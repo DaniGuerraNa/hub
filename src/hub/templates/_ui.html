@@ -1,0 +1,197 @@
+{# Piezas visuales compartidas. Se importan con:
+       {% import "_ui.html" as ui %}
+   Un macro y no HTML repetido porque los contratos —«glifo + color + palabra,
+   siempre los tres», «el icono vive en una placa tintada»— sólo se sostienen si
+   hay un único sitio donde se escriben. #}
+
+{% macro estado(dimension, valor, mostrar_texto=true) %}
+  {%- set i = insignia(dimension, valor) -%}
+  {%- if i -%}
+    <span class="insignia {{ i.tono }}" title="{{ i.porque }}">
+      <span class="glifo" aria-hidden="true">{{ i.glifo }}</span>
+      {%- if mostrar_texto %}<span>{{ i.texto }}</span>{% endif -%}
+    </span>
+  {%- else -%}
+    {# Valor desconocido: se cae al texto pelado. Es correcto aunque sea más
+       lento de leer; inventarle un glifo diría algo que no sabemos. #}
+    <span>{{ valor }}</span>
+  {%- endif -%}
+{% endmacro %}
+
+{# ── Iconos ────────────────────────────────────────────────────────────────
+   Trazo grueso y esquinas redondeadas: es el juego que se eligió comparando
+   maquetas. Van aquí y no en un sprite porque el hub no carga recursos
+   externos y un `<use>` con `xlink` complica más de lo que ahorra.
+
+   Un nombre desconocido devuelve VACÍO, nunca un icono de relleno: un símbolo
+   equivocado dice algo falso, y un hueco sólo dice que falta.
+
+   `ajustes` costó tres intentos, y los dos primeros son el mismo error: un
+   icono que dice otra cosa es peor que ninguno.
+     1. Círculo con ocho radios → a 16px se lee como un SOL, o sea como el botón
+        de modo claro.
+     2. Deslizadores → es el icono de FILTROS, y en estas pantallas hay filtros
+        de verdad al lado.
+     3. Una tuerca con dientes, que es lo que nadie confunde.
+
+   (Los comentarios van aquí arriba: dentro del diccionario son parte de una
+   expresión de Jinja y rompen la plantilla entera.) #}
+{% macro icono(nombre, px=16) %}
+{%- set trazos = {
+  'casa': '<path d="M2.5 8L9 2.5 15.5 8v7a1 1 0 01-1 1h-3v-4.5h-3V16h-3a1 1 0 01-1-1z"/>',
+  'terminal': '<rect x="2" y="3.5" width="14" height="11" rx="2"/><path d="M5.5 7.5l2 2-2 2"/>',
+  'lineas': '<path d="M3 5h12M3 9h12M3 13h8"/>',
+  'escudo': '<path d="M9 2l6 2.6v4.8c0 3.8-6 6.6-6 6.6s-6-2.8-6-6.6V4.6z"/>',
+  'pilas': '<rect x="2.5" y="3" width="13" height="4.5" rx="1.5"/><rect x="2.5" y="10.5" width="13" height="4.5" rx="1.5"/>',
+  'enlace': '<path d="M7 11l4-4M5.5 8.5L4 10a2.8 2.8 0 004 4l1.5-1.5M12.5 9.5L14 8a2.8 2.8 0 00-4-4L8.5 5.5"/>',
+  'documento': '<path d="M4 2.2h6.5l3.5 3.5v10.1H4z"/><path d="M6.5 8.5h5M6.5 11.4h3"/>',
+  'bandeja': '<path d="M2.5 10.5h4l1 2h3l1-2h4"/><path d="M4 3.5h10l1.5 7v4a1 1 0 01-1 1h-11a1 1 0 01-1-1v-4z"/>',
+  'rejilla': '<rect x="2.5" y="2.5" width="5.5" height="5.5" rx="1.8"/><rect x="10" y="2.5" width="5.5" height="5.5" rx="1.8"/><rect x="2.5" y="10" width="5.5" height="5.5" rx="1.8"/><rect x="10" y="10" width="5.5" height="5.5" rx="1.8"/>',
+  'aviso': '<path d="M9 2.2l6.8 12.3H2.2z"/><path d="M9 7v3.2M9 12.6v.01"/>',
+  'ok': '<path d="M3.5 9.5l3.5 3.5L14.5 5"/>',
+  'carpeta': '<path d="M2.5 4.5h4.5l1.5 2h7v8h-13z"/>',
+  'llave': '<path d="M9 2.2l5.8 2.5v4.6c0 3.6-5.8 6.3-5.8 6.3S3.2 12.9 3.2 9.3V4.7z"/>',
+  'punto': '<circle cx="9" cy="9" r="4.5" fill="currentColor" stroke="none"/>',
+  'agente': '<circle cx="9" cy="6" r="3"/><path d="M3.5 15.5c0-3 2.5-4.5 5.5-4.5s5.5 1.5 5.5 4.5"/>',
+  'skill': '<path d="M9 2.2l2 4.4 4.8.5-3.6 3.2 1 4.7L9 12.6l-4.2 2.4 1-4.7L2.2 7.1l4.8-.5z"/>',
+  'metodo': '<path d="M4 2.5h7l3 3v10H4z"/><path d="M6.5 7.5h5M6.5 10.5h5M6.5 13h3"/>',
+  'script': '<path d="M6.5 5.5L3 9l3.5 3.5M11.5 5.5L15 9l-3.5 3.5"/>',
+  'plantilla': '<rect x="2.5" y="2.5" width="13" height="13" rx="2"/><path d="M2.5 6.5h13M6.5 6.5v9"/>',
+  'lapiz': '<path d="M12.2 2.6l3.2 3.2L6.2 15H3v-3.2z"/><path d="M10.6 4.2l3.2 3.2"/>',
+  'puntos': '<circle cx="4" cy="9" r="1.35" fill="currentColor" stroke="none"/><circle cx="9" cy="9" r="1.35" fill="currentColor" stroke="none"/><circle cx="14" cy="9" r="1.35" fill="currentColor" stroke="none"/>',
+  'ajustes': '<path d="M7.55 2.2h2.9l.33 1.85 1.36.79 1.76-.65 1.45 2.51-1.42 1.24a5.4 5.4 0 010 1.57l1.42 1.24-1.45 2.51-1.76-.65-1.36.79-.33 1.85h-2.9l-.33-1.85-1.36-.79-1.76.65-1.45-2.51 1.42-1.24a5.4 5.4 0 010-1.57L2.35 6.7 3.8 4.19l1.76.65 1.36-.79z"/><circle cx="9" cy="9" r="2.45"/>',
+  'filtro': '<path d="M2.5 3.5h13l-5 5.6v5.4l-3 1.5V9.1z"/>',
+  'mas': '<path d="M9 3.5v11M3.5 9h11"/>',
+  'lupa': '<circle cx="8" cy="8" r="5"/><path d="M11.8 11.8l3.7 3.7"/>',
+} -%}
+{%- set d = trazos.get(nombre) -%}
+{%- if d -%}
+<svg width="{{ px }}" height="{{ px }}" viewBox="0 0 18 18" fill="none" stroke="currentColor"
+     stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">{{ d | safe }}</svg>
+{%- endif -%}
+{% endmacro %}
+
+{# Icono dentro de su placa tintada. `tono` usa la escala de atención. #}
+{% macro placa(nombre, tono='', tam='') %}
+  <span class="placa {{ tono }} {{ tam }}">{{ icono(nombre, 15 if tam == 'sm' else (19 if tam == 'lg' else 16)) }}</span>
+{% endmacro %}
+
+{# Rótulo de sección con su placa a la izquierda y un dato a la derecha. #}
+{% macro seccion(nombre, texto, apunte='', tono='') %}
+  <h2 class="con-placa">{{ placa(nombre, tono) }}<span>{{ texto }}</span>
+    {%- if apunte %}<span class="apunte">{{ apunte }}</span>{% endif -%}
+  </h2>
+{% endmacro %}
+
+{# ── Cabecera de vista ─────────────────────────────────────────────────────
+   Título y subtítulo a la izquierda; filtros y acciones a la derecha, en ese
+   orden, SIEMPRE.
+
+   Existe porque no lo estaba siendo: el filtro de proyecto acabó a la izquierda
+   en el inventario —sobre el índice— y a la derecha en respaldo. Da igual cuál
+   de los dos sitios sea mejor; lo que cuesta es que cambien de sitio, porque
+   obliga a buscar el control en cada pantalla en vez de ir directo. Con un
+   macro la consistencia no depende de acordarse.
+
+   Uso:  {% call ui.cabecera_vista('Respaldo', 'Qué hay sin respaldar hoy') %}
+           {{ ui.filtro_proyecto(...) }}
+         {% endcall %} #}
+{% macro cabecera_vista(titulo, subtitulo='') %}
+  <div class="cabecera-vista">
+    <div class="titulo-vista">
+      <h1>{{ titulo }}</h1>
+      {% if subtitulo %}<p class="tenue">{{ subtitulo }}</p>{% endif %}
+    </div>
+    {% if caller %}<div class="acciones-vista">{{ caller() }}</div>{% endif %}
+  </div>
+{% endmacro %}
+
+{# ── Menú de acciones ──────────────────────────────────────────────────────
+   Para todo lo que NO es la acción principal de una fila.
+
+   El problema que resuelve: cuatro botones en línea se leen como cuatro cosas
+   igual de importantes, y obligan a leerlos todos para encontrar la que se
+   busca. Con una acción fuera y el resto aquí dentro, la fila dice qué hacer y
+   lo demás sigue estando a un clic.
+
+   `<details>` y no JS: se abre y se cierra solo, funciona sin script y es
+   accesible por teclado de serie. Lo único que necesita JS es cerrarse al
+   pulsar fuera, que está en `base.html` y vale para todos a la vez.
+
+   Uso:  {% call ui.menu() %}<botones o formularios>{% endcall %} #}
+{% macro menu(etiqueta='Más acciones', alineado='der') %}
+  <details class="menu {{ alineado }}">
+    <summary title="{{ etiqueta }}" aria-label="{{ etiqueta }}">{{ icono('puntos') }}</summary>
+    <div class="menu-pop">{{ caller() }}</div>
+  </details>
+{% endmacro %}
+
+{# Igual, pero con la rueda: para ajustes de la vista, no para acciones sobre
+   un elemento. La forma distingue «qué le hago a esto» de «cómo lo veo». #}
+{% macro menu_ajustes(etiqueta='Ajustes', alineado='der') %}
+  <details class="menu {{ alineado }}">
+    <summary title="{{ etiqueta }}" aria-label="{{ etiqueta }}">{{ icono('ajustes') }}</summary>
+    <div class="menu-pop">{{ caller() }}</div>
+  </details>
+{% endmacro %}
+
+{# ── Nombre editable en su sitio ───────────────────────────────────────────
+   Renombrar se hace SOBRE el nombre, con un lápiz al lado, no en una caja de
+   texto aparte que está siempre ahí.
+
+   Un input permanente ocupa sitio, compite con las acciones de verdad y —lo
+   peor— muestra el nombre dos veces: una como título y otra como valor del
+   campo, que era exactamente lo que pasaba en la bandeja.
+
+   El formulario existe en el HTML desde el principio y sólo está oculto: así
+   funciona sin JS (se ve el campo, se envía) y con JS se comporta como una
+   edición en línea. #}
+{% macro nombre_editable(valor, accion, campo='nombre', destino=none, etiqueta='Renombrar',
+                         clase='', ocultos={}) %}
+  <span class="editable {{ clase }}">
+    <span class="valor">{{ valor }}</span>
+    <button type="button" class="icono-solo lapiz" title="{{ etiqueta }}"
+            aria-label="{{ etiqueta }}">{{ icono('lapiz', 14) }}</button>
+    <form method="post" action="{{ accion }}" class="edicion">
+      <input type="text" name="{{ campo }}" value="{{ valor }}" autocomplete="off"
+             aria-label="{{ etiqueta }}">
+      {% for k, v in ocultos.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+      {% if destino %}<input type="hidden" name="destino" value="{{ destino }}">{% endif %}
+      <button class="cta" type="submit">Guardar</button>
+      <button type="button" class="sutil cancelar">Cancelar</button>
+    </form>
+  </span>
+{% endmacro %}
+
+{# Filtro por proyecto. Un macro y no tres copias: salía en el inventario y
+   faltaba en respaldo y en servicios, y la forma de faltar era distinta en cada
+   sitio. `data-combo` le pone el buscador y la altura máxima (`hub-ui.js`).
+
+   `proyectos` debe traer sólo los que TIENEN algo que filtrar: ofrecer veinte
+   opciones de las que quince dejan la lista vacía no es un filtro, es una
+   trampa. #}
+{% macro filtro_proyecto(accion, proyectos, actual='', ocultos={}, vacio='Todos los proyectos') %}
+  {% if proyectos %}
+  <form method="get" action="{{ accion }}" class="filtro-proyecto">
+    {% for k, v in ocultos.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <select name="proyecto" data-combo="si" aria-label="Filtrar por proyecto"
+            onchange="this.form.submit()">
+      <option value="">{{ vacio }}</option>
+      {% for p in proyectos %}
+        <option value="{{ p.id }}" {{ 'selected' if actual == p.id }}>{{ p.nombre }}</option>
+      {% endfor %}
+    </select>
+  </form>
+  {% endif %}
+{% endmacro %}
+
+{# Campo etiquetado: el nombre del dato encima del valor, porque
+   «personal · activo · ask» son tres palabras sin sujeto. #}
+{% macro campo(que, valor, dimension=none, pista=none) %}
+  <span class="campo" {% if pista %}title="{{ pista }}"{% endif %}>
+    <span class="que">{{ que }}</span>
+    <span class="val">
+      {%- if dimension %}{{ estado(dimension, valor) }}{% else %}{{ valor }}{% endif -%}
+    </span>
+  </span>
+{% endmacro %}

@@ -1,0 +1,904 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+<link rel="stylesheet" href="/static/xterm.css">
+
+<style>
+  .taller {
+    display:grid;
+    grid-template-columns: var(--w-rail) 5px 1fr 5px var(--w-nota);
+    /* La altura la da el flex de `body.completo`, no un `calc` sobre 100vh:
+       cualquier cambio en la cabecera desajustaba la resta y cortaba el
+       terminal por abajo. `min-height:0` es lo que permite que se encoja. */
+    min-height: 0;
+    --w-rail: 240px;
+    --w-nota: 330px;
+  }
+  .taller.sin-rail { --w-rail: 0px; }
+  .taller.sin-nota { --w-nota: 0px; }
+  .taller.sin-rail > .rail, .taller.sin-rail > .tirador.izq,
+  .taller.sin-nota > .nota, .taller.sin-nota > .tirador.der { display:none; }
+  .taller.sin-rail { grid-template-columns: 1fr 5px var(--w-nota); }
+  .taller.sin-nota { grid-template-columns: var(--w-rail) 5px 1fr; }
+  .taller.sin-rail.sin-nota { grid-template-columns: 1fr; }
+
+  /* `min-height:0` en las tres columnas: sin él, un grid item con contenido
+     alto crece en vez de encogerse y empuja el terminal fuera de la pantalla. */
+  .rail, .nota { overflow-y:auto; overflow-x:hidden; min-height:0; }
+  .rail { border-right:1px solid var(--borde); padding:12px 10px 40px; }
+  .nota { border-left:1px solid var(--borde); padding:12px 14px 40px; display:flex; flex-direction:column; }
+  .centro { display:flex; flex-direction:column; min-width:0; min-height:0; }
+
+  .tirador { cursor:col-resize; background:transparent; }
+  .tirador:hover, .tirador.activo { background:var(--acento); opacity:.35; }
+
+  .grupo { margin-bottom:18px; }
+  /* El estilo de rótulo es de SECCIÓN y de nada más. Reservarlo es lo que hace
+     legible la jerarquía: si un proyecto también lo usaba, su nombre y
+     «Sesiones tmux» eran indistinguibles siendo cosas de distinto orden. */
+  .grupo > .rotulo { font-size:10px; text-transform:uppercase; letter-spacing:.08em;
+                     color:var(--texto-3); padding:0 10px 6px; }
+  .grupo + .grupo { border-top:1px solid var(--borde); padding-top:14px; }
+
+  .proyecto { margin-bottom:8px; }
+  .proyecto > .cabecera { display:block; padding:4px 10px; font-size:13px; font-weight:600;
+                          color:var(--texto); letter-spacing:.01em; }
+  .proyecto > .cabecera:hover { color:var(--acento); text-decoration:none; }
+  /* La guía vertical dice «esto cuelga de lo de arriba» sin gastar una palabra. */
+  .proyecto > .hijos { margin-left:16px; padding-left:8px; border-left:1px solid var(--borde); }
+  .vacio { padding:4px 10px; font-size:11px; color:var(--texto-3); font-style:italic; }
+
+  .item { display:block; padding:6px 10px; border-radius:var(--r-nav); font-size:14px; color:var(--texto-2); line-height:1.35; }
+  .item:hover { background:var(--superficie); color:var(--texto); text-decoration:none; }
+  .item.activo { background:var(--elevado); color:var(--acento);  }
+  .item.activo .sub { color:var(--texto-2); }
+  .item .sub { display:block; font-size:11px; color:var(--texto-3); }
+  .punto { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--acento); margin-right:5px; vertical-align:middle; }
+
+  .pestanas { display:flex; gap:3px; padding:5px 8px 0; border-bottom:1px solid var(--borde); overflow-x:auto; }
+  .pestana { display:flex; align-items:center; gap:7px; padding:6px 12px; border:1px solid var(--borde);
+             border-bottom:none; border-radius:var(--r-nav) var(--r-nav) 0 0; background:var(--lienzo);
+             color:var(--texto-3); font-size:12px; cursor:pointer; white-space:nowrap; max-width:300px;
+             user-select:none; }
+  .pestana:hover { color:var(--texto); }
+  .pestana.activa { background:var(--superficie); color:var(--texto);  }
+  .pestana .idx { font-family:ui-monospace,monospace; font-size:10px; opacity:.6; }
+  .pestana .txt { overflow:hidden; text-overflow:ellipsis; }
+  .pestana .cerrar { opacity:0; padding:0 2px; border-radius:3px; }
+  .pestana:hover .cerrar { opacity:.55; }
+  .pestana .cerrar:hover { opacity:1; color:var(--alerta); background:var(--elevado); }
+  .barra-term { display:flex; align-items:center; gap:6px; padding:7px 10px; border-bottom:1px solid var(--borde); flex-wrap:wrap; }
+  .barra-term button { padding:4px 9px; font-size:12px; }
+  /* El preset activo se marca con superficie y color, no con un contorno: es
+     como se marca lo activo en el raíl y en las pestañas. */
+  .barra-term button.on, .menu-pop button.on {
+    background:color-mix(in srgb, var(--acento) 16%, transparent); color:var(--acento); }
+  /* A− 14 A+ como un solo control: los tres pertenecen a la misma decisión y
+     separados parecían tres botones sueltos entre otros tantos. */
+  .grupo-fuente { display:flex; align-items:center; gap:2px; background:var(--superficie2);
+                  border-radius:var(--r-boton); padding:1px 3px; }
+  .grupo-fuente button { padding:3px 7px; }
+  .grupo-fuente #fuente-val { min-width:18px; text-align:center; font-size:12px;
+                              font-variant-numeric:tabular-nums; }
+  /* 🔴 El padding va DOS VECES, y no es un descuido. Medido con un Chrome
+     headless sobre esta misma vista:
+
+       `FitAddon` calcula las columnas con `getComputedStyle(padre).width`,
+       que con `box-sizing: border-box` devuelve el ancho **con el padding
+       dentro** — 900px medidos para un marco de 900 con 32 de padding—, y
+       luego resta el padding de `.xterm`, no el del marco.
+
+     Resultado: el padding del marco estrechaba el terminal pero no entraba en
+     la cuenta, así que xterm pedía 105 columnas donde caben 102 y el texto
+     desbordaba 24px por la derecha. Con `overflow:hidden` eso no se ve como
+     scroll: se ve como letras cortadas que reaparecen al redimensionar. Y
+     subir el padding del marco lo EMPEORABA.
+
+     Por eso: el del marco da el margen visual, y el de `.xterm` —que sí se
+     descuenta— corrige la cuenta. Se le da 4px más para dejar colchón. Medido
+     a 12, 13, 14, 16 y 20px de fuente: sobran entre 8 y 14px en todos. */
+  /* 🔴 `letter-spacing: normal` NO es cosmético: es la causa raíz del recorte.
+   *
+   * El `body` lleva `letter-spacing:-.01em` para la tipografía de la interfaz.
+   * xterm mide el ancho del glifo dentro de su propio contenedor, hereda ese
+   * -0,13px y cree que el carácter es más estrecho de lo que es. Entonces
+   * `_setDefaultSpacing()` compensa:
+   *
+   *     letterSpacing = cell.width - widthCache.get('W')
+   *
+   * y como el `letter-spacing` que pone **sobreescribe** al heredado en vez de
+   * sumarse, cada carácter acaba pintándose 0,147px MÁS ancho que su celda.
+   * Medido aquí: glifo 8,576px contra celda 8,429px. Invisible en el primer
+   * carácter y **1,72 caracteres al llegar a la columna 98** — el último cae
+   * fuera del área visible y `overflow:hidden` se lo come.
+   *
+   * Es también lo que desplazaba el clic: el hit-testing divide por la celda
+   * teórica, así que sobre texto más ancho devuelve una columna de más. Los
+   * dos síntomas, una sola causa.
+   *
+   * Cortar la herencia hace que xterm mida bien y su compensación caiga a ~0.
+   * Tiene que estar en el CSS de la página, no en JS: xterm mide al construirse.
+   *
+   * Se dio por descartado el 2026-08-28 («xterm lo compensa, desfase 0,00px»).
+   * Lo compensa, sí — de más, y esa era la parte que faltaba medir. */
+  #marco { flex:1; min-height:0; background:var(--lienzo); padding:8px 12px 8px 6px;
+           letter-spacing: normal; }
+  .nota-texto { flex:1; min-height:200px; resize:none; font-size:13px; line-height:1.5; }
+  .por-ventana { display:none; flex-direction:column; flex:1; min-height:0; }
+  .por-ventana.viendo { display:flex; }
+  .por-ventana summary { font-size:12px; }
+
+  /* 🔴 SIN barra de scroll, y no es cosmético.
+   *
+   * Aquí no se usa: con `mouse on` la rueda va a tmux y el historial se recorre
+   * con su copy-mode, así que la barra sólo era decoración con un coste.
+   *
+   * El coste: `.xterm-viewport` se superpone al área donde `.xterm-screen`
+   * pinta el texto, de modo que la barra ocupa las últimas columnas. Cuánto
+   * espacio reserva depende del navegador, y ahí estaba el problema:
+   *
+   *   - En Chrome sobre WSL la barra mide 10px y SÍ ocupa layout, así que
+   *     `clientWidth` la descuenta y `encajar()` la ve. Medido: el screen
+   *     terminaba 11px antes de donde empieza la barra. Todo cuadraba, y por
+   *     eso el fallo nunca se reprodujo en headless.
+   *   - Con *overlay scrollbars* —lo normal en Windows 11— la barra NO ocupa
+   *     layout: `offsetWidth - clientWidth` da 0. xterm y `encajar()` creen
+   *     que disponen del ancho entero, llenan hasta el borde, y la barra se
+   *     pinta ENCIMA de las últimas una o dos columnas al aparecer.
+   *
+   * Es la teoría del usuario (2026-08-30) y explica el síntoma que nunca se pudo
+   * reproducir aquí: letras que no están, y que vuelven al redimensionar.
+   * Quitarla no es una corrección a ciegas — elimina la variable: sin barra,
+   * `clientWidth == offsetWidth` en todos los navegadores y no hay nada que
+   * pueda solaparse con el texto.
+   *
+   * `overflow-y` sigue siendo `scroll`: xterm mueve el viewport por código
+   * (`scrollTop`) para pintar el scrollback. Se oculta la barra, no el scroll. */
+  .xterm-viewport {
+    background: var(--lienzo) !important;
+    scrollbar-width: none;          /* estándar */
+    -ms-overflow-style: none;       /* Edge heredado */
+  }
+  .xterm-viewport::-webkit-scrollbar { display: none; width: 0; height: 0; }
+</style>
+
+<div class="taller" id="taller">
+
+  {# Dos niveles, y la barra tiene que enseñar CUÁL es cuál. Antes el nombre del
+     proyecto usaba el mismo estilo que el rótulo «Sesiones tmux», así que
+     proyecto, sección y slot se leían como una lista plana de iguales — y con
+     tres proyectos sin slots, sus cabeceras parecían elementos sueltos. Ahora
+     el estilo de rótulo queda RESERVADO a las secciones, y el proyecto es una
+     cabecera con sus slots colgando de una guía. #}
+  <nav class="rail">
+    {% set en_uso = proyectos | selectattr('en_uso') | list %}
+    {% if en_uso %}
+    <div class="grupo">
+      <div class="rotulo">Proyectos</div>
+      {% for p in en_uso %}
+      <div class="proyecto">
+        <a class="cabecera" href="/proyecto/{{ p.id }}">{{ p.nombre }}</a>
+        <div class="hijos">
+          {% for s in p.slots %}
+          <a class="item {{ 'activo' if slot and s.id == slot.id }}"
+             href="/trabajo?slot={{ s.id }}">
+            {{ s.nombre }}
+            <span class="sub mono">{{ s.ruta_corta or '—' }}</span>
+          </a>
+          {% endfor %}
+          {# Sin esto la cabecera queda huérfana y se lee como un ítem más. #}
+          {% if not p.slots %}
+          <div class="vacio">
+            sin slots · {{ p.paneles_abiertos }} ventana{{ 's' if p.paneles_abiertos != 1 }} abierta{{ 's' if p.paneles_abiertos != 1 }}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="grupo">
+      <div class="rotulo">Sin organizar</div>
+      {% for s in sesiones %}
+      <a class="item {{ 'activo' if s.session == session and not slot }}"
+         href="/trabajo?session={{ s.session }}">
+        <span class="punto"></span>{{ s.session }}
+        <span class="sub">
+          {% if s.sin_slot %}{{ s.sin_slot }} de {{ s.ventanas }} ventana{{ 's' if s.ventanas != 1 }} sin slot
+          {%- else %}ya organizada{% endif %}
+        </span>
+      </a>
+      {% else %}
+      <div class="vacio">Todo vinculado a un slot.</div>
+      {% endfor %}
+      {% if sesiones_organizadas %}
+      {# Se dice cuántas se ocultan: una lista que esconde cosas en silencio se
+         lee como una lista incompleta. #}
+      <div class="vacio">
+        + {{ sesiones_organizadas | length }} sesión{{ 'es' if sesiones_organizadas | length != 1 }}
+        ya en slots, arriba
+      </div>
+      {% endif %}
+    </div>
+  </nav>
+
+  <div class="tirador izq" data-lado="rail"></div>
+
+  <main class="centro">
+    <div class="barra-term">
+      <strong style="font-size:14px;font-weight:500">{{ slot.nombre if slot else session or '—' }}</strong>
+      {% if slot and slot.ruta %}<span class="mono">{{ slot.ruta }}</span>{% endif %}
+      <span style="flex:1"></span>
+      {# Fuera se quedan las dos cosas que se tocan mientras se trabaja: el
+         tamaño de letra y la nota. Todo lo demás —los tres presets de reparto y
+         el «Ajustar»— se decide una vez y se olvida, así que vive bajo la
+         rueda. Siete botones en fila sobre el terminal eran siete cosas que
+         leer cada vez que se busca una. #}
+      <div class="grupo-fuente" title="Tamaño de letra del terminal">
+        <button id="menos" class="sutil" title="Reducir la letra" aria-label="Reducir la letra">A−</button>
+        <span id="fuente-val" class="tenue"></span>
+        <button id="mas" class="sutil" title="Aumentar la letra" aria-label="Aumentar la letra">A+</button>
+      </div>
+      <button id="alternar-nota" class="sutil" title="Mostrar u ocultar la nota">Nota</button>
+      {% call ui.menu_ajustes('Ajustes de la vista') %}
+        <div class="rotulo-menu">Reparto de la pantalla</div>
+        <button type="button" data-preset="comodo">Cómodo</button>
+        <button type="button" data-preset="denso">Denso</button>
+        <button type="button" data-preset="foco">Foco</button>
+        <div class="separador"></div>
+        <button type="button" id="ajustar"
+                title="Bajar la letra hasta ver todas las columnas de tmux">Ajustar a tmux</button>
+      {% endcall %}
+      <span id="cols" class="tenue" title="columnas"></span>
+      <span id="estado" class="tenue"></span>
+    </div>
+    <div class="pestanas" id="ventanas"></div>
+    <div id="marco"></div>
+  </main>
+
+  <div class="tirador der" data-lado="nota"></div>
+
+  <aside class="nota">
+    {# Un bloque por VENTANA de la sesión, y el JS enseña el de la pestaña
+       activa. Cambiar de pestaña no recarga la página: si esto se pintara sólo
+       para la ventana con la que se entró, seguirías viendo —y editando— la
+       nota de otro trabajo sin que nada lo dijera. #}
+    {% for v in ventanas_estado %}
+    <div class="por-ventana" data-ventana="{{ v.ventana }}" hidden>
+      {% if v.slot %}
+        <div class="fila" style="margin-bottom:8px">
+          <strong style="font-size:14px;font-weight:500">Nota — {{ v.slot.nombre }}</strong>
+          <span class="tenue nota-estado"></span>
+        </div>
+        <textarea class="nota-texto" data-slot="{{ v.slot.id }}"
+                  placeholder="Qué se está haciendo aquí, en qué quedó, qué sigue…">{{ v.slot.nota }}</textarea>
+        <p class="tenue" style="margin:8px 0 0">Se guarda sola. Sobrevive a que se caiga WSL.</p>
+
+        {# Con slot ya asignado sigue habiendo algo que ofrecer: separarla,
+           moverla o soltarla. Que no lo hubiera convertía el primer acierto en
+           definitivo, y equivocarse sólo se arreglaba borrando el slot. #}
+        <details style="margin-top:14px">
+          <summary>Esta ventana pertenece a «{{ v.slot.nombre }}»</summary>
+
+          {% if v.proyecto_id %}
+          <form method="post" action="/panel/accion" style="margin-top:10px">
+            <input type="hidden" name="pane_id" value="{{ v.pane_id }}">
+            <input type="hidden" name="accion" value="promover">
+            <input type="hidden" name="destino" value="/trabajo?session={{ session }}&ventana={{ v.ventana }}">
+            <label>Separarla en un slot propio</label>
+            <input type="text" name="nombre" value="{{ v.etiqueta }}">
+            <div class="barra" style="margin-top:8px">
+              <button class="aceptar">Separar</button>
+            </div>
+            <p class="tenue" style="margin:8px 0 0">
+              «{{ v.slot.nombre }}» se queda con su nota y sus otras ventanas.
+            </p>
+          </form>
+          {% endif %}
+
+          {% if v.otros_slots %}
+          <form method="post" action="/panel/accion" style="margin-top:16px">
+            <input type="hidden" name="pane_id" value="{{ v.pane_id }}">
+            <input type="hidden" name="accion" value="vincular">
+            <input type="hidden" name="destino" value="/trabajo?session={{ session }}&ventana={{ v.ventana }}">
+            <label>…o moverla a otro slot</label>
+            <select name="slot_id" data-combo="si" aria-label="Slot">
+              {% for s in v.otros_slots %}
+              <option value="{{ s.id }}">{{ s.nombre }}</option>
+              {% endfor %}
+            </select>
+            <div class="barra" style="margin-top:8px">
+              <button class="principal">Mover</button>
+            </div>
+          </form>
+          {% endif %}
+
+          <form method="post" action="/panel/accion" style="margin-top:16px">
+            <input type="hidden" name="pane_id" value="{{ v.pane_id }}">
+            <input type="hidden" name="accion" value="desvincular">
+            <input type="hidden" name="destino" value="/trabajo?session={{ session }}&ventana={{ v.ventana }}">
+            <div class="barra">
+              <button class="declinar">Soltarla del slot</button>
+            </div>
+            <p class="tenue" style="margin:8px 0 0">
+              Vuelve a la bandeja. El slot y su nota no se tocan.
+            </p>
+          </form>
+        </details>
+
+      {% elif v.proyecto_id %}
+        {# Sin slot no hay nota, así que este hueco ofrece lo único que la
+           desbloquea. Antes mandaba a la bandeja a buscar este mismo panel
+           para poder volver aquí: el rodeo sobraba. #}
+        <div class="fila" style="margin-bottom:8px">
+          <strong style="font-size:14px;font-weight:500">Sin slot</strong>
+        </div>
+        <p class="tenue" style="margin:0 0 12px">
+          La nota vive en el slot, no en la ventana. Dale nombre a esta línea de
+          trabajo y podrás escribirla — o átala a un slot que ya tengas.
+        </p>
+
+        <form method="post" action="/panel/accion">
+          <input type="hidden" name="pane_id" value="{{ v.pane_id }}">
+          <input type="hidden" name="accion" value="promover">
+          <input type="hidden" name="destino" value="/trabajo?session={{ session }}&ventana={{ v.ventana }}">
+          <label>Slot nuevo en {{ v.proyecto_nombre }}</label>
+          <input type="text" name="nombre" value="{{ v.etiqueta }}">
+          <div class="barra" style="margin-top:8px">
+            <button class="aceptar">Crear slot y escribir nota</button>
+          </div>
+        </form>
+
+        {% if v.slots %}
+        <form method="post" action="/panel/accion" style="margin-top:16px">
+          <input type="hidden" name="pane_id" value="{{ v.pane_id }}">
+          <input type="hidden" name="accion" value="vincular">
+          <input type="hidden" name="destino" value="/trabajo?session={{ session }}&ventana={{ v.ventana }}">
+          <label>…o vincular a uno que ya existe</label>
+          <select name="slot_id" data-combo="si" aria-label="Slot">
+            {% for s in v.slots %}
+            <option value="{{ s.id }}">{{ s.nombre }}</option>
+            {% endfor %}
+          </select>
+          <div class="barra" style="margin-top:8px">
+            <button class="principal">Vincular</button>
+          </div>
+        </form>
+        <p class="tenue" style="margin:12px 0 0">
+          Un slot admite varias ventanas y todas comparten su nota.
+        </p>
+        {% endif %}
+
+      {% else %}
+        <div class="fila" style="margin-bottom:8px">
+          <strong style="font-size:14px;font-weight:500">Sin proyecto</strong>
+        </div>
+        <p class="tenue">Esta ruta no pertenece a ningún proyecto registrado, y un
+        slot cuelga de un proyecto. Añade <span class="mono">{{ v.cwd }}</span>
+        a <span class="mono">projects.yml</span> y aparecerá aquí.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    <p class="tenue" id="sin-bloque" hidden>Esta ventana es nueva y el hub todavía
+    no la ha muestreado. Aparecerá aquí en unos segundos.</p>
+
+    {% if not ventanas_estado %}
+      <p class="tenue">Elige un slot en la izquierda para ver y editar su nota.</p>
+    {% endif %}
+  </aside>
+</div>
+
+<script src="/static/xterm.js"></script>
+<script src="/static/addon-fit.js"></script>
+<script>
+(function () {
+  const SESION = {{ (session or '') | tojson }};
+  const VENTANA = {{ ventana | tojson }};
+  if (!SESION) { document.getElementById('estado').textContent = 'sin sesiones de tmux'; return; }
+
+  const guardado = {
+    get: (k, d) => { try { return JSON.parse(localStorage.getItem('hub.' + k)) ?? d; } catch { return d; } },
+    set: (k, v) => localStorage.setItem('hub.' + k, JSON.stringify(v)),
+  };
+
+  const taller = document.getElementById('taller');
+  const estado = document.getElementById('estado');
+
+  // Estado de la conexión declarado ARRIBA a propósito: `reajustar()` lo lee, y
+  // se llama durante la configuración inicial. Declararlo más abajo lo dejaba en
+  // zona muerta temporal y abortaba el script entero (terminal en negro).
+  let ws = null, intentos = 0, cerradoAposta = false;
+  const codificador = new TextEncoder();
+
+  const term = new Terminal({
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    fontSize: guardado.get('fuente', 13),
+    cursorBlink: true,
+    scrollback: 10000,
+    allowProposedApi: true,
+    // El texto base va NEUTRO a propósito. Teñirlo de azul (#c9d3ee) hacía que
+    // el azul de Claude y las negritas no despegaran del texto normal: el color
+    // debe pertenecer a lo que Claude resalta, no al fondo sobre el que resalta.
+    // La paleta ANSI usa los tonos del sistema, separados en luminancia.
+    theme: {
+      background: '#0f101a', foreground: '#d8dade', cursor: '#98a4f7',
+      selectionBackground: '#2a3050',
+      black:   '#3a4054', red:     '#e8917c', green:   '#7ec8a9', yellow:  '#d9b57e',
+      blue:    '#8fb8d9', magenta: '#c2a7e6', cyan:    '#86c9c9', white:   '#c9d3ee',
+      brightBlack:   '#646e87', brightRed:     '#ffab94',
+      brightGreen:   '#9ae0c2', brightYellow:  '#f0cd97',
+      brightBlue:    '#aed0ef', brightMagenta: '#d9c0f7',
+      brightCyan:    '#a3e0e0', brightWhite:   '#ffffff',
+    },
+    // Las negritas suben a la variante brillante: sobre un base neutro, eso
+    // basta para que se vean sin recurrir a otro peso de fuente.
+    drawBoldTextInBrightColors: true,
+  });
+  const ajuste = new FitAddon.FitAddon();
+  term.loadAddon(ajuste);
+  term.open(document.getElementById('marco'));
+
+  // ── tamaño ────────────────────────────────────────────────────────────────
+  let ajustePedido = false;
+
+  /* El `fit()` va SIEMPRE en un frame posterior.
+   *
+   * xterm recalcula el alto de celda de forma asíncrona al cambiar
+   * `fontSize`, así que medir en la misma vuelta usa las métricas viejas: al
+   * pasar a «cómodo» (fuente 14) calculaba las filas con la altura de la
+   * fuente anterior, pedía más de las que caben y las últimas quedaban debajo
+   * del borde. Es el mismo error que dejó el terminal en negro — síncrono
+   * contra asíncrono, y sin ningún síntoma más que lo que no se ve. */
+  /* 🔴 `fit()` por sí solo pide MÁS columnas de las que caben.
+   *
+   * Medido con Chrome headless: calcula con `getComputedStyle(padre).width`,
+   * que con `box-sizing:border-box` **incluye el padding**, y luego resta el de
+   * `.xterm`, no el del marco. La última columna acaba fuera del área visible y
+   * `overflow:hidden` se la come: se pierden letras al final de la línea, y sólo
+   * reaparecen al redimensionar.
+   *
+   * Compensarlo con más padding no sirvió —dos intentos—: el margen de holgura
+   * quedaba por debajo del ancho de una celda y bastaba un redondeo para volver
+   * a perder un carácter. Así que no se estima: se **mide** el desbordamiento
+   * real y se quitan columnas hasta que quepa. */
+  function encajar() {
+    try { ajuste.fit(); } catch (e) { return; }
+    const marco = document.getElementById('marco');
+    const scr = marco.querySelector('.xterm-screen');
+    const vp = marco.querySelector('.xterm-viewport');
+    if (!scr || !vp) return;
+    /* Se exige **una celda y media libre**, y esto es lo que de verdad tapa el
+     * fallo.
+     *
+     * El razonamiento no es «por si acaso». El ancho de celda que xterm calcula
+     * y el ancho real al que el navegador pinta el glifo no tienen por qué
+     * coincidir —depende de la fuente que resuelva `ui-monospace` en cada
+     * sistema— y ese error **se acumula columna a columna**. Un error de 0,05px
+     * por celda es invisible al principio de la línea y vale casi un carácter
+     * entero al llegar a la columna 100: exactamente el síntoma, que se come
+     * el último y sólo el último.
+     *
+     * Es la misma causa que el clic desplazado a la derecha. Si el texto real
+     * es más ancho que la celda teórica, `floor(x / celda)` devuelve una
+     * columna mayor que la que se pulsó, y el desfase crece hacia la derecha.
+     * Los dos síntomas salen de la misma discrepancia.
+     *
+     * Media celda no bastaba porque sólo cubría el redondeo de `offsetWidth`,
+     * no el error acumulado. Así que la holgura tiene dos partes:
+     *
+     *   - el suelo, celda y media: el margen de seguridad que pidió el usuario. No se
+     *     va aunque la deriva sea cero. Cuesta una columna de ~100, y perder
+     *     texto en silencio es lo peor que puede hacer un terminal.
+     *   - la deriva REAL medida en esta máquina, si es mayor. Un número fijo
+     *     sirve para la fuente de aquí; medirlo sirve para cualquiera. Si en
+     *     otro sistema la deriva volviera a valer dos caracteres, la holgura
+     *     crece sola en vez de fallar en silencio. */
+    const celda = term._core && term._core._renderService
+      ? term._core._renderService.dimensions.css.cell.width : 8;
+    const d = derivaDeCelda();
+    const holgura = Math.ceil(Math.max(celda * 1.5,
+                                       celda / 2 + Math.max(0, d ? d.deriva : 0)));
+    let guardia = 8;   // nunca un bucle infinito por un layout raro
+    while (scr.offsetWidth > vp.clientWidth - holgura && term.cols > 20 && guardia-- > 0) {
+      term.resize(term.cols - 1, term.rows);
+    }
+  }
+
+  function reajustar() {
+    if (ajustePedido) return;   // varias llamadas seguidas hacen un solo fit
+    ajustePedido = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      ajustePedido = false;
+      encajar();
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ filas: term.rows, columnas: term.cols }));
+      }
+      document.getElementById('fuente-val').textContent = term.options.fontSize;
+      medirDesfase();
+    }));
+  }
+
+  /* Cuántas columnas pinta el navegador frente a las que cree tener tmux.
+   *
+   * Existe porque su desajuste **borra texto sin avisar**: tmux escribe hasta
+   * su última columna y el navegador sólo pinta hasta la suya, así que las
+   * letras de en medio no aparecen en ninguna parte. Costó tres intentos
+   * encontrarlo justamente porque no había forma de verlo. */
+  let anchoTmux = null;
+
+  /* La métrica que faltaba: ¿pinta el navegador el glifo al ancho que xterm
+   * cree?
+   *
+   * xterm calcula un `cell.width` y coloca cada columna en un múltiplo suyo.
+   * Si la fuente que el sistema resuelve para `ui-monospace` pinta con un
+   * avance distinto —aunque sean centésimas—, el error **se acumula**: al
+   * final de una línea de 100 columnas vale casi un carácter, y ese carácter
+   * es el que desaparece. La misma discrepancia desplaza el clic hacia la
+   * derecha, porque el hit-testing divide por la celda teórica.
+   *
+   * No se puede medir en Chrome headless, donde todo cuadra: el dato tiene que
+   * salir de la máquina donde el fallo ocurre. Por eso se mide aquí y se
+   * enseña, en vez de seguir teorizando. Se mide sobre un span con la MISMA
+   * tipografía y `letter-spacing` calculados de una fila real —xterm compensa
+   * el `letter-spacing` heredado del body y sin copiarlo la medición mentiría—
+   * y fuera de `.xterm-rows`, para no meterle un hijo que no espera. */
+  function derivaDeCelda() {
+    const fila = document.querySelector('#marco .xterm-rows > div');
+    const rs = term._core && term._core._renderService;
+    if (!fila || !rs) return null;
+    const cs = getComputedStyle(fila);
+    const s = document.createElement('span');
+    s.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;top:-9999px';
+    // Propiedad a propiedad y NO con el atajo `font`: `getComputedStyle` lo
+    // devuelve vacío en Chrome, y el span caía a la fuente del cuerpo — medía
+    // Inter y daba 13,7px de «celda». Una medición que miente es peor que
+    // ninguna, porque parece un dato.
+    for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle',
+                     'fontVariant', 'letterSpacing', 'fontFeatureSettings'])
+      s.style[p] = cs[p];
+    s.textContent = 'M'.repeat(100);
+    document.body.appendChild(s);
+    const real = s.getBoundingClientRect().width / 100;
+    s.remove();
+    const teorica = rs.dimensions.css.cell.width;
+    return { real, teorica, deriva: (real - teorica) * term.cols };
+  }
+
+  async function medirDesfase() {
+    const marca = document.getElementById('cols');
+    if (!marca) return;
+    try {
+      const r = await fetch(`/api/sesion/${encodeURIComponent(SESION)}/ventanas`);
+      const vs = await r.json();
+      const v = Array.isArray(vs) ? vs.find(x => x.indice === activa) : null;
+      const suyas = v && v.ancho;
+      if (!suyas) { marca.textContent = `${term.cols} col`; marca.className = 'tenue'; return; }
+      anchoTmux = suyas;
+      const desfase = suyas - term.cols;
+      const d = derivaDeCelda();
+      marca.textContent = desfase ? `${term.cols} col · tmux ${suyas}` : `${term.cols} col`;
+      marca.className = desfase ? 'frio' : 'tenue';
+      marca.title = (desfase
+        ? `tmux cree tener ${suyas} columnas y aquí caben ${term.cols}: se pierden `
+          + `${Math.abs(desfase)} caracteres por línea. Cambia el tamaño de letra o la ventana.`
+        : 'el navegador y tmux van al mismo ancho')
+        + (d ? `\n\nglifo ${d.real.toFixed(3)}px · celda de xterm ${d.teorica.toFixed(3)}px`
+             + `\nderiva al final de la línea: ${d.deriva.toFixed(1)}px`
+             + ` (${(d.deriva / d.teorica).toFixed(2)} caracteres)` : '');
+    } catch (e) {}
+  }
+
+  /* Bajar la letra hasta que quepan las columnas que tmux tiene.
+   *
+   * Hace falta cuando otra terminal mira la misma ventana: ahí el hub NO la
+   * encoge —encogerla trunca el historial de forma irreversible— así que la
+   * ventana se queda al ancho de la otra y aquí se recorta la vista. Bajar la
+   * letra es la salida reversible: se ve todo y no se rompe nada. */
+  async function ajustarAlAncho() {
+    if (!anchoTmux) return;
+    let intentos = 0;
+    while (term.cols < anchoTmux && term.options.fontSize > 8 && intentos++ < 14) {
+      term.options.fontSize = term.options.fontSize - 1;
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      try { ajuste.fit(); } catch (e) {}
+    }
+    guardado.set('fuente', term.options.fontSize);
+    reajustar();
+  }
+
+  function fuente(px) {
+    term.options.fontSize = Math.min(22, Math.max(9, px));
+    guardado.set('fuente', term.options.fontSize);
+    reajustar();
+  }
+
+  const PRESETS = {
+    comodo: { fuente: 14, rail: true, nota: true },
+    denso:  { fuente: 12, rail: true, nota: true },
+    foco:   { fuente: 13, rail: false, nota: false },
+  };
+
+  function aplicarPreset(nombre) {
+    const p = PRESETS[nombre]; if (!p) return;
+    taller.classList.toggle('sin-rail', !p.rail);
+    taller.classList.toggle('sin-nota', !p.nota);
+    guardado.set('preset', nombre);
+    guardado.set('sinNota', !p.nota);
+    document.querySelectorAll('[data-preset]').forEach(b =>
+      b.classList.toggle('on', b.dataset.preset === nombre));
+    // Cerrar el menú de ajustes al elegir: el efecto se ve en la pantalla de
+    // detrás, y dejarlo abierto lo tapa justo cuando hay que juzgarlo.
+    document.querySelectorAll('details.menu[open]').forEach(m => { m.open = false; });
+    fuente(p.fuente);
+  }
+
+  document.querySelectorAll('[data-preset]').forEach(b =>
+    b.onclick = () => aplicarPreset(b.dataset.preset));
+  document.getElementById('mas').onclick = () => fuente(term.options.fontSize + 1);
+  document.getElementById('ajustar').onclick = ajustarAlAncho;
+  document.getElementById('menos').onclick = () => fuente(term.options.fontSize - 1);
+  document.getElementById('alternar-nota').onclick = () => {
+    const oculta = taller.classList.toggle('sin-nota');
+    guardado.set('sinNota', oculta);
+    reajustar();
+  };
+
+  // Anchos arrastrables, persistidos.
+  taller.style.setProperty('--w-rail', guardado.get('anchoRail', 240) + 'px');
+  taller.style.setProperty('--w-nota', guardado.get('anchoNota', 330) + 'px');
+
+  document.querySelectorAll('.tirador').forEach(t => {
+    t.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      t.setPointerCapture(e.pointerId);
+      t.classList.add('activo');
+      const rail = t.dataset.lado === 'rail';
+      const mover = ev => {
+        const px = rail ? ev.clientX : innerWidth - ev.clientX;
+        const val = Math.max(140, Math.min(620, px));
+        taller.style.setProperty(rail ? '--w-rail' : '--w-nota', val + 'px');
+        guardado.set(rail ? 'anchoRail' : 'anchoNota', val);
+        reajustar();
+      };
+      const soltar = () => {
+        t.classList.remove('activo');
+        removeEventListener('pointermove', mover);
+        removeEventListener('pointerup', soltar);
+      };
+      addEventListener('pointermove', mover);
+      addEventListener('pointerup', soltar);
+    });
+  });
+
+  aplicarPreset(guardado.get('preset', 'comodo'));
+  if (guardado.get('sinNota', false)) taller.classList.add('sin-nota');
+  addEventListener('resize', reajustar);
+
+  /* Y además se vigila el hueco del terminal.
+   *
+   * Depende de demasiadas cosas —preset, rail, nota, arrastre de tiradores,
+   * cuántas líneas ocupe la cabecera— y acordarse de llamar a `reajustar()` en
+   * cada una es exactamente la clase de olvido que deja filas invisibles. Que
+   * lo observe el navegador quita el problema de raíz. */
+  if (window.ResizeObserver) {
+    new ResizeObserver(reajustar).observe(document.getElementById('marco'));
+  }
+
+  // ── conexión, con reintento ───────────────────────────────────────────────
+  function conectar() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    let url = `${proto}://${location.host}/ws/terminal/${encodeURIComponent(SESION)}`;
+    if (VENTANA !== null) url += `?ventana=${VENTANA}`;
+    estado.textContent = intentos ? `reconectando (${intentos})…` : 'conectando…';
+    ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => { intentos = 0; estado.textContent = ''; reajustar(); term.focus(); };
+    ws.onmessage = e => term.write(new Uint8Array(e.data));
+    ws.onerror = () => { estado.textContent = 'error de conexión'; };
+    ws.onclose = () => {
+      if (cerradoAposta) return;
+      intentos++;
+      // Espera creciente hasta 10 s: si WSL se está reiniciando, no sirve
+      // martillear el puerto, pero al volver debe reengancharse solo.
+      const espera = Math.min(10000, 500 * 2 ** Math.min(intentos, 5));
+      estado.textContent = `desconectado · reintento en ${Math.round(espera / 1000)} s`;
+      setTimeout(conectar, espera);
+    };
+  }
+
+  term.onData(d => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(codificador.encode(d)); });
+  addEventListener('beforeunload', () => { cerradoAposta = true; if (ws) ws.close(); });
+  conectar();
+
+  // ── ventanas de la sesión ─────────────────────────────────────────────────
+  const RUTA_BASE = {{ (slot.ruta if slot else '') | tojson }};
+  const cajaVentanas = document.getElementById('ventanas');
+  let ventanas = [], activa = VENTANA;
+
+  // El panel derecho tiene que seguir a la pestaña. Si no, escribirías en la
+  // nota del slot con el que entraste mientras miras otra ventana, y nada en
+  // la pantalla lo diría.
+  const bloques = document.querySelectorAll('.por-ventana');
+  function mostrarPanelDe(indice) {
+    let visto = false;
+    bloques.forEach(b => {
+      const suyo = String(b.dataset.ventana) === String(indice);
+      b.classList.toggle('viendo', suyo);
+      visto = visto || suyo;
+    });
+    // Una ventana recién creada aún no está en el último muestreo del
+    // snapshotter, así que no tiene bloque. Decirlo es mejor que dejar el
+    // hueco en blanco sin explicación.
+    const aviso = document.getElementById('sin-bloque');
+    if (aviso) aviso.hidden = visto || indice === null;
+  }
+
+  /* 🔴 Reescribir el HTML entero en cada pintado ROMPÍA el doble clic.
+   *
+   * El primer clic llama a `irA()`, que repintaba: el segundo clic caía sobre
+   * un nodo recién creado, así que el navegador emitía el `dblclick` en el
+   * ancestro común —la barra— y el manejador, que busca `[data-ir]` desde el
+   * target, salía sin hacer nada. Renombrar no fallaba: no llegaba a empezar.
+   * Y el sondeo de cada 5 s podía provocarlo también, sin tocar nada.
+   *
+   * Así que sólo se reescribe cuando cambia el CONJUNTO de ventanas. Un cambio
+   * de pestaña deja los nodos vivos y toca sólo la clase. */
+  let firmaPintada = null;
+
+  function pintarVentanas() {
+    const firma = JSON.stringify(ventanas.map(v => [v.indice, v.etiqueta]));
+    if (firma !== firmaPintada) {
+      firmaPintada = firma;
+      cajaVentanas.innerHTML = ventanas.map(v => `
+        <div class="pestana" data-ir="${v.indice}"
+             title="${escapar(v.etiqueta)} — doble clic para renombrar">
+          <span class="idx">${v.indice}</span>
+          <span class="txt">${escapar(v.etiqueta)}</span>
+          ${ventanas.length > 1 ? `<span class="cerrar" data-cerrar="${v.indice}">×</span>` : ''}
+        </div>`).join('') +
+        `<div class="pestana" id="nueva-ventana" title="Ventana nueva en la ruta del slot">+</div>`;
+    }
+    cajaVentanas.querySelectorAll('[data-ir]').forEach(el => {
+      el.classList.toggle('activa', String(el.dataset.ir) === String(activa));
+    });
+  }
+
+  function escapar(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  async function cargarVentanas() {
+    try {
+      const r = await fetch(`/api/sesion/${encodeURIComponent(SESION)}/ventanas`);
+      const nuevas = await r.json();
+      if (!Array.isArray(nuevas)) return;
+      ventanas = nuevas;
+      // Sin ventana pedida, la activa es la que tmux ya tenía marcada.
+      if (activa === null) {
+        const marcada = ventanas.find(v => v.activa);
+        if (marcada) activa = marcada.indice;
+      }
+      pintarVentanas();
+      mostrarPanelDe(activa);
+      medirDesfase();
+    } catch {}
+  }
+
+  function irA(indice) {
+    activa = indice;
+    pintarVentanas();
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ accion: 'ventana', indice }));
+    }
+    mostrarPanelDe(indice);
+    // La URL sigue a la pestaña para que recargar, o volver de un formulario,
+    // caiga en la misma ventana y no en la que se abrió al principio.
+    try {
+      const u = new URL(location.href);
+      u.searchParams.delete('slot');
+      u.searchParams.set('session', SESION);
+      u.searchParams.set('ventana', indice);
+      history.replaceState(null, '', u);
+    } catch (e) {}
+  }
+
+  cajaVentanas.addEventListener('click', async (e) => {
+    const cerrar = e.target.dataset ? e.target.dataset.cerrar : null;
+    if (cerrar !== undefined && cerrar !== null) {
+      e.stopPropagation();
+      const v = ventanas.find(x => String(x.indice) === String(cerrar));
+      const ok = await HubUI.confirmar({
+        titulo: `Cerrar la ventana ${cerrar}`,
+        mensaje: `«${v ? v.etiqueta : ''}»\n\nMata todo lo que esté corriendo dentro.`,
+        aceptar: 'Cerrar la ventana',
+        peligro: true,
+      });
+      if (!ok) return;
+      await fetch(`/api/sesion/${encodeURIComponent(SESION)}/ventana/${cerrar}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accion: 'cerrar' }),
+      });
+      return cargarVentanas();
+    }
+    if (e.target.id === 'nueva-ventana' || (e.target.closest && e.target.closest('#nueva-ventana'))) {
+      await fetch(`/api/sesion/${encodeURIComponent(SESION)}/ventanas`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ruta: RUTA_BASE }),
+      });
+      await cargarVentanas();
+      if (ventanas.length) irA(ventanas[ventanas.length - 1].indice);
+      return;
+    }
+    const pestana = e.target.closest ? e.target.closest('[data-ir]') : null;
+    if (pestana) irA(Number(pestana.dataset.ir));
+  });
+
+  cajaVentanas.addEventListener('dblclick', async (e) => {
+    let pestana = e.target.closest ? e.target.closest('[data-ir]') : null;
+    if (!pestana && document.elementFromPoint) {
+      // Red de seguridad: si el repintado se coló entre los dos clics, el
+      // `dblclick` llega con la barra como target. La posición del puntero sí
+      // sabe sobre qué pestaña estaba.
+      const bajo = document.elementFromPoint(e.clientX, e.clientY);
+      pestana = bajo && bajo.closest ? bajo.closest('[data-ir]') : null;
+    }
+    if (!pestana) return;
+    const i = pestana.dataset.ir;
+    const actual = ventanas.find(v => String(v.indice) === String(i));
+    const nombre = await HubUI.preguntar({
+      titulo: `Renombrar la ventana ${i}`,
+      etiqueta: 'Nombre',
+      valor: actual ? (actual.renombrada ? actual.nombre : actual.etiqueta) : '',
+    });
+    if (!nombre) return;
+    await fetch(`/api/sesion/${encodeURIComponent(SESION)}/ventana/${i}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombre }),
+    });
+    cargarVentanas();
+  });
+
+  // Alt+1..9 para saltar de ventana sin soltar el teclado.
+  addEventListener('keydown', (e) => {
+    if (!e.altKey || e.ctrlKey || e.metaKey) return;
+    const n = parseInt(e.key, 10);
+    if (Number.isInteger(n) && n >= 0 && n <= 9 && ventanas.some(v => v.indice === n)) {
+      e.preventDefault();
+      irA(n);
+    }
+  });
+
+  cargarVentanas();
+  setInterval(cargarVentanas, 5000);
+
+  // ── nota con autoguardado ─────────────────────────────────────────────────
+  // Se ata a TODAS las notas, una por ventana, no sólo a la que se ve: cambiar
+  // de pestaña no recarga la página, así que las demás siguen en el DOM y
+  // tienen que guardar en SU slot cuando les toque.
+  document.querySelectorAll('.nota-texto').forEach(nota => {
+    const marca = nota.closest('.por-ventana').querySelector('.nota-estado');
+    let temporizador;
+    const guardar = () => {
+      marca.textContent = 'guardando…';
+      fetch(`/api/slot/${nota.dataset.slot}/nota`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nota: nota.value }),
+      }).then(r => { marca.textContent = r.ok ? 'guardada' : 'error al guardar'; })
+        .catch(() => { marca.textContent = 'sin conexión'; });
+    };
+    nota.addEventListener('input', () => {
+      marca.textContent = 'sin guardar';
+      clearTimeout(temporizador);
+      temporizador = setTimeout(guardar, 800);
+    });
+    nota.addEventListener('blur', () => { clearTimeout(temporizador); guardar(); });
+  });
+
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,20 @@
+# Lo que este proyecto tiene **de propio**: agentes, skills y scripts que
+# escribiste o trajiste sueltos.
+#
+# Lo que te dio un kit NO va aquí: va en `kits.yml`, al lado. La separación es
+# por origen, y es la que contesta «¿esto lo escribí yo o me lo dio un kit?» —
+# que es justo la pregunta que se hace cuando algo hay que cambiar.
+#
+# Un archivo declarado en los dos sitios es un conflicto de origen y el hub lo
+# dice: o se declara la divergencia y sigue siendo del kit, o se expulsa y pasa
+# a ser tuyo de verdad, sabiendo que deja de recibir actualizaciones.
+
+proyecto: @ID@
+
+capacidades: []
+  # - name: revisor
+  #   type: agent            # agent | skill | script | metodo
+  #   path: .claude/agents/revisor.md
+  #   status: active         # active | incomplete | deprecated
+  #   contracts_provided: []
+  #   contracts_consumed: []

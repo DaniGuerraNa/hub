@@ -1,0 +1,17 @@
+# La identidad de este proyecto, para el hub.
+#
+# Vive en `.claude/hub/` porque todos los proyectos tienen `.claude/`
+# garantizado, los agentes lo encuentran por convención y no ensucia la raíz.
+
+id: @ID@
+nombre: @NOMBRE@
+base_version: "1.0"
+
+# 🔴 PUNTERO, no un documento nuevo. Apunta al archivo que HOY dice cómo va este
+# proyecto, con el formato que ya usa. Los proyectos viejos no migran: se declara
+# lo que ya existe.
+#
+# El mínimo exigible de ese documento son tres cosas, con el nombre que quieras
+# darles: en qué estado está, qué hacer al volver, y qué está bloqueado. Si ya
+# tienes algo equivalente, apúntalo aquí en vez de escribir otro.
+estado_ref: @ESTADO_REF@

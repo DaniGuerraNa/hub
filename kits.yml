@@ -1,0 +1,37 @@
+# Catálogo de kits — dónde vive cada uno y en qué versión.
+#
+# Un kit es una capa que aporta una capacidad a un proyecto. El hub los resuelve
+# por `id`: un proyecto dice «uso `orquestacion` 1.2» y el hub sabe de dónde
+# sacarlo. Referenciarlos por ruta relativa —`../orquestador`— se rompe en cuanto
+# cualquiera de los dos se mueve.
+#
+# Se instalan en `~/.local/share/hub/kits/<id>/<version>/`, con la versión EN LA
+# RUTA: todas coexisten, como en `~/.m2/repository`. Así un proyecto puede
+# quedarse en 1.2 mientras otro pasa a 2.0, sin migrarlos a la vez.
+#
+#   bash scripts/kit.sh listar
+#   bash scripts/kit.sh instalar <id> [version]
+#
+# 🔴 Un tag publicado no se mueve. Si hay que corregir algo, se publica la
+# siguiente versión. Si un tag se reescribiera, todo lo que midió deriva contra
+# él pasaría a mentir sin avisar.
+#
+# Tus kits propios van en `~/.local/share/hub/kits.yml`, con el mismo formato:
+# los dos archivos se fusionan por `id` y gana el tuyo. Así añades los tuyos sin
+# tocar este repo.
+
+kits:
+  # La capa base la trae el gestor consigo: no se descarga de ningún sitio.
+  - id: base
+    nombre: Capa base
+    version: "1.0"
+    origen: interno
+    descripcion: Identidad del proyecto y punteros a lo que ya tiene. Obligatoria.
+    obligatorio: true
+
+  # Ejemplo de kit externo. Descomenta y pon el repo real cuando publiques uno.
+  # - id: orquestacion
+  #   nombre: Kit de orquestación
+  #   version: "1.2"
+  #   origen: https://ejemplo.invalid/orquestacion.git
+  #   descripcion: Trabajar de forma semiautónoma — método, roles y delegación.

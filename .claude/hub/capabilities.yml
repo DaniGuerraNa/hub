@@ -1,0 +1,41 @@
+# Lo que este proyecto tiene **de propio**: agentes, skills y scripts que
+# escribiste o trajiste sueltos.
+#
+# Lo que te dio un kit NO va aquí: va en `kits.yml`, al lado. La separación es
+# por origen, y es la que contesta «¿esto lo escribí yo o me lo dio un kit?».
+#
+# 🔴 Prellenado con lo que el hub DETECTÓ escaneando este repo. Revísalo: el
+# escaneo ve los archivos, no si algo está incompleto o retirado, y eso sólo
+# lo sabes tú.
+
+proyecto: hub
+
+capacidades:
+  - name: anexar-proyecto
+    type: skill
+    path: .claude/skills/anexar-proyecto/SKILL.md
+    status: active
+  - name: aplicar-kit
+    type: skill
+    path: .claude/skills/aplicar-kit/SKILL.md
+    status: active
+  - name: instalar-hub
+    type: skill
+    path: .claude/skills/instalar-hub/SKILL.md
+    status: active
+  - name: mantener-kit
+    type: skill
+    path: .claude/skills/mantener-kit/SKILL.md
+    status: active
+  - name: nuevo-kit
+    type: skill
+    path: .claude/skills/nuevo-kit/SKILL.md
+    status: active
+  - name: nuevo-proyecto
+    type: skill
+    path: .claude/skills/nuevo-proyecto/SKILL.md
+    status: active
+  - name: sobre-el-hub
+    type: skill
+    path: .claude/skills/sobre-el-hub/SKILL.md
+    status: active

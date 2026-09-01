@@ -1,0 +1,301 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+{# ── Primer arranque ────────────────────────────────────────────────────────
+   Un hub recién instalado enseña siete pantallas vacías, y quien acaba de
+   clonarlo no sabe por dónde empezar. Esto es lo primero que le va a pasar.
+
+   Guía accionable, no un tour: al terminarla tiene un proyecto declarado. Un
+   recorrido que sólo señala pantallas vacías deja al usuario donde estaba.
+
+   Dos condiciones de salida: descartada (queda en `localStorage`, que es donde
+   viven las preferencias de UI del hub) o superada por los hechos — en cuanto
+   hay un proyecto, no vuelve a salir sola. #}
+{% if not rail.total_proyectos %}
+<div class="tarjeta" id="primer-arranque" style="margin-bottom:20px" hidden>
+  <div class="barra" style="align-items:flex-start;gap:12px">
+    {{ ui.placa('mas', '', 'lg') }}
+    <div style="flex:1;min-width:0">
+      <h2 style="margin:0 0 6px">El hub está listo, pero todavía no sabe nada tuyo</h2>
+      <p class="tenue" style="margin:0 0 14px;max-width:70ch">
+        Todo lo que ves sale de un registro de proyectos que ahora mismo está
+        vacío. En cuanto declares el primero, esta pantalla empieza a decirte qué
+        tienes abierto, qué falta respaldar y qué contenedores son de quién.
+      </p>
+
+      <ol class="limpia" style="display:grid;gap:12px;margin:0;max-width:72ch">
+        <li>
+          <strong>Declara un proyecto.</strong>
+          <div class="tenue">
+            Lo más fácil: abre Claude Code en la carpeta del hub y dile
+            <em>«anexa mi proyecto»</em> — la skill <code>anexar-proyecto</code>
+            lo registra y detecta cuál de tus documentos lleva su estado.
+            A mano también vale: edita
+            <code>~/.local/share/hub/projects.yml</code>, que trae un ejemplo
+            comentado dentro.
+          </div>
+        </li>
+        <li>
+          <strong>Trabaja como siempre.</strong>
+          <div class="tenue">
+            No hay que etiquetar nada al abrir un panel. Lo que el hub no sepa a
+            qué línea de trabajo pertenece cae a la bandeja de
+            <a href="/trabajo">/trabajo</a>, y lo organizas cuando quieras.
+          </div>
+        </li>
+        <li>
+          <strong>Añade capacidades con kits.</strong>
+          <div class="tenue">
+            Un kit es una capa que aporta una funcionalidad a un proyecto.
+            <code>bash scripts/kit.sh listar</code> enseña los disponibles.
+          </div>
+        </li>
+      </ol>
+
+      <div class="barra" style="margin-top:16px">
+        <a class="boton principal" href="/inventario">Ver qué hay</a>
+        <button class="sutil" id="primer-arranque-cerrar">No volver a mostrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Se pinta desde JS para que «no volver a mostrar» no dependa del servidor: es
+// una preferencia del navegador, como el tamaño de letra del terminal, y la base
+// del hub es un índice reconstruible — no el sitio donde guardar gustos.
+(() => {
+  const CLAVE = 'hub.primer-arranque-oculto';
+  const caja = document.getElementById('primer-arranque');
+  if (!caja) return;
+  let oculto = '0';
+  try { oculto = localStorage.getItem(CLAVE) || '0'; } catch (e) {}
+  if (oculto === '1') return;
+  caja.hidden = false;
+  document.getElementById('primer-arranque-cerrar').addEventListener('click', () => {
+    try { localStorage.setItem(CLAVE, '1'); } catch (e) {}
+    caja.remove();
+  });
+})();
+</script>
+{% endif %}
+
+{% if r.recuperacion %}
+<div class="aviso">
+  <h2>Se perdió una sesión de trabajo</h2>
+  <p class="tenue" style="margin:0 0 10px">
+    Última muestra antes del corte: {{ r.recuperacion.tomado_en }} ·
+    {{ r.recuperacion.paneles | length }} paneles
+    {% if r.recuperacion.proyectos %} en {{ r.recuperacion.proyectos | join(', ') }}{% endif %}
+  </p>
+  <ul class="limpia">
+    {% for p in r.recuperacion.paneles %}
+    <li>
+      <div class="pila">
+        <span class="etiqueta">{{ p.etiqueta }}</span>
+        <span class="mono">{{ p.cwd }}</span>
+        {% if p.slot_nombre %}<span class="tenue">slot: {{ p.slot_nombre }}</span>{% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  <div class="barra" style="margin-top:12px">
+    <a class="boton principal" href="/trabajo">Ir a trabajar</a>
+    <form method="post" action="/recuperacion/{{ r.recuperacion.id }}/revisada" class="enlinea">
+      <button class="aceptar">Ya lo revisé</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% if r.respaldo.commits_sin_respaldo %}
+<!-- Lo primero de la pantalla principal, porque es el hallazgo que originó el
+     hub: 473 commits que se habían dado por perdidos sin saberlo. -->
+<div class="aviso">
+  {{ ui.placa('aviso', 'riesgo', 'lg') }}
+  <div style="flex:1;min-width:0">
+    <h2>{{ r.respaldo.commits_sin_respaldo }} commits sin respaldo</h2>
+    <p style="margin:0 0 12px;color:var(--texto-2)">
+      Repartidos en {{ r.respaldo.repos_en_riesgo }} repo(s). Si esta máquina se apaga hoy,
+      es lo que no está en ningún otro sitio.
+    </p>
+    {% for x in r.respaldo.en_riesgo[:5] %}
+      {% if x.sin_push %}
+      <div class="barra" style="gap:14px;flex-wrap:wrap;margin-bottom:5px">
+        <span class="etiqueta">{{ x.proyecto_nombre or x.proyecto_id }}</span>
+        <span class="insignia neutro">{{ x.rama }}</span>
+        <span class="insignia riesgo"><span class="glifo">▲</span>{{ x.sin_push }} sin push</span>
+        <span class="mono">{{ x.ruta }}</span>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+  <a class="boton cta" href="/respaldo" style="flex:none">Ver el detalle</a>
+</div>
+{% endif %}
+
+<p class="tenue">
+  {% if r.snapshot %}
+    Última muestra {{ r.snapshot.tomado_en }} · {{ r.paneles_totales }} paneles abiertos
+    {% if r.sin_atribuir %} · {{ r.sin_atribuir }} sin proyecto{% endif %}
+    {% if r.servicios.vivos %} · {{ r.servicios.vivos }} contenedores corriendo{% endif %}
+  {% else %}
+    Todavía no hay ninguna muestra. Pulsa «Refrescar» o arranca el snapshotter.
+  {% endif %}
+</p>
+
+{% if r.bandeja %}
+<h2 class="con-placa">{{ ui.placa('bandeja', 'espera') }}
+  <span>Bandeja de entrada</span>
+  <span class="apunte">{{ r.bandeja | length }} paneles sin slot</span></h2>
+<div class="panel">
+{% for p in r.bandeja %}
+  <div class="fila">
+    {{ ui.placa('terminal', 'neutro' if not p.proyecto_id else '') }}
+    <div class="pila">
+      {# El nombre se edita SOBRE sí mismo. Antes había un campo de texto
+         permanente en la fila con la etiqueta de marca de agua: enseñaba el
+         nombre dos veces, ocupaba sitio y competía con las acciones de verdad.
+         Renombra la ventana de tmux, que es lo único que existe aquí — el slot
+         todavía no. #}
+      <span class="etiqueta">
+        {{ ui.nombre_editable(p.etiqueta, '/panel/accion', campo='nombre', destino='/',
+                              etiqueta='Renombrar la ventana',
+                              ocultos={'pane_id': p.pane_id, 'accion': 'renombrar_ventana'}) }}
+      </span>
+      <span class="mono dato" data-que="tmux">{{ p.session }}:{{ p.window_idx }}.{{ p.pane_idx }} · {{ p.cwd }}</span>
+      <span class="barra" style="gap:12px">
+        {% if p.proyecto_id %}<span class="insignia neutro">{{ p.proyecto_nombre }}</span>
+        {% else %}<span class="insignia espera"><span class="glifo">▲</span>sin proyecto</span>{% endif %}
+        <span class="insignia neutro">{{ p.comando }}</span>
+      </span>
+    </div>
+    {# UNA acción a la vista y el resto bajo los tres puntos.
+       Antes había cuatro cosas en fila —Abrir, un campo de texto, Crear slot y
+       Descartar— con el mismo peso visual, así que había que leerlas todas para
+       encontrar la que se busca, y en una bandeja con diez paneles eso son
+       cuarenta elementos. Abrir es lo que se hace casi siempre; crear un slot y
+       descartar se hacen una vez por panel y luego nunca más. #}
+    <div class="der">
+      <a class="boton principal" href="/trabajo?session={{ p.session }}&ventana={{ p.window_idx }}">Abrir</a>
+      {% call ui.menu('Más acciones sobre este panel') %}
+        {% if p.proyecto_id %}
+        <div class="rotulo-menu">Darle sitio</div>
+        <form method="post" action="/panel/accion">
+          <input type="hidden" name="pane_id" value="{{ p.pane_id }}">
+          <input type="hidden" name="accion" value="promover">
+          <div class="fila-menu">
+            <input type="text" name="nombre" placeholder="{{ p.etiqueta }}" aria-label="Nombre del slot">
+          </div>
+          <button class="aceptar" type="submit">Crear slot</button>
+        </form>
+        {# Atar a un slot que ya existe. Sin esto, promover era un billete de ida:
+           una segunda ventana del mismo trabajo no tenía dónde ir, y equivocarse
+           de ventana sólo se arreglaba borrando el slot. `slots.vincular` ya
+           existía; lo que faltaba era el botón. #}
+        {% set suyos = r.proyectos | selectattr('id', 'equalto', p.proyecto_id)
+                                   | map(attribute='slots') | first %}
+        {% if suyos %}
+        <div class="separador"></div>
+        <form method="post" action="/panel/accion">
+          <input type="hidden" name="pane_id" value="{{ p.pane_id }}">
+          <input type="hidden" name="accion" value="vincular">
+          <div class="fila-menu">
+            <select name="slot_id" data-combo="si" aria-label="Slot al que vincular">
+              {% for s in suyos %}<option value="{{ s.id }}">{{ s.nombre }}</option>{% endfor %}
+            </select>
+          </div>
+          <button type="submit">Vincular a ese slot</button>
+        </form>
+        {% endif %}
+        <div class="separador"></div>
+        {% endif %}
+        <form method="post" action="/panel/accion">
+          <input type="hidden" name="pane_id" value="{{ p.pane_id }}">
+          <input type="hidden" name="accion" value="descartar">
+          <button class="peligro" type="submit">Descartar de la bandeja</button>
+        </form>
+      {% endcall %}
+    </div>
+  </div>
+{% endfor %}
+</div>
+{% endif %}
+
+<h2 class="con-placa">{{ ui.placa('rejilla') }}<span>Proyectos</span>
+  <span class="apunte">{{ r.proyectos | length }}</span></h2>
+<div class="rejilla">
+{% for p in r.proyectos %}
+  <div class="tarjeta">
+    <div class="fila">
+      <div class="pila">
+        <a href="/proyecto/{{ p.id }}" class="etiqueta">{{ p.nombre }}</a>
+        {# Con doce proyectos en rejilla, «personal · activo» obliga a leer doce
+           veces para responder «¿hay algo parado?». El glifo se barre de un
+           vistazo y la palabra sigue estando. #}
+        <span class="barra" style="gap:12px">
+          {{ ui.estado('status', p.status) }}
+          {{ ui.estado('dominio', p.dominio) }}
+        </span>
+      </div>
+      {% if p.session_abierta %}
+        <a class="boton principal" href="/trabajo?session={{ p.session_abierta }}&ventana={{ p.ventana_abierta }}">
+          Trabajar <span class="tenue">· {{ p.paneles_abiertos }}</span>
+        </a>
+      {% else %}
+        <span class="chip">sin paneles</span>
+      {% endif %}
+    </div>
+    {% if p.sin_push %}
+      <div style="margin-top:8px"><span class="chip frio">{{ p.sin_push }} commits sin push</span></div>
+    {% endif %}
+    <!-- La primera línea del documento que el propio proyecto declaró vigente.
+         No es un resumen nuevo: es el puntero a cuál está al día. -->
+    {% if p.estado.campos.estado %}
+      <p style="margin:8px 0 0;color:var(--texto-2);font-size:13px">{{ p.estado.campos.estado.split('\n')[0] }}</p>
+    {% elif p.nota %}
+      <p class="tenue" style="margin:8px 0 0">{{ p.nota }}</p>
+    {% endif %}
+    {% if p.slots %}
+    <ul class="limpia">
+      {% for s in p.slots %}
+      <li>
+        <a href="/trabajo?slot={{ s.id }}">{{ s.nombre }}</a>
+        <span class="tenue">{% if s.ultima_actividad %} · {{ s.ultima_actividad[:10] }}{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+{% else %}
+  {# Dos causas distintas y un solo mensaje era una trampa: si el registro SÍ
+     declara proyectos, el problema no es el registro sino que no se ha
+     indexado, y mandar a editar `projects.yml` es mandar al sitio equivocado. #}
+  {% if declarados %}
+    <p class="tenue">
+      <code>projects.yml</code> declara {{ declarados }}
+      proyecto{{ 's' if declarados != 1 }}, pero todavía no se han indexado.
+      Pulsa «Refrescar», o comprueba que <code>hub-snapshotter</code> esté vivo.
+    </p>
+  {% else %}
+    <p class="tenue">No hay proyectos en <code>projects.yml</code>.</p>
+  {% endif %}
+{% endfor %}
+</div>
+
+{# Dónde se añade uno. La guía de primer arranque lo explica, pero desaparece en
+   cuanto hay un proyecto y no vuelve: quien ya tiene tres y quiere el cuarto no
+   encuentra ninguna pista, porque el botón que buscaría no existe **a
+   propósito** —crear y aplicar escriben dentro del repo de otro proyecto, y eso
+   lo hace un agente con el usuario mirando, no el hub—.
+   Una línea, sin caja y sin icono: es un apuntador, no una acción. #}
+<p class="tenue" style="margin:14px 0 0;font-size:13px">
+  Para añadir uno, abre Claude Code en la carpeta del hub y dile
+  <em>«crea un proyecto»</em> o <em>«anexa mi proyecto»</em>; para darle una
+  capacidad a uno que ya tienes, <em>«aplica el kit X aquí»</em>.
+  El hub calcula y propone; escribir en tu repo lo hace el agente, contigo
+  delante. Están en <code>FLUJOS.md</code>.
+</p>
+
+{% endblock %}

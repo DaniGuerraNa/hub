@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.db
+*.db-wal
+*.db-shm
+.ruff_cache/
+
+# El registro real vive en HUB_HOME (~/.local/share/hub/projects.yml), no aquí:
+# lleva rutas y notas propias, y el repo se comparte. La semilla es
+# `projects.ejemplo.yml`.
+projects.yml
+
+# Restos de la escritura atómica del registro: el cerrojo que serializa las
+# altas y el temporal previo al `os.replace`. Normalmente no sobreviven a la
+# operación, pero un corte a mitad deja el `.tmp`, y el `.lock` se queda por
+# diseño. Ninguno de los dos es del proyecto.
+projects.yml.lock
+projects.yml.*.tmp

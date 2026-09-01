@@ -1,0 +1,31 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "@ASIENTO@/bin/contexto-statusline.sh"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(hub:*)",
+      "Bash(which:*)",
+      "Bash(ls:*)",
+      "Bash(git log:*)",
+      "Bash(git status:*)",
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "deny": [
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "Bash(rm:*)",
+      "Bash(mv:*)",
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(docker:*)",
+      "Bash(systemctl:*)",
+      "Bash(curl:*)"
+    ]
+  }
+}

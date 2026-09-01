@@ -1,0 +1,849 @@
+{% import "_ui.html" as ui %}<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ titulo }} · Hub</title>
+<style>
+/* ───────────────────────────────────────────────────────────────────────────
+   Sistema de diseño: "Midnight SRE console".
+   Lienzo casi negro, superficies monocromas, bordes finos haciendo el trabajo
+   que en otros sistemas hace la elevación, y un único acento violeta que sólo
+   aparece en acciones y enlaces.
+
+   Se adoptan los tokens y los tratamientos de componente. NO se adopta el
+   ritmo de layout del documento (max-width 1200px, section-gap 80px,
+   titulares de 53px): es de una web de marketing y esto es una herramienta
+   densa donde la información por pantalla importa más que el aire.
+
+   Sólo tema oscuro: el documento es dark-only y mezclarlo con un tema claro
+   rompería el sistema.
+   ─────────────────────────────────────────────────────────────────────────── */
+@font-face {
+  font-family: 'Inter';
+  src: url('/static/inter.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  /* Superficies — la profundidad se define con tono, nunca con sombra.
+     Azul acero en vez del violeta-negro anterior (maqueta C): es más frío y
+     menos «negro», y deja al acento cian sitio para significar acción. */
+  --lienzo:      #0d1117;
+  --superficie:  #131a23;
+  --superficie2: #1a232e;
+  --elevado:     #243040;
+
+  /* Bordes */
+  --borde:       #232e3c;   /* tarjetas e inputs: sutil */
+  /* Queda para etiquetas que sí son contornos (el estado de un enlace de kit).
+     Ya NO lo usan los botones: un borde claro sobre fondo oscuro dibuja el
+     perímetro y hace que el elemento parezca despegado del fondo. */
+  --borde-acero: #8b99b0;
+
+  /* Texto — sólo estos tres, nada saturado.
+     `--texto-3` era #646e87: sobre el lienzo daba ~3,4:1, por debajo del 4,5:1
+     que necesita el texto pequeño, y es el token que visten las rutas, los
+     metadatos y los rótulos de sección. El resultado era que la mitad de la
+     información se perdía contra el fondo. #8d97b0 sube a ~6,3:1 y sigue
+     leyéndose como tercer nivel: la jerarquía la marca el contraste relativo
+     entre los tres, no lo apagado del último. */
+  --texto:       #e3e9f2;
+  --texto-2:     #b6c2d4;
+  --texto-3:     #8b99b0;
+  /* Para lo que de verdad debe desaparecer —marcas de agua, placeholders—,
+     que antes se confundía con «secundario» porque compartían token. */
+  --texto-4:     #6b7a91;
+
+  /* El acento. Cian de trabajo y no violeta de marca: esto es una herramienta,
+     y el acento sólo aparece en acciones, enlaces y en lo que está activo. */
+  --acento:      #3fb9d4;
+  --acento-tinta:#06222a;   /* texto sobre el acento sólido */
+  --alerta:      #e8735c;
+
+  /* 🔴 Aquí vivía `--brillo`, un reflejo interior de 1px
+     (`rgba(255,255,255,.25) inset`) que iba en la cabecera, los botones, las
+     pestañas y el índice. Es el recurso con el que se fingía volumen en las
+     interfaces de hace veinte años, y es exactamente lo que hacía que los
+     botones «se sintieran con relieve» al lado de un raíl lateral plano.
+     No se sustituye por nada: lo activo se marca con superficie y color, que
+     es como ya lo hace el raíl. */
+
+  /* Escala de atención. UNA sola en toda la interfaz, y significa siempre lo
+     mismo: cuánta atención pide esto. No son colores por categoría — si el
+     verde dijera «activo» en una columna y «seguro» en otra, no se aprendería
+     ninguno de los dos. Reutiliza tintes que ya existían en vez de traer
+     colores nuevos. */
+  --ok:     #4ec98a;   /* como debe estar */
+  --espera: #e0a95c;   /* detenido o pendiente, no roto */
+  --riesgo: #e8735c;   /* hay algo que hacer */
+  --neutro: #8b99b0;   /* sin carga, o decisión deliberada */
+
+  /* Tintes por tipo de capacidad. 🔴 Es la ÚNICA excepción a «el color codifica
+     atención»: aquí codifica TIPO, y sólo dentro del inventario, donde poder
+     barrer sesenta filas buscando los agentes es lo que hace la pantalla
+     usable. Van en la placa del icono; el estado sigue usando la escala normal
+     en las insignias, así que las dos señales no compiten.
+     Re-afinados con la paleta nueva: los anteriores giraban alrededor del
+     violeta que era el acento viejo y desentonaban con el cian. */
+  --t-agente:    #7aa2f7;
+  --t-skill:     #5ec8ad;
+  --t-metodo:    #b48ce8;
+  --t-script:    #dfa95f;
+  --t-plantilla: #6fb2d2;
+
+  /* El botón deja de ser una píldora. Un rectángulo redondeado de 9px es la
+     misma forma que ya tienen los ítems del raíl y las placas de los iconos:
+     una interfaz con dos vocabularios de forma —cápsulas aquí, rectángulos
+     allá— se lee como dos interfaces pegadas. La píldora se queda sólo donde
+     de verdad es una etiqueta y no algo que se pulsa (`.chip`). */
+  --r-nav: 10px;  --r-tarjeta: 16px;  --r-input: 10px;  --r-boton: 9px;
+  --fuente: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* Sin esto el navegador pinta las barras de scroll en claro —y una franja
+     blanca junto al terminal se come espacio y rompe el lienzo oscuro. */
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+/* Barras finas y del color del sistema. `overlay` está obsoleto y `thin` deja
+   la barra ocupando ancho real, así que en WebKit se estiliza a mano. */
+* { scrollbar-width: thin; scrollbar-color: var(--elevado) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--elevado); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--texto-3); }
+::-webkit-scrollbar-corner { background: transparent; }
+
+body {
+  margin: 0;
+  background: var(--lienzo);
+  color: var(--texto);
+  font-family: var(--fuente);
+  font-size: 15px;
+  line-height: 1.6;
+  /* El tracking es parte de la identidad del sistema: uniforme en todo. */
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* El ancho útil. 1120px dejaba franjas muertas a los lados en una pantalla
+   grande mientras el contenido se apretaba en el centro; 1440 las recorta sin
+   soltar el límite del todo, porque una tabla de rutas a 2500px de ancho separa
+   tanto la primera columna de la última que deja de leerse como una fila.
+   El aire que falta se devuelve por dentro (padding de tarjetas, interlínea),
+   no estirando el contenedor. Medido a 1366/1920/2560: el margen muerto por
+   lado pasa de 385 a 145 en un 1920, y a 1366 desaparece. */
+/* ── Estructura: raíl global + contenido ──────────────────────────────────
+   La navegación deja de ser una barra que se recorre y pasa a estar SIEMPRE a
+   la vista, con los proyectos dentro: se ve dónde estás y qué hay abierto sin
+   cambiar de pantalla. */
+body { display: flex; min-height: 100vh; }
+.principal-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.envoltura { max-width: 1600px; width: 100%; margin: 0 auto; padding: 22px 30px 64px; }
+/* La prosa no sigue al contenedor: una nota de slot a 1200px de ancho hace que
+   el ojo pierda el renglón al saltar de línea. Se limita la MEDIDA, no la caja. */
+.tarjeta p, .tarjeta label + p { max-width: 78ch; }
+
+/* La vista de trabajo se reparte la altura con la cabecera en vez de restarle
+   un número fijo. Restarlo se rompió en cuanto la nav creció lo bastante como
+   para envolver a dos líneas: el terminal seguía midiendo lo mismo y se salía
+   de la pantalla por abajo, escondiendo justo lo último que escribiste. */
+body.completo { height: 100vh; overflow: hidden; }
+body.completo .principal-col { min-height: 0; }
+body.completo .envoltura { max-width: none; padding: 0; display: flex;
+                           flex-direction: column; min-height: 0; flex: 1; }
+body.completo .envoltura > :not(header) { flex: 1; min-height: 0; }
+body.completo header { flex: none; }
+
+/* ── El raíl global ────────────────────────────────────────────────────── */
+.rail-global {
+  width: 214px; flex: none; background: var(--superficie);
+  border-right: 1px solid var(--borde); padding: 13px 10px;
+  display: flex; flex-direction: column; gap: 2px;
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+}
+.rail-global .marca { display: flex; align-items: center; gap: 10px;
+  padding: 5px 10px 14px; font-weight: 700; font-size: 16px; color: var(--texto); }
+.rail-global .marca:hover { text-decoration: none; }
+.rail-global .marca em { color: var(--acento); font-style: normal; }
+.rail-global .rotulo { font-size: 10px; text-transform: uppercase; letter-spacing: .12em;
+  color: var(--texto-4); padding: 15px 10px 5px; }
+.rail-global a.enlace { display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+  border-radius: 8px; color: var(--texto-2); font-size: 13.5px; }
+.rail-global a.enlace:hover { background: var(--superficie2); color: var(--texto); text-decoration: none; }
+.rail-global a.enlace.aqui { background: var(--elevado); color: var(--texto); font-weight: 600; }
+.rail-global a.enlace.aqui svg { color: var(--acento); }
+.rail-global .cuenta { margin-left: auto; flex: none; font-size: 11px; color: var(--texto-4);
+  font-variant-numeric: tabular-nums; }
+.rail-global .cuenta.urge { color: var(--riesgo); font-weight: 700; }
+.rail-global .nom { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* En /trabajo el terminal manda: el raíl se reduce a sus iconos. Sigue estando
+   —no desaparece, que dejaría la app sin navegación— pero cuesta 56px. */
+body.completo .rail-global { width: 56px; padding: 13px 8px; }
+body.completo .rail-global .rotulo,
+body.completo .rail-global .nom,
+body.completo .rail-global .cuenta,
+body.completo .rail-global .marca > span { display: none; }
+body.completo .rail-global a.enlace { justify-content: center; padding: 9px 0; }
+/* En modo compacto los proyectos se quedan fuera: sin su nombre son puntos de
+   color sueltos que no dicen a dónde llevan. Se llega a ellos por Panorama o
+   por la paleta, que es un atajo más rápido que un icono adivinado. */
+body.completo .rail-global a.enlace:not(:has(svg)) { display: none; }
+body.completo .rail-global .marca { justify-content: center; padding: 5px 0 12px; }
+@media (max-width: 860px) {
+  body { display: block; }
+  .rail-global { position: static; width: auto; height: auto; flex-direction: row;
+                 flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--borde); }
+  .rail-global .rotulo { display: none; }
+}
+
+/* ── Navegación ─────────────────────────────────────────────────────────── */
+/* La cabecera NO es una caja. Era una tarjeta con fondo, borde y esquinas
+   redondeadas flotando sobre el lienzo, y con el raíl a la izquierda ya
+   resolviendo la navegación, lo único que aportaba era un marco alrededor de
+   una miga de pan y dos botones. Un contenedor que no contiene nada que
+   agrupar es ruido con forma de mueble. */
+header {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  margin-bottom: 18px; padding: 2px 0;
+  background: transparent; border: 0;
+}
+/* Cabecera compacta donde el terminal es el protagonista: cada línea que ocupe
+   la nav es una línea que deja de verse del trabajo. No envuelve; si no cabe,
+   se desplaza. */
+body.completo header {
+  margin: 0; border-bottom: 1px solid var(--borde);
+  padding: 5px 10px; gap: 10px; flex-wrap: nowrap; overflow-x: auto;
+}
+body.completo header nav { flex: none; }
+body.completo .nav { padding: 3px 10px; }
+
+h1 { font-size: 24px; font-weight: 650; margin: 0 0 4px; letter-spacing: -.02em; }
+h1 a { color: var(--texto); }
+.miga { font-size: 13px; color: var(--texto-3); font-weight: 500; }
+/* El rótulo de sección tiene que leerse como el título de lo que viene debajo,
+   no como una nota al pie: sube a texto-2 y gana peso. Con `--texto-3` a 10px
+   era el elemento menos visible de la pantalla siendo el que la organiza. */
+h2 {
+  font-size: 12px; font-weight: 600; margin: 34px 0 14px;
+  text-transform: uppercase; letter-spacing: .09em; color: var(--texto-2);
+  display: flex; align-items: baseline; gap: 10px;
+}
+h2 a { font-size: 12px; font-weight: 400; text-transform: none; letter-spacing: -0.01em; }
+/* Rótulo con placa: deja de ser versalita apagada y pasa a leerse como el
+   título de lo que viene debajo, con su icono a la izquierda. */
+h2.con-placa { font-size: 14px; font-weight: 650; text-transform: none;
+  letter-spacing: -.01em; color: var(--texto); align-items: center; gap: 11px; }
+h2.con-placa .apunte { margin-left: auto; font-size: 12.5px; font-weight: 400;
+  color: var(--texto-3); text-transform: none; letter-spacing: -.01em; }
+h2.con-placa .apunte a { font-size: 12.5px; }
+
+a { color: var(--acento); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.nav {
+  font-size: 14px; font-weight: 500; padding: 5px 14px;
+  border-radius: var(--r-boton); color: var(--texto-3);
+}
+.nav:hover { color: var(--texto-2); text-decoration: none; }
+.nav.aqui { background: var(--elevado); color: var(--texto); }
+
+/* ── Texto ──────────────────────────────────────────────────────────────── */
+.tenue { color: var(--texto-3); font-size: 14px; }
+/* 12px de monoespaciada sobre un token de bajo contraste era la peor
+   combinación de la interfaz, y es justo la que visten las RUTAS — el dato que
+   más se necesita leer literalmente para copiarlo o reconocerlo. */
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px; color: var(--texto-3); overflow-wrap: anywhere; letter-spacing: 0;
+}
+/* ── Insignias de estado ────────────────────────────────────────────────────
+   Glifo + color + palabra, siempre los tres. El glifo distingue el valor sin
+   depender del color —un monitor malo o un daltonismo dejarían la mitad de la
+   interfaz muda—, el color agrupa por atención requerida, y la palabra sigue
+   ahí porque un símbolo sin su nombre es un acertijo la primera vez.
+   El mapa vive en `insignias.py`, no aquí: así un test puede afirmar que todo
+   valor de la base tiene el suyo. */
+/* El color va al GLIFO Y AL TEXTO, y no hay cápsula alrededor. Comparando
+   maquetas quedó claro por qué: metido en una píldora gris, el estado se lee
+   como una etiqueta más; en color plano —`▲ sin upstream`, `✓ con upstream`—
+   se lee de un vistazo sin buscarlo. */
+.insignia { display: inline-flex; align-items: baseline; gap: 7px; white-space: nowrap;
+            font-size: 13px; font-weight: 550; }
+.insignia > .glifo { font-size: 11px; line-height: 1; }
+.insignia.ok     { color: var(--ok); }
+.insignia.espera { color: var(--espera); }
+.insignia.riesgo { color: var(--riesgo); }
+.insignia.neutro { color: var(--texto-3); font-weight: 400; }
+
+/* ── Icono dentro de un cuadrado con su color ──────────────────────────────
+   El tratamiento que más gustó de las maquetas: el icono no flota junto al
+   texto, vive en una placa tintada que le da peso y lo hace localizable. */
+.placa { display: grid; place-items: center; flex: none; border-radius: 9px;
+  width: 30px; height: 30px;
+  background: color-mix(in srgb, var(--c, var(--acento)) 16%, transparent);
+  color: var(--c, var(--acento)); }
+.placa.sm { width: 24px; height: 24px; border-radius: 7px; }
+.placa.lg { width: 40px; height: 40px; border-radius: 12px; }
+.placa.ok { --c: var(--ok); } .placa.espera { --c: var(--espera); }
+.placa.riesgo { --c: var(--riesgo); } .placa.neutro { --c: var(--texto-3); }
+
+/* Pastilla: placa + texto. Para los metadatos de una cabecera. */
+.pastilla { display: inline-flex; align-items: center; gap: 8px;
+  background: var(--superficie2); border: 1px solid var(--borde);
+  border-radius: 999px; padding: 4px 14px 4px 5px; font-size: 13px; color: var(--texto-2); }
+.pastilla b { font-weight: 600; color: var(--texto); }
+
+/* ── Cifras: la respuesta de una pantalla antes de leer nada ──────────────
+   Sale en Respaldo, Servicios e Inventario, así que vive aquí: tres versiones
+   parecidas pero distintas es exactamente lo que hace que una interfaz se
+   sienta descosida. */
+.cifras { display: flex; gap: 12px; flex-wrap: wrap; margin: 0 0 18px; }
+.cifra { display: flex; align-items: center; gap: 12px; flex: 0 1 auto;
+  background: var(--superficie); border: 1px solid var(--borde);
+  border-radius: 12px; padding: 14px 18px; }
+.cifra b { display: block; font-size: 26px; font-weight: 700; line-height: 1.1;
+  letter-spacing: -.03em; font-variant-numeric: tabular-nums; color: var(--texto); }
+/* `> span:not(.placa)` y no `span` a secas: la placa TAMBIÉN es un span, y
+   `.cifra span` (0,1,1) le ganaba a `.placa` (0,1,0) — la volvía `display:block`,
+   con lo que `place-items:center` dejaba de aplicar y el icono se pegaba a la
+   esquina, y de paso le imponía el gris de `--texto-3` encima de su tinte. */
+.cifra > span:not(.placa) { display: block; font-size: 12px; color: var(--texto-3); }
+.cifra.urge { border-left: 3px solid var(--riesgo); }
+.cifra.urge b { color: var(--riesgo); }
+
+/* ── Panel de filas: la lista densa con separadores, no tarjetas sueltas ── */
+.panel { background: var(--superficie); border: 1px solid var(--borde);
+         border-radius: 10px; overflow: hidden; }
+.panel .fila { display: flex; align-items: center; gap: 14px; padding: 11px 16px;
+               border-bottom: 1px solid var(--borde); }
+.panel .fila:last-child { border-bottom: 0; }
+.panel .fila:hover { background: var(--superficie2); }
+.panel .fila.apagada { opacity: .55; }
+.panel .fila > .pila { flex: 1; min-width: 0; }
+.panel .fila > .der { margin-left: auto; display: flex; gap: 9px; align-items: center; flex: none; }
+.panel .vacio { padding: 16px; color: var(--texto-3); }
+
+/* Un dato sin su nombre obliga a adivinar de qué es. Antepone la etiqueta en
+   minúscula, tenue y sin negrita: nombra sin robarle protagonismo al valor. */
+.dato::before {
+  content: attr(data-que) " "; color: var(--texto-3);
+  font-family: var(--fuente); font-size: 12px; letter-spacing: -0.01em;
+}
+.etiqueta { font-weight: 500; color: var(--texto); }
+.frio { color: var(--alerta); }
+
+/* ── Superficies ────────────────────────────────────────────────────────── */
+.tarjeta {
+  background: var(--superficie); border: 1px solid var(--borde);
+  border-radius: var(--r-tarjeta); padding: 22px 24px; margin-bottom: 14px;
+}
+.fila { display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.pila { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.barra { display: flex; gap: 8px; align-items: center; }
+.rejilla { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+
+/* ── Botones: píldora siempre ───────────────────────────────────────────── */
+/* ── Botones: superficie, no contorno ──────────────────────────────────────
+   Antes cada botón era un contorno de `--borde-acero` (un gris CLARO) en forma
+   de píldora. Dos problemas a la vez: el contorno claro sobre fondo oscuro
+   dibuja el perímetro como si el botón estuviera recortado y pegado encima —el
+   «relieve» de las interfaces de hace veinte años—, y ese mismo tratamiento
+   convertía en botón cualquier cosa, así que seis acciones en fila pesaban lo
+   mismo aunque cinco fueran secundarias.
+
+   Ahora el botón se define por su SUPERFICIE, igual que un ítem del raíl: sin
+   contorno, fondo un escalón por encima del suyo, y el hover sube otro escalón.
+   El borde transparente se queda para que la métrica no salte cuando un rol sí
+   lo pinta. Y como el peso ya no es gratis, se puede repartir: relleno de
+   acento para lo principal, superficie para lo normal, sin fondo para lo
+   secundario. */
+button, a.boton, input[type=submit] {
+  font: inherit; font-size: 13.5px; font-weight: 500; letter-spacing: -0.01em;
+  padding: 7px 14px; border-radius: var(--r-boton); cursor: pointer;
+  background: var(--superficie2); border: 1px solid transparent; color: var(--texto-2);
+  display: inline-flex; align-items: center; gap: 7px; line-height: 1.45;
+}
+button:hover, a.boton:hover { background: var(--elevado); color: var(--texto);
+                              text-decoration: none; }
+button:focus-visible, a.boton:focus-visible, .menu > summary:focus-visible {
+  outline: 2px solid var(--acento); outline-offset: 2px; }
+button:disabled { opacity: .45; cursor: default; }
+button:disabled:hover { background: var(--superficie2); color: var(--texto-2); }
+
+/* Roles de acción. No se introducen colores nuevos: se reparten los que el
+   sistema ya tiene. Afirmar = el acento; declinar = lo apagado; destruir = la
+   alerta. Así se distinguen de un vistazo sin gastar presupuesto cromático. */
+
+/* Afirmativo: aceptar, guardar, crear. Tinte plano, sin contorno. */
+button.aceptar, a.boton.aceptar {
+  color: var(--acento);
+  background: color-mix(in srgb, var(--acento) 15%, transparent);
+}
+button.aceptar:hover, a.boton.aceptar:hover {
+  background: color-mix(in srgb, var(--acento) 26%, transparent); color: var(--texto);
+}
+
+/* Declinar: legible, pero neutro. Nunca compite con la acción afirmativa. */
+button.declinar, a.boton.declinar { background: var(--superficie2); color: var(--texto-2); }
+button.declinar:hover { background: var(--elevado); color: var(--texto); }
+
+/* Destructivo: cerrar una ventana, borrar un slot.
+   Va teñido YA EN REPOSO. Reservar el color al hover obligaba a pasar el ratón
+   para saber cuál era cuál — y en un diálogo donde el afirmativo ES el
+   destructivo, ambos botones salían grises e indistinguibles. */
+button.peligro, a.boton.peligro {
+  color: var(--alerta);
+  background: color-mix(in srgb, var(--alerta) 13%, transparent);
+}
+button.peligro:hover, a.boton.peligro:hover {
+  background: color-mix(in srgb, var(--alerta) 26%, transparent); color: var(--texto);
+}
+
+/* Acción principal neutra: la superficie sube un escalón y el texto va a
+   primer nivel. Sin contorno: el peso lo da el relleno. */
+button.principal, a.boton.principal {
+  background: var(--elevado); color: var(--texto);
+}
+button.principal:hover, a.boton.principal:hover {
+  background: color-mix(in srgb, var(--elevado) 70%, var(--texto-4));
+}
+/* La acción más consecuente de la app: acento sólido. */
+button.cta, a.boton.cta {
+  background: var(--acento); color: var(--acento-tinta); font-weight: 650;
+}
+button.cta:hover, a.boton.cta:hover { background: #55c8e0; color: var(--acento-tinta); }
+
+/* Secundario de verdad: SIN fondo en reposo. Es el peldaño que faltaba —antes
+   todo lo que no era `cta` seguía pareciendo igual de pulsable— y es lo que
+   permite poner tres acciones en una fila sin que compitan. */
+button.sutil, a.boton.sutil {
+  background: transparent; color: var(--texto-3); padding: 5px 10px; font-size: 12.5px;
+}
+button.sutil:hover, a.boton.sutil:hover { background: var(--superficie2); color: var(--texto-2); }
+
+/* Sólo icono: cuadrado, para lápices y tres puntos. */
+button.icono-solo { padding: 6px; width: 30px; height: 30px; justify-content: center;
+                    background: transparent; color: var(--texto-3); }
+button.icono-solo:hover { background: var(--superficie2); color: var(--texto); }
+
+/* ── Cabecera de vista: el mismo sitio en las siete pantallas ──────────────
+   Título y subtítulo a la izquierda, filtros y acciones a la derecha. Se
+   alinean por la línea BASE del título, no por el borde de la caja: el filtro
+   tiene la altura de un input y el título no, así que alinear por arriba los
+   dejaba a distinta altura óptica en cada pantalla según lo largo que fuera el
+   subtítulo. */
+.cabecera-vista { display: flex; align-items: flex-start; justify-content: space-between;
+                  gap: 20px 26px; flex-wrap: wrap; margin-bottom: 18px; }
+.cabecera-vista .titulo-vista { min-width: 0; }
+.cabecera-vista h1 { margin: 0 0 4px; }
+.cabecera-vista .titulo-vista > p { margin: 0; max-width: 70ch; }
+.acciones-vista { display: flex; align-items: center; gap: 10px; flex: none; }
+
+/* ── Índice lateral: una pantalla larga se navega, no se recorre ───────────
+   Vivía sólo en la ficha de proyecto. Sube aquí en cuanto lo necesitó la
+   segunda pantalla: el inventario tenía sesenta filas de golpe con los filtros
+   como chips sueltos arriba, que es la misma pantalla larga con el mismo
+   problema. Dos copias parecidas del mismo componente es lo que hace que una
+   interfaz se sienta descosida. */
+.con-indice { display: grid; grid-template-columns: 216px 1fr; gap: 52px; align-items: start; }
+/* El rótulo va FUERA del recuadro y con el mismo `h2` que la sección: así los
+   dos arrancan en la misma línea por construcción y no por un número mágico
+   que se descuadra en cuanto cambie el tamaño de letra. */
+.columna-indice { position: sticky; top: 18px; }
+.columna-indice > h2 { margin: 0 0 14px; }
+.indice { display: flex; flex-direction: column; gap: 3px;
+          padding: 8px; background: var(--superficie); border: 1px solid var(--borde);
+          border-radius: var(--r-tarjeta); }
+.indice a { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+            padding: 10px 14px; border-radius: var(--r-nav); font-size: 14px; font-weight: 500;
+            color: var(--texto-2); line-height: 1.35; }
+.indice a:hover { background: var(--elevado); color: var(--texto); text-decoration: none; }
+.indice a.aqui { background: var(--elevado); color: var(--acento); }
+.indice .cuenta { font-size: 12px; color: var(--texto-3); font-variant-numeric: tabular-nums; }
+.indice a.aqui .cuenta { color: var(--texto-2); }
+/* El punto de aviso: si el respaldo tiene commits en riesgo hay que verlo sin
+   entrar en la sección, o esconderla la vuelve invisible. */
+.indice .aviso { color: var(--alerta); }
+.indice .rotulo-indice { font-size: 10px; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--texto-4); padding: 10px 14px 4px; }
+.con-secciones .seccion { display: none; }
+.con-secciones .seccion.viendo { display: block; }
+.seccion > h2:first-child { margin-top: 0; }
+@media (max-width: 760px) {
+  .con-indice { grid-template-columns: 1fr; gap: 18px; }
+  .columna-indice { position: static; }
+  .indice { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  .indice a { flex: 0 0 auto; }
+}
+
+/* ── Menú de acciones ──────────────────────────────────────────────────────
+   Lo secundario deja de ocupar sitio en la fila sin dejar de estar. */
+.menu { position: relative; display: inline-block; flex: none; }
+.menu > summary {
+  list-style: none; cursor: pointer; display: grid; place-items: center;
+  width: 30px; height: 30px; border-radius: var(--r-boton); color: var(--texto-3);
+}
+.menu > summary::-webkit-details-marker, .menu > summary::marker { display: none; content: ''; }
+.menu > summary:hover { background: var(--superficie2); color: var(--texto); }
+.menu[open] > summary { background: var(--elevado); color: var(--texto); }
+.menu-pop {
+  position: absolute; top: calc(100% + 5px); z-index: 60; min-width: 194px;
+  background: var(--superficie2); border: 1px solid var(--borde); border-radius: 11px;
+  padding: 5px; display: flex; flex-direction: column; gap: 1px;
+  /* La única sombra del sistema, y por una razón: esto FLOTA de verdad sobre
+     otro contenido. La regla que se prohíbe es fingir volumen en algo plano
+     (el `--brillo` que se quitó), no separar lo que realmente está encima. */
+  box-shadow: 0 12px 28px rgba(0,0,0,.5);
+}
+.menu.der .menu-pop { right: 0; }
+.menu.izq .menu-pop { left: 0; }
+/* Hacia arriba cuando el menú vive pegado al borde inferior —el asistente—: ahí
+   abajo no queda pantalla y el desplegable se saldría de la ventana. */
+.menu.arriba .menu-pop { top: auto; bottom: calc(100% + 5px); }
+.menu-pop form { display: block; width: 100%; margin: 0; }
+.menu-pop button, .menu-pop a.boton {
+  width: 100%; justify-content: flex-start; background: transparent;
+  color: var(--texto-2); font-size: 13px; padding: 7px 10px; font-weight: 450;
+}
+.menu-pop button:hover, .menu-pop a.boton:hover { background: var(--elevado); color: var(--texto); }
+.menu-pop button.peligro { color: var(--alerta); }
+.menu-pop button.peligro:hover { background: color-mix(in srgb, var(--alerta) 18%, transparent); }
+.menu-pop .separador { height: 1px; background: var(--borde); margin: 4px 2px; }
+.menu-pop .rotulo-menu { font-size: 10px; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--texto-4); padding: 7px 10px 3px; }
+/* Un menú de ajustes puede llevar controles, no sólo acciones. */
+.menu-pop .fila-menu { display: flex; align-items: center; gap: 6px; padding: 4px 6px; }
+.menu-pop .fila-menu > span { font-size: 12.5px; color: var(--texto-3); margin-right: auto; }
+
+/* ── Nombre editable en su sitio ────────────────────────────────────────── */
+.editable { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.editable > .lapiz { opacity: 0; }
+.editable:hover > .lapiz, .editable > .lapiz:focus-visible { opacity: 1; }
+.editable > .edicion { display: none; align-items: center; gap: 6px; }
+.editable > .edicion input[type=text] { width: auto; min-width: 190px; padding: 5px 10px;
+                                        font-size: 14px; }
+/* Con JS: el formulario aparece y el nombre se va. Sin JS la clase nunca se
+   pone y se ve el campo de siempre — se degrada a lo que había, no a nada. */
+.editable.editando > .valor, .editable.editando > .lapiz { display: none; }
+.editable.editando > .edicion { display: inline-flex; }
+body.con-js .editable > .edicion { display: none; }
+body.con-js .editable.editando > .edicion { display: inline-flex; }
+
+/* ── Selector con búsqueda ─────────────────────────────────────────────────
+   El `<select>` nativo despliega una fila por opción: con veinte proyectos son
+   veinte filas, media pantalla, y sin forma de escribir para encontrar uno.
+   Aquí la lista tiene ALTURA MÁXIMA y un campo que filtra encima.
+   El `<select>` real sigue debajo, oculto, y es lo que se envía: si el JS
+   fallara, el formulario seguiría funcionando con el desplegable de siempre. */
+.combo { position: relative; display: inline-block; min-width: 190px; }
+body.con-js .combo > select { position: absolute; opacity: 0; pointer-events: none;
+                              width: 100%; height: 100%; }
+.combo-abre { width: 100%; justify-content: space-between; font-weight: 450;
+              color: var(--texto); }
+.combo-abre::after { content: '▾'; color: var(--texto-3); font-size: 11px; }
+.combo:not(.abierto) .combo-pop { display: none; }
+.combo-pop { position: absolute; top: calc(100% + 5px); left: 0; z-index: 60;
+  min-width: 100%; width: max-content; max-width: 340px;
+  background: var(--superficie2); border: 1px solid var(--borde); border-radius: 11px;
+  padding: 6px; box-shadow: 0 12px 28px rgba(0,0,0,.5); }
+.combo-busca { width: 100%; padding: 6px 10px; font-size: 13px; margin-bottom: 5px; }
+/* El tope de altura es el punto de todo esto: sea cual sea el número de
+   proyectos, el desplegable mide lo mismo y la lista se desplaza por dentro. */
+.combo-lista { max-height: 244px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.combo-op { width: 100%; justify-content: flex-start; background: transparent;
+  color: var(--texto-2); font-size: 13px; padding: 6px 10px; font-weight: 450;
+  text-align: left; white-space: nowrap; }
+.combo-op:hover { background: var(--elevado); color: var(--texto); }
+.combo-op.puesta { color: var(--acento); font-weight: 600; }
+.combo-vacio { font-size: 12.5px; color: var(--texto-4); padding: 8px 10px; }
+
+/* ── Campos: el input es un pozo sobre el lienzo, no una superficie ─────── */
+input[type=text], textarea, select {
+  font: inherit; font-size: 14px; letter-spacing: -0.01em; width: 100%;
+  padding: 9px 14px; border-radius: var(--r-input);
+  background: var(--lienzo); border: 1px solid var(--borde); color: var(--texto);
+}
+input::placeholder, textarea::placeholder { color: var(--texto-3); }
+input:focus, textarea:focus, select:focus { outline: none; border-color: var(--acento); }
+textarea { min-height: 80px; resize: vertical; }
+label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
+        color: var(--texto-3); margin: 12px 0 5px; }
+form.enlinea { display: inline; }
+
+/* ── Piezas menores ─────────────────────────────────────────────────────── */
+/* El chip SÍ sigue siendo una píldora: es una etiqueta, no algo que se pulsa.
+   Que la forma distinga las dos cosas es justo lo que se perdía cuando los
+   botones también eran cápsulas. */
+.chip {
+  font-size: 10px; letter-spacing: .04em; background: var(--superficie2);
+  border-radius: 9999px; padding: 2px 10px; color: var(--texto-3);
+}
+/* El aviso lleva placa y se dispone en fila. El color entra por el borde
+   izquierdo y por el icono, nunca como relleno del bloque: un panel rojo
+   entero fue justo lo que se descartó al comparar maquetas. */
+.aviso {
+  display: flex; gap: 18px; align-items: flex-start;
+  border: 1px solid var(--borde); background: var(--superficie);
+  border-radius: 12px; padding: 20px 22px; margin-bottom: 22px;
+  border-left: 3px solid var(--riesgo);
+}
+.aviso h2 { font-size: 17px; font-weight: 650; text-transform: none;
+            letter-spacing: -.015em; color: var(--texto); margin: 0 0 5px; }
+/* Un aviso que no es riesgo —«sin dueño», «Docker no contestó»— no debe llevar
+   el borde rojo: gastar la alerta en lo que no la necesita enseña a ignorarla. */
+.aviso.espera { border-left-color: var(--espera); }
+details summary { cursor: pointer; font-size: 14px; color: var(--texto-3); }
+details summary:hover { color: var(--texto-2); }
+ul.limpia { list-style: none; padding: 0; margin: 8px 0 0; }
+ul.limpia li { padding: 6px 0; border-top: 1px solid var(--borde); }
+
+/* ── Diálogos ───────────────────────────────────────────────────────────── */
+dialog.dlg {
+  border: 1px solid var(--borde); border-radius: var(--r-tarjeta);
+  background: var(--superficie); color: var(--texto);
+  padding: 0; max-width: 520px; width: calc(100% - 32px);
+}
+dialog.dlg::backdrop { background: rgba(15,16,26,.72); }
+dialog.dlg form { padding: 20px; margin: 0; }
+dialog.dlg h3 { margin: 0 0 8px; font-size: 20px; font-weight: 500; letter-spacing: -0.2px; }
+dialog.dlg .dlg-cuerpo p { margin: 0; color: var(--texto-2); white-space: pre-line; }
+dialog.dlg .dlg-pie { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+/* ── Paleta de comandos ─────────────────────────────────────────────────── */
+.tecla {
+  font-size: 10px; letter-spacing: .04em; color: var(--texto-3);
+  border: 1px solid var(--borde); border-radius: 5px; padding: 1px 5px; margin-left: 6px;
+}
+dialog.paleta {
+  max-width: 620px; padding: 12px;
+  /* Arriba y no centrada: la vista está debajo y hay que seguir viéndola
+     mientras se escribe. */
+  margin: 12vh auto auto;
+}
+dialog.paleta input { margin-bottom: 8px; }
+dialog.paleta ul { margin: 0; max-height: 52vh; overflow-y: auto; }
+dialog.paleta li {
+  display: flex; align-items: baseline; gap: 10px; padding: 8px 10px;
+  border-top: 1px solid var(--borde); border-radius: var(--r-input); cursor: pointer;
+}
+dialog.paleta li.marcado { background: var(--elevado); }
+dialog.paleta li .clase {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--texto-3); min-width: 74px; flex: none;
+}
+dialog.paleta li .titulo { font-weight: 500; }
+dialog.paleta li .detalle {
+  color: var(--texto-3); font-size: 12px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.paleta-pie { font-size: 11px; margin: 10px 4px 2px; }
+
+/* ── El asistente ───────────────────────────────────────────────────────────
+   Abajo a la derecha y en forma de PESTAÑA, no de burbuja: sus palabras. Una
+   barrita que se expande al hacer clic.
+
+   Medidas pedidas: el mismo grosor que la columna de nota (330px) y la mitad
+   de la altura de la pantalla. En /trabajo se solapa con la nota y está bien
+   —"puedo colapsarlo de ser necesario"—. Es una base para iterar, no un
+   layout resuelto: los cambios de UX se refinan viéndolo.                    */
+#asistente {
+  position: fixed; right: 16px; bottom: 0; z-index: 40;
+  width: 330px; max-width: calc(100vw - 32px);
+  display: flex; flex-direction: column;
+  background: var(--superficie); border: 1px solid var(--borde);
+  border-bottom: none; border-radius: var(--r-tarjeta) var(--r-tarjeta) 0 0;
+ 
+}
+#asistente-pestana {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 12px; border: none; background: transparent;
+  border-radius: var(--r-tarjeta) var(--r-tarjeta) 0 0; text-align: left;
+}
+#asistente-pestana:hover { background: var(--elevado); }
+#asistente-pestana .nombre { font-weight: 500; color: var(--texto-2); flex: 1; }
+/* El indicador de contexto va SIEMPRE visible, también con el chat plegado:
+   es lo que le dice cuándo mandar un compact o un clear, y escondido detrás de
+   un clic dejaría de cumplir su función. */
+#asistente-ctx { font-size: 11px; color: var(--texto-3); letter-spacing: 0; }
+#asistente-ctx.lleno { color: var(--alerta); }
+#asistente-luz {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--texto-3);
+}
+#asistente-luz.vivo { background: var(--acento); }
+#asistente-luz.pensando { background: var(--alerta); animation: latido 1.1s infinite; }
+@keyframes latido { 50% { opacity: .25; } }
+
+#asistente-cuerpo { display: none; flex-direction: column; height: 50vh; min-height: 0; }
+#asistente.abierto #asistente-cuerpo { display: flex; }
+#asistente-hilo {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+  border-top: 1px solid var(--borde);
+}
+.msj { max-width: 88%; padding: 7px 11px; border-radius: 12px; white-space: pre-wrap;
+       overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; }
+.msj.mio { align-self: flex-end; background: var(--elevado); color: var(--texto); }
+.msj.suyo { align-self: flex-start; background: var(--lienzo);
+            border: 1px solid var(--borde); color: var(--texto-2); }
+/* Las herramientas se colapsan a una línea gris: saber que leyó api.py importa,
+   ver los 400 KB que devolvió no. */
+.msj .util { display: block; font-family: ui-monospace, Menlo, Consolas, monospace;
+             font-size: 11px; color: var(--texto-3); letter-spacing: 0; margin-top: 3px; }
+#asistente-pie { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--borde); }
+#asistente-texto { min-height: 38px; max-height: 110px; padding: 8px 11px; font-size: 13px; }
+#asistente-acciones { display: flex; gap: 6px; align-items: center;
+                      padding: 0 10px 8px; }
+#asistente-acciones .tenue { font-size: 11px; flex: 1; }
+#asistente-vacio { color: var(--texto-3); font-size: 12px; margin: auto; text-align: center; }
+/* El cuadro de permisos de Claude Code, traído al chat. Sin esto la
+   conversación se queda colgada sin decir por qué. */
+#asistente-permiso {
+  border: 1px solid var(--alerta); border-radius: var(--r-input);
+  padding: 8px 10px; background: color-mix(in srgb, var(--alerta) 8%, transparent);
+}
+#asistente-permiso p { margin: 0 0 6px; font-size: 12px; }
+#asistente-permiso pre {
+  margin: 0 0 8px; font-size: 11px; color: var(--texto-2); white-space: pre-wrap;
+  overflow-wrap: anywhere; font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+#asistente-permiso button { padding: 3px 12px; font-size: 12px; }
+</style>
+</head>
+<body class="{{ 'completo' if ancho_completo else '' }}">
+
+{# ── Raíl global ────────────────────────────────────────────────────────────
+   Los proyectos viven aquí con su estado: se ve cuál está parado y cuál tiene
+   commits en riesgo sin entrar en ninguno. `rail` lo inyecta `web.py` en TODAS
+   las vistas mediante un procesador de contexto — si dependiera de que cada
+   vista se acordase de pasarlo, la que se olvidara perdería la navegación. #}
+{% set rail = rail | default({}, true) %}
+<nav class="rail-global">
+  <a href="/" class="marca">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linejoin="round" aria-hidden="true">
+      <rect x="2.5" y="2.5" width="6" height="6" rx="2"/>
+      <rect x="11.5" y="2.5" width="6" height="6" rx="2" opacity=".5"/>
+      <rect x="2.5" y="11.5" width="6" height="6" rx="2" opacity=".5"/>
+      <rect x="11.5" y="11.5" width="6" height="6" rx="2" opacity=".25"/>
+    </svg>
+    <span>Hub<em>.</em></span>
+  </a>
+
+  <div class="rotulo">Vistas</div>
+  {% for ruta, clave, nombre, icono in [
+      ('/', 'panorama', 'Panorama', 'casa'),
+      ('/trabajo', 'trabajo', 'Trabajo', 'terminal'),
+      ('/inventario', 'inventario', 'Inventario', 'lineas'),
+      ('/respaldo', 'respaldo', 'Respaldo', 'escudo'),
+      ('/servicios', 'servicios', 'Servicios', 'pilas'),
+      ('/conexiones', 'conexiones', 'Conexiones', 'enlace'),
+      ('/contexto', 'contexto', 'Contexto', 'documento')] %}
+  <a href="{{ ruta }}" class="enlace {{ 'aqui' if seccion == clave }}" title="{{ nombre }}">
+    {{ ui.icono(icono) }}<span class="nom">{{ nombre }}</span>
+    {% if clave == 'respaldo' and rail.sin_respaldo %}
+      <span class="cuenta urge">{{ rail.sin_respaldo }}</span>
+    {% elif clave == 'servicios' and rail.servicios %}
+      <span class="cuenta">{{ rail.servicios }}</span>
+    {% elif clave == 'trabajo' and rail.paneles %}
+      <span class="cuenta">{{ rail.paneles }}</span>
+    {% endif %}
+  </a>
+  {% endfor %}
+
+  {% if rail.proyectos %}
+  <div class="rotulo">Proyectos</div>
+  {% for x in rail.proyectos %}
+  <a href="/proyecto/{{ x.id }}" class="enlace {{ 'aqui' if proyecto_actual == x.id }}"
+     title="{{ x.nombre }}">
+    {{ ui.estado('status', x.status, false) }}<span class="nom">{{ x.nombre }}</span>
+    {% if x.sin_push %}<span class="cuenta urge">{{ x.sin_push }}</span>{% endif %}
+  </a>
+  {% endfor %}
+  {% if rail.ocultos %}
+  <a href="/" class="enlace" style="color:var(--texto-4);font-size:12.5px" title="Ver todos en el panorama">
+    <span style="width:16px"></span><span class="nom">+{{ rail.ocultos }} sin actividad</span>
+  </a>
+  {% endif %}
+  {% endif %}
+</nav>
+
+<div class="principal-col">
+<div class="envoltura">
+  <header>
+    {# Miga, no titular: la vista ya trae su propio h1 y repetirlo a dos
+       tamaños distintos hacía dudar de cuál era el de verdad. #}
+    <span class="miga">{{ titulo }}</span>
+    <span class="tenue">{{ subtitulo | default('') }}</span>
+    <span style="flex:1"></span>
+    <button class="sutil" id="abrir-paleta" title="Ctrl+K">Buscar <span class="tecla">Ctrl K</span></button>
+    <form method="post" action="/refrescar" class="enlinea"><button class="sutil">Refrescar</button></form>
+  </header>
+  {% block contenido %}{% endblock %}
+</div>
+</div>
+
+<!-- Paleta de comandos. Va en la base porque el valor está en que responda
+     desde cualquier pantalla: con ~20 ubicaciones y ~60 capacidades, navegar
+     por menús es más lento que escribir el nombre. -->
+<dialog class="dlg paleta" id="paleta">
+  <input type="text" id="paleta-q" placeholder="Ir a un proyecto, slot, capacidad, contenedor…"
+         autocomplete="off" spellcheck="false">
+  <ul id="paleta-res" class="limpia"></ul>
+  <p class="tenue paleta-pie">↑↓ para moverte · Enter para ir · Esc para cerrar</p>
+</dialog>
+
+<!-- El asistente. Va en la base para que le siga de pantalla en pantalla: es
+     una herramienta de consulta sobre el sistema, y tener que ir a un sitio
+     concreto para preguntar es justo la fricción que evita usarlo.
+
+     Sólo se pinta si hay un proyecto con `tipo: asistente` declarado. Sin él la
+     pestaña salía igual y el error aparecía al pulsarla — ofrecer algo que sólo
+     puede fallar es peor que no ofrecerlo. -->
+{% if rail.hay_asistente %}
+<aside id="asistente">
+  <button id="asistente-pestana" aria-expanded="false">
+    <span id="asistente-luz"></span>
+    <span class="nombre">Asistente</span>
+    <span id="asistente-ctx"></span>
+    <span class="tenue" id="asistente-flecha">▴</span>
+  </button>
+  <div id="asistente-cuerpo">
+    <div id="asistente-hilo"><p id="asistente-vacio">Cargando…</p></div>
+    <div id="asistente-pie">
+      <textarea id="asistente-texto" rows="1" placeholder="Pregunta algo… (Enter envía)"
+                spellcheck="false"></textarea>
+      <button class="aceptar" id="asistente-enviar">Enviar</button>
+    </div>
+    {# Compactar y limpiar se hacen cuando el contexto se llena, no cada vez que
+       se pregunta algo, y las dos son irreversibles. A la vista competían con
+       Enviar —lo único que se usa aquí de verdad— y ponían dos acciones sin
+       vuelta atrás al lado del sitio donde se escribe. Mismo criterio que
+       «Reescanear» en el inventario: bajo la rueda. #}
+    <div id="asistente-acciones">
+      <span class="tenue" id="asistente-estado"></span>
+      {% call ui.menu_ajustes('Acciones del asistente', 'der arriba') %}
+        <div class="rotulo-menu">Su contexto</div>
+        <button class="sutil" id="asistente-compactar"
+                title="Genera sus propias instrucciones y compacta">Compactar</button>
+        <button class="sutil peligro" id="asistente-limpiar"
+                title="Borra su contexto">Limpiar</button>
+        <div class="separador"></div>
+        <div class="rotulo-menu">Si algo falla</div>
+        <a class="boton sutil" id="asistente-crudo" href="/terminal?session=asistente"
+           target="_blank" title="Ver su terminal tal cual">Terminal</a>
+      {% endcall %}
+    </div>
+  </div>
+</aside>
+{% endif %}
+
+<script src="/static/hub-ui.js"></script>
+<script src="/static/paleta.js"></script>
+{% if rail.hay_asistente %}<script src="/static/asistente.js"></script>{% endif %}
+</body>
+</html>

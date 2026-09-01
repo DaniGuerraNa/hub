@@ -1,0 +1,19 @@
+# Qué kits usa este proyecto y qué escribió cada uno.
+#
+# Es el `pom.xml` del proyecto: vive dentro, versionado, y viaja con él. Si
+# alguien clona este repo en otra máquina, sabe qué kits lleva.
+#
+# `destinos` es lo que permite saber qué archivos sobran al subir de versión
+# o al quitar el kit. Sin esa lista, lo que ya no respalda nadie se queda
+# dentro del repo para siempre.
+
+proyecto: hub
+
+kits:
+  - id: base
+    version: "1.0"
+    aplicado: 2026-08-31
+    destinos:
+      - .claude/hub/project.yml
+      - .claude/hub/capabilities.yml
+      - .claude/hub/kits.yml

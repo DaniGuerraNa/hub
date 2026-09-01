@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  /* La columna de cifras a la derecha de cada fila. Alineada a la derecha y
+     con cifras tabulares: así los números se comparan verticalmente de un
+     vistazo sin tener que leerlos uno a uno. */
+  .col { text-align:right; font-size:11.5px; color:var(--texto-4); flex:none;
+         min-width:96px; line-height:1.35; }
+  .col b { display:block; font-size:17px; font-weight:600; color:var(--texto-2);
+           font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+  .col b.urge { color:var(--riesgo); }
+  .col b.espejo { color:var(--texto-4); font-weight:500; }
+</style>
+
+{% call ui.cabecera_vista('Respaldo',
+    'Qué trabajo hay hoy que no exista en ningún otro sitio. El hub mide y muestra;
+     hacer push sigue siendo cosa tuya.') %}
+  {# Filtra la lista Y las cifras. Recortar sólo la lista dejaría «9 commits sin
+     respaldo» encima de una lista sin ninguno: la pantalla contradiciéndose. #}
+  {{ ui.filtro_proyecto('/respaldo', r.proyectos, proyecto) }}
+{% endcall %}
+
+{# Sin git no hay medición, y el cero de arriba significaría «no he mirado» en
+   vez de «no hay nada». Es la única cifra del hub que no puede equivocarse en
+   esa dirección: el proyecto nació de encontrar 473 commits sin respaldar. Se
+   avisa ANTES de las cifras, no debajo, porque debajo ya se han leído. #}
+{% if not r.hay_git or no_medido %}
+  <div class="aviso" style="border-left-color:var(--riesgo);margin-bottom:14px">
+    {% if not r.hay_git %}
+      <strong>No se puede medir el respaldo: <code>git</code> no está en el PATH.</strong>
+      Instala git y vuelve a medir.
+    {% else %}
+      {# git ESTÁ pero no pudo leer los repos: permisos, `dubious ownership` en
+         `/mnt/c`, un montaje caído. Sin este caso la pantalla se quedaba muda
+         justo cuando más falta hace, porque `hay_git` seguía siendo cierto. #}
+      <strong>El último intento de medir no leyó ningún repo.</strong>
+      {{ no_medido }}
+    {% endif %}
+    Las cifras de abajo son la última lectura buena{% if r.medido_en %}, del
+    {{ r.medido_en[:19] | replace('T', ' ') }}{% endif %} — no se han borrado.
+  </div>
+{% endif %}
+
+<div class="cifras">
+  <div class="cifra {{ 'urge' if r.commits_sin_respaldo }}">
+    {{ ui.placa('escudo', 'riesgo' if r.commits_sin_respaldo else 'ok') }}
+    <b>{{ r.commits_sin_respaldo }}</b><span>commits sin respaldo</span>
+  </div>
+  <div class="cifra">{{ ui.placa('carpeta', 'neutro') }}
+    <b>{{ r.repos | length }}</b><span>repos vigilados</span></div>
+  {% if r.sucios %}<div class="cifra">{{ ui.placa('aviso', 'espera') }}
+    <b>{{ r.sucios }}</b><span>con cambios sin commitear</span></div>{% endif %}
+  {% if r.sin_remoto %}<div class="cifra">{{ ui.placa('punto', 'neutro') }}
+    <b>{{ r.sin_remoto }}</b><span>sin remoto</span></div>{% endif %}
+  {% if r.worktrees %}<div class="cifra">{{ ui.placa('rejilla', 'neutro') }}
+    <b>{{ r.worktrees }}</b><span>worktrees extra</span></div>{% endif %}
+</div>
+
+<div class="barra" style="margin-bottom:6px">
+  <form method="post" action="/respaldo/escanear" class="enlinea">
+    <button class="cta" title="Recorre cada repo con git; tarda unos segundos">Medir ahora</button>
+  </form>
+  <span class="tenue">
+    {% if r.medido_en %}Última medición {{ r.medido_en[:19] | replace('T', ' ') }}
+    {% else %}Todavía no se ha medido nada{% endif %}
+  </span>
+</div>
+
+<p class="tenue" style="max-width:70ch;margin:14px 0 0">
+  Esta pantalla existe por el 2026-08-27: se dieron por muertos dos worktrees que
+  tenían <strong style="color:var(--texto-2)">473 commits sin respaldo</strong> de
+  los últimos nueve días.
+</p>
+
+{% if r.repos %}
+<h2 class="con-placa">{{ ui.placa('carpeta') }}<span>Repositorios</span>
+  <span class="apunte">{{ r.repos | length }}</span></h2>
+<div class="panel">
+{% for x in r.repos %}
+  {# `cuenta_en_total` falso = worktree del mismo repositorio. Sus commits ya
+     están contados en su hermano, así que se apaga la fila: verlo dos veces en
+     negrita fue lo que infló la cifra a 1017 en su día. #}
+  <div class="fila {{ 'apagada' if not x.cuenta_en_total }}">
+    {{ ui.placa('aviso' if x.sin_push and x.cuenta_en_total else 'ok',
+                'riesgo' if x.sin_push and x.cuenta_en_total
+                else ('espera' if x.regimen == 'sin-upstream' else 'ok')) }}
+    <span class="pila">
+      <span class="etiqueta">
+        <a href="/proyecto/{{ x.proyecto_id }}">{{ x.proyecto_nombre or x.proyecto_id }}</a>
+      </span>
+      <span class="barra" style="gap:14px;flex-wrap:wrap">
+        <span class="insignia neutro">{{ x.rama }}</span>
+        {{ ui.estado('regimen', x.regimen) }}
+        {% if x.worktrees %}
+          <span class="insignia neutro" title="Worktrees además del principal">
+            +{{ x.worktrees }} worktree{{ 's' if x.worktrees != 1 }}</span>
+        {% endif %}
+      </span>
+      <span class="mono dato" data-que="repo">{{ x.ruta }}</span>
+    </span>
+    <span class="der">
+      <span class="col">
+        {% if x.sin_push is none %}<b>—</b>sin comparar
+        {% elif not x.cuenta_en_total %}
+          <b class="espejo">{{ x.sin_push }}</b>
+          <span title="Worktree del mismo repositorio: son los mismos commits, no se suman dos veces">espejo</span>
+        {% else %}<b class="{{ 'urge' if x.sin_push }}">{{ x.sin_push }}</b>sin push{% endif %}
+      </span>
+      <span class="col"><b>{{ x.sucios }}</b>sin commitear</span>
+      <span class="col"><b style="font-size:13px">{{ x.ultimo_commit[:10] if x.ultimo_commit else '—' }}</b>último commit</span>
+    </span>
+  </div>
+{% endfor %}
+</div>
+{% else %}
+<p class="tenue">Todavía no se ha medido ningún repo. Pulsa «Medir ahora».</p>
+{% endif %}
+
+{% endblock %}

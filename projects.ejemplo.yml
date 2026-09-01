@@ -1,0 +1,98 @@
+# Registro central de proyectos — fuente de verdad de qué existe (decisión 7).
+#
+# Esto es la SEMILLA. El instalador la copia a `~/.local/share/hub/projects.yml`
+# la primera vez y nunca vuelve a tocarla: tu registro es tuyo y no viaja con el
+# repo, así que actualizar el hub no puede pisártelo ni chocar con tus cambios.
+#
+# Editable a mano a propósito: si algo se rompe, se arregla con un editor de
+# texto y no con una consulta SQL. La base sólo lo indexa; todo lo que vive ahí
+# se puede reconstruir escaneando (regla dura 1).
+#
+# No hace falta reiniciar nada al editarlo: el siguiente ciclo lo recoge.
+#
+# ── Campos de un proyecto ─────────────────────────────────────────────────────
+#
+#   id           Identidad. NO cambia: los slots, las notas y el índice cuelgan
+#                de él. Renombrar es seguro; cambiar el `id`, no.
+#   nombre       La etiqueta que se pinta. Cámbiala cuando quieras.
+#   dominio      personal | laboral — es un ATRIBUTO con filtro, no un muro.
+#   asiento      Desde dónde trabajas. Puede no ser donde vive el código.
+#   rutas        Repos y otras ubicaciones. El asiento no se repite aquí.
+#   estado_ref   PUNTERO al documento que HOY dice cómo va el proyecto. No es un
+#                archivo nuevo: apunta a donde tu estado ya vive, con el formato
+#                que ya usas (decisión 5).
+#   guardrail    auto | ask | never — permiso del asistente para ejecutar cosas
+#                en este proyecto. `never` significa nunca, aunque lo pidas tú
+#                desde la interfaz: primero se cambia aquí (regla dura 7).
+#   status       activo | pausado | archivado
+#   tipo         (opcional) kit | asistente — un proyecto normal no lo lleva.
+#   contenedores (opcional) PREFIJOS de nombre de contenedores Docker que son de
+#                este proyecto. Lo que no declara nadie sale como «sin dueño»:
+#                no se le inventa un propietario.
+#   nota         (opcional) lo que haga falta recordar.
+
+proyectos:
+  - id: mi-proyecto
+    nombre: Mi proyecto
+    dominio: personal
+    asiento: ~/dev/mi-proyecto
+    estado_ref: docs/ESTADO.md
+    guardrail: ask
+    status: activo
+    contenedores: [mi-proyecto-]
+    nota: Borra este ejemplo y pon los tuyos.
+
+  # El asiento no tiene por qué ser donde está el código. Si orquestas desde una
+  # carpeta y los repos viven en otra, decláralos todos: lo que no está aquí no
+  # se mide, y un repo sin medir es un repo que puedes dar por respaldado sin
+  # que lo esté.
+  - id: otro-proyecto
+    nombre: Otro proyecto
+    dominio: laboral
+    asiento: ~/trabajo/otro
+    rutas:
+      - ruta: ~/dev/otro-backend
+      - ruta: ~/dev/otro-frontend
+    estado_ref: NOTAS.md
+    guardrail: never
+    status: activo
+
+  # El asistente es un proyecto más: `claude` corriendo en una ventana de tmux.
+  # Lo único distinto es cómo se pinta. `tipo: asistente` es lo que hace que el
+  # hub sepa cuál es SIN cablear una ruta en el código (decisión 75).
+  #
+  # Descoméntalo cuando lo hayas sembrado (`scripts/instalar.sh` lo ofrece). Sin
+  # ningún proyecto de este tipo, la pestaña del asistente no se pinta.
+  #
+  # - id: asistente
+  #   nombre: Asistente
+  #   dominio: personal
+  #   tipo: asistente
+  #   asiento: ~/projects/asistente
+  #   estado_ref: CLAUDE.md
+  #   guardrail: ask
+  #   status: activo
+
+
+# ── Conexiones ───────────────────────────────────────────────────────────────
+#
+# Dónde despliega cada cosa y dónde vive su credencial. Sirve para poder decir
+# «despliega en el vps de pruebas» sin recordar dónde estaban sus datos.
+#
+# 🔴 NUNCA se pone aquí un secreto (decisión 28). Sólo datos de conexión y
+# `referencia_secreto`, que es un PUNTERO a dónde vive la credencial. El hub
+# comprueba si el puntero existe; jamás lo abre. Si escribes una contraseña
+# aquí, quedará en un archivo de texto plano — para eso no es.
+#
+# Formato:
+#   - alias: vps-pruebas
+#     host: 203.0.113.10
+#     usuario: deploy
+#     proposito: pruebas antes de producción
+#     proyectos: [mi-proyecto]
+#     referencia_secreto: ~/.ssh/config#vps-pruebas
+#     nota: opcional
+#
+# Vacío a propósito: inventar conexiones sería exactamente el tipo de dato falso
+# que el hub existe para no tener.
+conexiones: []

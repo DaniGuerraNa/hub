@@ -1,0 +1,18 @@
+[Unit]
+Description=Hub — interfaz web en localhost
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@RAIZ@
+Environment=HUB_HOME=@HUB_HOME@
+# 🔴 El PATH de systemd no trae ~/.local/bin (decisión 81), y lo que el hub lanza
+# en tmux —`claude`, sobre todo— sí lo necesita. Probarlo a mano no lo detecta,
+# porque una shell interactiva sí lo tiene.
+Environment=PATH=@PATH@
+ExecStart=@UV@ run uvicorn hub.web:app --host @HOST@ --port @PUERTO@
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

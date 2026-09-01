@@ -1,0 +1,106 @@
+# El manifiesto de este kit. Es su contrato: lo que el hub lee para saber qué
+# aporta, qué necesita y qué escribe.
+#
+# 🔴 Dos reglas, aprendidas pagando:
+#
+#   1. Una plantilla que nombra el proyecto que la originó no es una plantilla,
+#      es una copia. Si aquí aparece la ruta, el stack o el concepto de un
+#      proyecto concreto, el segundo consumidor tendrá que reescribirlo entero
+#      — y peor, se le invitará a heredar afirmaciones ajenas.
+#   2. Un kit no se da por bueno hasta verlo acertar Y verlo fallar. Aplícalo a
+#      un consumidor real, rompe un archivo a propósito, comprueba que la deriva
+#      lo marca, restáuralo y comprueba que vuelve. Un verde que nadie ha visto
+#      en rojo no es evidencia.
+
+# 🔴 `id` y `nombre` llevan VALORES DE EJEMPLO, no marcadores `@ASI@`, y por dos
+# razones que costaron un rato:
+#
+#   1. `@` es un indicador reservado de YAML y no puede abrir un escalar plano.
+#      Con `id: @ID@` esta plantilla NO PARSEABA, así que el primer kit de
+#      cualquiera moría en `kit.sh verificar` con un error del parser señalando
+#      una línea que esa persona no había escrito — sin forma de distinguir «la
+#      plantilla viene rota» de «me equivoqué yo».
+#   2. El `id` acaba siendo el nombre de una carpeta, así que se valida su
+#      forma: minúsculas, números y guiones. `@ID@` tampoco la cumpliría.
+#
+# Una plantilla que verifica en verde recién copiada se puede probar antes de
+# entenderla, que es como se aprende esto. Cambia los dos valores por los tuyos.
+# (`@DESCRIPCION@` y `@NOTAS_DE_MANTENIMIENTO@` sí siguen siendo marcadores: van
+# dentro de bloques `>` y `|`, donde todo es texto libre.)
+id: mi-kit
+nombre: Mi kit
+version: "0.1"                 # major.minor. Un tag publicado NO se mueve nunca
+descripcion: >
+  @DESCRIPCION@
+
+# ── Lo que este kit ofrece a quien lo use ────────────────────────────────────
+#
+# Se nombra `dominio#verbo-objeto`, y el dominio nombra el CONTRATO, nunca al
+# proveedor: `notificar#enviar-mensaje`, no `telegram#enviar-mensaje`. Con el
+# proveedor dentro del nombre, sustituirlo deja de ser posible — y poder
+# sustituirlo es el motivo entero de que esto exista.
+expone: []
+  # - id: notificar#enviar-mensaje
+  #   tipo: script            # script | skill | agente | documento
+  #   ruta: herramientas/enviar.sh
+
+# ── Lo que necesita de otros ─────────────────────────────────────────────────
+#
+# Se depende de la CAPACIDAD, no del kit. Así, el día que la provea otro, este
+# kit no se entera.
+#
+# `opcional: true` significa que sin proveedor esa parte del kit no existe — y
+# entonces hay que **demostrar que funciona sin ella**. Si nunca se ha visto
+# correr sin eso, «opcional» es una afirmación, no una medida.
+consume: []
+  # - id: notificar#enviar-mensaje
+  #   opcional: true
+
+requiere:
+  binarios: []                 # se verifican, no se instalan
+
+# ── Qué escribe en el consumidor ─────────────────────────────────────────────
+#
+#   apuntador     · el consumidor NO tiene el archivo: referencia el del kit.
+#                   Para lo que se lee y nadie edita. Una sola verdad.
+#   materializado · se copia de verdad, con cabecera «del kit X vN, no editar».
+#                   Para skills, agentes y hooks: Claude Code los busca en rutas
+#                   fijas y un apuntador ahí no existiría.
+#   copia         · semilla que se personaliza. Divergir es lo correcto.
+aplica: []
+  # - origen: metodo/guia.md
+  #   destino: docs/equipo/guia.md
+  #   modo: apuntador
+  #
+  # - origen: skills/lo-mio/SKILL.md
+  #   destino: .claude/skills/lo-mio/SKILL.md
+  #   modo: materializado
+  #
+  # - origen: plantillas/rol.md
+  #   destino: .claude/agents/rol.md
+  #   modo: copia
+  #   parametros: [proyecto, stack]
+
+# ── Si es un kit DE MÁQUINA ──────────────────────────────────────────────────
+#
+# Hay dos clases de kit, y sólo se distinguen por esto:
+#
+#   de proyecto · propaga archivos a cada consumidor (`aplica` con destinos)
+#   de máquina  · instala algo una vez y no toca ningún proyecto (`aplica` vacío
+#                 y un `instalar` propio)
+#
+# Si el tuyo es de máquina, deja `aplica: []` — no le inventes destinos para que
+# parezca de proyecto — y apunta aquí a tu instalador. El hub te dirá que existe
+# y te imprimirá el comando; **nunca lo ejecuta por su cuenta**.
+# instalar: install.sh
+
+# ── Cómo se mantiene ─────────────────────────────────────────────────────────
+#
+# Ganchos, no un agente. El procedimiento de mantenimiento vive UNA vez, en el
+# hub, y mejora para todos los kits a la vez; aquí sólo van las particularidades
+# de éste. Si cada kit llevara su propio agente mantenedor, cambiar el método
+# obligaría a actualizar N agentes que dicen casi lo mismo.
+mantenimiento:
+  # verificar: herramientas/comprobar.sh
+  notas: |
+    @NOTAS_DE_MANTENIMIENTO@

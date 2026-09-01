@@ -1,0 +1,346 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  /* Tinte por tipo: sólo borde y texto, nunca relleno — las superficies siguen
+     siendo monocromas. Codificar el tipo aquí es funcional, no decorativo:
+     con ~60 capacidades hay que poder distinguirlas de un vistazo. */
+  .t-agente    { --tinte: var(--t-agente); }
+  .t-skill     { --tinte: var(--t-skill); }
+  .t-metodo    { --tinte: var(--t-metodo); }
+  .t-script    { --tinte: var(--t-script); }
+  .t-plantilla { --tinte: var(--t-plantilla); }
+
+  /* El tipo activo se tiñe con SU color, que es el mismo que lleva la placa de
+     esas filas: el índice y la lista quedan atados por el color en vez de por
+     la memoria. */
+  .indice a.aqui { color:var(--tinte, var(--acento)); }
+  .indice a.aqui .placa { --c:var(--tinte, var(--acento)); }
+  .indice a { gap:10px; }
+  .indice a > .nom { flex:1; }
+
+  /* 🔴 La única excepción a «el color codifica atención y nada más», y es
+     deliberada: aquí el tinte va SOLO en la placa del icono y significa TIPO.
+     Con ~60 capacidades, poder barrer la lista buscando los agentes es lo que
+     hace la pantalla usable. La escala de atención sigue mandando en las
+     insignias de la derecha —«sin uso detectado» en ámbar—, así que las dos
+     cosas no compiten: identidad a la izquierda, estado a la derecha. */
+  .cap-desc { font-size:13.5px; color:var(--texto-2); line-height:1.5;
+              display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .cap-meta { text-align:right; font-size:12px; color:var(--texto-4); line-height:1.6; flex:none;
+              min-width:150px; }
+  .cap-meta strong { color:var(--texto-2); font-weight:600; }
+
+  .kit-cab { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .cons { border:1px solid var(--borde); border-radius:var(--r-nav); padding:14px 16px; margin-top:12px; }
+  .cons summary { font-size:14px; color:var(--texto-2); }
+  .enlace-estado {
+    display:inline-block; font-size:10px; letter-spacing:.05em; text-transform:uppercase;
+    border-radius:var(--r-boton); padding:2px 10px; border:1px solid var(--borde);
+    color:var(--texto-3); min-width:130px; text-align:center; flex:none;
+  }
+  {# `apuntado` es tan «al día» como `igual`: el proyecto referencia el kit y NO
+     debe tener el archivo. Sin esta regla el estado bueno se pintaba en gris
+     neutro, que en esta pantalla se lee como «esto no lo he mirado». #}
+  .e-igual, .e-apuntado, .e-al-dia { color:var(--t-skill); border-color:var(--t-skill); }
+  .e-difiere, .e-falta, .e-sin { color:var(--alerta); border-color:var(--alerta); }
+  .e-divergencia { color:var(--texto-2); border-color:var(--borde-acero); }
+  ul.limpia li.enlace { display:flex; gap:12px; align-items:baseline; }
+</style>
+
+{# Una sola función para todos los enlaces de esta pantalla. Componer la query a
+   mano en cada sitio es cómo se pierde un filtro al pulsar otro — pasaba con el
+   de proyecto, que desaparecía al cambiar de tipo. #}
+{% macro url_inv(t='', secc='', arch=none) -%}
+{%- set a = archivadas if arch is none else arch -%}
+{%- set ps = [] -%}
+{%- if t %}{% set _ = ps.append('tipo=' ~ t) %}{% endif -%}
+{%- if secc %}{% set _ = ps.append('ver=' ~ secc) %}{% endif -%}
+{%- if proyecto %}{% set _ = ps.append('proyecto=' ~ proyecto) %}{% endif -%}
+{%- if a %}{% set _ = ps.append('archivadas=1') %}{% endif -%}
+/inventario{{ '?' ~ ps | join('&') if ps }}
+{%- endmacro %}
+
+{% call ui.cabecera_vista('Inventario',
+    'Qué capacidades existen, dónde viven y cuáles no se han usado nunca.') %}
+  {# El filtro va AQUÍ y no sobre el índice lateral, donde estaba: en respaldo y
+     en servicios sale en la cabecera, y un control que cambia de sitio según la
+     pantalla obliga a buscarlo cada vez. El índice se queda sólo con lo suyo,
+     que es navegar. #}
+  {% set ocultos = {} %}
+  {% if tipo %}{% set _ = ocultos.update({'tipo': tipo}) %}{% endif %}
+  {% if ver %}{% set _ = ocultos.update({'ver': ver}) %}{% endif %}
+  {% if archivadas %}{% set _ = ocultos.update({'archivadas': '1'}) %}{% endif %}
+  {{ ui.filtro_proyecto('/inventario', inv.proyectos, proyecto, ocultos=ocultos) }}
+  {# Reescanear no es de uso diario: recorre el filesystem y los transcripts de
+     Claude Code, y se hace cuando has creado algo, no cada vez que miras la
+     lista. Al lado del contenido competía con lo que sí se consulta. #}
+  {% call ui.menu_ajustes('Mantenimiento del catálogo') %}
+    <div class="rotulo-menu">Rehacer el catálogo</div>
+    <form method="post" action="/inventario/escanear">
+      <button name="medir" value="" type="submit">Reescanear</button>
+      <button name="medir" value="1" type="submit"
+              title="Recorre los transcripts de Claude Code; tarda unos segundos">
+        Reescanear y medir uso</button>
+    </form>
+    <div class="separador"></div>
+    <div class="rotulo-menu">Qué se lista</div>
+    <a class="boton" href="{{ url_inv(tipo, ver, not archivadas) }}">
+      {{ 'Ocultar' if archivadas else 'Incluir' }} proyectos archivados</a>
+  {% endcall %}
+{% endcall %}
+
+<div class="cifras">
+  <div class="cifra">{{ ui.placa('lineas', 'neutro') }}
+    <b>{{ inv.total }}</b><span>capacidades</span></div>
+  <div class="cifra {{ 'urge' if inv.sin_uso }}">{{ ui.placa('aviso', 'espera' if inv.sin_uso else 'ok') }}
+    <b>{{ inv.sin_uso }}</b><span>sin uso detectado</span></div>
+  {% if inv.no_medibles %}<div class="cifra">{{ ui.placa('metodo', 'neutro') }}
+    <b>{{ inv.no_medibles }}</b><span>uso no medible</span></div>{% endif %}
+  {% if inv.incompletas %}<div class="cifra urge">{{ ui.placa('aviso', 'riesgo') }}
+    <b>{{ inv.incompletas }}</b><span>incompletas</span></div>{% endif %}
+  {% if inv.archivadas %}<div class="cifra">{{ ui.placa('carpeta', 'neutro') }}
+    <b>{{ inv.archivadas }}</b><span>en proyectos archivados</span></div>{% endif %}
+</div>
+
+{# 🔴 De cuándo son estas cifras. Sin esto, una foto de hace una semana y una
+   recién medida se veían idénticas: «0 sin uso detectado» significa cosas muy
+   distintas si el escaneo es de hoy o de antes de escribir media docena de
+   skills. Va DEBAJO de las cifras y en tenue a propósito — es la letra pequeña
+   de lo de arriba, no un dato que se consulte por sí mismo. #}
+<p class="tenue" style="margin:-6px 0 16px;font-size:12.5px">
+  {% if inv.medido_en %}
+    Escaneado el {{ inv.medido_en[:19] | replace('T', ' ') }} (UTC).
+    El catálogo no se refresca solo: si has creado algo desde entonces, reescanea
+    desde la rueda.
+  {% else %}
+    Todavía no se ha escaneado el catálogo — o se escaneó con una versión
+    anterior del hub, que no guardaba la fecha. Reescanea desde la rueda.
+  {% endif %}
+</p>
+
+{% if not inv.total %}
+  <p class="tenue">El catálogo está vacío. Reescanea desde la rueda para poblarlo
+    a partir del filesystem.</p>
+{% endif %}
+
+<div class="con-indice">
+<div class="columna-indice">
+  <nav class="indice">
+    <div class="rotulo-indice">Capacidades</div>
+    <a class="{{ 'aqui' if not tipo and ver != 'kits' }}" href="{{ url_inv() }}">
+      <span class="nom">Todas</span><span class="cuenta">{{ inv.total }}</span>
+    </a>
+    {% for t in inv.tipos %}
+      <a class="t-{{ t }} {{ 'aqui' if tipo == t and ver != 'kits' }}" href="{{ url_inv(t) }}">
+        {{ ui.placa(t, tam='sm') }}<span class="nom">{{ t }}</span>
+        <span class="cuenta">{{ inv.por_tipo[t] }}</span>
+      </a>
+    {% endfor %}
+    {% if kits %}
+      <div class="rotulo-indice">Kits</div>
+      <a class="{{ 'aqui' if ver == 'kits' }}" href="{{ url_inv(secc='kits') }}">
+        <span class="nom">Kits y consumidores</span><span class="cuenta">{{ kits | length }}</span>
+      </a>
+    {% endif %}
+  </nav>
+</div>
+
+<div>
+{% if ver != 'kits' %}
+{% if inv.ocultas_archivadas %}
+  {# Se dice lo que se esconde y se da la puerta para verlo. Una lista que
+     oculta en silencio se lee como una lista completa. #}
+  <p class="tenue" style="margin:0 0 12px;font-size:13px">
+    {{ inv.ocultas_archivadas }} capacidad{{ 'es' if inv.ocultas_archivadas != 1 }}
+    de proyectos archivados fuera de la lista ·
+    <a href="{{ url_inv(tipo, ver, true) }}">verlas</a>
+  </p>
+{% endif %}
+<div class="panel">
+{% for c in inv.capacidades %}
+  <div class="fila t-{{ c.tipo }} {{ 'apagada' if c.proyecto_status == 'archivado' }}"
+       style="align-items:flex-start">
+    {# La placa lleva el tinte del TIPO y el icono su forma: dos señales para lo
+       mismo, que es lo que permite barrer sesenta filas buscando los agentes. #}
+    <span class="placa" style="--c:var(--tinte)">{{ ui.icono(c.tipo) }}</span>
+    <span class="pila">
+      <span class="barra" style="gap:12px;flex-wrap:wrap">
+        <span class="etiqueta">{{ c.nombre }}</span>
+        <span class="insignia neutro" style="color:var(--tinte)">{{ c.tipo }}</span>
+        {% if c.status != 'activo' %}<span class="insignia espera">{{ c.status }}</span>{% endif %}
+        {% if c.modelo %}<span class="insignia neutro">{{ c.modelo }}</span>{% endif %}
+        {% if c.origen == 'registry' %}
+          <span class="insignia neutro" title="Metadatos tomados de un registry.yaml existente">registry</span>
+        {% endif %}
+      </span>
+      {% if c.descripcion %}<span class="cap-desc">{{ c.descripcion }}</span>{% endif %}
+      <span class="mono dato" data-que="{{ c.proyecto_nombre or c.proyecto_id }}">{{ c.ruta }}</span>
+    </span>
+    <span class="der" style="align-items:flex-start">
+      <span class="cap-meta">
+        {% if c.proyecto_status == 'archivado' %}
+          <span class="insignia neutro" title="El proyecto está archivado: no es que se te olvidara, lo retiraste">archivado</span>
+        {% elif c.usado %}
+          <span class="insignia ok"><span class="glifo">✓</span>usado {{ c.usado[:10] }}</span>
+        {% elif c.medible %}
+          <span class="insignia espera"><span class="glifo">▲</span>sin uso detectado</span>
+        {% else %}
+          <span class="insignia neutro" title="Los métodos son documentos que se leen, no algo invocable por nombre">uso no medible</span>
+        {% endif %}
+        <span style="display:block;margin-top:4px">editado {{ c.modificado[:10] if c.modificado else '—' }}</span>
+      </span>
+      {% if c.tipo == 'agente' %}
+        <button class="sutil lanzar-agente"
+                data-proyecto="{{ c.proyecto_id }}"
+                data-nombre="agente:{{ c.nombre }}"
+                data-titulo="Lanzar «{{ c.nombre }}»"
+                data-prompt="Usa el agente {{ c.nombre }} para: ">Lanzar</button>
+      {% endif %}
+    </span>
+  </div>
+{% else %}
+  <div class="fila"><span class="tenue">Nada con este filtro.</span></div>
+{% endfor %}
+</div>
+{% endif %}
+
+{% if ver == 'kits' and kits %}
+<h2 class="con-placa" style="margin-top:0">{{ ui.placa('rejilla') }}<span>Kits</span>
+  <span class="apunte">{{ kits | length }}</span></h2>
+{% for k in kits %}
+<div class="tarjeta">
+  <div class="kit-cab">
+    <strong style="font-size:16px;font-weight:500">{{ k.nombre }}</strong>
+    {% if k.version %}<span class="chip">v{{ k.version }}</span>{% endif %}
+    {% if k.status != 'activo' %}<span class="chip frio">{{ k.status }}</span>{% endif %}
+    <span class="chip">{{ k.capacidades }} capacidades</span>
+    {% if not k.consumidores %}
+      <span class="chip">sin consumidores declarados</span>
+    {% elif k.deriva_total %}
+      <span class="chip frio">{{ k.deriva_total }} archivos con deriva</span>
+    {% else %}
+      <span class="chip" style="color:var(--t-skill);border-color:var(--t-skill)">sin deriva</span>
+    {% endif %}
+  </div>
+
+  {# Un kit depende de CAPACIDADES, no de otros kits por su nombre: así se puede
+     cambiar quién las provee sin tocar a quien las consume. Lo que nadie provee
+     se dice aquí, porque una capacidad ausente y callada se convierte en un
+     instrumento en verde que nadie ha visto funcionar. #}
+  {% if k.expone or k.consume %}
+  <div class="barra" style="gap:8px;flex-wrap:wrap;margin-top:10px">
+    {% for c in k.expone %}
+      <span class="insignia ok"><span class="glifo">→</span>{{ c }}</span>
+    {% endfor %}
+    {% for c in k.consume %}
+      {% set ausente = k.sin_proveedor | selectattr('id', 'equalto', c) | first %}
+      {% if not ausente %}
+        <span class="insignia neutro"><span class="glifo">←</span>{{ c }}</span>
+      {% elif ausente.opcional %}
+        <span class="insignia espera" title="Nadie provee esta capacidad: esa parte del kit no existe hoy"><span class="glifo">◐</span>{{ c }} · sin proveedor</span>
+      {% else %}
+        <span class="insignia riesgo" title="El kit no puede funcionar sin esto"><span class="glifo">▲</span>{{ c }} · falta</span>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if not k.consumidores %}
+    <p class="tenue" style="margin:12px 0 0;font-size:13px">
+      Nadie ha declarado usar este kit todavía. Un proyecto lo declara en su
+      <code>.claude/hub/kits.yml</code> — el censo lo lleva el consumidor, no el kit.
+      {% if not k.version %}
+      Este kit aún no tiene <code>kit.yml</code>: se sigue midiendo por sus fichas
+      de <code>consumidores/</code>, con líneas <code>MAPA: origen -&gt; destino</code>.
+      {% endif %}
+    </p>
+  {% endif %}
+
+  {% for c in k.consumidores %}
+  <details class="cons">
+    <summary>
+      <strong>{{ c.nombre }}</strong> —
+      {% for estado, n in c.cuenta | dictsort %}{{ n }} {{ estado }}{{ ', ' if not loop.last }}{% endfor %}
+    </summary>
+
+    <div class="barra" style="margin:14px 0">
+      <button class="cta lanzar-agente"
+              data-proyecto="{{ k.id }}"
+              data-nombre="mantenedor:{{ c.id }}"
+              data-titulo="Lanzar el mantenedor sobre {{ c.nombre }}"
+              data-prompt="{{ c.prompt_mantenedor }}">Lanzar mantenedor</button>
+      <span class="tenue" style="font-size:13px">Abre <code>claude</code> en el kit, con el diagnóstico dentro.</span>
+    </div>
+
+    <ul class="limpia">
+      {% for e in c.enlaces %}
+      <li class="enlace">
+        <span class="enlace-estado e-{{ e.estado.split('-')[0] }}">{{ e.estado }}</span>
+        <span class="mono">{{ e.origen }} → {{ e.destino }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+
+    {% if c.divergencias %}
+      <p class="tenue" style="margin:16px 0 4px;font-size:13px">
+        Divergencias declaradas — son decisiones, no defectos:
+      </p>
+      <ul class="limpia">
+        {% for d in c.divergencias %}
+        <li>
+          <span class="mono">{{ d.archivo }}</span>
+          <div class="tenue" style="font-size:13px">{{ d.razon }}</div>
+        </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </details>
+  {% endfor %}
+</div>
+{% endfor %}
+{% endif %}
+</div>
+</div>
+
+<script>
+document.addEventListener('click', async (e) => {
+  const boton = e.target.closest && e.target.closest('.lanzar-agente');
+  if (!boton) return;
+
+  // El sistema propone, tú decides: el prompt llega prellenado pero editable.
+  const prompt = await HubUI.preguntar({
+    titulo: boton.dataset.titulo,
+    etiqueta: 'Prompt inicial',
+    valor: boton.dataset.prompt,
+    multilinea: true,
+    aceptar: 'Lanzar',
+    cta: true,
+    nota: 'Abre una ventana de tmux con claude. Nada se ejecuta sin que lo confirmes aquí.',
+  });
+  if (!prompt) return;
+
+  boton.textContent = 'lanzando…';
+  const r = await fetch('/api/agente/lanzar', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      proyecto_id: boton.dataset.proyecto,
+      nombre: boton.dataset.nombre,
+      prompt,
+    }),
+  }).then(r => r.json()).catch(() => ({ ok: false, error: 'sin conexión con el hub' }));
+
+  boton.textContent = 'Lanzar';
+  if (!r.ok) {
+    return HubUI.avisar({
+      titulo: r.bloqueado ? 'Guardrail activo' : 'No se pudo lanzar',
+      mensaje: r.error || 'error desconocido',
+    });
+  }
+  // Te lleva a verlo trabajar, que es el sitio donde quieres estar.
+  location.href = `/trabajo?session=${encodeURIComponent(r.session)}&ventana=${r.ventana}`;
+});
+</script>
+
+{% endblock %}

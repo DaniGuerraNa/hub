@@ -1,0 +1,428 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  /* La página tenía las cinco secciones apiladas: para llegar a los slots había
+     que pasar por respaldo, servicios y paneles. Ahora se navega por secciones
+     y sólo se pinta la que se pide.
+
+     El ocultado lo enciende el JS con `.con-secciones`, no el CSS de entrada:
+     sin script la página se degrada a lo de antes —todo visible y en orden— en
+     vez de quedarse con una sola sección y ningún modo de cambiarla. */
+  /* ── La cabecera del proyecto ──
+     Antes era h1 + un párrafo tenue + rutas sueltas, y todo eso flotaba a la
+     misma distancia del contenido de la sección: no se veía dónde acababa
+     «este proyecto» y empezaba «esta sección de este proyecto». Ahora es un
+     bloque con línea de cierre, y sus datos van etiquetados. */
+  .ficha { padding-bottom:22px; margin-bottom:26px; border-bottom:1px solid var(--borde); }
+  .ficha h1 { font-size:26px; font-weight:600; letter-spacing:-0.02em; margin:0 0 12px; }
+  .ficha .campos { display:flex; flex-wrap:wrap; gap:8px 10px; margin-bottom:14px; }
+  /* Etiqueta encima del valor: «laboral · activo · never» no dice qué es cada
+     cosa, y guardrail y status se confunden entre sí con sólo mirarlos. */
+  .campo { display:flex; flex-direction:column; gap:1px; padding:5px 12px;
+           background:var(--superficie); border:1px solid var(--borde);
+           border-radius:var(--r-nav); }
+  .campo .que { font-size:11px; text-transform:uppercase; letter-spacing:.09em;
+                color:var(--texto-3); }
+  .campo .val { font-size:14px; color:var(--texto-2); font-weight:500; }
+  /* En columnas y no en lista: un proyecto medido tenía seis rutas, y apiladas empujaban
+     la sección medio scroll hacia abajo. Se reparten en las columnas que quepan
+     sin partir una ruta, que es lo que `auto-fill` con un mínimo generoso hace. */
+  .ficha .rutas { display:grid; grid-template-columns:repeat(auto-fill, minmax(600px, 1fr));
+                  gap:2px 32px; }
+
+</style>
+
+<div class="ficha">
+  <h1>{{ p.nombre }}</h1>
+  <div class="campos">
+    {{ ui.campo('estado', p.status, 'status') }}
+    {{ ui.campo('guardrail', p.guardrail, 'guardrail', 'Qué puede hacer el hub aquí sin preguntarte') }}
+    {{ ui.campo('dominio', p.dominio, 'dominio') }}
+    {% if p.tipo and p.tipo != 'proyecto' %}{{ ui.campo('tipo', p.tipo, 'tipo') }}{% endif %}
+    {{ ui.campo('id', p.id, none, 'La identidad: no cambia aunque cambie el nombre') }}
+    {% if p.estado_ref %}
+      {{ ui.campo('estado_ref', p.estado_ref, none, 'El documento que este proyecto declara vigente') }}
+    {% endif %}
+  </div>
+  {# `p.rutas` YA trae el asiento como una ruta más, con su tipo. Añadirlo
+     aparte lo pintaba dos veces, idéntico y seguido. #}
+  <div class="rutas">
+    {% for r in p.rutas %}
+      <span class="mono dato" data-que="{{ r.tipo }}">{{ r.ruta }}</span>
+    {% endfor %}
+  </div>
+</div>
+
+{% set en_riesgo = repos | selectattr('sin_push') | list | length %}
+
+<div class="con-indice" id="taller-proyecto">
+  <div class="columna-indice">
+  <h2>Secciones</h2>
+  <nav class="indice" id="indice-proyecto">
+    <a href="#estado" data-sec="estado">Estado</a>
+    {% if repos %}
+    <a href="#respaldo" data-sec="respaldo">Respaldo
+      <span class="cuenta {{ 'aviso' if en_riesgo }}">{{ (en_riesgo ~ ' ⚠') if en_riesgo else repos | length }}</span>
+    </a>
+    {% endif %}
+    {% if servicios.total %}
+    <a href="#servicios" data-sec="servicios">Servicios
+      <span class="cuenta">{{ servicios.contenedores | length }}</span>
+    </a>
+    {% endif %}
+    <a href="#paneles" data-sec="paneles">Paneles
+      <span class="cuenta">{{ paneles | length }}</span>
+    </a>
+    <a href="#slots" data-sec="slots">Slots
+      <span class="cuenta">{{ slots | length }}</span>
+    </a>
+  </nav>
+  </div>
+
+  <div id="secciones-proyecto">
+
+<section class="seccion" id="sec-estado">
+<!-- El estado no es un documento nuevo: es el que el proyecto ya declaró
+     vigente, resuelto y resumido (decisión 5). Sobran documentos, falta el
+     puntero a cuál es el bueno hoy. -->
+<h2>Estado {% if estado.ruta %}<span class="tenue" style="text-transform:none;letter-spacing:0">· {{ estado.declarado }}</span>{% endif %}</h2>
+<div class="tarjeta">
+  {% if not estado.declarado %}
+    <p style="margin:0;color:var(--texto-2)">
+      Este proyecto no declara <code>estado_ref</code>: nadie ha dicho cuál de sus
+      documentos está vigente. Se añade en <code>projects.yml</code>.
+    </p>
+  {% elif not estado.existe %}
+    <p style="margin:0;color:var(--texto-2)">
+      Apunta a <code>{{ estado.declarado }}</code>, que no existe en ninguna de sus rutas.
+      El puntero está roto: o se movió el documento, o el registro se quedó viejo.
+    </p>
+  {% elif not estado.campos %}
+    <p style="margin:0 0 10px;color:var(--texto-2)">
+      El documento existe pero no trae el bloque mínimo (<code>estado</code>,
+      <code>próxima acción</code>, <code>bloqueado_por</code>), así que hay que leerlo entero.
+    </p>
+    <span class="mono dato" data-que="documento">{{ estado.ruta }}</span>
+  {% else %}
+    {% for clave, titulo in [('estado','Estado'), ('proxima_accion','Próxima acción'), ('bloqueado_por','Bloqueado por')] %}
+      {% if estado.campos[clave] %}
+        <label style="margin-top:0">{{ titulo }}</label>
+        <p style="margin:0 0 14px;white-space:pre-wrap">{{ estado.campos[clave] }}</p>
+      {% endif %}
+    {% endfor %}
+    <span class="mono dato" data-que="documento">{{ estado.ruta }}{% if estado.modificado %} · editado {{ estado.modificado[:10] }}{% endif %}</span>
+  {% endif %}
+
+  <div class="barra" style="margin-top:14px">
+    {% if capa.presente %}
+      <span class="chip" title="{{ capa.carpeta }}">capa base {{ capa.version }}</span>
+      {% if not capa.tiene_capabilities %}<span class="chip frio">sin capabilities.yml</span>{% endif %}
+    {% else %}
+      <span class="chip frio">sin capa base</span>
+      <button class="cta" id="sembrar-base" data-proyecto="{{ p.id }}"
+              data-prompt="{{ capa.prompt_sembrar }}">Crear capa base</button>
+      <span class="tenue" style="font-size:13px">
+        El hub no escribe dentro de tus proyectos: lanza un agente que lo haga.
+      </span>
+    {% endif %}
+  </div>
+</div>
+</section>
+
+{% if repos %}
+<section class="seccion" id="sec-respaldo">
+{# Una tarjeta por repo gastaba media pantalla en cuatro filas de dos datos.
+   El panel las compacta sin perder nada: cada línea sigue trayendo rama, ruta,
+   régimen y worktrees. #}
+<h2 class="con-placa">{{ ui.placa('escudo', 'ok' if not en_riesgo else 'riesgo') }}
+  <span>Respaldo</span>
+  <span class="apunte">{{ repos | length }} repos ·
+    {% if en_riesgo %}{{ en_riesgo }} en riesgo{% else %}todo respaldado{% endif %}
+    · <a href="/respaldo">ver todo</a></span></h2>
+<div class="panel">
+{% for x in repos %}
+  <div class="fila {{ 'apagada' if not x.cuenta_en_total }}">
+    {{ ui.placa('ok' if x.regimen == 'con-upstream' else 'aviso',
+                'ok' if x.regimen == 'con-upstream' else ('riesgo' if x.sin_push else 'espera')) }}
+    <span class="pila">
+      <span class="etiqueta">{{ x.rama }}</span>
+      <span class="mono dato" data-que="repo">{{ x.ruta }}</span>
+    </span>
+    <span class="der">
+      {% if x.sucios %}<span class="insignia espera"><span class="glifo">▲</span>{{ x.sucios }} sin commitear</span>{% endif %}
+      {% if x.sin_push %}<span class="insignia riesgo"><span class="glifo">▲</span>{{ x.sin_push }} sin push</span>{% endif %}
+      {% if x.worktrees %}<span class="insignia neutro">{{ x.worktrees }} worktree{{ 's' if x.worktrees != 1 }}</span>{% endif %}
+      {{ ui.estado('regimen', x.regimen) }}
+    </span>
+  </div>
+{% endfor %}
+</div>
+</section>
+{% endif %}
+
+{% if servicios.total %}
+<section class="seccion" id="sec-servicios">
+{% set corriendo = servicios.contenedores | selectattr('estado', 'equalto', 'running') | list | length %}
+<h2 class="con-placa">{{ ui.placa('pilas', 'ok' if corriendo else 'neutro') }}
+  <span>Servicios</span>
+  <span class="apunte">{{ corriendo }} de {{ servicios.contenedores | length }} corriendo
+    · <a href="/servicios">ver todo</a></span></h2>
+<div class="panel">
+  {% for c in servicios.contenedores %}
+  <div class="fila {{ 'apagada' if c.estado != 'running' }}">
+    {{ ui.placa('punto', 'ok' if c.estado == 'running' else 'neutro') }}
+    <span class="pila">
+      <span class="etiqueta">{{ c.contenedor }}</span>
+      <span class="mono dato" data-que="imagen">{{ c.imagen }}</span>
+    </span>
+    <span class="der">
+      {{ ui.estado('servicio', c.estado) }}
+      <span class="insignia neutro">{{ c.detalle }}</span>
+    </span>
+  </div>
+  {% endfor %}
+</div>
+</section>
+{% endif %}
+
+<section class="seccion" id="sec-paneles">
+<h2 class="con-placa">{{ ui.placa('terminal', 'ok' if paneles else 'neutro') }}
+  <span>Paneles abiertos</span>
+  <span class="apunte">{{ paneles | length }}</span></h2>
+<div class="panel">
+{% for x in paneles %}
+  <div class="fila">
+    {{ ui.placa('terminal', 'ok') }}
+    <div class="pila">
+      <span class="etiqueta">{{ x.etiqueta }}</span>
+      <span class="mono dato" data-que="tmux">{{ x.session }}:{{ x.window_idx }}.{{ x.pane_idx }}</span>
+      <span class="mono dato" data-que="cwd">{{ x.cwd }}</span>
+    </div>
+    <div class="der">
+      <a class="boton principal" href="/trabajo?session={{ x.session }}&ventana={{ x.window_idx }}">Abrir</a>
+      {% if x.slot_nombre %}
+        <span class="chip">{{ x.slot_nombre }}</span>
+      {% elif slots %}
+        <form method="post" action="/panel/accion" class="barra">
+          <input type="hidden" name="pane_id" value="{{ x.pane_id }}">
+          <input type="hidden" name="accion" value="vincular">
+          {# Con el hash, volver del POST te deja en la sección desde la que
+             actuaste y no en Estado. #}
+          <input type="hidden" name="destino" value="/proyecto/{{ p.id }}#paneles">
+          <select name="slot_id" data-combo="si" aria-label="Slot">
+            {% for s in slots %}<option value="{{ s.id }}">{{ s.nombre }}</option>{% endfor %}
+          </select>
+          <button class="aceptar">Vincular</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+{% else %}
+  <p class="vacio">Ninguno abierto ahora mismo.</p>
+{% endfor %}
+</div>
+</section>
+
+<section class="seccion" id="sec-slots">
+<h2>
+  Slots
+  <a href="/proyecto/{{ p.id }}?archivados={{ 0 if archivados else 1 }}#slots" style="font-weight:400;text-transform:none;letter-spacing:0">
+    {{ 'ocultar archivados' if archivados else 'ver archivados' }}
+  </a>
+</h2>
+
+{% for s in slots %}
+<div class="tarjeta">
+  <div class="fila">
+    <div class="pila">
+      <span class="etiqueta">{{ s.nombre }} {% if s.status == 'archivado' %}<span class="chip">archivado</span>{% endif %}</span>
+      {% if s.ruta %}<span class="mono dato" data-que="ruta">{{ s.ruta }}</span>{% endif %}
+      <span class="tenue">
+        {% if s.ultima_actividad %}última actividad {{ s.ultima_actividad[:16] }}{% else %}sin actividad registrada{% endif %}
+      </span>
+    </div>
+    <div class="barra">
+      <a class="boton principal" href="/trabajo?slot={{ s.id }}">Trabajar</a>
+      {% if s.status == 'activo' and s.ruta %}
+      <form method="post" action="/slot/{{ s.id }}/abrir" class="enlinea">
+        <input type="hidden" name="proyecto_id" value="{{ p.id }}">
+        <button class="declinar" title="Abre una ventana nueva de tmux en la ruta del slot">Lanzar</button>
+      </form>
+      {% endif %}
+      <form method="post" action="/slot/{{ s.id }}/estado" class="barra">
+        <input type="hidden" name="proyecto_id" value="{{ p.id }}">
+        {% if s.status == 'activo' %}
+          <button class="declinar" name="accion" value="archivar">Archivar</button>
+        {% else %}
+          <button class="declinar" name="accion" value="desarchivar">Desarchivar</button>
+        {% endif %}
+        {# 🔴 Con confirmación, y diciendo qué se lleva por delante. Un slot
+           borrado se lleva SU NOTA, que es lo único del hub que no se
+           reconstruye escaneando —por eso `desinstalar.sh` no borra `HUB_HOME`
+           sin que lo pidas—. Era un submit normal: un clic y la nota no
+           volvía. Archivar existe justo para no tener que borrar. #}
+        <button name="accion" value="borrar" class="peligro"
+                data-borrar-slot="{{ s.nombre }}"
+                data-tiene-nota="{{ '1' if s.nota else '' }}">Borrar</button>
+      </form>
+    </div>
+  </div>
+
+  {% if s.nota %}<p style="margin:10px 0 0;white-space:pre-wrap">{{ s.nota }}</p>{% endif %}
+
+  <details style="margin-top:10px">
+    <summary>Editar</summary>
+    <form method="post" action="/slot/{{ s.id }}/editar">
+      <input type="hidden" name="proyecto_id" value="{{ p.id }}">
+      <label>Nombre</label>
+      <input type="text" name="nombre" value="{{ s.nombre }}" required>
+      <label>Ruta</label>
+      <input type="text" name="ruta" value="{{ s.ruta or '' }}">
+      <label>Nota</label>
+      <textarea name="nota">{{ s.nota }}</textarea>
+      <label>Comando al abrir (vacío = shell limpia)</label>
+      <input type="text" name="comando" value="{{ s.comando or '' }}">
+      <label>
+        <input type="checkbox" name="autostart_claude" value="1" style="width:auto"
+          {% if s.autostart_claude %}checked{% endif %}> arrancar <code>claude</code>
+      </label>
+      <label>Mover a otro proyecto (id, vacío = no mover)</label>
+      <input type="text" name="mover_a" placeholder="{{ p.id }}">
+      <p><button class="aceptar">Guardar</button></p>
+    </form>
+  </details>
+</div>
+{% else %}
+<p class="tenue">Sin slots todavía.</p>
+{% endfor %}
+
+<h2>Slot nuevo</h2>
+<div class="tarjeta">
+  <form method="post" action="/slot/nuevo">
+    <input type="hidden" name="proyecto_id" value="{{ p.id }}">
+    <label>Nombre</label>
+    <input type="text" name="nombre" placeholder="back, front, investigación…" required>
+    <label>Ruta</label>
+    <input type="text" name="ruta" value="{{ p.asiento or '' }}">
+    <label>Nota</label>
+    <textarea name="nota"></textarea>
+    <label>Comando al abrir (vacío = shell limpia)</label>
+    <input type="text" name="comando">
+    <p><button class="aceptar">Crear</button></p>
+  </form>
+</div>
+</section>
+
+  </div>
+</div>
+
+<script>
+// Navegación por secciones. El hash manda —así un enlace a #slots lleva ahí— y
+// si no hay, se recuerda la última mirada: los formularios de esta página hacen
+// POST y redirigen, y volver siempre a «Estado» perdía el sitio en cada acción.
+(() => {
+  const taller = document.getElementById('taller-proyecto');
+  const indice = document.getElementById('indice-proyecto');
+  if (!taller || !indice) return;
+
+  const enlaces = [...indice.querySelectorAll('a[data-sec]')];
+  const existe = (s) => document.getElementById(`sec-${s}`) && enlaces.some((a) => a.dataset.sec === s);
+  const CLAVE = 'hub:proyecto-seccion';
+
+  function mostrar(sec, recordar = true) {
+    if (!existe(sec)) sec = enlaces[0].dataset.sec;
+    for (const s of taller.querySelectorAll('.seccion')) {
+      s.classList.toggle('viendo', s.id === `sec-${sec}`);
+    }
+    for (const a of enlaces) a.classList.toggle('aqui', a.dataset.sec === sec);
+    if (recordar) { try { sessionStorage.setItem(CLAVE, sec); } catch (e) { /* modo privado */ } }
+  }
+
+  // Sólo ahora: hasta aquí la página se ve entera, así que un fallo de script
+  // deja una página larga y no una en blanco.
+  taller.classList.add('con-secciones');
+
+  let guardada = null;
+  try { guardada = sessionStorage.getItem(CLAVE); } catch (e) { /* modo privado */ }
+  mostrar(location.hash.slice(1) || guardada || enlaces[0].dataset.sec, false);
+
+  indice.addEventListener('click', (e) => {
+    const a = e.target.closest('a[data-sec]');
+    if (!a) return;
+    e.preventDefault();
+    // replaceState y no el hash directo: así el botón «atrás» sale del proyecto
+    // en vez de recorrer sus cinco secciones una a una.
+    history.replaceState(null, '', `#${a.dataset.sec}`);
+    mostrar(a.dataset.sec);
+  });
+
+  window.addEventListener('hashchange', () => mostrar(location.hash.slice(1)));
+})();
+</script>
+
+<script>
+document.addEventListener('click', async (e) => {
+  const boton = e.target.closest && e.target.closest('#sembrar-base');
+  if (!boton) return;
+
+  // El sistema propone, tú decides: el prompt llega prellenado pero editable.
+  const prompt = await HubUI.preguntar({
+    titulo: 'Crear la capa base de este proyecto',
+    etiqueta: 'Prompt inicial',
+    valor: boton.dataset.prompt,
+    multilinea: true,
+    aceptar: 'Lanzar',
+    cta: true,
+    nota: 'Abre una ventana de tmux con claude dentro del proyecto. El hub no escribe nada.',
+  });
+  if (!prompt) return;
+
+  boton.textContent = 'lanzando…';
+  const r = await fetch('/api/base/sembrar', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ proyecto_id: boton.dataset.proyecto, prompt }),
+  }).then((r) => r.json()).catch(() => ({ ok: false, error: 'sin conexión con el hub' }));
+
+  boton.textContent = 'Crear capa base';
+  if (!r.ok) {
+    return HubUI.avisar({
+      titulo: r.bloqueado ? 'Guardrail activo' : 'No se pudo lanzar',
+      mensaje: r.error || 'error desconocido',
+    });
+  }
+  location.href = `/trabajo?session=${encodeURIComponent(r.session)}&ventana=${r.ventana}`;
+});
+</script>
+
+<script>
+// Borrar un slot se lleva su nota, y la nota es lo único del hub que no se
+// reconstruye escaneando. Era un submit normal: un clic y no volvía.
+//
+// Se engancha por delegación en el documento y no botón a botón: los slots se
+// pintan en bucle, y un `querySelectorAll` al cargar se pierde cualquiera que
+// aparezca después.
+document.addEventListener('click', async (e) => {
+  const boton = e.target.closest ? e.target.closest('[data-borrar-slot]') : null;
+  if (!boton) return;
+  e.preventDefault();
+
+  const nota = boton.dataset.tieneNota
+    ? '\n\nSe borra también su NOTA, y eso no se puede deshacer: es lo único que no se reconstruye escaneando.'
+    : '';
+  const ok = await HubUI.confirmar({
+    titulo: `Borrar el slot «${boton.dataset.borrarSlot}»`,
+    mensaje: `${nota}\n\nSi sólo quieres quitarlo de en medio, «Archivar» lo conserva.`.trim(),
+    aceptar: 'Borrar el slot',
+    peligro: true,
+  });
+  if (!ok) return;
+
+  // El botón lleva `name`/`value`, así que se envía él mismo para que el
+  // servidor reciba `accion=borrar`: un `form.submit()` a secas los perdería.
+  boton.form.requestSubmit ? boton.form.requestSubmit(boton) : boton.form.submit();
+});
+</script>
+
+{% endblock %}

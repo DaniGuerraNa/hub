@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  /* El estado del puntero: lo único propio de esta pantalla. El resto —panel,
+     filas, insignias— viene del sistema. */
+  .puntero { display:flex; align-items:baseline; gap:10px; margin-top:7px; font-size:12.5px; }
+</style>
+
+{{ ui.cabecera_vista('Conexiones',
+    'Dónde despliega cada cosa y dónde vive su credencial — nunca la credencial.') }}
+
+<div class="aviso" style="border-left-color:var(--acento)">
+  {{ ui.placa('llave', '', 'lg') }}
+  <div style="flex:1;min-width:0">
+  <h2>El hub nunca guarda el secreto</h2>
+  <p class="tenue" style="margin:0">
+    Aquí sólo viven datos de conexión y un <strong style="color:var(--texto-2)">puntero</strong>
+    a dónde está la credencial —la config de ssh, un gestor de secretos, un <code>.env</code>.
+    Un índice de proyectos no es un almacén de credenciales: convertirlo en uno multiplica
+    el radio de daño de cualquier fallo. Lo único que se comprueba del puntero es si existe;
+    nunca se abre.
+  </p>
+  </div>
+</div>
+
+{% if error %}
+<div class="aviso" style="border-left-color:var(--alerta)">
+  {{ ui.placa('aviso', 'riesgo') }}
+  <div style="flex:1"><strong>No se añadió nada.</strong>
+    <div class="tenue">{{ error }}</div></div>
+</div>
+{% endif %}
+
+{# Antes esta pantalla sólo sabía decir «edita projects.yml»: era la única de las
+   siete en la que no se podía hacer nada. El YAML sigue mandando —esto escribe
+   en él y reindexa, no crea una segunda fuente de verdad— pero para seis campos
+   no hace falta abrir un editor.
+
+   Cerrado por defecto: lo que se hace a diario aquí es consultar. #}
+<details class="tarjeta" style="margin-bottom:18px" {{ 'open' if error or not cs }}>
+  <summary class="barra" style="cursor:pointer;gap:9px">
+    {{ ui.placa('mas', '', 'sm') }}<strong style="font-weight:550">Añadir una conexión</strong>
+  </summary>
+  <form method="post" action="/conexiones/nueva" style="margin-top:14px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:0 22px">
+      <div>
+        <label>Alias</label>
+        <input type="text" name="alias" required placeholder="vps-pruebas"
+               autocomplete="off">
+      </div>
+      <div>
+        <label>Host</label>
+        <input type="text" name="host" placeholder="10.0.0.4 o midominio.com" autocomplete="off">
+      </div>
+      <div>
+        <label>Usuario</label>
+        <input type="text" name="usuario" placeholder="deploy" autocomplete="off">
+      </div>
+      <div>
+        <label>Propósito</label>
+        <input type="text" name="proposito" placeholder="pruebas antes de producción" autocomplete="off">
+      </div>
+    </div>
+
+    <label>Referencia del secreto — un puntero, nunca la credencial</label>
+    <input type="text" name="referencia_secreto" autocomplete="off"
+           placeholder="~/.ssh/config#vps-pruebas  ·  ~/proyecto/.env  ·  op://boveda/item">
+    <p class="tenue" style="margin:6px 0 0;font-size:12.5px">
+      El hub sólo comprueba si eso existe; no lo abre nunca. Si escribes aquí una
+      contraseña, quedará en un archivo de texto plano — para eso no es.
+    </p>
+
+    <label>Proyectos que la usan</label>
+    <div class="barra" style="flex-wrap:wrap;gap:6px 16px">
+      {% for p in proyectos %}
+      <label style="display:inline-flex;align-items:center;gap:6px;margin:0;
+                    text-transform:none;letter-spacing:0;font-size:13.5px;color:var(--texto-2)">
+        <input type="checkbox" name="proyectos" value="{{ p.id }}" style="width:auto">
+        {{ p.nombre }}
+      </label>
+      {% endfor %}
+    </div>
+
+    <label>Nota</label>
+    <input type="text" name="nota" autocomplete="off"
+           placeholder="lo que haga falta recordar de este destino">
+
+    <div class="barra" style="margin-top:16px">
+      <button class="cta" type="submit">Añadir a projects.yml</button>
+      <span class="tenue" style="font-size:12.5px">
+        Se escribe en el archivo real, conservando lo que ya hay.
+      </span>
+    </div>
+  </form>
+</details>
+
+{% if not cs %}
+  <p class="tenue" style="max-width:62ch">
+    No hay ninguna conexión declarada todavía. Esto recupera la intención de
+    <code>commons</code>: poder decir «despliega en el vps de pruebas» sin tener
+    que recordar dónde estaban sus datos.
+  </p>
+{% endif %}
+
+{% if cs %}
+<h2 class="con-placa">{{ ui.placa('enlace') }}<span>Destinos</span>
+  <span class="apunte">{{ cs | length }}</span></h2>
+<div class="panel">
+{% for c in cs %}
+  <div class="fila">
+    {{ ui.placa('llave', 'ok' if c.puntero_ok == 1 else ('riesgo' if c.puntero_ok == 0 else 'espera')) }}
+    <span class="pila">
+      <span class="etiqueta">{{ c.alias }}</span>
+      <span class="barra" style="gap:12px;flex-wrap:wrap">
+        {% for pid in c.proyectos %}
+          <a href="/proyecto/{{ pid }}" class="insignia neutro">{{ pid }}</a>
+        {% endfor %}
+        {% if c.host %}<span class="mono dato" data-que="host">{{ c.usuario ~ '@' if c.usuario }}{{ c.host }}</span>{% endif %}
+      </span>
+      {% if c.proposito %}<span class="tenue">{{ c.proposito }}</span>{% endif %}
+      <span class="puntero">
+        {% if c.referencia_secreto %}
+          {% if c.puntero_ok == 1 %}<span class="insignia ok"><span class="glifo">✓</span>puntero ok</span>
+          {% elif c.puntero_ok == 0 %}<span class="insignia riesgo"><span class="glifo">▲</span>no existe</span>
+          {% else %}<span class="insignia espera"><span class="glifo">◐</span>no comprobable</span>{% endif %}
+          <span class="mono">{{ c.referencia_secreto }}</span>
+        {% else %}
+          <span class="insignia espera"><span class="glifo">▲</span>sin puntero</span>
+          <span class="tenue">no se sabe dónde vive la credencial</span>
+        {% endif %}
+      </span>
+      {% if c.nota %}<span class="tenue" style="font-size:13px">{{ c.nota }}</span>{% endif %}
+    </span>
+  </div>
+{% endfor %}
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,15 @@
+[Unit]
+Description=Hub — muestreo continuo del estado de tmux
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@RAIZ@
+Environment=HUB_HOME=@HUB_HOME@
+Environment=PATH=@PATH@
+ExecStart=@UV@ run python -m hub.snapshotter
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

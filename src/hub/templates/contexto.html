@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  #texto {
+    width:100%; min-height:62vh; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:12.5px; line-height:1.6; letter-spacing:0; white-space:pre; overflow-wrap:normal;
+    overflow-x:auto;
+  }
+</style>
+
+{{ ui.cabecera_vista('Contexto',
+    'Todo lo que el hub sabe ahora mismo, escrito para pegarlo al principio de una
+     sesión. No lo genera un modelo: reúne lo que ya está medido y lo que cada
+     proyecto ya declaró vigente, así que no cuesta tokens ni puede inventarse nada.') }}
+
+<div class="barra" style="margin-bottom:14px">
+  <button class="cta" id="copiar">Copiar</button>
+  <a class="boton declinar" href="/api/contexto?formato=md" target="_blank">Ver en crudo</a>
+</div>
+
+<textarea id="texto" readonly spellcheck="false">{{ markdown }}</textarea>
+
+<script>
+document.getElementById('copiar').addEventListener('click', async (e) => {
+  const boton = e.currentTarget;
+  const texto = document.getElementById('texto');
+
+  try {
+    await navigator.clipboard.writeText(texto.value);
+  } catch (err) {
+    // El portapapeles necesita contexto seguro y aquí se sirve por http en
+    // localhost: si el navegador lo bloquea, se selecciona para copiar a mano
+    // en vez de dejar un botón que no hace nada.
+    texto.focus();
+    texto.select();
+    return HubUI.avisar({
+      titulo: 'Copia manual',
+      mensaje: 'El navegador no dejó usar el portapapeles. El texto ya está seleccionado: Ctrl+C.',
+    });
+  }
+  boton.textContent = 'copiado';
+  setTimeout(() => { boton.textContent = 'Copiar'; }, 1500);
+});
+</script>
+
+{% endblock %}

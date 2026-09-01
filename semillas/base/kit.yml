@@ -1,0 +1,52 @@
+# La capa base — el kit obligatorio.
+#
+# Vive en el repo del hub y no en un repo aparte: es el kit que el gestor trae
+# consigo, como el JDK con Maven. Todo proyecto la lleva; los demás kits son
+# agregados opcionales (0..N).
+#
+# 🔴 Dos reglas que sostienen que esto siga siendo un CONTRATO y no un cajón:
+#
+#   1. Aquí sólo entra lo que necesitan TODOS los proyectos. Si algo podría
+#      cambiar, o sólo le sirve a algunos, va en un kit y no en la base.
+#   2. Añadir un campo sube `major` y obliga a migrar a todos los proyectos.
+#      Ese coste es el que mantiene la base pequeña.
+
+id: base
+nombre: Capa base
+version: "1.0"
+descripcion: >
+  Identidad del proyecto y punteros a lo que ya tiene. No crea documentos
+  nuevos: apunta a donde el estado ya vive, con el formato que ya usa.
+
+expone:
+  - id: proyecto#declarar-identidad
+    tipo: documento
+    ruta: contenido/project.yml
+  - id: proyecto#declarar-capacidades
+    tipo: documento
+    ruta: contenido/capabilities.yml
+
+aplica:
+  - origen: contenido/project.yml
+    destino: .claude/hub/project.yml
+    modo: copia                 # cada proyecto rellena el suyo: divergir es el objetivo
+    parametros: [id, nombre, estado_ref]
+
+  - origen: contenido/capabilities.yml
+    destino: .claude/hub/capabilities.yml
+    modo: copia
+    parametros: [id]
+
+  # El registro de kits del propio proyecto. Va en el kit base porque vive
+  # dentro de `.claude/hub/`, que es lo que la base crea: sin declararlo aquí, el
+  # primer `aplicar` no tendría dónde anotarse.
+  - origen: contenido/kits.yml
+    destino: .claude/hub/kits.yml
+    modo: copia
+    parametros: [id]
+
+mantenimiento:
+  notas: |
+    Antes de tocar esta base, mira cuántos proyectos la llevan: cambiarla los
+    obliga a todos. La pregunta no es «¿esto sería útil?» sino «¿esto lo
+    necesitan todos, para siempre?».

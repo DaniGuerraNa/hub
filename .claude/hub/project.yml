@@ -1,0 +1,25 @@
+# La identidad de este proyecto, para el hub.
+#
+# Vive en `.claude/hub/` porque todos los proyectos tienen `.claude/`
+# garantizado, los agentes lo encuentran por convención y no ensucia la raíz.
+#
+# Sembrado por la capa base v1.0.
+#
+# ── Por qué este archivo tiene una versión propia para el producto ───────────
+# El del repo de desarrollo apunta a `ESTADO.md`, que es su bitácora y no viaja
+# aquí. Publicarlo tal cual dejaba un puntero a un archivo inexistente — y el
+# producto acababa incumpliendo la regla que su propia skill enseña:
+# «no inventes un `estado_ref` que no existe».
+
+id: hub
+nombre: Hub
+base_version: "1.0"
+
+# PUNTERO, no un documento nuevo: apunta a donde el estado ya vive, con el
+# formato que ya usas. El mínimo exigible de ese documento son tres cosas, con
+# el nombre que quieras darles: en qué estado está, qué hacer al volver, y qué
+# está bloqueado.
+#
+# Aquí es el README porque un repo recién clonado no tiene bitácora todavía.
+# Cuando empieces a llevar la tuya, cambia esta línea.
+estado_ref: README.md

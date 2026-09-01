@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  /* Las cifras, el panel y las insignias vienen del sistema (`base.html`).
+     Aquí sólo queda lo propio de esta pantalla. */
+  .svc-estado { text-align:right; flex:none; min-width:150px; }
+  .svc-estado .apunte { display:block; font-size:11.5px; color:var(--texto-4); }
+</style>
+
+{% call ui.cabecera_vista('Servicios', 'De quién es cada contenedor, antes de parar ninguno.') %}
+  {{ ui.filtro_proyecto('/servicios', s.proyectos, proyecto) }}
+{% endcall %}
+
+<div class="cifras">
+  <div class="cifra">{{ ui.placa('pilas', 'neutro') }}
+    <b>{{ s.total }}</b><span>contenedores</span></div>
+  <div class="cifra">{{ ui.placa('punto', 'ok') }}
+    <b>{{ s.vivos }}</b><span>corriendo</span></div>
+  {% if s.sin_atribuir %}
+  <div class="cifra urge">{{ ui.placa('aviso', 'riesgo') }}
+    <b>{{ s.sin_atribuir | length }}</b><span>sin dueño</span></div>
+  {% endif %}
+</div>
+
+<div class="barra" style="margin-bottom:6px">
+  {# Reescanear pasa a secundario: se consulta a diario, se reescanea cuando has
+     levantado algo. Lo que ocupa el primer plano debe ser lo que se lee. #}
+  <form method="post" action="/servicios/escanear" class="enlinea">
+    <button class="sutil">Reescanear</button>
+  </form>
+  {% if s.medido_en %}<span class="tenue">Última lectura {{ s.medido_en[:19] | replace('T', ' ') }}</span>{% endif %}
+</div>
+
+<p class="tenue" style="margin:14px 0 0;max-width:70ch">
+  {# Esta frase la lee alguien que no es quien escribió el hub: no puede afirmar
+     cuántos proyectos hay en SU Docker ni citar por su nombre un repo privado.
+     El porqué, que es lo que vale, se cuenta igual sin ninguna de las dos. #}
+  En un mismo Docker suelen convivir contenedores de varios proyectos, y saber de
+  quién es cada uno es lo que evita el accidente clásico: un
+  <code>docker stop $(docker ps -q)</code> se los lleva todos por delante. Por eso
+  aquí se para <strong style="color:var(--texto-2)">de uno en uno</strong>, nunca
+  en lote.
+</p>
+
+{% if docker_mudo %}
+<div class="aviso espera">
+  {{ ui.placa('aviso', 'espera', 'lg') }}
+  <div style="flex:1;min-width:0">
+  <h2>Docker no contestó</h2>
+  <p class="tenue" style="margin:0">
+    Lo de abajo es la última lectura buena{% if s.medido_en %}, del
+    {{ s.medido_en[:19] | replace('T', ' ') }}{% endif %} — no se ha borrado.
+    Un cero se leería como «no tienes contenedores», y lo cierto es que no se pudo
+    preguntar. Comprueba que Docker Desktop esté corriendo.
+  </p>
+  </div>
+</div>
+{% elif not hay_docker %}
+  <p class="tenue">Docker no está instalado en este entorno.</p>
+{% elif not s.total %}
+  <p class="tenue">No hay contenedores, o todavía no se ha escaneado. Pulsa «Reescanear».</p>
+{% endif %}
+
+{% if s.sin_atribuir %}
+<div class="aviso espera">
+  {{ ui.placa('aviso', 'espera', 'lg') }}
+  <div style="flex:1;min-width:0">
+  <h2>{{ s.sin_atribuir | length }} contenedor(es) sin proyecto</h2>
+  <p class="tenue" style="margin:0">
+    Para atribuirlos, añade su prefijo de nombre al campo <code>contenedores:</code>
+    del proyecto en <code>projects.yml</code>. Lo que no tiene dueño es lo que lleva
+    meses parado sin que nadie sepa si se puede borrar.
+  </p>
+  </div>
+</div>
+{% endif %}
+
+{% if s.contenedores %}
+<h2 class="con-placa">{{ ui.placa('pilas') }}<span>Contenedores</span>
+  <span class="apunte">{{ s.vivos }} de {{ s.total }} corriendo</span></h2>
+<div class="panel">
+{% for c in s.contenedores %}
+  <div class="fila {{ 'apagada' if c.estado != 'running' }}">
+    {{ ui.placa('punto', 'ok' if c.estado == 'running' else 'neutro') }}
+    <span class="pila">
+      <span class="etiqueta">{{ c.contenedor }}</span>
+      <span class="barra" style="gap:14px;flex-wrap:wrap">
+        {% if c.proyecto_id %}
+          <a href="/proyecto/{{ c.proyecto_id }}" class="insignia neutro">{{ c.proyecto_nombre or c.proyecto_id }}</a>
+        {% else %}
+          <span class="insignia espera" title="Añade su prefijo al campo `contenedores:` del proyecto en projects.yml"><span class="glifo">▲</span>sin dueño</span>
+        {% endif %}
+        <span class="mono dato" data-que="imagen">{{ c.imagen }}</span>
+      </span>
+    </span>
+    <span class="der">
+      <span class="svc-estado">
+        {{ ui.estado('servicio', c.estado) }}
+        <span class="apunte">{{ c.detalle }}{% if c.estado != 'running' and c.ultima_vez_visto %}
+          · visto {{ c.ultima_vez_visto[:10] }}{% endif %}</span>
+      </span>
+      {% if c.estado == 'running' %}
+        <button class="sutil accion-svc" data-contenedor="{{ c.contenedor }}" data-accion="restart">Reiniciar</button>
+        <button class="peligro accion-svc" data-contenedor="{{ c.contenedor }}" data-accion="stop">Parar</button>
+      {% else %}
+        <button class="aceptar accion-svc" data-contenedor="{{ c.contenedor }}" data-accion="start">Arrancar</button>
+      {% endif %}
+    </span>
+  </div>
+{% endfor %}
+</div>
+{% endif %}
+
+<script>
+document.addEventListener('click', async (e) => {
+  const boton = e.target.closest && e.target.closest('.accion-svc');
+  if (!boton) return;
+
+  const { contenedor, accion } = boton.dataset;
+  const verbo = { start: 'arrancar', stop: 'parar', restart: 'reiniciar' }[accion] || accion;
+
+  // Parar mata lo que corra dentro, y aquí conviven proyectos distintos:
+  // siempre se confirma nombrando el contenedor exacto.
+  if (accion !== 'start') {
+    const ok = await HubUI.confirmar({
+      titulo: `¿${verbo[0].toUpperCase()}${verbo.slice(1)} ${contenedor}?`,
+      mensaje: accion === 'stop'
+        ? 'Se detiene sólo este contenedor. Lo que esté corriendo dentro se corta.'
+        : 'Se reinicia sólo este contenedor.',
+      aceptar: verbo,
+      peligro: true,
+    });
+    if (!ok) return;
+  }
+
+  const etiqueta = boton.textContent;
+  boton.textContent = '…';
+  const r = await fetch('/api/servicio/accion', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contenedor, accion }),
+  }).then((r) => r.json()).catch(() => ({ ok: false, error: 'sin conexión con el hub' }));
+
+  if (!r.ok) {
+    boton.textContent = etiqueta;
+    return HubUI.avisar({ titulo: 'No se pudo ' + verbo, mensaje: r.error || 'error desconocido' });
+  }
+  location.reload();
+});
+</script>
+
+{% endblock %}

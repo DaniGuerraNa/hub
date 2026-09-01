@@ -1,0 +1,31 @@
+# Qué kits usa este proyecto y qué escribió cada uno.
+#
+# Es el `pom.xml` del proyecto: vive dentro, versionado, y viaja con él. Si
+# alguien clona este repo en otra máquina, sabe qué kits lleva sin preguntarle a
+# nadie.
+#
+# Lo declarado va aquí; lo medido (hashes, deriva) lo calcula el hub escaneando
+# y no se guarda: su base es un índice reconstruible, no una fuente de verdad.
+#
+# `destinos` no es redundante: es lo que permite saber qué archivos sobran al
+# subir de versión o al quitar el kit. Sin esa lista, lo que ya no respalda nadie
+# se queda dentro del repo para siempre y la medición de deriva empieza a mentir.
+
+proyecto: @ID@
+
+kits:
+  - id: base
+    version: "1.0"
+    aplicado: @FECHA@
+    destinos:
+      - .claude/hub/project.yml
+      - .claude/hub/capabilities.yml
+      - .claude/hub/kits.yml
+
+  # - id: orquestacion
+  #   version: "1.2"
+  #   aplicado: 2026-09-01
+  #   parametros: {stack: python}       # los valores con los que se rellenó lo `copia`
+  #   destinos:
+  #     - docs/equipo/metodo.md
+  #     - .claude/skills/sesion-autonoma/SKILL.md

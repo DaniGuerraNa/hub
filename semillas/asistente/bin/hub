@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""Acceso al hub desde el asistente.
+
+Un script con subcomandos en vez de cuatro skills: menos ceremonia, y el
+catálogo del hub ya lo indexa como capacidad sin declarar nada.
+
+Todo pasa por la API del hub (`api.py` es la costura de lectura única), así que
+el asistente nunca lee la base ni escanea el disco por su cuenta.
+
+  hub estado                      el panorama entero, listo para leer
+  hub sesiones [proyecto] [días]  qué sesiones de Claude hubo y de qué iban
+  hub sesion <id> [--crudo]       el contenido de una: texto sí, ruido no
+             [--desde U] [--hasta U]   sólo un tramo, por uuid de mensaje
+  hub nota "<texto>" [--slot N]   deja una nota; sin --slot, donde estés
+  hub slot <proyecto> "<nombre>" [--ruta R]
+  hub nuevo-proyecto --id x --nombre "X" --ruta /abs/x
+                                  crea un proyecto vacío y lanza al agente que
+                                  lo monta; pregunta antes lo que falte
+
+🔴 Lo que este script NO hace, y no es un olvido: no borra nada, y no escribe en
+ningún proyecto del usuario. Sobre ellos es sólo lectura. Lo único que escribe es
+dentro del hub —notas y slots—, que es un trato explícito y no una limitación
+técnica que haya que rodear.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime, timedelta, timezone
+
+# El puerto sale del entorno, como en el resto del hub. Estaba cableado, y eso
+# convertía en trampa el consejo de `conocimiento/06-problemas.md`: quien
+# resolvía un puerto ocupado instalando en el 8788 se quedaba con el asistente
+# mudo, diciendo «el hub no responde» sin más explicación.
+HUB = "http://{}:{}".format(
+    os.environ.get("HUB_HOST", "127.0.0.1"), os.environ.get("HUB_PORT", "8787")
+)
+ESPERA = 20
+
+
+def traer(camino: str, cuerpo: dict | None = None) -> str:
+    url = f"{HUB}{camino}"
+    datos = json.dumps(cuerpo).encode() if cuerpo is not None else None
+    peticion = urllib.request.Request(
+        url, data=datos, headers={"Content-Type": "application/json"},
+        method="POST" if datos is not None else "GET",
+    )
+    try:
+        with urllib.request.urlopen(peticion, timeout=ESPERA) as r:
+            return r.read().decode()
+    except urllib.error.URLError as exc:
+        # 🔴 Antes esto decía «compruébalo con systemctl --user status hub-web»,
+        # y `Bash(systemctl:*)` está DENEGADO en el settings del asistente: era
+        # el único diagnóstico que se le ofrecía y el único que no podía correr.
+        # Desde el chat un `deny` ni siquiera abre cuadro de permisos.
+        salir(f"el hub no responde en {HUB}: {exc}\n"
+              "Díselo al usuario: puede que el servicio esté caído "
+              "(`systemctl --user status hub-web`) o que el hub escuche en otro "
+              "puerto (entonces hace falta HUB_PORT). Tú no puedes comprobarlo.")
+    except OSError as exc:
+        salir(f"no se pudo hablar con el hub: {exc}")
+    return ""  # inalcanzable: salir() levanta SystemExit
+
+
+def pedir(camino: str, cuerpo: dict | None = None):
+    crudo = traer(camino, cuerpo)
+    try:
+        return json.loads(crudo)
+    except ValueError:
+        salir(f"respuesta ilegible del hub en {camino}:\n{crudo[:200]}")
+
+
+def salir(mensaje: str) -> None:
+    print(mensaje, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def opcion(args: list[str], nombre: str) -> str | None:
+    """Saca `--nombre valor` de la lista y lo devuelve."""
+    if nombre not in args:
+        return None
+    i = args.index(nombre)
+    valor = args[i + 1] if i + 1 < len(args) else None
+    del args[i:i + 2]
+    return valor
+
+
+# ── Comandos ────────────────────────────────────────────────────────────────
+
+
+def cmd_estado(args):
+    """El contexto completo del hub en markdown.
+
+    No lo genera un modelo: reúne lo que ya está medido y lo que cada proyecto
+    declaró vigente. No cuesta tokens de generación y no puede inventarse nada.
+
+    Se sirve como texto plano, no como JSON: está escrito para leerse tal cual.
+    """
+    print(traer("/api/contexto?formato=md"))
+
+
+def cmd_sesiones(args):
+    proyecto = args[0] if args and not args[0].isdigit() else ""
+    dias = next((a for a in args if a.isdigit()), None)
+    consulta = {}
+    if proyecto:
+        consulta["proyecto"] = proyecto
+    if dias:
+        consulta["desde"] = (
+            datetime.now(timezone.utc) - timedelta(days=int(dias))
+        ).isoformat()
+
+    sesiones = pedir("/api/sesiones?" + urllib.parse.urlencode(consulta))["sesiones"]
+    if not sesiones:
+        print("Ninguna sesión con ese filtro.")
+        return
+    for s in sesiones:
+        duracion = f"{s['duracion_min'] // 60}h{s['duracion_min'] % 60:02d}" \
+            if s.get("duracion_min") else "?"
+        print(f"{s['id']}  {(s.get('inicio') or '')[:16]}  {duracion:>7}  "
+              f"{s.get('turnos', 0):>3} turnos  [{s.get('proyecto_id') or '—'}]  "
+              f"{s.get('titulo') or '(sin título)'}")
+
+
+def cmd_sesion(args):
+    if not args:
+        salir("hace falta el id de la sesión (sácalo de `hub sesiones`)")
+    desde = opcion(args, "--desde")
+    hasta = opcion(args, "--hasta")
+    crudo = "--crudo" in args
+    ident = [a for a in args if not a.startswith("--")][0]
+
+    # 🔴 `--crudo` sin tramo devuelve la sesión ENTERA con el `thinking` y la
+    # salida de las herramientas dentro. La API acepta un tramo desde el
+    # principio y el CLI no lo exponía, así que la herramienta que existe para
+    # no reventar el contexto podía reventarlo. Ahora se puede acotar.
+    consulta = {k: v for k, v in
+                (("crudo", "1" if crudo else ""), ("desde", desde), ("hasta", hasta))
+                if v}
+    datos = pedir(f"/api/sesion/{urllib.parse.quote(ident)}"
+                  + ("?" + urllib.parse.urlencode(consulta) if consulta else ""))
+    if not datos.get("ok"):
+        salir(datos.get("error", "no se pudo leer la sesión"))
+
+    if crudo:
+        print(json.dumps(datos["lineas"], ensure_ascii=False, indent=2))
+        return
+
+    for m in datos["mensajes"]:
+        quien = "TÚ" if m["rol"] == "user" else "CLAUDE"
+        print(f"\n── {quien}  {(m.get('ts') or '')[:19]}  [{m.get('uuid')}]")
+        if m["texto"]:
+            print(m["texto"])
+        for u in m.get("herramientas", []):
+            print(f"  {u}")
+
+
+def cmd_nota(args):
+    slot = opcion(args, "--slot")
+    if not args:
+        salir('hace falta el texto: hub nota "lo que sea"')
+    r = pedir("/api/nota", {"texto": " ".join(args),
+                            "slot_id": int(slot) if slot else None})
+    if r.get("ok"):
+        print(f"Anotada en «{r['slot']}» ({r['proyecto_id']}, slot {r['slot_id']}).")
+        return
+    if r.get("motivo") == "sin-slot" and r.get("sugerencia"):
+        c = r["sugerencia"]["crear_slot"]
+        print("Ese panel no tiene slot todavía. Se puede crear con:\n"
+              f'  hub slot {c["proyecto_id"]} "{c["nombre"]}" --ruta {c["ruta"]}')
+        return
+    salir(r.get("error") or f"no se pudo anotar ({r.get('motivo')})")
+
+
+def cmd_slot(args):
+    ruta = opcion(args, "--ruta")
+    if len(args) < 2:
+        salir('hace falta proyecto y nombre: hub slot mi-proyecto "respaldo"')
+    r = pedir("/api/slot", {"proyecto_id": args[0], "nombre": " ".join(args[1:]),
+                            "ruta": ruta})
+    if not r.get("ok"):
+        salir(r.get("error", "no se pudo crear"))
+    print(f"Slot {r['slot_id']} «{r['nombre']}» creado en {r['proyecto_id']}.")
+
+
+def cmd_nuevo_proyecto(args):
+    """Crea un proyecto en blanco y lanza al agente que lo rellena.
+
+    Tú NO escribes el proyecto: se lo pides al hub, que crea la carpeta vacía,
+    la acota con permisos y lanza un agente dentro. Ese agente sí escribe, sólo
+    ahí, y su ventana se ve en /trabajo.
+
+    Pregunta antes las tres cosas —nombre y para qué es, dónde va la carpeta, y
+    si es personal o laboral— y no inventes ninguna, sobre todo la ruta: si
+    apunta a una carpeta con contenido, el hub lo rechaza a propósito.
+    """
+    ident = opcion(args, "--id")
+    nombre = opcion(args, "--nombre")
+    ruta = opcion(args, "--ruta")
+    dominio = opcion(args, "--dominio") or "personal"
+    guardrail = opcion(args, "--guardrail") or "ask"
+    if not (ident and nombre and ruta):
+        salir('hace falta: hub nuevo-proyecto --id x --nombre "X" --ruta /abs/x'
+              ' [--dominio personal|laboral] [--guardrail auto|ask|never]')
+    r = pedir("/api/proyecto/nuevo", {
+        "id": ident, "nombre": nombre, "ruta": ruta,
+        "dominio": dominio, "guardrail": guardrail,
+    })
+    if not r.get("ok"):
+        salir(r.get("error", "no se pudo crear"))
+    print(f"Proyecto «{ident}» creado en {r['ruta']}.")
+    # 🔴 Con `guardrail: never` el hub crea el proyecto y NO lanza agente: eso es
+    # lo correcto, y lo dice devolviendo `agente: False` y un `aviso`, sin
+    # `session` ni `ventana`. Dar por hecho que están era un `KeyError` justo
+    # después de haber creado el proyecto de verdad: el usuario veía un
+    # traceback y tenía un proyecto que no sabía que existía.
+    #
+    # La API ya arregló ese caso; aquí se volvía a romper. Un reparto que se
+    # arregla en un lado y se rompe en el otro no está arreglado.
+    if not r.get("agente"):
+        print(r.get("aviso", "No se lanzó ningún agente."))
+        return
+    print(f"El agente ya está montándolo: sesión {r['session']}, ventana {r['ventana']}.")
+    print("Se ve en /trabajo. Sólo puede escribir dentro de esa carpeta.")
+
+
+COMANDOS = {
+    "estado": cmd_estado, "sesiones": cmd_sesiones, "sesion": cmd_sesion,
+    "nota": cmd_nota, "slot": cmd_slot, "nuevo-proyecto": cmd_nuevo_proyecto,
+}
+
+
+def main() -> None:
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help", "ayuda"):
+        print(__doc__.split("🔴")[0].strip())
+        return
+    accion = COMANDOS.get(args[0])
+    if not accion:
+        salir(f"no conozco «{args[0]}». Son: {', '.join(COMANDOS)}")
+    accion(args[1:])
+
+
+if __name__ == "__main__":
+    main()

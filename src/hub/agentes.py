@@ -1,0 +1,310 @@
+"""Lanzar agentes de Claude Code desde la UI.
+
+El hub no ejecuta el agente: abre una ventana de tmux donde corre `claude` con
+un prompt inicial. El trabajo sigue pasando donde siempre, y tú lo ves en la
+terminal embebida.
+
+Nunca se usa `send-keys` (decisión 22): inyectar teclas en una shell cuyo estado
+se desconoce ejecuta comandos reales con consecuencias reales.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import shlex
+import sqlite3
+import subprocess
+from pathlib import Path
+
+from . import api, config, registry, tmux
+
+# Un nombre de sesión de tmux no admite cualquier cosa; se deriva del id.
+_NO_VALIDO = re.compile(r"[^\w.\-]+")
+
+
+class GuardrailBloqueado(PermissionError):
+    """El proyecto declara `never`: no se lanza nada, aunque lo pida la UI."""
+
+
+def sesion_para(con: sqlite3.Connection, proyecto_id: str) -> str:
+    """Dónde abrir la ventana: donde ya vive ese proyecto, si es que vive."""
+    for panel in api.paneles_abiertos(con):
+        if panel["proyecto_id"] == proyecto_id:
+            return panel["session"]
+    return _NO_VALIDO.sub("-", proyecto_id) or "hub-agentes"
+
+
+def comando(prompt: str) -> str:
+    """`claude` con un prompt inicial. Sin `-p`: queremos sesión interactiva."""
+    return f"claude {shlex.quote(prompt)}"
+
+
+def lanzar(
+    con: sqlite3.Connection,
+    proyecto_id: str,
+    prompt: str,
+    nombre_ventana: str = "agente",
+    ruta: str | None = None,
+) -> dict:
+    """Abre la ventana y devuelve dónde quedó, para que la UI navegue allí."""
+    proyecto = api.obtener_proyecto(con, proyecto_id)
+    if not proyecto:
+        raise ValueError(f"proyecto desconocido: {proyecto_id}")
+
+    # `claude ''` abre una sesión con un argumento vacío en vez de fallar, así
+    # que la ventana se crearía y nadie sabría por qué el agente no hace nada.
+    if not prompt.strip():
+        raise ValueError("hace falta un prompt: sin él la ventana se abre sin encargo")
+
+    # `never` significa nunca, aunque la petición venga de la propia UI:
+    # primero se cambia el guardrail en projects.yml (regla dura 7).
+    if proyecto["guardrail"] == "never":
+        raise GuardrailBloqueado(
+            f"«{proyecto['nombre']}» tiene guardrail `never`. "
+            "Cámbialo en projects.yml si de verdad quieres lanzar agentes ahí."
+        )
+
+    destino = ruta or proyecto["asiento"]
+    if not destino:
+        raise ValueError(f"«{proyecto['nombre']}» no tiene asiento donde abrir la ventana")
+
+    session = sesion_para(con, proyecto_id)
+    # El PATH de usuario, o el agente arranca sin las herramientas del usuario:
+    # `hub-web` corre bajo systemd y su PATH no trae `~/.local/bin`.
+    entorno = {"PATH": tmux.path_de_usuario()}
+    if not tmux.existe_sesion(session):
+        tmux.nueva_sesion(session, destino, entorno=entorno)
+
+    indice = tmux.nueva_ventana(session, destino, nombre_ventana[:40], comando(prompt),
+                                entorno)
+    return {"session": session, "ventana": indice, "ruta": destino}
+
+
+# ─────────────────────── crear un proyecto desde el chat ───────────────────
+#
+# El reparto, y es lo que hace que esto sea seguro sin pedirle permisos al
+# asistente:
+#
+#   El hub   crea la carpeta VACÍA, la acota con permisos y da el alta en su
+#            propio registro. Nada de eso toca un repo ajeno.
+#   El agente rellena el proyecto, dentro de esa carpeta y sólo dentro.
+#
+# El asistente sigue siendo de sólo lectura: no escribe nada de esto. Pide, y el
+# hub lanza. Así los permisos no dependen de qué proyecto se esté hablando en
+# mitad de una conversación, que era lo que hacía frágil la otra vía.
+
+_ID_VALIDO = re.compile(r"[a-z0-9][a-z0-9-]*")
+
+
+class CarpetaOcupada(FileExistsError):
+    """La ruta ya tiene contenido: no es un proyecto en blanco."""
+
+
+def _acotar_permisos(destino: Path) -> None:
+    """Deja al agente escribir en su carpeta y en ninguna otra.
+
+    🔴 Tres cosas que se pagaron midiéndolas, y que parecen detalles:
+
+    1. `Edit(ruta)` y NO `Write(ruta)`. Las reglas de ruta sólo se evalúan para
+       `Edit`, que cubre todas las herramientas de edición; un `Write(ruta)` se
+       ignora y el agente acaba pidiendo permiso para todo.
+    2. La ruta absoluta necesita `//` delante. Sin la doble barra el patrón no
+       casa con nada y no avisa: parecería concedido y no lo estaría.
+    3. `hasTrustDialogAccepted`. Un workspace sin confiar **descarta el `allow`
+       entero**, así que sin esto el agente arrancaría sin ninguno de sus
+       permisos en una máquina recién instalada.
+    """
+    conf = destino / ".claude"
+    conf.mkdir(parents=True, exist_ok=True)
+    patron = "//" + str(destino).lstrip("/").rstrip("/") + "/**"
+
+    # 🔴 Y LEER las skills y semillas del hub. Salió probándolo de verdad: el
+    # agente arrancaba, leía «usa la skill nuevo-proyecto», no la encontraba
+    # —vive en el repo del hub y él corre en la carpeta nueva— y se ponía a
+    # rastrear `~/.claude/skills/` pidiendo permisos. El prompt mandaba usar
+    # algo que el agente no podía ver.
+    #
+    # Lectura y sólo lectura, y sólo de esas dos carpetas: es lo que necesita
+    # para seguir el procedimiento y aplicar la capa base.
+    hub = str(config.RAIZ_REPO).lstrip("/").rstrip("/")
+    (conf / "settings.json").write_text(
+        json.dumps(
+            {
+                "permissions": {
+                    "allow": [
+                        f"Edit({patron})",
+                        f"Read(//{hub}/.claude/skills/**)",
+                        f"Read(//{hub}/semillas/**)",
+                        # El gestor de kits, que sólo consulta: `listar` y
+                        # `ruta`. Sin esto el agente se queda pidiendo permiso
+                        # en mitad del procedimiento que se le acaba de mandar
+                        # seguir. Y poder LEERLO antes de ejecutarlo, que es lo
+                        # que hace por su cuenta y es buena costumbre.
+                        f"Bash(bash {config.RAIZ_REPO}/scripts/kit.sh:*)",
+                        f"Read(//{hub}/scripts/**)",
+                    ],
+                    # Y hasta aquí. La lista cubre el procedimiento entero; lo
+                    # que se salga de él se PREGUNTA, con el usuario mirando la
+                    # ventana. Perseguir cada permiso hasta que no pregunte
+                    # nunca sería confundir «no molesta» con «está acotado»: la
+                    # pregunta es la última señal de que algo se sale del guion.
+                    # Fuera de su carpeta no escribe. No está en `deny` a
+                    # propósito: si de verdad hace falta tocar algo de fuera,
+                    # que lo pregunte y lo apruebe un humano — `deny` ni
+                    # siquiera deja llegar la pregunta.
+                    "deny": [],
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _confiar(destino)
+
+
+def _confiar(destino: Path) -> None:
+    """Marca la carpeta como de confianza en `~/.claude.json`.
+
+    Sin esto Claude Code ignora las entradas de `allow` del proyecto —lo dice
+    por stderr y sigue— y el agente se queda pidiendo permiso para cada archivo
+    de su propia carpeta.
+    """
+    conf = Path.home() / ".claude.json"
+    try:
+        datos = json.loads(conf.read_text(encoding="utf-8")) if conf.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        # No poder marcar la confianza no impide crear el proyecto: el agente
+        # pedirá permiso y el usuario lo dará. Romper `~/.claude.json` sí sería
+        # grave, así que ante la duda no se toca.
+        return
+    proyectos = datos.setdefault("projects", {})
+    if not isinstance(proyectos, dict):
+        return
+    proyectos.setdefault(str(destino), {})["hasTrustDialogAccepted"] = True
+    tmp = conf.with_suffix(".json.hub-tmp")
+    try:
+        tmp.write_text(json.dumps(datos), encoding="utf-8")
+        tmp.replace(conf)   # atómico: nunca se queda a medias
+    except OSError:
+        tmp.unlink(missing_ok=True)
+
+
+def crear_proyecto(
+    con: sqlite3.Connection,
+    id_proyecto: str,
+    nombre: str,
+    ruta: str,
+    dominio: str = "personal",
+    guardrail: str = "ask",
+    estado_ref: str = "ESTADO.md",
+) -> dict:
+    """Crea la carpeta, la acota, da el alta y lanza al agente a rellenarla."""
+    id_proyecto = (id_proyecto or "").strip()
+    nombre = (nombre or "").strip()
+    if not _ID_VALIDO.fullmatch(id_proyecto):
+        raise ValueError(
+            f"«{id_proyecto}» no sirve como id: minúsculas, números y guiones."
+            " El id no se puede cambiar después."
+        )
+    if not nombre:
+        raise ValueError("hace falta un nombre.")
+    if dominio not in ("personal", "laboral"):
+        raise ValueError("el dominio es `personal` o `laboral`.")
+    if guardrail not in ("auto", "ask", "never"):
+        raise ValueError("el guardrail es `auto`, `ask` o `never`.")
+
+    destino = Path(ruta).expanduser()
+    if not destino.is_absolute():
+        raise ValueError(f"la ruta tiene que ser absoluta: «{ruta}»")
+
+    # 🔴 «Una carpeta en blanco no tiene nada que perder» es cierto — pero es una
+    # garantía que hay que COMPROBAR, no suponer. Una ruta mal escrita apuntando
+    # a algo que ya existe es justo el caso en que dar permisos amplios duele, y
+    # es el error más fácil de cometer dictando una ruta por chat.
+    if destino.exists() and any(destino.iterdir()):
+        raise CarpetaOcupada(
+            f"«{destino}» ya tiene contenido. Para eso está «anexa mi proyecto»,"
+            " que registra lo que ya existe sin tocarlo."
+        )
+
+    if api.obtener_proyecto(con, id_proyecto):
+        raise ValueError(f"ya hay un proyecto con el id «{id_proyecto}».")
+
+    destino.mkdir(parents=True, exist_ok=True)
+    # Con git desde el minuto uno: el hub mide commits sin respaldo, y un
+    # proyecto sin git es invisible para esa medición.
+    subprocess.run(["git", "init", "-b", "main"], cwd=destino,
+                   capture_output=True, check=False)
+    _acotar_permisos(destino)
+
+    # El alta la hace el hub: `projects.yml` es su registro. Si el agente tuviera
+    # que escribirlo, necesitaría permiso fuera de su carpeta.
+    registry.añadir_proyecto({
+        "id": id_proyecto, "nombre": nombre, "dominio": dominio,
+        "asiento": str(destino), "estado_ref": estado_ref,
+        "guardrail": guardrail, "status": "activo",
+    })
+    proyectos = registry.cargar()
+    registry.sincronizar(con, proyectos)
+
+    # 🔴 El guardrail se comprueba DESPUÉS de crear, y el fallo no se propaga.
+    # Salió probándolo: con `never` la llamada devolvía error mientras el
+    # proyecto quedaba creado y dado de alta — el usuario veía «bloqueado» y no
+    # se enteraba de que ya existía. Crear la identidad es legítimo con
+    # cualquier guardrail; lo que `never` prohíbe es poner a trabajar a un
+    # agente dentro. Así que se crea, no se lanza, y se DICE.
+    try:
+        lanzado = lanzar(
+            con, id_proyecto, _PROMPT_NUEVO.format(
+                nombre=nombre, id=id_proyecto, ruta=destino, estado_ref=estado_ref,
+            skill=config.RAIZ_REPO / '.claude' / 'skills' / 'nuevo-proyecto' / 'SKILL.md',
+            hub=config.RAIZ_REPO,
+            ),
+            nombre_ventana="nuevo-proyecto", ruta=str(destino),
+        )
+    except GuardrailBloqueado as exc:
+        return {
+            "id": id_proyecto, "ruta": str(destino), "agente": False,
+            "aviso": f"{exc} El proyecto está creado y registrado, pero vacío:"
+                     " tendrás que montarlo tú o cambiar el guardrail.",
+        }
+    return {"id": id_proyecto, "ruta": str(destino), "agente": True, **lanzado}
+
+
+# El encargo. No repite la skill `nuevo-proyecto`: la INVOCA, para que no haya
+# dos versiones del procedimiento que se separen con el tiempo. Y le dice qué
+# está hecho ya, o el agente volvería a preguntar lo que el usuario acaba de
+# contestar en el chat.
+_PROMPT_NUEVO = """\
+Lee y sigue este procedimiento para terminar de montar este proyecto:
+
+    {skill}
+
+Es la skill `nuevo-proyecto` del hub. No la tienes cargada como skill porque
+corres en la carpeta del proyecto y ella vive en la del hub: léela con Read, que
+para eso tienes permiso. No la copies aquí.
+
+El hub está en {hub}. Todo lo que necesitas de allí, con la ruta hecha — úsalas
+tal cual en vez de buscar, que es lo único que tienes permiso para tocar fuera:
+
+    bash {hub}/scripts/kit.sh listar        # qué kits hay y qué aporta cada uno
+    bash {hub}/scripts/kit.sh ruta base     # dónde está la semilla de la capa base
+
+Ya está hecho, NO lo repitas ni lo preguntes:
+- La carpeta existe y tiene `git init` (rama main): {ruta}
+- El alta en el registro del hub: id `{id}`, nombre «{nombre}», estado_ref `{estado_ref}`
+
+Te toca, dentro de ESTA carpeta y sólo dentro:
+1. Aplicar la capa base y rellenar sus marcadores.
+2. Crear `{estado_ref}` vacío pero con su forma: qué estado tiene, qué hacer al
+   volver, qué está bloqueado.
+3. Enseñar qué kits hay y qué aporta cada uno, y dejar elegir. No apliques
+   ninguno por tu cuenta.
+4. Un primer commit.
+
+Si algo te pide escribir fuera de esta carpeta, para y dilo: no tienes permiso ahí
+y es a propósito.
+"""

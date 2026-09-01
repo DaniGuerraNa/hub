@@ -1,0 +1,198 @@
+"""Que el hub se pueda instalar en una máquina que no es ésta.
+
+Aquí ya está todo instalado, y eso es justo lo que oculta lo que falta: probar el
+instalador en la máquina donde se escribió no demuestra nada. Estos tests atacan
+las tres formas concretas en que la instalación se rompía en otro sitio:
+
+1. el diagnóstico no distinguía «falta» de «está» — no existía;
+2. los units cableaban `%h/projects/hub` y `%h/.local/bin/uv`, así que un clon
+   en otra carpeta, o un `uv` en otro sitio, no arrancaba;
+3. el registro estaba dentro del repo, y actualizar pisaba los datos.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+RAIZ = Path(__file__).resolve().parents[1]
+DOCTOR = RAIZ / "scripts" / "doctor.sh"
+INSTALAR = RAIZ / "scripts" / "instalar.sh"
+
+
+# Ruta absoluta a propósito: uno de los tests vacía el PATH, y con `"bash"` a
+# secas ni siquiera se llegaría a lanzar el script.
+BASH = shutil.which("bash") or "/bin/bash"
+
+
+def _correr(guion: Path, entorno: dict | None = None, *args: str):
+    return subprocess.run(
+        [BASH, str(guion), *args],
+        capture_output=True, text=True, timeout=120,
+        env={**os.environ, **(entorno or {})},
+    )
+
+
+# ── el diagnóstico ───────────────────────────────────────────────────────────
+
+def test_el_doctor_pasa_en_una_maquina_preparada():
+    r = _correr(DOCTOR)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Todo lo imprescindible está" in r.stdout
+
+
+def test_el_doctor_se_ha_visto_fallar(tmp_path):
+    """Un verde que nadie ha visto en rojo no es evidencia.
+
+    Se le da un PATH donde no hay nada, que es lo más parecido a una máquina
+    recién instalada. Tiene que salir != 0 y **nombrar** lo que falta: un
+    diagnóstico que sólo dice «error» no ayuda a nadie.
+    """
+    vacio = tmp_path / "bin"
+    vacio.mkdir()
+    r = _correr(DOCTOR, {"PATH": str(vacio)})
+    assert r.returncode == 1
+    assert "FALTA" in r.stdout or "falta" in r.stdout.lower()
+    for imprescindible in ("git", "tmux", "uv"):
+        assert imprescindible in r.stdout
+
+
+def test_el_doctor_dice_la_consecuencia_y_no_solo_el_nombre():
+    """«Falta docker» no le dice nada a quien acaba de clonar."""
+    texto = DOCTOR.read_text(encoding="utf-8")
+    assert "queda vacía" in texto      # docker
+    assert "cae a grep" in texto       # ripgrep
+    assert "no hay asistente" in texto  # claude
+
+
+# ── los servicios ────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("nombre", ["hub-web", "hub-snapshotter"])
+def test_los_units_son_plantillas_sin_rutas_cableadas(nombre):
+    plantilla = RAIZ / "scripts" / f"{nombre}.service.plantilla"
+    texto = plantilla.read_text(encoding="utf-8")
+    assert "@RAIZ@" in texto and "@UV@" in texto
+    # `%h/projects/hub` era la suposición que rompía cualquier clon en otra
+    # carpeta, y no fallaba aquí porque aquí esa carpeta existe.
+    assert "%h/projects/hub" not in texto
+    assert "%h/.local/bin/uv" not in texto
+
+
+def test_el_unit_generado_lleva_las_rutas_reales(tmp_path):
+    """La sustitución del instalador, sin instalar nada: se aplica y se mira."""
+    plantilla = (RAIZ / "scripts" / "hub-web.service.plantilla").read_text(encoding="utf-8")
+    generado = (
+        plantilla.replace("@RAIZ@", "/opt/hub-de-otro")
+        .replace("@HUB_HOME@", "/opt/datos")
+        .replace("@UV@", "/usr/local/bin/uv")
+        .replace("@PATH@", "/usr/bin")
+        .replace("@HOST@", "127.0.0.1")
+        .replace("@PUERTO@", "9999")
+    )
+    assert "WorkingDirectory=/opt/hub-de-otro" in generado
+    assert "/usr/local/bin/uv run uvicorn" in generado
+    assert "--port 9999" in generado
+    assert "@" not in re.sub(r"[\w.-]+@[\w.-]+", "", generado.replace("@RAIZ@", ""))
+
+
+# ── el registro ──────────────────────────────────────────────────────────────
+
+def test_el_instalador_no_pisa_un_registro_existente():
+    """Lo dice el código, y es la línea que protege los datos de quien actualiza."""
+    texto = INSTALAR.read_text(encoding="utf-8")
+    assert 'if [ -f "$HUB_HOME/projects.yml" ]' in texto
+    assert "no se toca" in texto
+
+
+def test_el_instalador_verifica_que_el_hub_contesta():
+    """Arrancar no es funcionar: el instalador espera un 200, no un exit 0."""
+    texto = INSTALAR.read_text(encoding="utf-8")
+    assert "%{http_code}" in texto
+    assert "/inventario" in texto and "/respaldo" in texto
+
+
+def test_la_semilla_del_asistente_esta_completa():
+    """Sin esto, el asistente sólo existía en un disco y no en ningún repo."""
+    semilla = RAIZ / "semillas" / "asistente"
+    for relativa in ("CLAUDE.md", "bin/hub", "bin/contexto-statusline.sh",
+                     ".claude/settings.json"):
+        assert (semilla / relativa).is_file(), relativa
+    ajustes = (semilla / ".claude" / "settings.json").read_text(encoding="utf-8")
+    # La ruta de la statusline se resuelve al sembrar: Claude Code no expande
+    # `~` ni variables en ese campo.
+    assert "@ASIENTO@" in ajustes
+    assert '"deny"' in ajustes and '"Write"' in ajustes
+
+
+def test_el_instalador_y_el_doctor_son_ejecutables():
+    for guion in (DOCTOR, INSTALAR, RAIZ / "scripts" / "desinstalar.sh",
+                  RAIZ / "scripts" / "sembrar-asistente.sh"):
+        assert guion.is_file(), guion
+        assert shutil.which("bash")
+        r = subprocess.run(["bash", "-n", str(guion)], capture_output=True, text=True)
+        assert r.returncode == 0, f"{guion.name}: {r.stderr}"
+
+
+# ── lo que ve un hub recién instalado ────────────────────────────────────────
+
+@pytest.fixture
+def hub_vacio(tmp_path, monkeypatch):
+    """Un hub sin un solo proyecto: exactamente lo que encuentra quien instala.
+
+    Devuelve el cliente y una función para escribir en su misma base, porque dos
+    de estos tests necesitan declarar algo y volver a mirar la página.
+    """
+    from fastapi.testclient import TestClient
+
+    from hub import db, web
+
+    ruta = tmp_path / "hub.db"
+    db.inicializar(db.conectar(ruta))  # existe desde ya: el cliente no la crea hasta la 1ª petición
+
+    def conexion_de_pruebas():
+        con = db.conectar(ruta)
+        db.inicializar(con)
+        return con
+
+    monkeypatch.setattr(web, "conexion", conexion_de_pruebas)
+    return TestClient(web.app), conexion_de_pruebas
+
+
+def test_el_hub_vacio_guia_en_vez_de_ensenar_pantallas_en_blanco(hub_vacio):
+    cliente, _ = hub_vacio
+    html = cliente.get("/").text
+    assert "primer-arranque" in html
+    assert "todavía no sabe nada tuyo" in html
+
+
+def test_sin_asistente_declarado_no_se_pinta_su_pestana(hub_vacio):
+    """La pestaña salía siempre, y el error aparecía al pulsarla."""
+    cliente, _ = hub_vacio
+    assert 'id="asistente-pestana"' not in cliente.get("/").text
+
+
+def test_con_asistente_declarado_si_se_pinta(hub_vacio):
+    cliente, conectar = hub_vacio
+    con = conectar()
+    con.execute(
+        "INSERT INTO proyecto (id, nombre, tipo, asiento)"
+        " VALUES ('asistente','Asistente','asistente','/tmp/asistente')"
+    )
+    con.commit()
+    con.close()
+    assert 'id="asistente-pestana"' in cliente.get("/").text
+
+
+def test_la_guia_desaparece_en_cuanto_hay_un_proyecto(hub_vacio):
+    """Se va sola al quedar superada por los hechos, sin tener que descartarla."""
+    cliente, conectar = hub_vacio
+    con = conectar()
+    con.execute("INSERT INTO proyecto (id, nombre) VALUES ('mio','Mío')")
+    con.commit()
+    con.close()
+    assert "primer-arranque" not in cliente.get("/").text
