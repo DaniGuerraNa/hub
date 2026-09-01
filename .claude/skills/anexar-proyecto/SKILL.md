@@ -75,6 +75,49 @@ propia, para que el proyecto se describa a sí mismo aunque el registro se pierd
 **Pregunta antes de escribir dentro de su repo.** Es su proyecto; el hub sólo
 propone.
 
+#### 🔴 Si NO puede modificar el repo
+
+Pasa más de lo que parece: repos de otro equipo, con revisión obligatoria, o
+simplemente que no le toca reorganizar. **Si te lo dice, no insistas ni busques
+la forma de colar los tres archivos** — hay una salida pensada para esto, y es la
+que tienes que ofrecerle.
+
+Se llama **asiento de orquestación**: una carpeta **nueva y aparte**, que pasa a
+ser el `asiento` del proyecto, y el repo intocable se declara en `rutas`.
+
+```yaml
+  - id: plataforma
+    nombre: Plataforma
+    asiento: ~/proyectos/plataforma-main     # NUEVA, vacía, la creas tú
+    rutas:
+      - ruta: /ruta/al/repo-que-no-se-toca   # se mide, no se toca
+      - ruta: /ruta/a/otro-repo-suyo
+```
+
+Con eso:
+
+- La capa base, los kits y el documento de estado van **en el asiento**. El hub
+  siembra ahí porque `prompt_sembrar` usa el `asiento`.
+- Los repos declarados se siguen midiendo enteros —ramas, commits sin respaldar,
+  worktrees, cambios sin commitear— sin que nadie escriba una línea en ellos.
+- Si el proyecto YA estaba anexado apuntando al repo, esto es **mover una línea**
+  en `projects.yml`: el repo baja de `asiento` a `rutas`, y arriba va la carpeta
+  nueva. El `id` no se toca — los slots y las notas cuelgan de él.
+
+Dos cosas que comprobar antes de darlo por hecho:
+
+1. **La carpeta del asiento tiene que existir** y conviene que tenga `git init`:
+   el hub mide commits sin respaldo, y una carpeta sin git es invisible para esa
+   medición.
+2. **Lo que declares en `rutas` tiene que existir de verdad.** Lo que se declara
+   se mide, y medir una carpeta que no está no da error: da un cero, y un cero en
+   «commits sin respaldo» se lee como «todo a salvo».
+
+Para un proyecto que empieza de cero, esto mismo está en la portada: **«Proyecto
+nuevo»**, con los repos en «Repos que ya existen». Ahí el hub además acota el
+permiso del agente al asiento, así que los repos declarados quedan fuera de lo
+que puede escribir.
+
 ### 5. Comprueba que el hub lo ve
 
 ```bash

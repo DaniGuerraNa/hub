@@ -128,6 +128,20 @@
       </span>
     {% endif %}
   </div>
+  {# 🔴 La salida para quien NO puede escribir en su propio repo —de otro equipo,
+     con revisión obligatoria, o que no le toca reorganizar—. Sin esto, la única
+     acción ofrecida era sembrar DENTRO del repo, y quien no podía se quedaba sin
+     alternativa a la vista: pasó al instalarlo otra persona. Se dice sólo cuando
+     falta la capa base, que es cuando la pregunta aparece. #}
+  {% if not capa.presente %}
+  <p class="tenue" style="margin:8px 0 0;font-size:13px">
+    ¿No puedes escribir en este repo? Entonces la capa base no va dentro: crea una
+    carpeta nueva aparte, ponla como <code>asiento</code> en
+    <code>projects.yml</code> y baja este repo a <code>rutas</code>. Se sigue
+    midiendo entero y nadie lo toca. Claude Code lo hace si le dices
+    <em>«no puedo modificar este repo»</em>.
+  </p>
+  {% endif %}
 </div>
 </section>
 
