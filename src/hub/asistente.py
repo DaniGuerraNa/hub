@@ -25,6 +25,7 @@ excepción es **acotada a este panel**; nunca se extiende a uno de trabajo.
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import time
 from pathlib import Path
@@ -597,20 +598,50 @@ def es_interno(texto: str) -> bool:
     return texto.lstrip().startswith(PREFIJO_INTERNO)
 
 
+# 🔴 Rastro que deja un comando de barra en el transcript, y que el chat pintaba.
+#
+# Al ejecutar `/clear` o `/compact`, Claude Code escribe en el `.jsonl` mensajes
+# de **rol `user`** con los metadatos del comando: el aviso de que lo de abajo
+# viene de un comando local, y el nombre del comando con sus argumentos. No los
+# escribió nadie y no significan nada para quien mira el chat.
+#
+# Se veía justo donde peor sienta: limpiar dejaba una conversación que decía
+# «vacía» y enseñaba dos bloques de XML, así que parecía que `/clear` había
+# fallado. Y había funcionado — la sesión era nueva.
+_META_DE_COMANDO = re.compile(
+    r"^\s*<(local-command-caveat|local-command-stdout|command-name"
+    r"|command-message|command-args)\b"
+)
+
+
+def es_meta_de_comando(texto: str) -> bool:
+    return bool(_META_DE_COMANDO.match(texto or ""))
+
+
 def ocultar_internos(mensajes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Quita del chat los mensajes que el hub se manda a sí mismo y sus respuestas.
+    """Quita del chat lo que no escribió nadie: lo que el hub se manda a sí mismo
+    —con su respuesta— y el rastro que dejan los comandos de barra.
 
     Se marca por prefijo en el texto y no por una clave guardada porque el uuid
     lo asigna Claude Code, no el hub: no hay nada limpio que correlacionar. Es
     frágil a propósito, y su peor fallo es **cosmético** —aparece un mensaje que
     debía estar oculto—, nunca pérdida de datos. Si llega a molestar, la
     alternativa es una tabla que correlacione por texto y timestamp.
+
+    🔴 El rastro de un comando NO activa `saltar_respuesta`, y la diferencia
+    importa: a un mensaje interno le sigue una respuesta del asistente que
+    tampoco debe verse, pero a un `/clear` no le contesta nadie. Tratarlos igual
+    se comería el primer mensaje real de la conversación siguiente — y eso ya no
+    sería cosmético.
     """
     visibles: list[dict[str, Any]] = []
     saltar_respuesta = False
     for mensaje in mensajes:
         if mensaje.get("rol") == "user":
-            if es_interno(mensaje.get("texto") or ""):
+            texto = mensaje.get("texto") or ""
+            if es_meta_de_comando(texto):
+                continue
+            if es_interno(texto):
                 saltar_respuesta = True
                 continue
             saltar_respuesta = False
