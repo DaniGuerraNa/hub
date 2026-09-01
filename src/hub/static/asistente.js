@@ -124,14 +124,27 @@
     try {
       const url = ultimo ? `/api/asistente?desde=${encodeURIComponent(ultimo)}` : '/api/asistente';
       const r = await fetch(url);
-      const datos = (r && r.ok && await r.json()) || {};
+      // Un 500 daba `datos = {}`, que abajo es indistinguible de «no hay nada
+      // que contar». Se convierte en error para que lo recoja el catch y se
+      // pueda DECIR, en vez de quedarse callado con cara de estar cargando.
+      if (!r || !r.ok) throw new Error(`el hub respondió ${r ? r.status : 'nada'}`);
+      const datos = await r.json();
       pintarLuz(datos);
       pintarContexto(datos.contexto);
       pintarConfirmacion(datos.confirmacion);
 
       const mensajes = datos.mensajes || [];
-      const vacio = document.getElementById('asistente-vacio');
-      if (vacio && (mensajes.length || datos.abierto)) { hilo.innerHTML = ''; }
+      // 🔴 El marcador se retira en cuanto LLEGA una respuesta, tenga mensajes o
+      // no. Antes se pedía además `mensajes.length || datos.abierto`, y con las
+      // dos cosas falsas —el asistente declarado pero nunca arrancado, que es el
+      // estado de cualquiera recién instalado— no se limpiaba; y como el hilo no
+      // quedaba vacío, el `else` de abajo tampoco entraba. El panel se quedaba
+      // en «Cargando…» para siempre, justo cuando lo que había que leer era «no
+      // está abierto, escribe y se arranca solo».
+      //
+      // Vaciar aquí no puede llevarse ningún mensaje por delante: el marcador
+      // sólo existe mientras no se haya pintado ninguno.
+      if (document.getElementById('asistente-vacio')) { hilo.innerHTML = ''; }
       pintar(mensajes, false);
       if (!hilo.innerHTML) {
         hilo.innerHTML = `<p id="asistente-vacio">${datos.abierto
@@ -140,7 +153,14 @@
       }
     } catch (e) {
       // Un sondeo fallido no puede romper la página: el hub puede estar
-      // reiniciándose y la pestaña tiene que seguir ahí cuando vuelva.
+      // reiniciándose y la pestaña tiene que seguir ahí cuando vuelva. Pero
+      // callarse del todo es lo que producía el «Cargando…» eterno, así que se
+      // dice — y sólo si no hay conversación pintada, que no se borra por un
+      // sondeo perdido. El siguiente ciclo lo sustituye solo.
+      if (document.getElementById('asistente-vacio')) {
+        hilo.innerHTML = '<p id="asistente-vacio">No se pudo hablar con el hub.'
+          + ' Se reintenta solo.</p>';
+      }
     } finally {
       enCurso = false;
     }

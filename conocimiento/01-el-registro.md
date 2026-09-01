@@ -54,6 +54,31 @@ parecer respaldado sin estarlo.
 
 El asiento no hace falta repetirlo: ya cuenta como ruta.
 
+### Repos que no puedes modificar
+
+Es el mismo patrón, y resuelve un caso concreto: repos de otro equipo, o sin una
+estructura común, o que simplemente no te toca reorganizar. En vez de meter la
+estructura del hub dentro de cada uno, **creas una carpeta nueva como asiento** y
+declaras los repos como rutas.
+
+Desde la interfaz: **«Proyecto nuevo»** en la portada, y en «Repos que ya
+existen» pones uno por línea. El hub crea el asiento vacío y declara los demás.
+
+Lo que queda entonces:
+
+| Dónde | Qué pasa ahí |
+|---|---|
+| **El asiento** | La capa base, los kits y el documento de estado. Es lo único que se escribe |
+| **Los repos declarados** | Se **miden** —ramas, commits sin respaldar, worktrees, cambios sin commitear— y no se toca nada |
+
+🔴 Lo que hace que esto sea una garantía y no una promesa: el permiso del agente
+se acota **a la carpeta del asiento**, así que los repos declarados quedan fuera
+de lo que puede escribir. No es que se le pida que no los toque; es que no puede.
+
+Y al revés: **lo que se declara se mide, así que tiene que existir**. Una ruta
+mal escrita no da error, da un cero — y un cero en «commits sin respaldo» se lee
+como «todo a salvo». Por eso el hub rechaza declarar una carpeta que no está.
+
 ## `estado_ref` — el puntero al estado
 
 Apunta al documento que **ya tienes** y que dice en qué punto está el proyecto.

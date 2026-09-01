@@ -315,9 +315,16 @@ document.addEventListener('click', async (e) => {
       { nombre: 'id', etiqueta: 'Identificador', requerido: true,
         marca: 'mi-proyecto', patron: '[a-z0-9][a-z0-9-]*',
         pista: 'Minúsculas, números y guiones. 🔴 No se puede cambiar después: los slots y las notas cuelgan de él.' },
-      { nombre: 'ruta', etiqueta: 'Carpeta', requerido: true,
+      { nombre: 'ruta', etiqueta: 'Carpeta del proyecto', requerido: true,
         marca: '~/dev/mi-proyecto',
         pista: 'Absoluta, y vacía o inexistente. Si ya tiene contenido, lo que buscas es «anexa mi proyecto».' },
+      // El caso de quien tiene repos que NO puede tocar —de otro equipo, o con
+      // sus propias reglas—: la carpeta de arriba pasa a ser sólo el asiento
+      // desde el que se orquesta, y estos se declaran para medirlos. El permiso
+      // del agente se acota al asiento, así que quedan medibles y no escribibles.
+      { nombre: 'rutas', etiqueta: 'Repos que ya existen (opcional)', multilinea: true,
+        marca: '/ruta/al/repo-uno\n/ruta/al/repo-dos',
+        pista: 'Una por línea, absolutas. Si el código vive fuera, decláralo aquí: la carpeta de arriba queda como asiento desde el que orquestas, y estos repos se miden pero NO se tocan. Lo que no se declara, no se mide.' },
       { nombre: 'dominio', etiqueta: 'Dominio', valor: 'personal',
         opciones: [['personal', 'Personal'], ['laboral', 'Laboral']] },
       { nombre: 'guardrail', etiqueta: 'Permiso para el agente', valor: 'ask',

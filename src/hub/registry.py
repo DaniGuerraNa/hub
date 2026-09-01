@@ -385,6 +385,22 @@ def añadir_proyecto(datos: dict, ruta: Path | None = None) -> None:
     limpio = {k: str(datos.get(k) or "").strip() for k in campos}
     limpio = {k: v for k, v in limpio.items() if v}
     limpio["id"] = id_
+
+    # `rutas` va aparte porque es una LISTA y no un escalar, y porque su forma
+    # —`- ruta: …`— es la que lee `cargar()`. Sin esto, un proyecto cuyo código
+    # vive fuera del asiento sólo se podía declarar editando el YAML a mano: el
+    # caso de quien orquesta desde una carpeta y tiene los repos en otras, que
+    # es exactamente el que no puede tocar esos repos.
+    rutas = datos.get("rutas") or []
+    if isinstance(rutas, str):
+        raise YamlInvalido(
+            f"Las `rutas` de «{id_}» son una lista, aunque sólo haya una:\n\n"
+            f"    rutas:\n      - ruta: {rutas}"
+        )
+    limpias = [str(r).strip() for r in rutas if str(r).strip()]
+    if limpias:
+        limpio["rutas"] = [{"ruta": r} for r in limpias]
+
     _insertar(ruta, "proyectos", limpio, "id", id_,
               duplicado=f"Ya hay un proyecto con el id «{id_}».")
 

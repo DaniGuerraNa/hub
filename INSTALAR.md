@@ -59,6 +59,11 @@ tres caminos, según lo que tengas:
 
 - **Empezar algo nuevo** → botón **«Proyecto nuevo»** en la portada. Crea la
   carpeta vacía, la da de alta y lanza un agente que la monta contigo delante.
+- **Tienes repos que no puedes tocar** —de otro equipo, o sin estructura común—
+  → el mismo botón, poniendo esos repos en «Repos que ya existen». La carpeta
+  que creas queda como **asiento** desde el que orquestas: ahí va la capa base,
+  los kits y el estado. Los repos declarados se miden y no se tocan, porque el
+  permiso del agente se acota al asiento.
 - **Registrar algo que ya existe** → abre Claude Code en la carpeta del hub y
   dile **«anexa mi proyecto»**. La skill `anexar-proyecto` lo registra y detecta
   cuál de tus documentos lleva el estado, sin crear uno nuevo. No es un botón

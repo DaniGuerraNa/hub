@@ -602,6 +602,11 @@ async def api_proyecto_nuevo(request: Request):
             cuerpo.get("dominio") or "personal",
             cuerpo.get("guardrail") or "ask",
             cuerpo.get("estado_ref") or "ESTADO.md",
+            # Una por línea desde el formulario. Se parte aquí y no en el JS
+            # porque el mismo endpoint lo usa el CLI del asistente, y dos sitios
+            # partiendo la misma cadena acaban partiéndola distinto.
+            rutas=[r for r in str(cuerpo.get("rutas") or "").splitlines() if r.strip()]
+            if isinstance(cuerpo.get("rutas"), str) else (cuerpo.get("rutas") or []),
         )
         return {"ok": True, **hecho}
     except agentes.CarpetaOcupada as exc:

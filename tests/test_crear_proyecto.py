@@ -225,3 +225,100 @@ def test_el_prompt_va_citado(con, escena, tmp_path):
     import shlex
     partes = shlex.split(comando)
     assert partes[0] == "claude" and len(partes) == 2
+
+
+# --------------------------------------------------------------------------- #
+# El asiento de orquestación: código que vive fuera y no se toca
+# --------------------------------------------------------------------------- #
+#
+# 🔴 El caso que lo pidió: repos de otro equipo, sin estructura común y que no se
+# pueden modificar. La carpeta creada es sólo el ASIENTO —ahí va la capa base, los
+# kits y el documento de estado—, y los repos se declaran para medirlos.
+#
+# Lo que hace que sea seguro no es la buena voluntad del agente: es que el
+# permiso se acota a la carpeta creada, así que lo declarado queda fuera. Estos
+# tests comprueban las dos mitades — que se declare, y que siga fuera del
+# permiso.
+
+
+def test_declara_los_repos_que_ya_existen_sin_tocarlos(con, escena, tmp_path):
+    uno, dos = tmp_path / "repo-uno", tmp_path / "repo-dos"
+    for r in (uno, dos):
+        r.mkdir()
+        (r / "codigo.py").write_text("de otro equipo", encoding="utf-8")
+
+    agentes.crear_proyecto(con, "orq", "Orquestación", str(tmp_path / "asiento"),
+                           rutas=[str(uno), str(dos)])
+
+    declarado = escena["registro"].read_text(encoding="utf-8")
+    assert "rutas:" in declarado and str(uno) in declarado and str(dos) in declarado
+    # Y siguen exactamente como estaban: el hub declara, no mueve.
+    assert (uno / "codigo.py").read_text(encoding="utf-8") == "de otro equipo"
+    assert not (uno / ".claude").exists(), "la estructura va en el asiento, no aquí"
+
+
+def test_los_repos_declarados_quedan_fuera_del_permiso_del_agente(con, escena, tmp_path):
+    """La garantía de verdad. Si el `allow` los incluyera, «no los toca» sería
+    una recomendación en un prompt y no una barrera."""
+    repo = tmp_path / "ajeno"
+    repo.mkdir()
+    asiento = tmp_path / "asiento"
+    agentes.crear_proyecto(con, "orq", "Orq", str(asiento), rutas=[str(repo)])
+
+    conf = json.loads((asiento / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    permisos = json.dumps(conf)
+    assert str(asiento) in permisos
+    assert str(repo) not in permisos
+
+
+def test_el_prompt_le_dice_que_esos_repos_no_se_tocan(con, escena, tmp_path):
+    """Acotar el permiso impide el destrozo; decírselo impide la PROPUESTA. Un
+    agente que ve un proyecto vacío cuyo código está en otra parte tiende a
+    ofrecer moverlo o clonarlo, y eso ya es ruido para quien no puede."""
+    repo = tmp_path / "ajeno"
+    repo.mkdir()
+    agentes.crear_proyecto(con, "orq", "Orq", str(tmp_path / "a"), rutas=[str(repo)])
+
+    comando = next(l["comando"] for l in escena["lanzados"] if l.get("comando"))
+    seguido = " ".join(comando.split())
+    assert str(repo) in seguido
+    assert "SÓLO LECTURA" in seguido
+    assert "no los clones aquí" in seguido
+
+
+def test_sin_repos_declarados_el_prompt_no_cambia(con, escena, tmp_path):
+    """Control negativo: el párrafo aparece sólo cuando hay algo que decir. Si
+    saliera siempre, un proyecto normal recibiría instrucciones sobre repos que
+    no existen."""
+    agentes.crear_proyecto(con, "normal", "Normal", str(tmp_path / "n"))
+    comando = next(l["comando"] for l in escena["lanzados"] if l.get("comando"))
+    assert "SÓLO LECTURA" not in comando
+
+
+def test_una_ruta_declarada_que_no_existe_se_rechaza(con, escena, tmp_path):
+    """🔴 Lo que se declara se mide, y medir una carpeta que no está no da error:
+    da un cero. Un cero en «commits sin respaldo» se lee como «todo a salvo», que
+    es justo la tranquilidad falsa que el hub existe para evitar."""
+    with pytest.raises(ValueError, match="no existe"):
+        agentes.crear_proyecto(con, "orq", "Orq", str(tmp_path / "a"),
+                               rutas=[str(tmp_path / "fantasma")])
+    assert not escena["lanzados"]
+
+
+def test_una_ruta_declarada_relativa_se_rechaza(con, escena, tmp_path):
+    with pytest.raises(ValueError, match="absoluta"):
+        agentes.crear_proyecto(con, "orq", "Orq", str(tmp_path / "a"),
+                               rutas=["../otro-repo"])
+
+
+def test_el_registro_declarado_se_relee_con_sus_rutas(con, escena, tmp_path):
+    """De ida y vuelta: no basta con escribir el YAML, tiene que volver a
+    cargarse. La forma de `rutas` es `- ruta: …`, y escribirla plana hacía que
+    `cargar()` iterase la cadena carácter a carácter."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    agentes.crear_proyecto(con, "orq", "Orq", str(tmp_path / "a"), rutas=[str(repo)])
+
+    p = next(x for x in registry.cargar(escena["registro"]) if x.id == "orq")
+    assert [r.ruta for r in p.rutas] == [str(repo)]
+    assert str(tmp_path / "a") in p.todas_las_rutas()

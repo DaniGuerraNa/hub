@@ -201,8 +201,20 @@ def crear_proyecto(
     dominio: str = "personal",
     guardrail: str = "ask",
     estado_ref: str = "ESTADO.md",
+    rutas: list[str] | None = None,
 ) -> dict:
-    """Crea la carpeta, la acota, da el alta y lanza al agente a rellenarla."""
+    """Crea la carpeta, la acota, da el alta y lanza al agente a rellenarla.
+
+    `rutas` son repos que YA EXISTEN y que no se tocan: se declaran para que el
+    hub los mida —commits sin respaldo, ramas, worktrees— y nada más. Es el
+    patrón del asiento de orquestación: una carpeta nueva donde vive la
+    estructura del hub, y el código donde ya estaba.
+
+    🔴 Sirve para repos que no se pueden modificar, y esa garantía no la da esta
+    función: la da `_acotar_permisos`, que acota al agente a la carpeta creada.
+    Lo que se declara aquí queda FUERA de ese permiso, así que es medible y no
+    escribible — que es justo lo que se quiere.
+    """
     id_proyecto = (id_proyecto or "").strip()
     nombre = (nombre or "").strip()
     if not _ID_VALIDO.fullmatch(id_proyecto):
@@ -234,6 +246,27 @@ def crear_proyecto(
     if api.obtener_proyecto(con, id_proyecto):
         raise ValueError(f"ya hay un proyecto con el id «{id_proyecto}».")
 
+    # 🔴 Se comprueba que existan, y no es puntillismo: lo que se declara SE MIDE,
+    # y medir sobre una carpeta inexistente no da error, da un cero. Un cero en
+    # «commits sin respaldo» se lee como «está todo a salvo», así que una ruta
+    # mal escrita aquí produce exactamente la tranquilidad falsa que el hub
+    # existe para evitar.
+    apuntadas: list[str] = []
+    for cruda in (rutas or []):
+        cruda = str(cruda).strip()
+        if not cruda:
+            continue
+        camino = Path(cruda).expanduser()
+        if not camino.is_absolute():
+            raise ValueError(f"la ruta tiene que ser absoluta: «{cruda}»")
+        if not camino.is_dir():
+            raise ValueError(
+                f"«{camino}» no existe o no es una carpeta. Lo que se declara se"
+                " mide, y medir sobre algo que no está da un cero que parece"
+                " «no hay nada sin respaldar»."
+            )
+        apuntadas.append(str(camino))
+
     destino.mkdir(parents=True, exist_ok=True)
     # Con git desde el minuto uno: el hub mide commits sin respaldo, y un
     # proyecto sin git es invisible para esa medición.
@@ -246,7 +279,7 @@ def crear_proyecto(
     registry.añadir_proyecto({
         "id": id_proyecto, "nombre": nombre, "dominio": dominio,
         "asiento": str(destino), "estado_ref": estado_ref,
-        "guardrail": guardrail, "status": "activo",
+        "guardrail": guardrail, "status": "activo", "rutas": apuntadas,
     })
     proyectos = registry.cargar()
     registry.sincronizar(con, proyectos)
@@ -263,6 +296,7 @@ def crear_proyecto(
                 nombre=nombre, id=id_proyecto, ruta=destino, estado_ref=estado_ref,
             skill=config.RAIZ_REPO / '.claude' / 'skills' / 'nuevo-proyecto' / 'SKILL.md',
             hub=config.RAIZ_REPO,
+            apuntadas=_texto_apuntadas(apuntadas),
             ),
             nombre_ventana="nuevo-proyecto", ruta=str(destino),
         )
@@ -273,6 +307,30 @@ def crear_proyecto(
                      " tendrás que montarlo tú o cambiar el guardrail.",
         }
     return {"id": id_proyecto, "ruta": str(destino), "agente": True, **lanzado}
+
+
+def _texto_apuntadas(rutas: list[str]) -> str:
+    """El párrafo del prompt que nombra los repos declarados, si los hay.
+
+    🔴 Decírselo importa tanto como acotarle el permiso. El agente que ve un
+    proyecto «vacío» cuyo código está en otra parte tiende a proponer moverlo o
+    clonarlo ahí — que es exactamente lo que no se puede hacer cuando esos repos
+    son de otro equipo. Que lo lea evita la propuesta, no sólo el destrozo.
+    """
+    if not rutas:
+        return ""
+    lista = "\n".join(f"    - {r}" for r in rutas)
+    return (
+        "\nEste proyecto se orquesta desde esta carpeta, pero SU CÓDIGO VIVE"
+        " FUERA, en repos que ya existen y que están declarados en el hub para"
+        f" medirlos:\n\n{lista}\n\n"
+        "🔴 Esos repos son de SÓLO LECTURA para ti, y no por una limitación"
+        " técnica que haya que rodear: puede que sean de otro equipo o que no se"
+        " puedan tocar. No escribas en ellos, no los muevas, no los clones aquí y"
+        " no propongas reorganizarlos. Toda la estructura del hub —capa base,"
+        " kits, documento de estado— va en ESTA carpeta, y desde aquí se apunta a"
+        " ellos. Si crees que hace falta tocar alguno, dilo y para.\n"
+    )
 
 
 # El encargo. No repite la skill `nuevo-proyecto`: la INVOCA, para que no haya
@@ -297,6 +355,7 @@ tal cual en vez de buscar, que es lo único que tienes permiso para tocar fuera:
 Ya está hecho, NO lo repitas ni lo preguntes:
 - La carpeta existe y tiene `git init` (rama main): {ruta}
 - El alta en el registro del hub: id `{id}`, nombre «{nombre}», estado_ref `{estado_ref}`
+{apuntadas}
 
 Te toca, dentro de ESTA carpeta y sólo dentro:
 1. Aplicar la capa base y rellenar sus marcadores.

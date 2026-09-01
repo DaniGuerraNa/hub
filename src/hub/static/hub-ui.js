@@ -95,6 +95,12 @@
             return `<label for="${id}">${escapar(c.etiqueta)}</label>
                     <select id="${id}" name="${escapar(c.nombre)}">${opts}</select>${pista}`;
           }
+          if (c.multilinea) {
+            return `<label for="${id}">${escapar(c.etiqueta)}</label>
+                    <textarea id="${id}" name="${escapar(c.nombre)}" rows="3"
+                              placeholder="${escapar(c.marca || '')}"
+                              spellcheck="false">${escapar(c.valor || '')}</textarea>${pista}`;
+          }
           return `<label for="${id}">${escapar(c.etiqueta)}</label>
                   <input type="text" id="${id}" name="${escapar(c.nombre)}"
                          value="${escapar(c.valor || '')}"
