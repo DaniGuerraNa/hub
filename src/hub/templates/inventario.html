@@ -138,12 +138,14 @@
         <span class="cuenta">{{ inv.por_tipo[t] }}</span>
       </a>
     {% endfor %}
-    {% if kits %}
-      <div class="rotulo-indice">Kits</div>
-      <a class="{{ 'aqui' if ver == 'kits' }}" href="{{ url_inv(secc='kits') }}">
-        <span class="nom">Kits y consumidores</span><span class="cuenta">{{ kits | length }}</span>
-      </a>
-    {% endif %}
+    {# Sin el `if kits` que había aquí: la sección se escondía entera mientras no
+       hubiera ninguno, y ahí es justo donde se crea el primero. Quien acaba de
+       instalar el hub —que es quien más necesita encontrarlo— no tenía kits, así
+       que no veía la puerta para hacer uno. #}
+    <div class="rotulo-indice">Kits</div>
+    <a class="{{ 'aqui' if ver == 'kits' }}" href="{{ url_inv(secc='kits') }}">
+      <span class="nom">Kits y consumidores</span><span class="cuenta">{{ kits | length }}</span>
+    </a>
   </nav>
 </div>
 
@@ -206,9 +208,23 @@
 </div>
 {% endif %}
 
-{% if ver == 'kits' and kits %}
+{% if ver == 'kits' %}
 <h2 class="con-placa" style="margin-top:0">{{ ui.placa('rejilla') }}<span>Kits</span>
-  <span class="apunte">{{ kits | length }}</span></h2>
+  <span class="apunte">{{ kits | length }}</span>
+  <button class="principal" id="nuevo-kit">Kit nuevo</button></h2>
+
+{% if not kits %}
+<div class="tarjeta">
+  <p style="margin:0 0 6px">Todavía no tienes ningún kit.</p>
+  <p class="tenue" style="margin:0">
+    Un kit es una capa que aporta una capacidad a varios proyectos a la vez: un
+    método de trabajo con sus skills, o unos comandos que instalas una vez en la
+    máquina. Nacen vacíos, desde la semilla — extraer uno de un proyecto que ya
+    lo tenía produce una copia de ese proyecto, con sus rutas dentro.
+  </p>
+</div>
+{% endif %}
+
 {% for k in kits %}
 <div class="tarjeta">
   <div class="kit-cab">
@@ -339,6 +355,56 @@ document.addEventListener('click', async (e) => {
     });
   }
   // Te lleva a verlo trabajar, que es el sitio donde quieres estar.
+  location.href = `/trabajo?session=${encodeURIComponent(r.session)}&ventana=${r.ventana}`;
+});
+</script>
+
+<script>
+document.addEventListener('click', async (e) => {
+  if (!e.target.closest || !e.target.closest('#nuevo-kit')) return;
+  const boton = e.target.closest('#nuevo-kit');
+
+  const datos = await HubUI.formulario({
+    titulo: 'Kit nuevo',
+    aceptar: 'Crear y diseñar',
+    campos: [
+      { nombre: 'nombre', etiqueta: 'Nombre', requerido: true, marca: 'Mi kit' },
+      { nombre: 'id', etiqueta: 'Identificador', requerido: true,
+        marca: 'mi-kit', patron: '[a-z0-9][a-z0-9-]*',
+        pista: 'Minúsculas, números y guiones. 🔴 No se puede cambiar: es como lo referencian sus consumidores.' },
+      { nombre: 'ruta', etiqueta: 'Carpeta', requerido: true,
+        marca: '~/projects/mi-kit',
+        pista: 'Su propio repo, vacío. NO dentro de la carpeta de kits instalados: ahí la versión va en la ruta y kit.sh daría por instalado algo que nunca se clonó.' },
+      { nombre: 'guardrail', etiqueta: 'Permiso para el agente', valor: 'ask',
+        opciones: [['ask', 'Preguntar (ask)'], ['auto', 'Automático (auto)'],
+                   ['never', 'Nunca (never) — deja la semilla y no lanza nada']] },
+    ],
+    nota: 'El hub copia la semilla con su id y su nombre ya puestos, y da el alta. '
+        + 'El diseño —qué capacidad aporta, qué expone y qué escribe en cada '
+        + 'consumidor— lo lleva un agente, que empieza preguntándote.',
+  });
+  if (!datos) return;
+
+  boton.disabled = true;
+  boton.textContent = 'creando…';
+  const r = await fetch('/api/kit/nuevo', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(datos),
+  }).then((r) => r.json()).catch(() => ({ ok: false, error: 'sin conexión con el hub' }));
+
+  boton.disabled = false;
+  boton.textContent = 'Kit nuevo';
+
+  if (!r.ok) {
+    return HubUI.avisar({
+      titulo: r.ocupada ? 'Esa carpeta ya tiene contenido' : 'No se pudo crear',
+      mensaje: r.error || 'error desconocido',
+    });
+  }
+  if (!r.agente) {
+    await HubUI.avisar({ titulo: `«${r.id}» creado, sin agente`, mensaje: r.aviso });
+    return location.reload();
+  }
   location.href = `/trabajo?session=${encodeURIComponent(r.session)}&ventana=${r.ventana}`;
 });
 </script>

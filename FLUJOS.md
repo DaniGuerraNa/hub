@@ -13,26 +13,39 @@ Abres Claude Code en la carpeta del hub y lo pides con tus palabras.
 | Cuidar un kit que ya usa gente | `mantener-kit` | «mantén el kit X» |
 | Entender qué es y qué hace el hub | `sobre-el-hub` | «explícame el hub» |
 
-## Por qué son skills y no botones
+## Por qué casi todas son skills y no botones
 
-Anexar, crear y aplicar **escriben archivos dentro del repo de un proyecto**, y
-el hub tiene prohibido hacer eso: *el hub indexa; nunca mueve ni copia contenido
-de otros proyectos*. No es una limitación que haya que rodear — es lo que hace
-que estas operaciones sean revisables.
+Anexar y aplicar **escriben archivos dentro de un repo que ya es tuyo y que ya
+tiene contenido**, y el hub tiene prohibido hacer eso: *el hub indexa; nunca
+mueve ni copia contenido de otros proyectos*. No es una limitación que haya que
+rodear — es lo que hace que estas operaciones sean revisables.
+
+**Crear sí tiene botón**, y no es una excepción a la regla: es la regla leída
+bien. Un proyecto nuevo y un kit nuevo empiezan en una carpeta **vacía**, así que
+ahí no hay nada de nadie que sobrescribir. El hub pone la carpeta, los permisos y
+el alta —cosas suyas—, y el contenido lo sigue escribiendo un agente dentro de
+ella. Lo que cambia es dónde se pide, no quién escribe.
+
+> Los botones están en la portada («Proyecto nuevo») y en `/inventario` →
+> Kits («Kit nuevo»). Antes esto sólo se podía pedir por chat y **no se decía en
+> ninguna pantalla**: la única pista era una línea en gris al fondo de la
+> portada, debajo de todos los proyectos. Existía y no la encontraba ni quien la
+> escribió.
 
 El reparto es siempre el mismo:
 
 > **El hub calcula y propone. Un agente, corriendo en ese repo y contigo mirando,
 > escribe.**
 
-## Crear un proyecto sin salir del chat
+## Crear un proyecto sin salir del hub
 
-`nuevo-proyecto` es la única que además se puede pedir al asistente, y **sin
-romper el reparto de arriba**: el asistente no escribe nada.
+Tres formas de pedir lo mismo, y las tres acaban en el mismo sitio:
 
-```
-hub nuevo-proyecto --id mi-app --nombre "Mi App" --ruta /ruta/absoluta/mi-app
-```
+| Dónde | Cómo |
+|---|---|
+| **La interfaz** | Portada → **«Proyecto nuevo»** |
+| **El asistente** | «crea un proyecto» — y él no escribe nada, lo pide |
+| **La terminal** | `hub nuevo-proyecto --id mi-app --nombre "Mi App" --ruta /ruta/absoluta/mi-app` |
 
 Lo que pasa cuando lo pides:
 
@@ -59,9 +72,15 @@ las semillas del hub, y consultar el catálogo de kits. **Lo que se salga de ah�
 te lo pregunta a ti**, en su ventana. Que pregunte no es un fallo: es la última
 señal de que algo se sale del guion.
 
-Aplicar kits **no** se hace así. Ahí el asistente te da el plan y el prompt, y la
-escritura la sigues haciendo con Claude Code — un kit toca muchos archivos de un
-repo con historia, y ese es el momento en que quieres ver los diffs.
+**Crear un kit funciona igual**, desde `/inventario` → Kits → «Kit nuevo». El
+hub copia `semillas/kit/` con el `id` y el `nombre` ya puestos —copiarla tal cual
+dejaba un kit llamándose `mi-kit`, y el choque no aparecía al crearlo sino
+después, al medirlo contra el segundo—, da el alta con `tipo: kit` y lanza al
+agente, que empieza por las cuatro preguntas de la skill `nuevo-kit`.
+
+**Aplicar** kits **no** se hace así. Ahí el asistente te da el plan y el prompt, y
+la escritura la sigues haciendo con Claude Code — un kit toca muchos archivos de
+un repo con historia, y ese es el momento en que quieres ver los diffs.
 
 ## El orden habitual
 

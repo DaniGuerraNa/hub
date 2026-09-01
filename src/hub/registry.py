@@ -376,7 +376,11 @@ def añadir_proyecto(datos: dict, ruta: Path | None = None) -> None:
     if any(str(p.get("id") or "") == id_ for p in (actual.get("proyectos") or [])):
         raise YamlInvalido(f"Ya hay un proyecto con el id «{id_}».")
 
-    campos = ["id", "nombre", "dominio", "asiento", "estado_ref",
+    # `tipo` está en la lista porque un kit se da de alta por aquí igual que un
+    # proyecto, y sin él nacía como `proyecto`: el hub lo medía, pero no salía en
+    # la vista de kits ni el CLI lo reconocía como tal. Los vacíos se filtran
+    # justo debajo, así que un alta que no lo traiga sigue sin escribirlo.
+    campos = ["id", "nombre", "tipo", "dominio", "asiento", "estado_ref",
               "guardrail", "status", "nota"]
     limpio = {k: str(datos.get(k) or "").strip() for k in campos}
     limpio = {k: v for k, v in limpio.items() if v}

@@ -54,12 +54,19 @@ Tus datos **no viven dentro del repo**: así puedes actualizar el hub con un
 
 ## El primer proyecto
 
-La portada trae una guía mientras el registro esté vacío. Lo más rápido es
-abrir Claude Code en la carpeta del hub y decirle **«anexa mi proyecto»**: la
-skill `anexar-proyecto` lo registra y detecta cuál de tus documentos lleva el
-estado, sin crear uno nuevo.
+La portada trae una guía mientras el registro esté vacío. A partir de ahí hay
+tres caminos, según lo que tengas:
 
-A mano también vale: `~/.local/share/hub/projects.yml` trae un ejemplo comentado.
+- **Empezar algo nuevo** → botón **«Proyecto nuevo»** en la portada. Crea la
+  carpeta vacía, la da de alta y lanza un agente que la monta contigo delante.
+- **Registrar algo que ya existe** → abre Claude Code en la carpeta del hub y
+  dile **«anexa mi proyecto»**. La skill `anexar-proyecto` lo registra y detecta
+  cuál de tus documentos lleva el estado, sin crear uno nuevo. No es un botón
+  porque escribe dentro de un repo que ya es tuyo.
+- **A mano** → `~/.local/share/hub/projects.yml` trae un ejemplo comentado.
+
+Para fabricar una capacidad reutilizable, el botón **«Kit nuevo»** está en
+`/inventario` → Kits.
 
 ## El asistente
 

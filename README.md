@@ -59,13 +59,22 @@ mueven, archivan y borran sus slots.
 Más un **asistente** opcional en la esquina: un chat que responde sobre tus
 proyectos leyendo lo que el hub ya midió.
 
-### Los tres botones que lanzan un agente
+### Los botones que lanzan un agente
 
-Casi todo el hub sólo mide y muestra. Tres acciones son la excepción y conviene
-saber cuáles son, porque abren una ventana de tmux con `claude` dentro de un
-repo tuyo: **«Crear capa base»** (en la pantalla del proyecto), **«Lanzar
-mantenedor»** (en el inventario, sobre un kit) y **crear un proyecto** desde el
-chat del asistente.
+Casi todo el hub sólo mide y muestra. Cuatro acciones son la excepción y conviene
+saber cuáles son, porque abren una ventana de tmux con `claude` dentro de una
+carpeta tuya:
+
+| Botón | Dónde | Sobre qué |
+|---|---|---|
+| **Proyecto nuevo** | Portada | Una carpeta **vacía** que crea el hub |
+| **Kit nuevo** | Inventario → Kits | Una carpeta **vacía**, desde la plantilla |
+| **Crear capa base** | Pantalla del proyecto | Un repo tuyo que ya existe |
+| **Lanzar mantenedor** | Inventario, sobre un kit | El repo de ese kit |
+
+Los dos primeros pueden ser botones justamente porque la carpeta está vacía: no
+hay nada de nadie que sobrescribir. Registrar un proyecto que **ya existe** o
+aplicarle un kit no tienen botón por eso mismo, y se piden a Claude Code.
 
 Ninguna escribe por su cuenta: el hub prepara el encargo y lo ejecuta un agente
 en su ventana, que tú ves. Y `guardrail: never` en el registro de un proyecto

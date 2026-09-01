@@ -61,3 +61,21 @@ maneje tu hub por detrás.
 
 Y por lo mismo: **no expongas el puerto a la red**. La API es de lectura, pero
 `/terminal` da acceso de shell y vive en el mismo servidor.
+
+### Los dos que crean cosas
+
+| Endpoint | Qué hace |
+|---|---|
+| `POST /api/proyecto/nuevo` | `{id, nombre, ruta, dominio?, guardrail?, estado_ref?}` |
+| `POST /api/kit/nuevo` | `{id, nombre, ruta, guardrail?}` — copia `semillas/kit/` |
+
+Los dos crean una carpeta **vacía**, la acotan con permisos, dan el alta en el
+registro y lanzan un agente dentro. Y los dos contestan siempre con `ok`, sin
+lanzar excepciones a la cara:
+
+- `{"ok": false, "ocupada": true}` — la ruta ya tiene contenido. No se toca nada.
+- `{"ok": true, "agente": false, "aviso": "…"}` — con `guardrail: never` la cosa
+  **queda creada y registrada**, pero no se lanza a nadie. 🔴 Míralo: dar por
+  hecho que `ok` implica agente deja un proyecto que existe y que nadie sabe que
+  existe.
+- `{"ok": true, "agente": true, "session": "…", "ventana": N}` — dónde mirarlo.

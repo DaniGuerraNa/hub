@@ -223,8 +223,14 @@
 </div>
 {% endif %}
 
+{# La acción va AQUÍ, junto a lo que crea, y no al fondo de la pantalla.
+   Antes sólo había una línea en gris al final de la portada explicando que esto
+   se pedía por chat: existía, la escribió quien construyó el hub, y aun así no
+   la encontraba ni él. Con veinte proyectos delante, el fondo de la página no
+   es un sitio donde nadie vaya a buscar cómo empezar el veintiuno. #}
 <h2 class="con-placa">{{ ui.placa('rejilla') }}<span>Proyectos</span>
-  <span class="apunte">{{ r.proyectos | length }}</span></h2>
+  <span class="apunte">{{ r.proyectos | length }}</span>
+  <button class="principal" id="nuevo-proyecto">Proyecto nuevo</button></h2>
 <div class="rejilla">
 {% for p in r.proyectos %}
   <div class="tarjeta">
@@ -284,18 +290,71 @@
 {% endfor %}
 </div>
 
-{# Dónde se añade uno. La guía de primer arranque lo explica, pero desaparece en
-   cuanto hay un proyecto y no vuelve: quien ya tiene tres y quiere el cuarto no
-   encuentra ninguna pista, porque el botón que buscaría no existe **a
-   propósito** —crear y aplicar escriben dentro del repo de otro proyecto, y eso
-   lo hace un agente con el usuario mirando, no el hub—.
-   Una línea, sin caja y sin icono: es un apuntador, no una acción. #}
+{# Lo que el botón NO cubre, que es registrar algo que ya existe y aplicar un
+   kit. Los dos tocan carpetas que ya tienen contenido —y ahí el hub no escribe,
+   por eso siguen siendo una conversación con un agente y no un botón. #}
 <p class="tenue" style="margin:14px 0 0;font-size:13px">
-  Para añadir uno, abre Claude Code en la carpeta del hub y dile
-  <em>«crea un proyecto»</em> o <em>«anexa mi proyecto»</em>; para darle una
-  capacidad a uno que ya tienes, <em>«aplica el kit X aquí»</em>.
-  El hub calcula y propone; escribir en tu repo lo hace el agente, contigo
-  delante. Están en <code>FLUJOS.md</code>.
+  Para registrar un proyecto <em>que ya existe</em>, abre Claude Code en la
+  carpeta del hub y dile <em>«anexa mi proyecto»</em>; para darle una capacidad a
+  uno que ya tienes, <em>«aplica el kit X aquí»</em>. Esos dos escriben dentro de
+  tu repo, así que los hace el agente contigo delante y no el hub.
+  Están en <code>FLUJOS.md</code>.
 </p>
+
+<script>
+document.addEventListener('click', async (e) => {
+  if (!e.target.closest || !e.target.closest('#nuevo-proyecto')) return;
+  const boton = e.target.closest('#nuevo-proyecto');
+
+  const datos = await HubUI.formulario({
+    titulo: 'Proyecto nuevo',
+    aceptar: 'Crear y montar',
+    campos: [
+      { nombre: 'nombre', etiqueta: 'Nombre', requerido: true,
+        marca: 'Mi proyecto', pista: 'La etiqueta que se pinta. Se puede cambiar después.' },
+      { nombre: 'id', etiqueta: 'Identificador', requerido: true,
+        marca: 'mi-proyecto', patron: '[a-z0-9][a-z0-9-]*',
+        pista: 'Minúsculas, números y guiones. 🔴 No se puede cambiar después: los slots y las notas cuelgan de él.' },
+      { nombre: 'ruta', etiqueta: 'Carpeta', requerido: true,
+        marca: '~/dev/mi-proyecto',
+        pista: 'Absoluta, y vacía o inexistente. Si ya tiene contenido, lo que buscas es «anexa mi proyecto».' },
+      { nombre: 'dominio', etiqueta: 'Dominio', valor: 'personal',
+        opciones: [['personal', 'Personal'], ['laboral', 'Laboral']] },
+      { nombre: 'guardrail', etiqueta: 'Permiso para el agente', valor: 'ask',
+        opciones: [['ask', 'Preguntar (ask)'], ['auto', 'Automático (auto)'],
+                   ['never', 'Nunca (never) — crea el proyecto y no lanza nada']] },
+    ],
+    nota: 'El hub crea la carpeta vacía, la acota con permisos y da el alta. '
+        + 'El contenido lo escribe un agente dentro de esa carpeta, y sólo ahí. '
+        + 'Lo verás trabajar en /trabajo.',
+  });
+  if (!datos) return;
+
+  boton.disabled = true;
+  boton.textContent = 'creando…';
+  const r = await fetch('/api/proyecto/nuevo', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(datos),
+  }).then((r) => r.json()).catch(() => ({ ok: false, error: 'sin conexión con el hub' }));
+
+  boton.disabled = false;
+  boton.textContent = 'Proyecto nuevo';
+
+  if (!r.ok) {
+    return HubUI.avisar({
+      titulo: r.ocupada ? 'Esa carpeta ya tiene contenido' : 'No se pudo crear',
+      mensaje: r.error || 'error desconocido',
+    });
+  }
+  // 🔴 Con `never` el proyecto queda creado y NADIE lo monta. Decirlo importa:
+  // sin este aviso el usuario ve que no se abre ninguna ventana y da por hecho
+  // que ha fallado, cuando lo que tiene es un proyecto vacío ya registrado.
+  if (!r.agente) {
+    await HubUI.avisar({ titulo: `«${r.id}» creado, sin agente`, mensaje: r.aviso });
+    return location.reload();
+  }
+  location.href = `/trabajo?session=${encodeURIComponent(r.session)}&ventana=${r.ventana}`;
+});
+</script>
 
 {% endblock %}

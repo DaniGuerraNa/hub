@@ -122,9 +122,22 @@ Lo que nadie provee se dice en voz alta, en el inventario y en `kit.sh arbol`:
 
 ## Hacer uno
 
-Abre Claude Code en el hub y di **«quiero un kit para X»** (skill `nuevo-kit`).
-Te preguntará cuatro cosas, creará el repo desde la plantilla y te acompañará
-hasta el primer consumidor.
+Desde la interfaz: **`/inventario` → Kits → «Kit nuevo»**. Pide el nombre, el
+identificador y en qué carpeta va, y con eso el hub crea el repo desde la
+plantilla —con el `id` y el `nombre` ya puestos dentro—, lo da de alta y abre una
+ventana con un agente que te pregunta las cuatro cosas que definen el kit y lo
+diseña contigo.
+
+También vale abrir Claude Code en el hub y decir **«quiero un kit para X»**
+(skill `nuevo-kit`): es el mismo procedimiento, porque el botón invoca esa misma
+skill en vez de llevar su propia copia.
+
+🔴 **La carpeta tiene que estar vacía, y no es capricho.** Un kit nace desde la
+plantilla; extraerlo de un proyecto que ya lo tenía produce una copia de ese
+proyecto, con sus rutas y su stack dentro, y el segundo que lo use tendrá que
+reescribirlo entero. Y **no va dentro de la carpeta de kits instalados**: ahí la
+versión forma parte de la ruta, y `kit.sh instalar` vería la carpeta, se
+cortocircuitaría y respondería `✓ instalado` sin haber clonado nada.
 
 Las dos reglas que aprenderás igual, pero mejor antes:
 

@@ -17,12 +17,22 @@ import pytest
 GUION = Path(__file__).resolve().parents[1] / "src" / "hub" / "static" / "hub-ui.js"
 
 ARNES = r"""
+// Lo que "hay escrito" en cada campo cuando se cierra el diálogo. `formulario`
+// lee los campos por `[name=…]`, así que sin esto todos valdrían lo mismo y el
+// test no distinguiría recoger bien de recoger cualquier cosa.
+const valores = {};
+
 function elemento() {
   const el = {
     className: '', innerHTML: '', value: '', returnValue: '', _cierre: null,
     appendChild(){}, remove(){}, focus(){}, select(){},
     addEventListener(ev, fn){ if (ev === 'close') this._cierre = fn; },
-    querySelector(){ return elemento(); },
+    querySelector(sel){
+      const hijo = elemento();
+      const m = /\[name="([^"]+)"\]/.exec(sel || '');
+      if (m && valores[m[1]] !== undefined) hijo.value = valores[m[1]];
+      return hijo;
+    },
     showModal(){ registro.abiertos++; },
   };
   return el;
@@ -64,6 +74,30 @@ registro.expuesto = Object.keys(window.HubUI).sort();
   ultimo.returnValue = 'no'; ultimo._cierre();
   registro.resultados.sinDato = await p3;
 
+  const CAMPOS = [
+    { nombre: 'id', etiqueta: 'Identificador', requerido: true },
+    { nombre: 'ruta', etiqueta: 'Carpeta', requerido: true },
+    { nombre: 'guardrail', etiqueta: 'Permiso', valor: 'ask',
+      opciones: [['ask', 'Preguntar'], ['never', 'Nunca']] },
+  ];
+
+  // Formulario: se cancela. Tiene que dar null y NO un objeto con los campos a
+  // medio escribir, que es lo que se enviaría al servidor sin darse cuenta.
+  const p4 = window.HubUI.formulario({ titulo: 't', campos: CAMPOS });
+  valores.id = 'mi-kit'; valores.ruta = '/tmp/x'; valores.guardrail = 'ask';
+  ultimo.returnValue = 'no'; ultimo._cierre();
+  registro.resultados.formCancelado = await p4;
+
+  // Formulario: se acepta. Se recogen los tres campos, con los espacios fuera.
+  const p5 = window.HubUI.formulario({ titulo: 't', campos: CAMPOS });
+  valores.id = '  mi-kit  '; valores.ruta = '/tmp/x'; valores.guardrail = 'never';
+  ultimo.returnValue = 'si'; ultimo._cierre();
+  registro.resultados.formAceptado = await p5;
+
+  // El HTML que pinta: el select con su opción marcada, y `required` sólo donde
+  // se pidió. Se mira el innerHTML porque es lo único que el navegador valida.
+  registro.html = ultimo.innerHTML;
+
   console.log(JSON.stringify(registro));
 })();
 """
@@ -83,12 +117,40 @@ def ejecucion(tmp_path_factory):
     return json.loads(salida.stdout.strip().splitlines()[-1])
 
 
-def test_expone_las_tres_formas_de_preguntar(ejecucion):
-    assert ejecucion["expuesto"] == ["avisar", "confirmar", "preguntar"]
+def test_expone_las_cuatro_formas_de_preguntar(ejecucion):
+    assert ejecucion["expuesto"] == ["avisar", "confirmar", "formulario", "preguntar"]
 
 
 def test_abre_un_dialogo_por_llamada(ejecucion):
-    assert ejecucion["abiertos"] == 3
+    assert ejecucion["abiertos"] == 5
+
+
+def test_el_formulario_cancelado_no_devuelve_datos_a_medias(ejecucion):
+    """🔴 Devolver el objeto igualmente sería peor que fallar: quien llama hace
+    `if (!datos) return`, y un objeto con los campos a medio escribir pasa esa
+    guarda y se manda al servidor como si el usuario lo hubiera aceptado."""
+    assert ejecucion["resultados"]["formCancelado"] is None
+
+
+def test_el_formulario_recoge_cada_campo_por_su_nombre(ejecucion):
+    """Y con los espacios fuera: una ruta con un espacio al final, pegada del
+    explorador, es una carpeta distinta para el sistema de archivos."""
+    assert ejecucion["resultados"]["formAceptado"] == {
+        "id": "mi-kit", "ruta": "/tmp/x", "guardrail": "never",
+    }
+
+
+def test_el_select_marca_la_opcion_por_defecto(ejecucion):
+    assert '<option value="ask" selected>' in ejecucion["html"]
+
+
+def test_solo_lleva_required_lo_que_se_declaro_obligatorio(ejecucion):
+    """El control negativo del formulario. Ponerlo en todos sería cómodo y
+    dejaría al usuario sin poder aceptar hasta rellenar campos que tienen
+    valor por defecto."""
+    html = ejecucion["html"]
+    assert html.count("required") == 2          # id y ruta, no guardrail
+    assert 'name="guardrail"' in html and "<select" in html
 
 
 def test_confirmar_distingue_aceptar_de_cancelar(ejecucion):

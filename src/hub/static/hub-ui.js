@@ -69,6 +69,65 @@
       });
     },
 
+    /* Varios campos de una vez, para lo que no cabe en `preguntar`.
+     *
+     * Existe porque crear un proyecto pide cinco datos a la vez y encadenar
+     * cinco `preguntar` es peor de tres formas: no se ve lo que ya se contestó,
+     * cancelar a mitad deja medio formulario escrito, y no hay forma de volver
+     * atrás a corregir el primero.
+     *
+     * `required` en el campo y no una validación propia: `<form method="dialog">`
+     * respeta la validación nativa del navegador, que además ya avisa en el
+     * idioma del usuario. Un `<dialog>` no se cierra si el formulario no valida.
+     *
+     * Devuelve un objeto {nombre: valor} o null si se cancela.
+     */
+    formulario({ titulo, campos, aceptar = 'Crear', nota = '', cta = true }) {
+      return new Promise(resolver => {
+        const html = campos.map(c => {
+          const id = `f-${c.nombre}`;
+          const pista = c.pista
+            ? `<p class="tenue" style="margin:2px 0 0;font-size:12px">${escapar(c.pista)}</p>` : '';
+          if (c.opciones) {
+            const opts = c.opciones.map(([v, t]) =>
+              `<option value="${escapar(v)}"${v === c.valor ? ' selected' : ''}>${escapar(t)}</option>`
+            ).join('');
+            return `<label for="${id}">${escapar(c.etiqueta)}</label>
+                    <select id="${id}" name="${escapar(c.nombre)}">${opts}</select>${pista}`;
+          }
+          return `<label for="${id}">${escapar(c.etiqueta)}</label>
+                  <input type="text" id="${id}" name="${escapar(c.nombre)}"
+                         value="${escapar(c.valor || '')}"
+                         ${c.requerido ? 'required' : ''}
+                         ${c.patron ? `pattern="${escapar(c.patron)}"` : ''}
+                         placeholder="${escapar(c.marca || '')}"
+                         autocomplete="off" spellcheck="false">${pista}`;
+        }).join('');
+
+        const dlg = construir({
+          titulo: escapar(titulo),
+          cuerpo: html + (nota
+            ? `<p class="tenue" style="margin-top:12px">${escapar(nota)}</p>` : ''),
+          botones: `
+            <button value="no" class="declinar" formnovalidate>Cancelar</button>
+            <button value="si" class="${cta ? 'cta' : 'aceptar'}">${escapar(aceptar)}</button>`,
+        });
+
+        cerrarDespues(dlg, resolver, () => {
+          if (dlg.returnValue !== 'si') return null;
+          const datos = {};
+          campos.forEach(c => {
+            const nodo = dlg.querySelector(`[name="${c.nombre}"]`);
+            datos[c.nombre] = nodo ? nodo.value.trim() : '';
+          });
+          return datos;
+        });
+        dlg.showModal();
+        const primero = dlg.querySelector('input, select');
+        if (primero) primero.focus();
+      });
+    },
+
     avisar({ titulo, mensaje }) {
       return new Promise(resolver => {
         const dlg = construir({

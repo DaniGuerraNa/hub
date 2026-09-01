@@ -1,10 +1,14 @@
 # El registro — `projects.yml`
 
-Vive en `~/.local/share/hub/projects.yml`. Es el **único archivo que editas a
-mano**, y de él sale todo lo que ves. No hace falta reiniciar nada: el siguiente
-ciclo lo recoge.
+Vive en `~/.local/share/hub/projects.yml`. De él sale todo lo que ves, y no hace
+falta reiniciar nada: el siguiente ciclo lo recoge.
 
-Si algo se rompe, se arregla con un editor de texto.
+Es texto plano a propósito: si algo se rompe, se arregla con un editor.
+
+**Editarlo a mano no es la única forma de dar de alta algo.** «Proyecto nuevo» en
+la portada y «Kit nuevo» en `/inventario` escriben aquí por ti — el alta la hace
+siempre el hub, porque este archivo es suyo. Lo que no hace ninguno de los dos es
+tocar el contenido de tus proyectos.
 
 ## Un proyecto
 
@@ -31,6 +35,7 @@ proyectos:
 | `estado_ref` | Puntero al documento que dice cómo va el proyecto |
 | `guardrail` | Permiso del asistente para ejecutar cosas ahí |
 | `status` | `archivado` lo saca de las listas sin borrarlo |
+| `tipo` | `kit` o `asistente`. Un proyecto normal no lo lleva; un kit sin él se mide, pero no sale en la vista de kits |
 | `contenedores` | **Prefijos** de nombres de contenedores Docker |
 
 ## Cuando el código no está en el asiento

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import shutil
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -307,4 +308,157 @@ Te toca, dentro de ESTA carpeta y sólo dentro:
 
 Si algo te pide escribir fuera de esta carpeta, para y dilo: no tienes permiso ahí
 y es a propósito.
+"""
+
+
+# --------------------------------------------------------------------------- #
+# Kits
+# --------------------------------------------------------------------------- #
+
+# 🔴 Las dos líneas de la semilla que el hub sí rellena, y sólo esas dos.
+#
+# `semillas/kit/kit.yml` trae `id: mi-kit` y `nombre: Mi kit` como valores de
+# EJEMPLO —no marcadores `@ASI@`, porque `@` no puede abrir un escalar plano en
+# YAML y la plantilla no parseaba—. Copiarla tal cual dejaba un kit recién
+# creado llamándose `mi-kit`: el segundo que hicieras chocaba con el primero, y
+# el choque aparecía mucho después, al medirlo.
+#
+# Se anclan al principio de línea a propósito. Un reemplazo del texto suelto
+# tocaría también los comentarios que explican por qué son valores de ejemplo, y
+# el archivo dejaría de contar su propio porqué.
+_ID_SEMILLA = re.compile(r"^id: mi-kit$", re.MULTILINE)
+_NOMBRE_SEMILLA = re.compile(r"^nombre: Mi kit$", re.MULTILINE)
+
+
+def crear_kit(
+    con: sqlite3.Connection,
+    id_kit: str,
+    nombre: str,
+    ruta: str,
+    guardrail: str = "ask",
+) -> dict:
+    """Crea el repo de un kit desde la semilla y lanza al agente que lo diseña.
+
+    Mismo reparto que `crear_proyecto`, y por el mismo motivo: el hub pone la
+    carpeta, la semilla y el alta —cosas suyas—, y el contenido lo escribe un
+    agente dentro de esa carpeta y sólo dentro.
+
+    🔴 El kit se crea en SU PROPIO REPO, nunca dentro de
+    `~/.local/share/hub/kits/<id>/<versión>/`. Esa otra carpeta es el repositorio
+    local de instalación, con la versión en la ruta —el equivalente de `~/.m2`—:
+    escribir ahí hace que `kit.sh instalar` vea la carpeta, se cortocircuite y
+    responda `✓ instalado` sin haber clonado ni resuelto ningún tag. Un éxito que
+    no ocurrió.
+    """
+    id_kit = (id_kit or "").strip()
+    nombre = (nombre or "").strip()
+    if not _ID_VALIDO.fullmatch(id_kit):
+        raise ValueError(
+            f"«{id_kit}» no sirve como id de kit: minúsculas, números y guiones."
+            " El id no se puede cambiar después: es como lo referencian sus"
+            " consumidores."
+        )
+    if not nombre:
+        raise ValueError("hace falta un nombre.")
+    if guardrail not in ("auto", "ask", "never"):
+        raise ValueError("el guardrail es `auto`, `ask` o `never`.")
+
+    destino = Path(ruta).expanduser()
+    if not destino.is_absolute():
+        raise ValueError(f"la ruta tiene que ser absoluta: «{ruta}»")
+    if destino.exists() and any(destino.iterdir()):
+        raise CarpetaOcupada(
+            f"«{destino}» ya tiene contenido. Un kit nace vacío, desde la"
+            " semilla: extraerlo de un proyecto que ya lo tenía produce una"
+            " copia de ese proyecto, con sus rutas y su stack dentro."
+        )
+    if api.obtener_proyecto(con, id_kit):
+        raise ValueError(f"ya hay un proyecto o kit con el id «{id_kit}».")
+
+    semilla = config.RAIZ_REPO / "semillas" / "kit"
+    if not (semilla / "kit.yml").is_file():
+        raise RuntimeError(f"no encuentro la semilla de kit en {semilla}")
+
+    destino.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(semilla, destino, dirs_exist_ok=True)
+
+    manifiesto = destino / "kit.yml"
+    texto = manifiesto.read_text(encoding="utf-8")
+    texto = _ID_SEMILLA.sub(f"id: {id_kit}", texto, count=1)
+    texto = _NOMBRE_SEMILLA.sub(f"nombre: {nombre}", texto, count=1)
+    manifiesto.write_text(texto, encoding="utf-8")
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=destino,
+                   capture_output=True, check=False)
+    _acotar_permisos(destino)
+
+    registry.añadir_proyecto({
+        "id": id_kit, "nombre": nombre, "tipo": "kit", "dominio": "personal",
+        "asiento": str(destino), "estado_ref": "CHANGELOG.md",
+        "guardrail": guardrail, "status": "activo",
+    })
+    registry.sincronizar(con, registry.cargar())
+
+    # Mismo orden que en `crear_proyecto`, y por el mismo fallo medido: con
+    # `never` el kit queda creado y registrado, y decirlo evita que el usuario
+    # crea que no ha pasado nada.
+    try:
+        lanzado = lanzar(
+            con, id_kit, _PROMPT_KIT.format(
+                nombre=nombre, id=id_kit, ruta=destino,
+                skill=config.RAIZ_REPO / ".claude" / "skills" / "nuevo-kit" / "SKILL.md",
+                hub=config.RAIZ_REPO,
+            ),
+            nombre_ventana="nuevo-kit", ruta=str(destino),
+        )
+    except GuardrailBloqueado as exc:
+        return {
+            "id": id_kit, "ruta": str(destino), "agente": False,
+            "aviso": f"{exc} El kit está creado y registrado, con la semilla"
+                     " dentro, pero sin diseñar: tendrás que montarlo tú o"
+                     " cambiar el guardrail.",
+        }
+    return {"id": id_kit, "ruta": str(destino), "agente": True, **lanzado}
+
+
+# Igual que `_PROMPT_NUEVO`: INVOCA la skill en vez de repetirla, para que no
+# haya dos versiones del procedimiento separándose con el tiempo.
+_PROMPT_KIT = """\
+Lee y sigue este procedimiento para diseñar este kit:
+
+    {skill}
+
+Es la skill `nuevo-kit` del hub. No la tienes cargada como skill porque corres
+en la carpeta del kit y ella vive en la del hub: léela con Read, que para eso
+tienes permiso. No la copies aquí.
+
+El hub está en {hub}:
+
+    bash {hub}/scripts/kit.sh listar        # qué kits hay ya, para no duplicar
+    bash {hub}/scripts/kit.sh verificar {id}   # comprueba este manifiesto
+
+Ya está hecho, NO lo repitas ni lo preguntes:
+- La carpeta existe, con la semilla dentro y `git init` (rama main): {ruta}
+- `kit.yml` ya tiene su `id` (`{id}`) y su `nombre` («{nombre}») puestos
+- El alta en el registro del hub, con `tipo: kit`
+
+Te toca, dentro de ESTA carpeta y sólo dentro. Empieza por el paso 1 de la
+skill, que son las cuatro preguntas: PREGÚNTALAS antes de escribir nada, porque
+de la primera —qué capacidad aporta, en una frase que empiece por un verbo— sale
+todo lo demás.
+
+Después, rellena el manifiesto: `descripcion`, `expone`, `consume`, `requiere` y
+`aplica` con el modo de cada archivo. Y las notas de mantenimiento.
+
+🔴 Dos cosas que la skill explica y que no puedes saltarte:
+- Una plantilla que nombra el proyecto que la originó no es una plantilla, es
+  una copia. Si aquí acaba una ruta, un stack o un concepto de un proyecto
+  concreto, el segundo consumidor tendrá que reescribirlo entero.
+- Un kit no se da por bueno hasta verlo acertar Y verlo fallar. Aplicarlo a un
+  consumidor real, romper un archivo a propósito, comprobar que la deriva lo
+  marca, restaurarlo y comprobar que vuelve. Un verde que nadie ha visto en rojo
+  no es evidencia.
+
+Si algo te pide escribir fuera de esta carpeta, para y dilo: no tienes permiso
+ahí y es a propósito.
 """

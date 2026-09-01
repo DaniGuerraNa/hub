@@ -615,6 +615,35 @@ async def api_proyecto_nuevo(request: Request):
         con.close()
 
 
+@app.post("/api/kit/nuevo")
+async def api_kit_nuevo(request: Request):
+    """Crea el repo de un kit desde la semilla y lanza al agente que lo diseña.
+
+    Mismo reparto que crear un proyecto: el hub pone la carpeta, la semilla y el
+    alta; el diseño lo escribe el agente dentro de esa carpeta y sólo dentro.
+    """
+    cuerpo = await request.json()
+    con = conexion()
+    try:
+        hecho = agentes.crear_kit(
+            con,
+            cuerpo.get("id", ""),
+            cuerpo.get("nombre", ""),
+            cuerpo.get("ruta", ""),
+            cuerpo.get("guardrail") or "ask",
+        )
+        return {"ok": True, **hecho}
+    except agentes.CarpetaOcupada as exc:
+        return {"ok": False, "ocupada": True, "error": str(exc)}
+    except agentes.GuardrailBloqueado as exc:
+        return {"ok": False, "bloqueado": True, "error": str(exc)}
+    except (ValueError, RuntimeError, OSError, registry.YamlInvalido,
+            tmux.DestinoInvalido) as exc:
+        return {"ok": False, "error": str(exc)}
+    finally:
+        con.close()
+
+
 @app.get("/api/inventario")
 def api_inventario(tipo: str = "", proyecto: str = ""):
     con = conexion()
