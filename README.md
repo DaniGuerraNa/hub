@@ -30,6 +30,27 @@ está en [`INSTALAR.md`](INSTALAR.md).
 Cuando termine, el hub está en <http://127.0.0.1:8787> y la portada te guía
 hasta declarar tu primer proyecto.
 
+### Actualizar
+
+```bash
+git pull && systemctl --user restart hub-web hub-snapshotter
+```
+
+El `pull` solo no basta: el código en marcha sigue siendo el viejo. Tus datos
+viven en `~/.local/share/hub/`, fuera del repo, así que actualizar no puede
+pisarte nada. Si algo se ve raro después, recarga con **Ctrl+Shift+R**: parte de
+la interfaz son `.js` que el navegador cachea.
+
+### Las ramas
+
+| Rama | Qué hay |
+|---|---|
+| `main` | **La que quieres.** Es lo que se ha usado, no sólo lo que compila |
+| `qa` | En pruebas, camino de `main` |
+| `dev` | Todo lo que se va haciendo. Se rompe |
+
+`git clone` te deja en `main` sin que hagas nada.
+
 ## Las pantallas
 
 | | |
