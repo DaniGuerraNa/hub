@@ -43,11 +43,20 @@ Casos que vas a ver:
 | Falta | Qué pasa |
 |---|---|
 | `claude` | Sin Claude Code no hay asistente ni medición de uso. Hay que instalarlo desde <https://claude.com/claude-code>; no es un paquete de `apt`. |
-| `systemd --user` | En WSL suele estar desactivado. Requiere editar `/etc/wsl.conf` y **`wsl --shutdown` desde Windows**: avísale de que se cierra la sesión de WSL. |
+| `systemd --user` | **No bloquea.** Sin él el hub no arranca solo, pero `bash scripts/instalar.sh --sin-servicios` lo instala igual y te imprime el comando para arrancarlo a mano. Ofrece las dos salidas y que elija. Sólo si la máquina es WSL de verdad (`/proc/version` dice microsoft y no hay `/.dockerenv`) tiene sentido activar systemd: editar `/etc/wsl.conf` y **`wsl --shutdown` desde Windows**, avisando de que se cierra la sesión. En un contenedor o en otro Linux, ese consejo no aplica: no toques `/etc/wsl.conf`. |
 | `uv` | `curl -LsSf https://astral.sh/uv/install.sh \| sh`, y después abrir una shell nueva o exportar el PATH. |
 
 Los **opcionales** (`docker`, `rg`) no bloquean. Menciónalos con su consecuencia
-y sigue; instalarlos es decisión suya, no tuya.
+y sigue **sin preguntar por ellos**: instalarlos es decisión suya y puede
+tomarla después. Cada pregunta que no hace falta es una parada más para alguien
+que sólo quiere ver el hub arrancar.
+
+🔴 **Lo mismo con `systemd --user`.** Si no responde, instala con
+`--sin-servicios` sin convertirlo en una pregunta: no toca nada del sistema y
+es reversible. Di al final que el hub no arrancará solo y cómo activarlo si
+quiere (en WSL, `/etc/wsl.conf` y `wsl --shutdown`). Medido en una
+instalación en limpio el 3-sep: presentado como elección A/B, la persona
+tardó tres turnos en contestarla.
 
 ### 3. Instala
 

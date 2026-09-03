@@ -50,11 +50,20 @@ else
 fi
 
 paso "4/5 · Servicios"
+# Sin systemd de usuario no hay servicios que instalar: se cae al arranque a
+# mano en vez de fallar. Es lo que le pasa a un contenedor, a un Linux sin
+# systemd de usuario, y a WSL antes de activarlo.
+if [ "$CON_SERVICIOS" -eq 1 ] && ! systemctl --user show-environment >/dev/null 2>&1; then
+  CON_SERVICIOS=0
+  bien "systemd --user no responde: se omiten los servicios"
+fi
 if [ "$CON_SERVICIOS" -eq 0 ]; then
-  bien "omitidos (--sin-servicios)"
-  printf '    Arráncalo a mano cuando quieras:\n'
-  printf '      cd %s && HUB_HOME=%s uv run uvicorn hub.web:app --host %s --port %s\n' \
-         "$RAIZ" "$HUB_HOME" "$HUB_HOST" "$HUB_PORT"
+  bien "omitidos (sin systemd de usuario, o --sin-servicios)"
+  # Los DOS procesos, no sólo la web: sin el snapshotter el hub no relee
+  # projects.yml ni muestrea tmux, y parece instalado sin estarlo.
+  printf '    Arráncalo a mano (web + snapshotter) cuando quieras:\n'
+  printf '      cd %s && HUB_HOME=%s HUB_PORT=%s bash scripts/arrancar.sh\n' \
+         "$RAIZ" "$HUB_HOME" "$HUB_PORT"
   printf '\nListo. Datos en %s\n' "$HUB_HOME"
   exit 0
 fi

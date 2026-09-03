@@ -196,3 +196,36 @@ def test_la_guia_desaparece_en_cuanto_hay_un_proyecto(hub_vacio):
     con.commit()
     con.close()
     assert "primer-arranque" not in cliente.get("/").text
+
+
+def test_sin_systemd_el_doctor_no_bloquea_y_ofrece_arrancar_a_mano(tmp_path):
+    """🔴 Lo que vio la primera instalación en limpio (3-sep): sin systemd de
+    usuario el doctor decía FALTA, el instalador no seguía, y el único consejo
+    era editar /etc/wsl.conf y reiniciar Windows — dentro de un Ubuntu que no
+    era WSL. systemd sólo decide si el hub arranca solo; sin él se arranca a mano."""
+    falso = tmp_path / "bin"
+    falso.mkdir()
+    (falso / "systemctl").write_text("#!/bin/sh\nexit 1\n")
+    (falso / "systemctl").chmod(0o755)
+    r = _correr(DOCTOR, {"PATH": f"{falso}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "a mano" in r.stdout
+    assert "--sin-servicios" in r.stdout
+    assert "Todo lo imprescindible está" in r.stdout
+
+
+def test_sin_systemd_el_instalador_cae_al_arranque_a_mano():
+    texto = (RAIZ / "scripts" / "instalar.sh").read_text(encoding="utf-8")
+    assert "systemctl --user show-environment" in texto
+    assert "CON_SERVICIOS=0" in texto.split('paso "4/5')[1]
+
+
+def test_el_arranque_a_mano_levanta_la_web_y_el_snapshotter():
+    """Sin systemd, arrancar sólo la web deja un hub que no relee el registro."""
+    guion = RAIZ / "scripts" / "arrancar.sh"
+    assert os.access(guion, os.X_OK)
+    texto = guion.read_text(encoding="utf-8")
+    assert "uvicorn hub.web:app" in texto
+    assert "python -m hub.snapshotter" in texto
+    instalador = (RAIZ / "scripts" / "instalar.sh").read_text(encoding="utf-8")
+    assert "scripts/arrancar.sh" in instalador.split('paso "4/5')[1]

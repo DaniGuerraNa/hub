@@ -41,6 +41,18 @@ correrlo las veces que quieras— y **nunca pisa tu registro** si ya existe.
 
 Cuando termine, el hub está en <http://127.0.0.1:8787>.
 
+**Sin `systemd --user`** —un contenedor, un Linux sin systemd de usuario, WSL
+antes de activarlo— el instalador omite los servicios y te lo dice. No es un
+error: el hub se arranca a mano, los dos procesos a la vez, con
+
+```bash
+bash scripts/arrancar.sh            # web + snapshotter, en segundo plano
+bash scripts/arrancar.sh --parar
+```
+
+Sólo la web no basta: el snapshotter es quien relee `projects.yml` y muestrea
+tmux, y sin él el hub parece instalado sin estarlo.
+
 ## Qué te ha dejado
 
 | | |

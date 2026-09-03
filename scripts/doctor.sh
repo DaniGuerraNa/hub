@@ -69,13 +69,21 @@ else
   falta=1
 fi
 
-# systemd de usuario: es lo que arranca los dos servicios al abrir WSL.
+# systemd de usuario: es lo que arranca los dos servicios solos al abrir sesión.
+# 🔴 NO es imprescindible. Lo era, y con eso `--sin-servicios` no servía para
+# el único caso en que hace falta: sin systemd el doctor fallaba, el instalador
+# no seguía, y en un contenedor o un Linux sin systemd de usuario la única
+# salida que se ofrecía era «edita /etc/wsl.conf y reinicia Windows» — que la
+# primera instalación en limpio (3-sep) siguió al pie de la letra dentro de un
+# Ubuntu que no era WSL.
 if systemctl --user show-environment >/dev/null 2>&1; then
-  linea "$ok" "systemd --user" "activo"
+  linea "$ok" "systemd --user" "activo: los servicios arrancan solos"
 else
-  linea "$mal" "systemd --user" "no responde: los servicios no arrancarían solos"
-  printf '        → en WSL, añade `[boot]\\nsystemd=true` a /etc/wsl.conf y `wsl --shutdown`\n'
-  falta=1
+  avisos=$((avisos + 1)); linea "$ojo" "systemd --user" "no responde: el hub no arrancará solo, pero se puede arrancar a mano"
+  if grep -qi microsoft /proc/version 2>/dev/null && [ ! -f /.dockerenv ]; then
+    printf '        → en WSL: añade `[boot]\\nsystemd=true` a /etc/wsl.conf y `wsl --shutdown` desde Windows\n'
+  fi
+  printf '        → o instala sin servicios: `bash scripts/instalar.sh --sin-servicios` y luego `bash scripts/arrancar.sh`\n'
 fi
 
 titulo 'Opcionales — el hub funciona sin ellos, con menos'

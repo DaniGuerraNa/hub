@@ -75,6 +75,13 @@ trae los campos comentados.
 
 No hace falta reiniciar nada: el siguiente ciclo lo recoge.
 
+### 3b. Si el registro aún trae los ejemplos de la semilla
+
+`projects.yml` nace con `mi-proyecto` y `otro-proyecto` de ejemplo, con rutas
+que no existen. Si siguen ahí al anexar el primero real, dilo y **ofrécete a
+quitarlos**: se pintarían como proyectos con todo en cero, y un cero se lee como
+«todo a salvo». Medido en la primera instalación en limpio (3-sep): quedaron.
+
 ### 4. Ofrece la capa base
 
 ```bash
@@ -87,6 +94,14 @@ propia, para que el proyecto se describa a sí mismo aunque el registro se pierd
 
 **Pregunta antes de escribir dentro de su repo.** Es su proyecto; el hub sólo
 propone.
+
+🔴 **Con `guardrail: never` no lo conviertas en una pregunta.** El hub no va a
+lanzar el agente que siembra (regla dura 7), así que las opciones son cambiar
+el guardrail o hacerlo a mano; ninguna es urgente. Di que la capa base no está,
+deja el prompt de `prompt_sembrar` a la vista por si la quiere, y **termina**.
+Medido el 3-sep en una instalación en limpio: presentado como elección, costó
+tres turnos y acabó igual. Si el proyecto ya trae `.claude/hub/` completo —un
+kit puede sembrarlo, como hace `work-kit`— no hay nada que ofrecer.
 
 #### 🔴 Si NO puede modificar el repo
 
