@@ -31,10 +31,10 @@ def test_usa_el_titulo_de_claude_cuando_existe():
 def test_el_hostname_no_cuenta_como_titulo(monkeypatch, tmp_path):
     """tmux pone el hostname por defecto; eso no es una etiqueta."""
     monkeypatch.setattr(tmux, "rama_git", lambda cwd: None)
-    host = socket.gethostname()
     carpeta = tmp_path / "mi-proyecto"
     carpeta.mkdir()
-    etiqueta = tmux.inferir_etiqueta(host, str(carpeta), "bash")
+    # "DESKTOP" y no `socket.gethostname()`: el conftest fija ese hostname.
+    etiqueta = tmux.inferir_etiqueta("DESKTOP", str(carpeta), "bash")
     assert etiqueta == "mi-proyecto"
 
 

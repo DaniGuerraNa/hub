@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from hub import config, db
+from hub import config, db, tmux
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -24,6 +24,19 @@ def _tmux_aparte():
     """
     os.environ.setdefault("HUB_TMUX_SOCKET", "hub-tests")
     yield
+
+
+@pytest.fixture(autouse=True)
+def _hostname_fijo(monkeypatch):
+    """La máquina de los tests se llama `DESKTOP`, se ejecuten donde se ejecuten.
+
+    🔴 Cuatro archivos usan `"DESKTOP"` como el título que tmux pone a una
+    shell, y `tmux._titulo_por_defecto()` lo comparaba con el hostname REAL.
+    Coincidía sólo porque la máquina donde nació la suite se llama así: la
+    primera persona que clonó el repo (3-sep) tuvo una prueba en rojo sin haber
+    tocado nada. Una medición que coincide puede estar mal igual (regla 19).
+    """
+    monkeypatch.setattr(tmux, "_titulo_por_defecto", lambda: {"desktop"})
 
 
 @pytest.fixture(autouse=True)
