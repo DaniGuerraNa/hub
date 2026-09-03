@@ -180,3 +180,20 @@ def test_el_pulso_ignora_lo_que_no_sea_un_id(cliente):
     assert r.status_code == 200
     assert r.json()["notas"] == {}  # ninguno de esos slots existe
     assert cliente.get("/api/trabajo/pulso").status_code == 200
+
+
+def test_lanzar_un_slot_sin_tmux_lo_dice_en_pantalla(cliente, monkeypatch):
+    """Regla dura 21: lo que falla en tmux se dice, no se traga."""
+    from hub import slots, tmux
+
+    def revienta(*a, **k):
+        raise tmux.TmuxNoDisponible("error connecting to /tmp/tmux-1000/default")
+
+    monkeypatch.setattr(slots, "abrir", revienta)
+    r = cliente.post("/slot/1/abrir", data={"proyecto_id": "demo", "destino": "/trabajo?slot=1"},
+                     follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"].startswith("/trabajo?slot=1&aviso=")
+    pagina = cliente.get(r.headers["location"])
+    assert "No se pudo abrir la ventana" in pagina.text
+    assert "error connecting" in pagina.text

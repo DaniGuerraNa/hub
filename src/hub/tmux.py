@@ -381,6 +381,12 @@ def nueva_sesion(
     _correr(args)
 
 
+def panel_de_sesion(session: str) -> str:
+    """El panel activo de una sesión: lo que `new-session -d` no devuelve."""
+    validar_sesion(session)
+    return _correr(["display-message", "-p", "-t", f"={session}", "#{pane_id}"]).strip()
+
+
 def renombrar_ventana(session: str, indice: int, nombre: str) -> None:
     validar_sesion(session)
     _correr(["rename-window", "-t", f"={session}:{int(indice)}", nombre])

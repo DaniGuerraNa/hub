@@ -753,6 +753,10 @@ dialog.paleta li .detalle {
 #asistente-permiso button { padding: 3px 12px; font-size: 12px; }
 </style>
 </head>
+<style>
+  .aviso-accion { margin:8px 16px; padding:8px 12px; border:1px solid var(--acento);
+                  border-radius:10px; color:var(--texto); background:var(--superficie); font-size:13px; }
+</style>
 <body class="{{ 'completo' if ancho_completo else '' }}">
 
 {# ── Raíl global ────────────────────────────────────────────────────────────
@@ -823,6 +827,10 @@ dialog.paleta li .detalle {
     <button class="sutil" id="abrir-paleta" title="Ctrl+K">Buscar <span class="tecla">Ctrl K</span></button>
     <form method="post" action="/refrescar" class="enlinea"><button class="sutil">Refrescar</button></form>
   </header>
+  {# Lo que falló en la acción anterior, dicho aquí y no tragado (regla 21). #}
+  {% if request is defined and request.query_params.get('aviso') %}
+  <p class="aviso-accion" role="alert">{{ request.query_params.get('aviso') }}</p>
+  {% endif %}
   {% block contenido %}{% endblock %}
 </div>
 </div>

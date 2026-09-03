@@ -268,3 +268,34 @@ def test_cada_ventana_de_la_sesion_trae_su_propio_estado(con, proyecto_demo):
     assert [e["ventana"] for e in estados] == [0, 1]
     assert estados[0]["slot"]["id"] == uno
     assert estados[1]["slot"] is None
+
+
+def test_abrir_crea_la_sesion_cuando_tmux_no_tiene_servidor(escena, monkeypatch):
+    """🔴 Máquina recién instalada: tmux está, nadie lo abrió. «Lanzar» tiene que
+    crear la sesión, no pedir una ventana a un servidor que no existe."""
+    llamadas = []
+    monkeypatch.setattr(tmux, "existe_sesion", lambda s: False)
+    monkeypatch.setattr(tmux, "path_de_usuario", lambda: "/usr/bin")
+    monkeypatch.setattr(tmux, "nueva_sesion", lambda *a, **k: llamadas.append(("nueva", a, k)))
+    monkeypatch.setattr(tmux, "abrir_ventana", lambda *a, **k: llamadas.append(("ventana", a)) or "%x")
+    monkeypatch.setattr(tmux, "panel_de_sesion", lambda s: "%9")
+    monkeypatch.setattr(tmux, "escribir_titulo", lambda *a: None)
+    slot_id = slots.crear(escena, "demo", "Primer slot", "/tmp/demo", "", None, True)
+    pane = slots.abrir(escena, slot_id)
+    assert pane == "%9"
+    assert [l[0] for l in llamadas] == ["nueva"]
+    _, args, kw = llamadas[0]
+    assert args[1] == "/tmp/demo" and args[2] == "Primer slot" and args[3] == "claude"
+    assert kw["entorno"]["PATH"] == "/usr/bin"
+    assert escena.execute("SELECT slot_id FROM binding WHERE pane_id='%9'").fetchone()[0] == slot_id
+
+
+def test_abrir_usa_el_asiento_del_proyecto_cuando_el_slot_no_tiene_ruta(escena, monkeypatch):
+    """«Creé el slot sobre el proyecto»: sin ruta propia, se abre en el asiento."""
+    abiertas = []
+    monkeypatch.setattr(tmux, "existe_sesion", lambda s: True)
+    monkeypatch.setattr(tmux, "abrir_ventana", lambda ruta, *a, **k: abiertas.append(ruta) or "%5")
+    monkeypatch.setattr(tmux, "escribir_titulo", lambda *a: None)
+    slot_id = slots.crear(escena, "demo", "Sin ruta", None, "", None, False)
+    assert slots.abrir(escena, slot_id) == "%5"
+    assert abiertas == ["/tmp/demo"]

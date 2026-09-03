@@ -183,7 +183,17 @@ def conexion():
     return db.abrir()
 
 
-def _volver(destino: str = "/") -> RedirectResponse:
+def _volver(destino: str = "/", aviso: str | None = None) -> RedirectResponse:
+    """Redirige, y si algo falló lo dice en la página de destino.
+
+    🔴 Un `except: pass` alrededor de tmux esconde fallos que se manifiestan
+    como bugs de UI (regla dura 21): «Lanzar» no abría nada en una máquina
+    recién instalada y nadie lo supo hasta que otra persona lo probó. Lo que
+    falla se dice en voz alta, en la pantalla a la que se vuelve.
+    """
+    if aviso:
+        separador = "&" if "?" in destino else "?"
+        destino = f"{destino}{separador}aviso={quote(aviso)}"
     return RedirectResponse(destino, status_code=303)
 
 
@@ -1273,15 +1283,24 @@ def slot_estado(slot_id: int, accion: str = Form(...), proyecto_id: str = Form(.
 
 
 @app.post("/slot/{slot_id}/abrir")
-def slot_abrir(slot_id: int, proyecto_id: str = Form(...), session: str = Form("")):
+def slot_abrir(
+    slot_id: int,
+    proyecto_id: str = Form(...),
+    session: str = Form(""),
+    destino: str = Form(""),
+):
     con = conexion()
+    aviso = None
     try:
         slots.abrir(con, slot_id, session.strip() or None)
-    except Exception:
-        pass  # si tmux no responde, la vista lo refleja en el próximo ciclo
+    except (tmux.TmuxNoDisponible, RuntimeError, ValueError) as exc:
+        # Se dice, no se traga (regla dura 21). Hasta el 3-sep un `except:
+        # pass` aquí convertía «no hay servidor de tmux» en un botón que no
+        # hacía nada.
+        aviso = f"No se pudo abrir la ventana: {exc}"
     finally:
         con.close()
-    return _volver(f"/proyecto/{proyecto_id}")
+    return _volver(destino.strip() or f"/proyecto/{proyecto_id}", aviso)
 
 
 @app.post("/panel/accion")

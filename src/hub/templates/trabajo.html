@@ -225,6 +225,7 @@
   .dec .dbb button { padding:3px 11px; font-size:12px; }
   .lienzo-crudo { font:11.5px/1.6 var(--mono, ui-monospace, monospace);
     white-space:pre-wrap; color:var(--texto-3); }
+  .lanzar-slot { margin:0 0 6px 22px; }
   .por-ventana { display:none; flex-direction:column; flex:1; min-height:0; }
   .por-ventana.viendo { display:flex; }
   .por-ventana summary { font-size:12px; }
@@ -303,6 +304,16 @@
                   title="{{ TITULOS_ESTADO.get(s.estado, '') }}"></span>{{ s.nombre }}
             <span class="sub mono">{{ s.ruta_corta or '—' }}</span>
           </a>
+          {# Un slot sin ventana necesita poder abrirla DESDE AQUÍ. Antes el
+             único «Lanzar» vivía en /proyecto: quien entraba a trabajar veía
+             «Sin ventana abierta» y ninguna forma de abrirla. #}
+          {% if s.estado == 'cerrado' %}
+          <form method="post" action="/slot/{{ s.id }}/abrir" class="lanzar-slot">
+            <input type="hidden" name="proyecto_id" value="{{ p.id }}">
+            <input type="hidden" name="destino" value="/trabajo?slot={{ s.id }}">
+            <button class="sutil" title="Abre una ventana de tmux en la ruta del slot (o en el asiento del proyecto)">Lanzar</button>
+          </form>
+          {% endif %}
           {% endfor %}
           {# Sin esto la cabecera queda huérfana y se lee como un ítem más. #}
           {% if not p.slots %}
