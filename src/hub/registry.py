@@ -215,17 +215,20 @@ def cargar(ruta: Path | None = None) -> list[Proyecto]:
             )
         if not isinstance(declaradas, list):
             raise YamlInvalido(f"Las `rutas` de «{id_}» tienen que ser una lista.")
+        asiento = _normalizar(str(crudo["asiento"])) if crudo.get("asiento") else None
         try:
-            rutas = [
-                Ruta(ruta=_normalizar(r["ruta"]), tipo=r.get("tipo", "repo"))
-                if isinstance(r, dict)
-                else Ruta(ruta=_normalizar(str(r)))
-                for r in declaradas
-            ]
+            rutas: list[Ruta] = []
+            for r in declaradas:
+                if isinstance(r, dict) and "patron" in r:
+                    rutas.extend(_expandir_patron(asiento, str(r["patron"]), id_))
+                elif isinstance(r, dict):
+                    rutas.append(Ruta(ruta=_normalizar(r["ruta"]), tipo=r.get("tipo", "repo")))
+                else:
+                    rutas.append(Ruta(ruta=_normalizar(str(r))))
         except (KeyError, TypeError) as exc:
             raise YamlInvalido(
-                f"Las `rutas` de «{id_}» están mal: cada una es una ruta o un "
-                f"bloque con `ruta:`. ({exc})"
+                f"Las `rutas` de «{id_}» están mal: cada una es una ruta, un "
+                f"bloque con `ruta:` o un bloque con `patron:`. ({exc})"
             ) from exc
         try:
             proyectos.append(
@@ -234,10 +237,7 @@ def cargar(ruta: Path | None = None) -> list[Proyecto]:
                     nombre=str(crudo.get("nombre", id_)),
                     dominio=crudo.get("dominio", "personal"),
                     tipo=crudo.get("tipo", "proyecto"),
-                    asiento=(
-                        _normalizar(str(crudo["asiento"]))
-                        if crudo.get("asiento") else None
-                    ),
+                    asiento=asiento,
                     rutas=rutas,
                     estado_ref=crudo.get("estado_ref"),
                     base_version=crudo.get("base_version"),
@@ -484,6 +484,50 @@ def _insertar_bajo_cerrojo(
 
 def _normalizar(ruta: str) -> str:
     return str(Path(ruta).expanduser()).rstrip("/")
+
+
+def _expandir_patron(asiento: str | None, patron: str, id_: str) -> list[Ruta]:
+    """`- patron: "*/repos/*"` → un `Ruta` por cada repo git que encaje (decisión 150).
+
+    Para un asiento que **contiene** repos —un workspace con `{ambiente}/repos/`—
+    listarlos uno a uno en `projects.yml` es una lista que caduca en cuanto se
+    clona el siguiente. El patrón declara la intención y se resuelve al leer,
+    contra el disco, que es lo que la regla dura 1 pide: nada aquí que no se
+    pueda reconstruir escaneando.
+
+    Sólo entran las carpetas con `.git` (directorio o archivo, para que los
+    worktrees cuenten): lo demás bajo `repos/` no se mide, y medirlo daría un
+    cero que se lee como «todo a salvo». Un patrón sin coincidencias no es un
+    error: un workspace recién instalado está vacío a propósito.
+    """
+    if not patron:
+        raise KeyError("patron vacío")
+    raiz = Path(patron).expanduser()
+    if not raiz.is_absolute():
+        if not asiento:
+            raise YamlInvalido(
+                f"El `patron` «{patron}» de «{id_}» es relativo y el proyecto no "
+                "tiene `asiento` contra el que resolverlo."
+            )
+        raiz = Path(asiento)
+        relativo = patron
+    else:
+        # `Path.glob` no acepta patrones absolutos: se separa la raíz fija.
+        partes = raiz.parts
+        fijas = []
+        for parte in partes:
+            if any(c in parte for c in "*?["):
+                break
+            fijas.append(parte)
+        raiz = Path(*fijas) if fijas else Path("/")
+        relativo = str(Path(*partes[len(fijas):]))
+    if not raiz.is_dir():
+        return []
+    encontradas = sorted(
+        str(c).rstrip("/") for c in raiz.glob(relativo)
+        if c.is_dir() and (c / ".git").exists()
+    )
+    return [Ruta(ruta=r) for r in encontradas]
 
 
 def sincronizar(con: sqlite3.Connection, proyectos: list[Proyecto]) -> None:

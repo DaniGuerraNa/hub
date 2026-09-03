@@ -59,6 +59,19 @@ trae los campos comentados.
   de él. El `nombre` es sólo la etiqueta, y ése sí se cambia cuando quieras.
 - `guardrail: ask` salvo que el usuario diga otra cosa. Para trabajo laboral o
   para algo delicado, `never`.
+- **Si es un workspace que contiene repos** —una carpeta de trabajo con
+  `{ambiente}/repos/{repo}` dentro, cada uno con su git— no le hagas `git init`
+  ni le crees un documento de estado. Declara los repos con un patrón y deja
+  `estado_ref` vacío:
+
+  ```yaml
+  rutas:
+    - patron: "*/repos/*"
+  ```
+
+  El hub lo resuelve al leer contra el disco y mide cada repo que encaje y tenga
+  `.git`. Un patrón sin coincidencias no es un error: el workspace acaba de
+  instalarse.
 
 No hace falta reiniciar nada: el siguiente ciclo lo recoge.
 
@@ -106,9 +119,10 @@ Con eso:
 
 Dos cosas que comprobar antes de darlo por hecho:
 
-1. **La carpeta del asiento tiene que existir** y conviene que tenga `git init`:
-   el hub mide commits sin respaldo, y una carpeta sin git es invisible para esa
-   medición.
+1. **La carpeta del asiento tiene que existir** y, si el código vive en ella,
+   conviene que tenga `git init`: el hub mide commits sin respaldo, y una carpeta
+   sin git es invisible para esa medición. Si el asiento es un workspace que
+   **contiene** repos, no: ahí lo que se mide son los repos, por `patron:`.
 2. **Lo que declares en `rutas` tiene que existir de verdad.** Lo que se declara
    se mide, y medir una carpeta que no está no da error: da un cero, y un cero en
    «commits sin respaldo» se lee como «todo a salvo».

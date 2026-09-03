@@ -54,6 +54,24 @@ parecer respaldado sin estarlo.
 
 El asiento no hace falta repetirlo: ya cuenta como ruta.
 
+### Un workspace que contiene repos
+
+El caso inverso: el asiento es una carpeta de trabajo **sin git propio** que
+tiene dentro los repos, cada uno con el suyo — `{ambiente}/repos/{repo}`. Listarlos
+uno a uno es una lista que caduca en cuanto clonas el siguiente. Se declara un
+patrón, relativo al asiento, y el hub lo resuelve al leer:
+
+```yaml
+  - id: trabajo
+    asiento: ~/workspace
+    rutas:
+      - patron: "*/repos/*"
+```
+
+Entra cada carpeta que encaje **y tenga `.git`**; lo demás no se mide. Un patrón
+sin coincidencias no es un error: un workspace recién instalado está vacío. Ese
+asiento no necesita `git init` ni documento de estado: deja `estado_ref` vacío.
+
 ### Repos que no puedes modificar
 
 Es el mismo patrón, y resuelve un caso concreto: repos de otro equipo, o sin una

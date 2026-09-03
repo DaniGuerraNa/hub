@@ -62,3 +62,59 @@ def test_atribucion_no_confunde_prefijos_parciales(yaml_demo):
     atribuidor = Atribuidor(registry.cargar(yaml_demo))
     assert atribuidor.atribuir("/home/ana/dev/facturador-otro-repo") is None
     assert atribuidor.atribuir("/home/ana/otra-cosa") is None
+
+
+def test_un_patron_en_rutas_se_expande_a_los_repos_git_que_existen(tmp_path):
+    """Un workspace que contiene repos los declara con `patron:`, no uno a uno."""
+    ws = tmp_path / "workspace"
+    for nombre in ("ext/repos/a", "ext/repos/b", "int/repos/c", "ext/repos/sin-git"):
+        (ws / nombre).mkdir(parents=True)
+    (ws / "ext/repos/a/.git").mkdir()
+    (ws / "int/repos/c/.git").write_text("gitdir: /otro/sitio")   # un worktree
+    (ws / "ext/repos/b/.git").mkdir()
+    (ws / "ext/repos/archivo.txt").write_text("no soy un repo")
+    yml = tmp_path / "projects.yml"
+    yml.write_text(f"""
+proyectos:
+  - id: trabajo
+    nombre: Trabajo
+    asiento: {ws}
+    rutas:
+      - patron: "*/repos/*"
+""", encoding="utf-8")
+    [p] = registry.cargar(yml)
+    assert [Path(r.ruta).relative_to(ws).as_posix() for r in p.rutas] == [
+        "ext/repos/a", "ext/repos/b", "int/repos/c",
+    ]
+    assert all(r.tipo == "repo" for r in p.rutas)
+    assert p.todas_las_rutas()[-1] == str(ws)
+
+
+def test_un_patron_sin_coincidencias_no_es_error(tmp_path):
+    """Un workspace recién instalado está vacío a propósito: cero rutas, no un fallo."""
+    ws = tmp_path / "vacio"
+    ws.mkdir()
+    yml = tmp_path / "projects.yml"
+    yml.write_text(f"""
+proyectos:
+  - id: trabajo
+    nombre: Trabajo
+    asiento: {ws}
+    rutas:
+      - patron: "*/repos/*"
+""", encoding="utf-8")
+    [p] = registry.cargar(yml)
+    assert p.rutas == []
+
+
+def test_un_patron_relativo_sin_asiento_se_rechaza(tmp_path):
+    yml = tmp_path / "projects.yml"
+    yml.write_text("""
+proyectos:
+  - id: trabajo
+    nombre: Trabajo
+    rutas:
+      - patron: "*/repos/*"
+""", encoding="utf-8")
+    with pytest.raises(registry.YamlInvalido, match="asiento"):
+        registry.cargar(yml)
