@@ -160,3 +160,270 @@ def test_un_proyecto_sin_slots_ni_ventanas_no_entra_en_la_barra(escena):
     ctx = api.contexto_trabajo(escena, session="work", ventana=0)
     quieto = next(p for p in ctx["proyectos"] if p["id"] == "quieto")
     assert quieto["en_uso"] is False
+
+
+# ── el punto de estado ────────────────────────────────────────────────────────
+#
+# Sale de una pregunta suya: *"si tengo un segundo slot en ejecución y ese
+# termina o se pausa para hacerme preguntas, quiero enterarme"*. El dato ya
+# estaba en la base —`panel.titulo` se guarda con el glifo crudo de Claude
+# Code— y no se usaba para nada.
+
+@pytest.mark.parametrize(
+    "panel,esperado",
+    [
+        # El spinner braille: está pensando.
+        ({"titulo": "⠂ Continuar con los pendientes", "comando": "claude"}, "trabajando"),
+        ({"titulo": "⠐ Otra cosa", "comando": "claude"}, "trabajando"),
+        # ✳ es Claude quieto. NO se puede saber si acabó o si te espera.
+        ({"titulo": "✳ Confirmar comprensión", "comando": "claude"}, "detenido"),
+        # Una shell no reporta nada: tmux le pone el hostname.
+        ({"titulo": "DESKTOP", "comando": "bash"}, "otro"),
+        # 🔴 Los dos que me habrían salido mal mirando `pane_current_command`:
+        # otro programa no es un asistente detenido...
+        ({"titulo": "informe.md", "comando": "vim"}, "otro"),
+        # ...y un panel recién abierto todavía no tiene título propio.
+        ({"titulo": "", "comando": "claude"}, "otro"),
+    ],
+)
+def test_estado_de_panel(panel, esperado):
+    assert api.estado_de_panel(panel) == esperado
+
+
+def test_un_slot_sin_panel_esta_cerrado():
+    """None y «otro» no son lo mismo: uno no tiene ventana, el otro sí."""
+    assert api.estado_de_panel(None) == "cerrado"
+
+
+def test_el_glifo_tiene_una_sola_definicion():
+    """El asistente y la barra leen «está pensando» del mismo sitio.
+
+    Estaba duplicado en `asistente._es_spinner`. Dos copias del rango braille
+    son dos definiciones que pueden separarse sin que nada avise.
+    """
+    from hub import asistente
+    assert not hasattr(asistente, "_es_spinner")
+    assert tmux.es_spinner("⠂ x") and not tmux.es_spinner("✳ x")
+
+
+@pytest.fixture
+def escena_con_estados(con, monkeypatch):
+    """Dos slots del mismo proyecto: uno pensando y otro quieto."""
+    con.execute("INSERT INTO proyecto (id, nombre, asiento) VALUES ('demo','Demo','/tmp/demo')")
+    monkeypatch.setattr(tmux, "servidor_pid", lambda: 100)
+    monkeypatch.setattr(tmux, "rama_git", lambda cwd: None)
+    monkeypatch.setattr(
+        tmux, "listar_paneles",
+        lambda *a, **k: [
+            {"session": "work", "window_idx": 0, "pane_idx": 0, "pane_id": "%1",
+             "cwd": "/tmp/demo", "titulo": "⠂ Migrando", "comando": "claude", "activo": True},
+            {"session": "work", "window_idx": 1, "pane_idx": 0, "pane_id": "%2",
+             "cwd": "/tmp/demo", "titulo": "✳ Listo", "comando": "claude", "activo": False},
+        ],
+    )
+    return con
+
+
+def _slots_de_demo(con):
+    ctx = api.contexto_trabajo(con, session="work", ventana=0)
+    demo = next(p for p in ctx["proyectos"] if p["id"] == "demo")
+    return {s["nombre"]: s["estado"] for s in demo["slots"]}
+
+
+def test_cada_slot_trae_el_estado_de_su_panel(escena_con_estados):
+    a = slots.crear(escena_con_estados, "demo", "Migración")
+    b = slots.crear(escena_con_estados, "demo", "Revisión")
+    c = slots.crear(escena_con_estados, "demo", "Sin abrir")
+    snapshotter.capturar(
+        escena_con_estados,
+        Atribuidor([Proyecto(id="demo", nombre="Demo", asiento="/tmp/demo")]),
+    )
+    slots.vincular(escena_con_estados, "%1", a)
+    slots.vincular(escena_con_estados, "%2", b)
+    assert c  # existe, pero no tiene panel
+
+    estados = _slots_de_demo(escena_con_estados)
+    assert estados == {
+        "Migración": "trabajando",
+        "Revisión": "detenido",
+        "Sin abrir": "cerrado",
+    }
+
+
+def test_los_cuatro_estados_tienen_estilo():
+    """Un estado sin CSS se pinta con el punto de acento y miente.
+
+    Es el fallo probable al añadir uno nuevo: se toca `estado_de_panel` y se
+    olvida la hoja de estilo, que está en otro archivo.
+    """
+    html = (Path(__file__).parents[1] / "src/hub/templates/trabajo.html").read_text("utf-8")
+    for estado in ("trabajando", "detenido", "otro", "cerrado"):
+        assert f".punto.{estado}" in html, f"«{estado}» no tiene estilo"
+    # Lo único que se mueve es «trabajando»: si el detenido también pulsara, la
+    # barra entera parecería una alarma.
+    assert "prefers-reduced-motion" in html
+
+
+# ── el latido: que el punto no se quede congelado ─────────────────────────────
+#
+# El punto existe para enterarse de que un segundo slot paró. Pintado sólo al
+# cargar la página, se enteraba únicamente quien recargara — o sea, lo contrario
+# de para lo que se hizo.
+
+def _escena_pulsante(con):
+    """La escena de estados, ya capturada y con los dos slots vinculados."""
+    a = slots.crear(con, "demo", "Migración")
+    b = slots.crear(con, "demo", "Revisión")
+    slots.crear(con, "demo", "Sin abrir")
+    snapshotter.capturar(
+        con, Atribuidor([Proyecto(id="demo", nombre="Demo", asiento="/tmp/demo")])
+    )
+    slots.vincular(con, "%1", a)
+    slots.vincular(con, "%2", b)
+    return a, b
+
+
+def test_el_pulso_da_el_estado_de_todos_los_slots_activos(escena_con_estados):
+    """Todos, no sólo los del proyecto abierto: el raíl los enseña todos."""
+    a, b = _escena_pulsante(escena_con_estados)
+    slots_ = api.pulso_trabajo(escena_con_estados)["slots"]
+    assert slots_[a] == "trabajando"
+    assert slots_[b] == "detenido"
+    assert len(slots_) == 3  # el tercero, sin panel, también viene: «cerrado»
+
+
+def test_el_pulso_dice_lo_mismo_que_el_primer_pintado(escena_con_estados):
+    """Dos caminos para el mismo dato es dos formas de que uno mienta.
+
+    El servidor pinta el punto con `contexto_trabajo` y el navegador lo repinta
+    con `pulso_trabajo`. Si divergen, la página cambia de opinión sola a los
+    cinco segundos sin que haya pasado nada.
+    """
+    _escena_pulsante(escena_con_estados)
+    del_pulso = api.pulso_trabajo(escena_con_estados)["slots"]
+    ctx = api.contexto_trabajo(escena_con_estados, session="work", ventana=0)
+    demo = next(p for p in ctx["proyectos"] if p["id"] == "demo")
+    assert {s["id"]: s["estado"] for s in demo["slots"]} == del_pulso
+
+
+def test_el_pulso_solo_trae_las_notas_que_se_le_piden(escena_con_estados):
+    """Las notas son texto largo y el latido va cada cinco segundos.
+
+    Se piden las del panel derecho —una o dos— y no las de los veinte slots.
+    """
+    a, b = _escena_pulsante(escena_con_estados)
+    api.guardar_nota(escena_con_estados, a, "lo que quedó pendiente")
+    api.guardar_nota(escena_con_estados, b, "no debería viajar")
+    assert api.pulso_trabajo(escena_con_estados, [a])["notas"] == {
+        a: "lo que quedó pendiente"
+    }
+
+
+def test_el_pulso_no_se_cae_con_un_slot_que_ya_no_existe(escena_con_estados):
+    """La página lleva horas abierta: el slot que pide pudo borrarse."""
+    _escena_pulsante(escena_con_estados)
+    assert api.pulso_trabajo(escena_con_estados, [9999])["notas"] == {}
+
+
+def test_el_punto_lleva_el_id_de_su_slot(escena_con_estados):
+    """Sin esto el latido no sabe qué punto es de quién.
+
+    Es el fallo silencioso de este cambio: el HTML se sirve igual de bien, el
+    latido corre, y ningún punto se actualiza nunca.
+    """
+    html = (Path(__file__).parents[1] / "src/hub/templates/trabajo.html").read_text("utf-8")
+    assert "data-slot-punto" in html
+    # El JS lo lee por `dataset`, que camelliza el guión. Un `data-slotPunto`
+    # en el HTML no existiría para él.
+    assert "dataset.slotPunto" in html
+
+
+# ── atar una ventana a un trabajo de otro proyecto ────────────────────────────
+#
+# La ruta no siempre dice de qué va el trabajo: se puede estar en una carpeta
+# cualquiera hablando del hub. Hasta aquí la barra sólo ofrecía slots del
+# proyecto que salía del `cwd`, así que ese caso no tenía salida ninguna — el
+# panel explicaba por qué no se podía hacer nada y la ventana se quedaba fuera.
+
+@pytest.fixture
+def escena_ajena(con, monkeypatch):
+    """Dos proyectos, y una ventana en una carpeta que no es de ninguno."""
+    con.execute("INSERT INTO proyecto (id, nombre, asiento) VALUES ('demo','Demo','/tmp/demo')")
+    con.execute("INSERT INTO proyecto (id, nombre, asiento) VALUES ('hub','Hub','/tmp/hub')")
+    monkeypatch.setattr(tmux, "servidor_pid", lambda: 100)
+    monkeypatch.setattr(tmux, "rama_git", lambda cwd: None)
+    monkeypatch.setattr(
+        tmux, "listar_paneles",
+        lambda *a, **k: [
+            {"session": "suelta", "window_idx": 0, "pane_idx": 0, "pane_id": "%9",
+             "cwd": "/tmp/en-ningun-sitio", "titulo": "✳ Hablando del hub",
+             "comando": "claude", "activo": True},
+        ],
+    )
+    snapshotter.capturar(
+        con,
+        Atribuidor([
+            Proyecto(id="demo", nombre="Demo", asiento="/tmp/demo"),
+            Proyecto(id="hub", nombre="Hub", asiento="/tmp/hub"),
+        ]),
+    )
+    return con
+
+
+def _ventana(con):
+    return api.contexto_trabajo(con, session="suelta", ventana=0)["vinculable"]
+
+
+def test_slots_activos_traen_el_nombre_de_su_proyecto(escena_ajena):
+    """Sin el nombre, el desplegable enseña dos «Main» y no se sabe cuál es cuál."""
+    slots.crear(escena_ajena, "hub", "Hub - Dev")
+    (s,) = api.slots_activos(escena_ajena)
+    assert s["proyecto_nombre"] == "Hub"
+
+
+def test_una_ventana_sin_proyecto_puede_atarse_a_un_slot_existente(escena_ajena):
+    """El caso que no tenía salida: sin proyecto no se ofrecía NADA."""
+    slot_id = slots.crear(escena_ajena, "hub", "Hub - Dev")
+    v = _ventana(escena_ajena)
+
+    assert v["proyecto_id"] is None      # la ruta sigue sin ser de nadie
+    assert not v["slots"]                # y por eso no hay hermanos
+    assert [s["id"] for s in v["slots_ajenos"]] == [slot_id]
+
+
+def test_vincular_a_otro_proyecto_cambia_el_trabajo_pero_no_la_ruta(escena_ajena):
+    """🔴 Los dos proyectos hacen falta y significan cosas distintas.
+
+    `proyecto_id` es un hecho de la ruta y decide si se puede CREAR un slot.
+    `proyecto_efectivo` es de qué trabajo es la ventana, y es lo que miran la
+    nota y los lienzos. Colapsarlos hacía que una ventana vinculada a un slot
+    de otro proyecto enseñara los lienzos del proyecto de su carpeta.
+    """
+    slot_id = slots.crear(escena_ajena, "hub", "Hub - Dev")
+    slots.vincular(escena_ajena, "%9", slot_id)
+
+    v = _ventana(escena_ajena)
+    assert v["proyecto_efectivo"] == "hub"
+    assert v["proyecto_id"] is None
+    assert v["slot"]["id"] == slot_id
+
+
+def test_mover_no_ofrece_el_slot_en_el_que_ya_estas(escena_ajena):
+    a = slots.crear(escena_ajena, "hub", "Hub - Dev")
+    slots.crear(escena_ajena, "demo", "Otro")
+    slots.vincular(escena_ajena, "%9", a)
+
+    v = _ventana(escena_ajena)
+    assert a not in [s["id"] for s in v["slots_ajenos"]]
+    assert [s["nombre"] for s in v["slots_ajenos"]] == ["Otro"]
+
+
+def test_el_desplegable_de_otro_proyecto_sale_en_el_html(escena_ajena):
+    """Que el dato exista no basta: la plantilla tenía que ofrecerlo."""
+    slots.crear(escena_ajena, "hub", "Hub - Dev")
+    html = (Path(__file__).parents[1] / "src/hub/templates/trabajo.html").read_text("utf-8")
+    # El bloque «Sin proyecto» ya no es sólo una explicación de por qué no.
+    assert "Atarla a un slot que ya existe" in html
+    assert "opciones_de_slot([], v.slots_ajenos)" in html
+    # Y el panel de lienzos mira el proyecto del trabajo, no el de la carpeta.
+    assert 'data-proyecto="{{ v.proyecto_efectivo or \'\' }}"' in html

@@ -13,11 +13,13 @@ Convención de `snapshot.preservado`:
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from . import base
 from . import repos as _repos
+from . import tmux
 from .models import Proyecto, Ruta
 
 
@@ -173,6 +175,60 @@ def slots_de(
     return filas
 
 
+def estado_de_panel(panel: dict | None) -> str:
+    """Qué está pasando en el panel de un slot, para el punto de la barra.
+
+    Nace de una pregunta concreta: *"si tengo un segundo slot en ejecución y ese
+    termina o se pausa para hacerme preguntas, quiero enterarme"*. La respuesta
+    ya estaba en la base de datos —`panel.titulo` se guarda con el glifo crudo
+    que escribe Claude Code— y no se estaba usando para nada.
+
+    Cuatro estados, y los cuatro significan algo distinto para quien mira:
+
+        trabajando  el spinner gira: no hace falta ir
+        detenido    Claude está quieto. **Es el que pide atención**: acabó, o
+                    está esperando una respuesta tuya. Desde el título no se
+                    puede saber cuál de las dos.
+        otro        una shell, o algo que no reporta estado: nada que medir
+        cerrado     el slot no tiene panel abierto en el último muestreo
+
+    El dato es tan fresco como el snapshot, o sea hasta `INTERVALO_SEGUNDOS` de
+    retraso. Es deliberado: leer tmux en vivo daría 3 segundos, pero el caso de
+    uso es enterarse de que algo paró, no cronometrarlo.
+    """
+    if panel is None:
+        return "cerrado"
+    titulo = panel.get("titulo") or ""
+    if tmux.es_spinner(titulo):
+        return "trabajando"
+    if tmux.tiene_glifo_estado(titulo):
+        return "detenido"
+    return "otro"
+
+
+def slots_activos(con: sqlite3.Connection) -> list[dict]:
+    """Todos los slots activos, con el nombre de su proyecto.
+
+    Existe para poder ofrecer «mover esta ventana a un trabajo de OTRO
+    proyecto». La ruta no siempre dice de qué va el trabajo: se puede estar en
+    una carpeta cualquiera hablando del hub, y hasta ahora la barra sólo
+    ofrecía slots del proyecto que salía del `cwd`, así que ese caso no tenía
+    salida ninguna.
+    """
+    filas = [
+        _fila_a_dict(f)
+        for f in con.execute(
+            """SELECT s.*, p.nombre AS proyecto_nombre
+                 FROM slot s JOIN proyecto p ON p.id = s.proyecto_id
+                WHERE s.status = 'activo'
+                ORDER BY p.nombre, s.nombre"""
+        )
+    ]
+    for f in filas:
+        f["ruta_corta"] = ruta_corta(f.get("ruta"))
+    return filas
+
+
 def obtener_slot(con: sqlite3.Connection, slot_id: int) -> dict | None:
     fila = con.execute("SELECT * FROM slot WHERE id=?", (slot_id,)).fetchone()
     return _fila_a_dict(fila) if fila else None
@@ -214,9 +270,19 @@ def contexto_trabajo(
         if panel["proyecto_id"]:
             por_proyecto[panel["proyecto_id"]] = por_proyecto.get(panel["proyecto_id"], 0) + 1
 
+    # El panel de cada slot, para poder decir qué está haciendo. Se toma el
+    # primero igual que `panel_de_slot`: si un slot tuviera dos, dos puntos
+    # distintos junto al mismo nombre no se sabrían leer.
+    panel_por_slot: dict[int, dict] = {}
+    for panel in paneles:
+        if panel["slot_id"] and panel["slot_id"] not in panel_por_slot:
+            panel_por_slot[panel["slot_id"]] = panel
+
     proyectos = listar_proyectos(con)
     for p in proyectos:
         p["slots"] = slots_de(con, p["id"])
+        for s in p["slots"]:
+            s["estado"] = estado_de_panel(panel_por_slot.get(s["id"]))
         p["paneles_abiertos"] = por_proyecto.get(p["id"], 0)
         # Un proyecto entra en la barra si hay algo suyo que mirar. Se calcula
         # aquí y no en la plantilla porque «slots O paneles» en Jinja obliga a
@@ -408,18 +474,36 @@ def _estado_de_ventana(
     # se arregla registrando la ruta en projects.yml.
     hermanos = slots_de(con, panel["proyecto_id"]) if panel["proyecto_id"] else []
 
+    # Los slots de los DEMÁS proyectos, para poder atar esta ventana a un
+    # trabajo que no es el de su carpeta. Se excluye el suyo por lo mismo que
+    # `otros_slots`: "mover" no puede ofrecer quedarse donde está.
+    ajenos = [
+        s
+        for s in slots_activos(con)
+        if s["proyecto_id"] != panel["proyecto_id"]
+        and (not slot or s["id"] != slot["id"])
+    ]
+
     return {
         "ventana": ventana,
         "pane_id": panel["pane_id"],
         "etiqueta": panel["etiqueta"],
         "cwd": panel["cwd"],
+        # 🔴 Dos proyectos distintos y los dos hacen falta. `proyecto_id` es un
+        # hecho de la RUTA y no se toca: es lo que decide si se puede crear un
+        # slot aquí. `proyecto_efectivo` es de qué TRABAJO es esta ventana, que
+        # es una decisión suya al vincularla, y es lo que tienen que mirar la
+        # nota y los lienzos. Colapsarlos hacía que una ventana vinculada a un
+        # slot de otro proyecto enseñara los lienzos del proyecto de su carpeta.
         "proyecto_id": panel["proyecto_id"],
         "proyecto_nombre": panel["proyecto_nombre"],
+        "proyecto_efectivo": slot["proyecto_id"] if slot else panel["proyecto_id"],
         "slot": slot,
         "slots": hermanos,
         # Los demás slots del proyecto: a dónde se puede mover. Sin quitar el
         # suyo, "mover" ofrecería quedarse donde está.
         "otros_slots": [s for s in hermanos if not slot or s["id"] != slot["id"]],
+        "slots_ajenos": ajenos,
     }
 
 
@@ -446,6 +530,50 @@ def _slot_de_ventana(
 
 def guardar_nota(con: sqlite3.Connection, slot_id: int, nota: str) -> None:
     con.execute("UPDATE slot SET nota = ? WHERE id = ?", (nota, slot_id))
+
+
+def pulso_trabajo(
+    con: sqlite3.Connection, slots_nota: Sequence[int] = ()
+) -> dict:
+    """Lo que cambia mientras la vista de trabajo sigue abierta, sin recargarla.
+
+    La vista se pinta entera en el servidor y luego se queda quieta durante
+    horas. Eso dejaba dos cosas mintiendo en pantalla:
+
+    - **el punto de estado**, congelado en el que tenía al abrir la página, que
+      es exactamente lo contrario de para lo que existe: sirve para enterarse
+      de que un segundo slot paró, y sólo se enteraba quien recargara;
+    - **la nota**, cuando el mismo slot tiene dos ventanas —hay un `textarea`
+      por ventana, así que escribir en una dejaba a la otra con el texto viejo—
+      o cuando la escribe el asistente por su cuenta.
+
+    Devuelve las dos cosas juntas a propósito: es un solo latido y una sola
+    petición. Los estados van de TODOS los slots activos porque el raíl los
+    enseña todos; las notas sólo de los que se piden, que son los del panel
+    derecho —una o dos— y son lo único que pesa.
+
+    No incluye slots nuevos ni ventanas nuevas: eso cambia la forma de la
+    página, no su contenido, y repintar el raíl entero cada 5 s por si acaso
+    rompería el clic en curso igual que rompía el doble clic en las pestañas.
+    """
+    paneles = paneles_abiertos(con)
+    panel_por_slot: dict[int, dict] = {}
+    for panel in paneles:
+        if panel["slot_id"] and panel["slot_id"] not in panel_por_slot:
+            panel_por_slot[panel["slot_id"]] = panel
+
+    estados = {
+        f["id"]: estado_de_panel(panel_por_slot.get(f["id"]))
+        for f in con.execute("SELECT id FROM slot WHERE status = 'activo'")
+    }
+
+    notas: dict[int, str] = {}
+    for slot_id in dict.fromkeys(slots_nota):
+        fila = con.execute("SELECT nota FROM slot WHERE id=?", (slot_id,)).fetchone()
+        if fila is not None:
+            notas[slot_id] = fila["nota"] or ""
+
+    return {"slots": estados, "notas": notas}
 
 
 def bandeja(con: sqlite3.Connection) -> list[dict]:

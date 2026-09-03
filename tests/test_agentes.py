@@ -118,8 +118,15 @@ def test_el_prompt_nunca_se_interpola_en_crudo(malicioso):
     comando = agentes.comando(malicioso)
     partes = shlex.split(comando)
     assert partes[0] == "claude"
-    assert partes[1] == malicioso, "el prompt debe llegar entero y sin ejecutar"
-    assert len(partes) == 2
+    # El prompt es el ÚLTIMO argumento y va entero: si se hubiera partido, o si
+    # la shell le hubiera metido mano, aquí saldrían dos trozos o algo distinto.
+    # Delante van las banderas (`--model`, y `--permission-mode` si toca).
+    assert partes[-1] == malicioso, "el prompt debe llegar entero y sin ejecutar"
+    # Delante sólo van banderas del hub —`--model`, y `--permission-mode` si
+    # toca—; ni un trozo del prompt se ha escapado hasta ahí.
+    delante = partes[1:-1]
+    assert "--model" in delante
+    assert malicioso not in " ".join(delante)
 
 
 def test_el_prompt_del_mantenedor_lleva_la_medicion_dentro():

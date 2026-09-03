@@ -58,6 +58,22 @@ INTERVALO_SEGUNDOS = int(os.environ.get("HUB_INTERVALO", "20"))
 # muerte detectada) nunca se podan.
 RETENCION_SNAPSHOTS = int(os.environ.get("HUB_RETENCION", "50"))
 
+def canal_yml() -> Path:
+    """Los ajustes del canal de consulta: hoy, el puntero al token del bot.
+
+    Archivo aparte y no una sección de `projects.yml` por dos motivos. El primero
+    es que `conexiones.revisar_secretos()` vigila ese archivo contra campos que
+    huelan a credencial, y meter ahí algo llamado `token_ref` invita a que el
+    siguiente pegue el valor. El segundo es que este archivo lo lee el relé, que
+    es un proceso distinto de `hub-web`: cuanto menos comparta con él, menos
+    superficie.
+
+    🔴 Aquí va el PUNTERO, nunca el token (regla dura 5).
+    """
+    declarado = os.environ.get("HUB_CANAL_YML")
+    return Path(declarado) if declarado else HUB_HOME / "canal.yml"
+
+
 WEB_HOST = os.environ.get("HUB_HOST", "127.0.0.1")
 WEB_PORT = int(os.environ.get("HUB_PORT", "8787"))
 

@@ -103,6 +103,26 @@ def test_una_capacidad_no_puede_llamarse_como_su_proveedor(tmp_path):
         kits.leer_manifiesto(raiz)
 
 
+def test_una_capacidad_suelta_dice_que_le_falta_el_id(tmp_path):
+    """La forma corta es el error que sale solo al escribir un kit a mano.
+
+    `- notificar#enviar-mensaje` en vez de `- id: notificar#enviar-mensaje`
+    reventaba con un `AttributeError` desde dentro del parser, y quien escribe
+    su primer kit veía un traceback del hub sin forma de saber que le sobraba un
+    guion. `KitInvalido` existe para decir qué falta, no «error».
+
+    Salió de escribir el kit `telegram` el 2026-09-02.
+    """
+    raiz = tmp_path / "suelta"
+    raiz.mkdir()
+    (raiz / "kit.yml").write_text(
+        'id: x\nversion: "1.0"\nconsume:\n  - orquestacion#pactar-sesion\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(kits.KitInvalido, match="suelto"):
+        kits.leer_manifiesto(raiz)
+
+
 @pytest.mark.parametrize("destino", ["/etc/passwd", "../../fuera.md", "a/../../b.md"])
 def test_un_destino_no_puede_salir_del_proyecto(tmp_path, destino):
     """Un kit puede venir de cualquier sitio. Esto no es paranoia, es la puerta."""
@@ -811,6 +831,53 @@ def test_la_cabecera_obligatoria_no_cuenta_como_deriva(tmp_path, cabecera):
     assert _estado_de(proyecto, kit) == "igual"
 
 
+def test_una_skill_con_frontmatter_lleva_la_cabecera_DETRAS_y_sigue_al_dia(tmp_path):
+    """🔴 El mismo defecto, reaparecido por el caso que más importa: una skill.
+
+    Un `SKILL.md` necesita `---` en su PRIMERA línea o el frontmatter no parsea
+    y la skill deja de existir para quien la busca —se comprobó: `name` sale
+    `None`—. Así que ahí la cabecera **no puede ir delante**, tiene que ir
+    detrás del frontmatter.
+
+    Y el recorte devolvía `lineas[ultima+1:]`, o sea todo lo posterior a la
+    cabecera: se llevaba el frontmatter del destino y lo dejaba distinto del
+    origen **para siempre**, en el modo que existe justamente para skills,
+    agentes y hooks. Nada visible fallaba; sólo un `difiere` eterno.
+    """
+    kit, contenido = _kit_materializado(tmp_path)
+    frontmatter = '---\nname: saludar\ndescription: "Saluda: con dos puntos dentro"\n---\n'
+    kit_ruta = kit.raiz / "skills" / "saludar.md"
+    kit_ruta.write_text(frontmatter + "\n" + contenido, encoding="utf-8")
+
+    proyecto = tmp_path / "proy"
+    destino = proyecto / ".claude" / "skills" / "saludar.md"
+    destino.parent.mkdir(parents=True)
+    destino.write_text(
+        frontmatter
+        + "\n<!-- del kit saludador v1.0 — no editar aquí -->\n\n"
+        + contenido,
+        encoding="utf-8",
+    )
+
+    assert _estado_de(proyecto, kit) == "igual"
+
+
+def test_la_cabecera_de_una_skill_no_puede_ir_antes_del_frontmatter(tmp_path):
+    """CONTROL NEGATIVO: se comprueba que el problema que motiva lo anterior es real.
+
+    Si esto dejara de fallar algún día, es que el frontmatter ya se parsea con
+    algo delante — y entonces la regla de ponerla detrás sobra.
+    """
+    from hub import catalogo
+
+    ruta = tmp_path / "SKILL.md"
+    ruta.write_text(
+        "<!-- del kit saludador v1.0 -->\n---\nname: saludar\n---\ncuerpo\n",
+        encoding="utf-8",
+    )
+    assert catalogo.leer_frontmatter(ruta) == {}
+
+
 def test_sin_cabecera_tambien_esta_al_dia(tmp_path):
     """Tolerar la cabecera no puede volverse exigirla."""
     kit, contenido = _kit_materializado(tmp_path)
@@ -902,3 +969,64 @@ def test_un_id_dentro_de_otro_no_cuenta_como_aplicado(tmp_path, bloque):
     proyecto.mkdir()
     (proyecto / "CLAUDE.md").write_text(bloque, encoding="utf-8")
     assert _estado_de(proyecto, kit) == "falta"
+
+
+def test_da_igual_si_la_cabecera_va_PEGADA_al_frontmatter(tmp_path):
+    """🔴 El mismo defecto una vez más, y por un detalle invisible: DÓNDE se
+    pone la cabecera dentro del hueco.
+
+    `_sin_cabecera` se lleva la cabecera y las líneas en blanco que la siguen,
+    pero el origen conserva las suyas. Si el contenido empezaba con una blanca
+    justo donde se insertó —el caso de una skill: `---`, frontmatter, `---`,
+    blanca, título— el destino se quedaba con una línea menos y salía `difiere`
+    para siempre.
+
+    Medido el 2026-09-03 sobre dos consumidores del mismo kit: el que la puso
+    tras la blanca salía al día y el que la pegó al `---`, en rojo. Ninguna
+    instrucción decía cuál de las dos era la buena, porque nadie sabía que
+    hubiera dos.
+    """
+    kit, contenido = _kit_materializado(tmp_path)
+    frontmatter = '---\nname: saludar\n---\n'
+    (kit.raiz / "skills" / "saludar.md").write_text(
+        frontmatter + "\n" + contenido, encoding="utf-8"
+    )
+
+    proyecto = tmp_path / "proy"
+    destino = proyecto / ".claude" / "skills" / "saludar.md"
+    destino.parent.mkdir(parents=True)
+    # Pegada al cierre del frontmatter, sin respetar la blanca del origen.
+    destino.write_text(
+        frontmatter + "<!-- del kit saludador v1.0 — no editar aquí -->\n\n" + contenido,
+        encoding="utf-8",
+    )
+    assert _estado_de(proyecto, kit) == "igual"
+
+
+def test_perdonar_las_blancas_NO_tapa_un_cambio_de_verdad(tmp_path):
+    """El control que sostiene lo de arriba. La relajación es sólo para líneas
+    vacías y sólo cuando había cabecera: cualquier cambio de contenido sigue
+    saliendo, o la medición dejaría de servir para lo único que hace."""
+    kit, contenido = _kit_materializado(tmp_path)
+    proyecto = tmp_path / "proy"
+    destino = proyecto / ".claude" / "skills" / "saludar.md"
+    destino.parent.mkdir(parents=True)
+    destino.write_text(
+        "<!-- del kit saludador v1.0 — no editar aquí -->\n\n"
+        + contenido
+        + "una línea que el kit no tiene\n",
+        encoding="utf-8",
+    )
+    assert _estado_de(proyecto, kit) == "difiere"
+
+
+def test_sin_cabecera_la_comparacion_sigue_siendo_EXACTA(tmp_path):
+    """Un archivo sin cabecera no entra en la relajación: ahí una línea en
+    blanco de más sí es una diferencia, y darla por buena sería relajar la
+    medición entera por un caso que no la necesita."""
+    kit, contenido = _kit_materializado(tmp_path)
+    proyecto = tmp_path / "proy"
+    destino = proyecto / ".claude" / "skills" / "saludar.md"
+    destino.parent.mkdir(parents=True)
+    destino.write_text(contenido + "\n\n", encoding="utf-8")
+    assert _estado_de(proyecto, kit) == "difiere"

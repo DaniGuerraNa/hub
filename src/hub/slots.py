@@ -131,7 +131,12 @@ def abrir(con: sqlite3.Connection, slot_id: int, session: str | None = None) -> 
         return None
     comando = slot["comando"]
     if not comando and slot["autostart_claude"]:
-        comando = "claude"
+        # Un slot es TU ventana de trabajo, no un agente del hub: la abres, la
+        # miras y eliges tú con qué modelo trabajar, desde
+        # `~/.claude/settings.json` o con `/model`. Si un slot concreto quiere
+        # otro, se le pone en `slot["comando"]`. La política de `modelos.py`
+        # cubre lo que el hub lanza por su cuenta, que es lo que nadie mira.
+        comando = "claude"  # modelo: hereda — a propósito, ver arriba
     pane_id = tmux.abrir_ventana(slot["ruta"], slot["nombre"], comando, session)
     if pane_id:
         vincular(con, pane_id, slot_id)
@@ -146,5 +151,6 @@ def comando_manual(con: sqlite3.Connection, slot_id: int) -> str | None:
     slot = api.obtener_slot(con, slot_id)
     if not slot or not slot["ruta"]:
         return None
+    # modelo: hereda — el mismo comando que `abrir()`, para copiar y pegar.
     comando = slot["comando"] or ("claude" if slot["autostart_claude"] else None)
     return tmux.comando_de_apertura(slot["ruta"], slot["nombre"], comando)

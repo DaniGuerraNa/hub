@@ -56,11 +56,22 @@ espera de todos.
 bash scripts/kit.sh listar
 ```
 
-Enseña qué hay, con **qué aporta cada uno**, y deja elegir. No apliques ninguno
-por tu cuenta: un kit trae archivos, reglas y a veces agentes, y meterlos sin
-pedirlo es decidir por otro cómo va a trabajar.
+No apliques ninguno por tu cuenta: un kit trae archivos, reglas y a veces
+agentes, y meterlos sin pedirlo es decidir por otro cómo va a trabajar.
 
-Para cada elegido, usa la skill `aplicar-kit`.
+**Cómo ofrecerlos depende de si hay alguien delante**, y esto no es un matiz:
+
+- **Con alguien en la conversación**: enseña qué hay, con qué aporta cada uno, y
+  deja elegir. Para cada elegido, la skill `aplicar-kit`.
+- 🔴 **Si te lanzó el hub** —ventana abierta desde el chat del asistente—:
+  **NO preguntes.** Nadie está mirando esa ventana, así que la pregunta no
+  espera a nadie: deja el trabajo colgado y desde fuera se ve como «está
+  trabajando», porque el hub sólo distingue `trabajando` de `detenido`. Pon la
+  lista en tu resumen final y termina. La decisión se toma después, en la
+  conversación donde sí hay alguien.
+
+Se sabe cuál es el caso por cómo empezó: si lo primero que viste fue un encargo
+ya escrito con la carpeta creada y el alta hecha, te lanzó el hub.
 
 ### 5. Da de alta en el registro
 

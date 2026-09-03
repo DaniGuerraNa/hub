@@ -124,10 +124,69 @@ def instalar(id_kit: str, version: str | None) -> int:
         # La base la trae el hub consigo: no hay nada que descargar.
         print(f"{id_kit} {version} viene con el hub: {config.RAIZ_REPO / 'semillas' / id_kit}")
         return 0
+    # 🔴 Un kit EN DESARROLLO no se instala, y decirlo es el arreglo.
+    #
+    # `instalar` clona el tag `v<version>` del origen. Un kit que aún se está
+    # escribiendo no lo ha publicado —de los cuatro del catálogo, sólo uno tiene
+    # tag—, así que el comando moría con un `fatal: Remote branch v0.1 not found
+    # in upstream origin` de git en crudo. Ese mensaje no dice qué hacer, y lo
+    # que hay que hacer no es publicar un tag: es NADA, porque el kit ya se
+    # resuelve desde el registro y todo lo demás —`ruta`, `estado`, `aplicar`—
+    # funcionaba perfectamente contra él.
+    #
+    # Costó una aplicación de kit a mano: quien lo intentó leyó el fatal, dio el
+    # comando por roto y siguió por su cuenta. Un paso del procedimiento que
+    # falla con un error de otra herramienta se lee como «esto no funciona».
+    # Primero lo ya instalado: una versión congelada que ya está en disco se
+    # informa como tal, aunque el kit se esté escribiendo a la vez. Las dos
+    # cosas conviven —la copia de `1.0` y el repo donde nace la `1.1`— y
+    # confundirlas haría creer que no hay nada instalado cuando sí lo hay.
+    ya = kits.ruta_de(id_kit, version)
+    if ya.is_dir():
+        print(f"  ✓ {id_kit} {version} ya estaba instalado → {ya}")
+        return 0
+
+    try:
+        proyectos = registry.cargar()
+    except Exception:      # el registro puede no existir todavía
+        proyectos = []
+    en_desarrollo = kits.resolver_en_desarrollo(id_kit, proyectos)
+    if en_desarrollo:
+        # 🔴 Y la versión se COMPRUEBA, igual que con `base`. Sin esto,
+        # `instalar lienzos 9.9` contestaba «en desarrollo» y salía con éxito:
+        # el kit en desarrollo es UNA versión concreta —la que declara su
+        # `kit.yml`—, no todas las que le pidas. Un consumidor que declarase
+        # `9.9` mediría su deriva contra la 0.1 creyendo estar en otra.
+        try:
+            suya = kits.leer_manifiesto(en_desarrollo).version
+        except Exception:
+            suya = ""
+        if suya and version != suya:
+            print(
+                f"{id_kit} {version} no existe: el kit en desarrollo va por la"
+                f" {suya} ({en_desarrollo}).",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"{id_kit} {version} está EN DESARROLLO: no hay nada que instalar.")
+        print(f"  se resuelve desde el registro → {en_desarrollo}")
+        print("  publica el tag cuando lo congeles:"
+              f" git -C {en_desarrollo} tag v{version}")
+        return 0
+
     try:
         destino = kits.instalar(id_kit, version, origen)
     except kits.KitInvalido as e:
         print(str(e), file=sys.stderr)
+        # El fallo más probable con diferencia, y el que no se explica solo.
+        if "not found in upstream" in str(e) or f"v{version}" in str(e):
+            print(
+                f"\nEl origen no tiene la etiqueta `v{version}`. O bien:\n"
+                f"  · publícala:  git -C {origen} tag v{version}\n"
+                f"  · o declara el kit en tu `projects.yml` con `tipo: kit`"
+                " para trabajarlo en desarrollo, sin publicar nada.",
+                file=sys.stderr,
+            )
         return 1
     print(f"  ✓ {id_kit} {version} → {destino}")
 
@@ -290,14 +349,26 @@ def arbol() -> int:
     return 0
 
 
+def _en_desarrollo(id_kit: str):
+    """La raíz de un kit declarado en el registro como `tipo: kit`."""
+    try:
+        return kits.resolver_en_desarrollo(id_kit, registry.cargar())
+    except Exception:  # noqa: BLE001 — un registro roto no ciega a `verificar`
+        return None
+
+
 def verificar(donde: str) -> int:
     """Valida un manifiesto. Se usa antes de publicar una versión."""
     ruta_kit = Path(donde)
     if not ruta_kit.is_dir():
+        # También los que se están ESCRIBIENDO, no sólo los instalados. El
+        # arreglo estaba hecho en `estado` y en `arbol` y aquí no: verificar un
+        # kit por su id fallaba con «no encuentro» justo mientras lo escribes,
+        # que es cuando más se verifica. Se descubrió aplicando el primero.
         resuelta = (
             config.RAIZ_REPO / "semillas" / "base"
             if donde == kits.ID_BASE
-            else kits.resolver(donde)
+            else kits.resolver(donde) or _en_desarrollo(donde)
         )
         if not resuelta:
             print(f"No encuentro «{donde}» ni como ruta ni como kit instalado.",

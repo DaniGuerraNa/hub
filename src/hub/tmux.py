@@ -24,6 +24,20 @@ _FORMATO = (
 # apertura del español.
 _GLIFO_INICIAL = re.compile(r"^[^\w¿¡«\"'(\[]+", re.UNICODE)
 
+# Ese glifo no es decoración: es la ÚNICA señal de actividad que da Claude Code
+# sin leer la pantalla entera, y llega gratis porque `list-panes` ya la trae.
+# Mientras piensa gira un spinner del bloque braille (⠂ ⠐ …); cuando no, pone
+# otra cosa (✳). Medido en esta máquina: 240 títulos con ✳ contra 60 braille.
+#
+# 🔴 El glifo NO distingue "terminó" de "te está esperando con una pregunta":
+# los dos son ✳. Para eso haría falta leer el contenido del panel.
+_BRAILLE = (0x2800, 0x28FF)
+
+# Shells: un panel con una de estas no está corriendo un asistente, así que su
+# título no dice nada de actividad.
+SHELLS = {"bash", "zsh", "sh", "fish"}
+
+
 # Prefijo de las sesiones espejo que crea el hub para la terminal embebida.
 # Son sesiones AGRUPADAS: comparten las mismas ventanas que la original, así que
 # si no se excluyen, `list-panes -a` cuenta cada panel dos veces.
@@ -135,6 +149,30 @@ def limpiar_titulo(titulo: str) -> str:
     return _GLIFO_INICIAL.sub("", titulo).strip()
 
 
+def tiene_glifo_estado(titulo: str) -> bool:
+    """Si el título lo está escribiendo algo que reporta estado, o sea Claude.
+
+    Se pregunta por el glifo y no por `pane_current_command` porque el comando
+    no es de fiar en los dos sentidos: hay quien arranca el asistente por un
+    envoltorio (`node`, un alias) y hay paneles con `vim` o `python` que no
+    reportan nada. Sin esto, un panel con vim se pintaba «detenido» y mandaba a
+    mirar un sitio donde no había pasado nada.
+    """
+    return bool(titulo) and limpiar_titulo(titulo) != titulo
+
+
+def es_spinner(titulo: str) -> bool:
+    """Si el título viene con el spinner de Claude Code, o sea: está pensando.
+
+    Toma el título entero y no el carácter suelto a propósito: quien la llama
+    tiene un `pane_title`, y hacerle recortar el primer carácter es una forma
+    fácil de equivocarse con un título vacío.
+    """
+    if not titulo:
+        return False
+    return _BRAILLE[0] <= ord(titulo[0]) <= _BRAILLE[1]
+
+
 def inferir_etiqueta(titulo: str, cwd: str, comando: str) -> str:
     """Etiqueta legible del panel.
 
@@ -148,7 +186,7 @@ def inferir_etiqueta(titulo: str, cwd: str, comando: str) -> str:
 
     carpeta = Path(cwd).name or cwd
     partes = [carpeta]
-    if comando and comando not in {"bash", "zsh", "sh", "fish"}:
+    if comando and comando not in SHELLS:
         partes.append(comando)
     rama = rama_git(cwd)
     if rama:

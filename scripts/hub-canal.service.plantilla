@@ -1,0 +1,21 @@
+[Unit]
+# El relé del canal de consulta. Servicio PROPIO y no un hilo de hub-web, y no es
+# organización: es el único proceso que lee el token del bot. `hub-web` expone el
+# puerto —y con él el endpoint de terminal, que da acceso de shell (regla dura
+# 8)—, así que no debe verlo nunca.
+Description=Hub — relé del canal de consulta (Telegram)
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@RAIZ@
+Environment=HUB_HOME=@HUB_HOME@
+Environment=PATH=@PATH@
+ExecStart=@UV@ run python -m hub.rele
+Restart=always
+# Más que los otros: si Telegram no responde, reintentar cada diez segundos no lo
+# trae antes y sólo llena el registro de ruido.
+RestartSec=30
+
+[Install]
+WantedBy=default.target

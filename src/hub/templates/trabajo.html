@@ -27,7 +27,10 @@
   .rail, .nota { overflow-y:auto; overflow-x:hidden; min-height:0; }
   .rail { border-right:1px solid var(--borde); padding:12px 10px 40px; }
   .nota { border-left:1px solid var(--borde); padding:12px 14px 40px; display:flex; flex-direction:column; }
-  .centro { display:flex; flex-direction:column; min-width:0; min-height:0; }
+  /* `position:relative` para que el aviso de copiado se ancle AQUÍ y no al
+     viewport: si no, aparece flotando sobre la nota o fuera de la pantalla. */
+  .centro { display:flex; flex-direction:column; min-width:0; min-height:0;
+            position:relative; }
 
   .tirador { cursor:col-resize; background:transparent; }
   .tirador:hover, .tirador.activo { background:var(--acento); opacity:.35; }
@@ -54,6 +57,22 @@
   .item.activo .sub { color:var(--texto-2); }
   .item .sub { display:block; font-size:11px; color:var(--texto-3); }
   .punto { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--acento); margin-right:5px; vertical-align:middle; }
+
+  /* El estado del slot. Lo único que se mueve es «trabajando»: si el detenido
+     también llamara la atención —y detenido es el estado normal, 4 de cada 5
+     muestras— la barra entera parecería una alarma y dejaría de decir nada.
+     Así lo que se percibe es la DESAPARICIÓN del pulso, que es justo el momento
+     en el que hay que ir a mirar. */
+  .punto.trabajando { background:var(--ok); animation:latido 1.6s ease-in-out infinite; }
+  .punto.detenido   { background:var(--neutro); }
+  /* Huecos: no hay asistente del que informar. El de un slot cerrado es más
+     tenue todavía, pero se pinta igual para que la lista no se desalinee. */
+  .punto.otro       { background:transparent; box-shadow:inset 0 0 0 1px var(--texto-4); }
+  .punto.cerrado    { background:transparent; box-shadow:inset 0 0 0 1px var(--borde); }
+  /* La ruta se alinea con el nombre, no con el punto. */
+  .item .sub { padding-left:11px; }
+  @keyframes latido { 0%, 100% { opacity:1; } 50% { opacity:.2; } }
+  @media (prefers-reduced-motion: reduce) { .punto.trabajando { animation:none; } }
 
   .pestanas { display:flex; gap:3px; padding:5px 8px 0; border-bottom:1px solid var(--borde); overflow-x:auto; }
   .pestana { display:flex; align-items:center; gap:7px; padding:6px 12px; border:1px solid var(--borde);
@@ -124,6 +143,88 @@
   #marco { flex:1; min-height:0; background:var(--lienzo); padding:8px 12px 8px 6px;
            letter-spacing: normal; }
   .nota-texto { flex:1; min-height:200px; resize:none; font-size:13px; line-height:1.5; }
+
+  /* Nota y lienzos comparten el lado. `min-height:0` en la hoja no es adorno:
+     sin él, el `flex:1` del textarea y de la lista no puede encoger dentro de
+     un contenedor flex y el panel se desborda en vez de hacer scroll. */
+  .pest-lado { display:flex; gap:2px; margin:-2px 0 10px; border-bottom:1px solid var(--borde); }
+  .pest-lado button { background:none; border:0; border-bottom:2px solid transparent;
+    color:var(--texto-4); padding:5px 11px 7px; font:inherit; font-size:13px;
+    cursor:pointer; border-radius:0; }
+  .pest-lado button:hover { color:var(--texto-2); }
+  .pest-lado button.on { color:var(--acento); border-bottom-color:var(--acento); font-weight:600; }
+  .hoja { flex:1; min-height:0; display:flex; flex-direction:column; }
+  .hoja[hidden] { display:none; }
+
+  /* El aviso de copiado: aparece sobre el terminal y se va solo. No ocupa sitio
+     en el layout —`position:absolute`— porque el alto del terminal está medido
+     al píxel y meterle un elemento en el flujo le quitaría una fila. */
+  #copiado { position:absolute; right:14px; bottom:10px; padding:3px 9px;
+             border-radius:var(--r-nav); background:var(--elevado); color:var(--texto-2);
+             font-size:11px; opacity:0; transition:opacity .15s; pointer-events:none; }
+  #copiado.visible { opacity:.92; }
+
+  /* El campo de respuesta libre de un punto: no compite con los tres botones,
+     los acompaña. */
+  .dresp { width:100%; margin-top:6px; font-size:12.5px; min-height:44px;
+           resize:vertical; }
+  .dresp-estado { font-size:11px; }
+
+  /* Archivar un lienzo: discreto hasta que pasas por encima. Es una acción
+     reversible y frecuente, no una que deba pedir atención. */
+  .lienzo-item .arch { float:right; opacity:0; padding:0 5px; border:none;
+                       background:transparent; color:var(--texto-3); cursor:pointer; }
+  .lienzo-item:hover .arch { opacity:.6; }
+  .lienzo-item .arch:hover { opacity:1; color:var(--acento); }
+
+  /* Las consultas del slot: una pregunta, su estado y lo que contestaron. */
+  .consulta { padding:9px 0; border-bottom:1px solid var(--borde); }
+  .consulta .quien { font-size:11px; color:var(--texto-3); }
+  .consulta .texto { font-size:13px; margin:3px 0; white-space:pre-wrap; }
+  .consulta .resp { font-size:13px; color:var(--texto-2); border-left:2px solid var(--ok);
+                    padding-left:8px; margin-top:5px; white-space:pre-wrap; }
+  .consulta.ajena { opacity:.6; }
+  #consultas-punto, #lienzos-punto { display:none; width:6px; height:6px; border-radius:50%;
+    background:var(--acento); vertical-align:2px; margin-left:2px; }
+  #lienzos-punto.hay, #consultas-punto.hay { display:inline-block; }
+
+  #lienzos-buscar { width:100%; margin-bottom:8px; font-size:12.5px; }
+  #lienzos-lista { overflow-y:auto; max-height:44%; }
+  .lienzo-item { border:1px solid var(--borde); border-radius:10px; padding:8px 10px;
+    margin-bottom:6px; cursor:pointer; }
+  .lienzo-item:hover { border-color:var(--texto-4); }
+  .lienzo-item.on { border-color:var(--acento); background:var(--superficie2); }
+  .lienzo-item .tt { font-size:13px; display:flex; gap:6px; align-items:center; }
+  .lienzo-item .tt b { flex:1; font-weight:500; }
+  .lienzo-item .mm { font-size:11px; color:var(--texto-4); margin-top:2px; }
+  .et-tuyo { font-size:10.5px; padding:1px 7px; border-radius:999px; flex:none;
+    background:color-mix(in srgb, var(--espera) 17%, transparent); color:var(--espera); }
+
+  #lienzos-vista { flex:1; min-height:0; overflow-y:auto; margin-top:10px;
+    border-top:1px solid var(--borde); padding-top:10px; }
+  #lienzos-vista .cabl { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  #lienzos-vista .cabl b { flex:1; font-size:13px; }
+
+  /* La plantilla `decisiones`: todo plegado, y se abre lo que toca decidir. */
+  .dec { border:1px solid var(--borde); border-radius:9px; margin-bottom:6px; }
+  .dec > summary { padding:8px 10px; cursor:pointer; font-size:12.5px;
+    display:flex; gap:8px; align-items:center; list-style:none; }
+  .dec > summary::-webkit-details-marker { display:none; }
+  .dec .dtt { flex:1; }
+  .dec .dst { font-size:10.5px; padding:1px 8px; border-radius:999px; flex:none;
+    background:var(--superficie2); color:var(--texto-4); }
+  .dec[data-e="si"]    { border-color:color-mix(in srgb, var(--ok) 55%, var(--borde)); }
+  .dec[data-e="no"]    { border-color:color-mix(in srgb, var(--riesgo) 45%, var(--borde)); }
+  .dec[data-e="luego"] { border-color:color-mix(in srgb, var(--espera) 50%, var(--borde)); }
+  .dec[data-e="si"] .dst    { background:color-mix(in srgb, var(--ok) 18%, transparent); color:var(--ok); }
+  .dec[data-e="no"] .dst    { background:color-mix(in srgb, var(--riesgo) 18%, transparent); color:var(--riesgo); }
+  .dec[data-e="luego"] .dst { background:color-mix(in srgb, var(--espera) 18%, transparent); color:var(--espera); }
+  .dec .djj { padding:0 10px 9px; font-size:12.5px; color:var(--texto-2);
+    border-top:1px solid var(--borde); padding-top:9px; }
+  .dec .dbb { display:flex; gap:6px; padding:0 10px 10px; }
+  .dec .dbb button { padding:3px 11px; font-size:12px; }
+  .lienzo-crudo { font:11.5px/1.6 var(--mono, ui-monospace, monospace);
+    white-space:pre-wrap; color:var(--texto-3); }
   .por-ventana { display:none; flex-direction:column; flex:1; min-height:0; }
   .por-ventana.viendo { display:flex; }
   .por-ventana summary { font-size:12px; }
@@ -162,7 +263,11 @@
   .xterm-viewport::-webkit-scrollbar { display: none; width: 0; height: 0; }
 </style>
 
-<div class="taller" id="taller">
+{# `data-proyecto` del SLOT elegido, no de la ventana. Es el que usa el panel de
+   lienzos cuando el slot no tiene ninguna ventana abierta: sin esto, entrar en
+   un slot recién creado decía «aún no hay lienzos en este proyecto» —falso, no
+   sabía de qué proyecto preguntar— y eso es peor que no decir nada. #}
+<div class="taller" id="taller" data-proyecto="{{ slot.proyecto_id if slot else '' }}">
 
   {# Dos niveles, y la barra tiene que enseñar CUÁL es cuál. Antes el nombre del
      proyecto usaba el mismo estilo que el rótulo «Sesiones tmux», así que
@@ -170,6 +275,15 @@
      tres proyectos sin slots, sus cabeceras parecían elementos sueltos. Ahora
      el estilo de rótulo queda RESERVADO a las secciones, y el proyecto es una
      cabecera con sus slots colgando de una guía. #}
+  {# Los textos del punto viven en UNA variable porque los usan dos sitios: el
+     primer pintado, que lo hace el servidor, y el latido, que lo rehace en el
+     navegador. Dos copias de la misma frase divergen a la primera corrección. #}
+  {% set TITULOS_ESTADO = {
+       'trabajando': 'Trabajando ahora',
+       'detenido':   'Detenido: terminó o te está esperando',
+       'otro':       'Abierto, sin asistente',
+       'cerrado':    'Sin ventana abierta',
+     } %}
   <nav class="rail">
     {% set en_uso = proyectos | selectattr('en_uso') | list %}
     {% if en_uso %}
@@ -179,10 +293,14 @@
       <div class="proyecto">
         <a class="cabecera" href="/proyecto/{{ p.id }}">{{ p.nombre }}</a>
         <div class="hijos">
+          {# El punto lleva `title` porque el color solo no dice nada la primera
+             vez que lo ves, y porque «detenido» significa dos cosas que el
+             glifo del título no distingue: acabó, o te está esperando. #}
           {% for s in p.slots %}
           <a class="item {{ 'activo' if slot and s.id == slot.id }}"
              href="/trabajo?slot={{ s.id }}">
-            {{ s.nombre }}
+            <span class="punto {{ s.estado }}" data-slot-punto="{{ s.id }}"
+                  title="{{ TITULOS_ESTADO.get(s.estado, '') }}"></span>{{ s.nombre }}
             <span class="sub mono">{{ s.ruta_corta or '—' }}</span>
           </a>
           {% endfor %}
@@ -255,17 +373,47 @@
     </div>
     <div class="pestanas" id="ventanas"></div>
     <div id="marco"></div>
+    {# Confirmación de que el texto salió al portapapeles. Sin ella, copiar y no
+       copiar se ven exactamente igual, que es como se pierde una selección
+       creyendo que se tiene. #}
+    <div id="copiado" aria-live="polite"></div>
   </main>
 
   <div class="tirador der" data-lado="nota"></div>
 
   <aside class="nota">
+    {# Nota y lienzos comparten sitio porque son lo mismo: lo que acompaña a
+       este trabajo. El lienzo NO roba el foco — aparece el punto en la pestaña
+       y la abres tú (principio 9). #}
+    <div class="pest-lado">
+      <button type="button" data-hoja="nota" class="on">Nota</button>
+      <button type="button" data-hoja="lienzos">Lienzos <span id="lienzos-punto"></span></button>
+      {# Las consultas van en hoja PROPIA y no como un lienzo con etiqueta: una
+         pregunta tiene su propio ciclo —sale, se contesta, vuelve al panel— y
+         meterla en el motor de lienzos obligaría a inventarle un tipo y a
+         duplicar ese estado en dos sitios que luego divergen. #}
+      <button type="button" data-hoja="consultas">Consultas <span id="consultas-punto"></span></button>
+    </div>
+
+    <div class="hoja" data-hoja="nota">
     {# Un bloque por VENTANA de la sesión, y el JS enseña el de la pestaña
        activa. Cambiar de pestaña no recarga la página: si esto se pintara sólo
        para la ventana con la que se entró, seguirías viendo —y editando— la
        nota de otro trabajo sin que nada lo dijera. #}
+    {# Los slots propios primero y los de otros proyectos detrás, con su
+       proyecto DENTRO del texto y no en un `<optgroup>`: el combo de
+       `hub-ui.js` recorre `sel.options`, que aplana los grupos, así que la
+       etiqueta se perdería justo donde hace falta para distinguirlos —y el
+       buscador del combo mira ese mismo texto. #}
+    {% macro opciones_de_slot(propios, ajenos) -%}
+      {% for s in propios %}<option value="{{ s.id }}">{{ s.nombre }}</option>{% endfor %}
+      {% for s in ajenos %}<option value="{{ s.id }}">{{ s.proyecto_nombre }} · {{ s.nombre }}</option>{% endfor %}
+    {%- endmacro %}
+
     {% for v in ventanas_estado %}
-    <div class="por-ventana" data-ventana="{{ v.ventana }}" hidden>
+    <div class="por-ventana" data-ventana="{{ v.ventana }}"
+         data-proyecto="{{ v.proyecto_efectivo or '' }}"
+         data-slot-nombre="{{ v.slot.nombre if v.slot else '' }}" hidden>
       {% if v.slot %}
         <div class="fila" style="margin-bottom:8px">
           <strong style="font-size:14px;font-weight:500">Nota — {{ v.slot.nombre }}</strong>
@@ -297,16 +445,14 @@
           </form>
           {% endif %}
 
-          {% if v.otros_slots %}
+          {% if v.otros_slots or v.slots_ajenos %}
           <form method="post" action="/panel/accion" style="margin-top:16px">
             <input type="hidden" name="pane_id" value="{{ v.pane_id }}">
             <input type="hidden" name="accion" value="vincular">
             <input type="hidden" name="destino" value="/trabajo?session={{ session }}&ventana={{ v.ventana }}">
             <label>…o moverla a otro slot</label>
             <select name="slot_id" data-combo="si" aria-label="Slot">
-              {% for s in v.otros_slots %}
-              <option value="{{ s.id }}">{{ s.nombre }}</option>
-              {% endfor %}
+              {{ opciones_de_slot(v.otros_slots, v.slots_ajenos) }}
             </select>
             <div class="barra" style="margin-top:8px">
               <button class="principal">Mover</button>
@@ -350,16 +496,14 @@
           </div>
         </form>
 
-        {% if v.slots %}
+        {% if v.slots or v.slots_ajenos %}
         <form method="post" action="/panel/accion" style="margin-top:16px">
           <input type="hidden" name="pane_id" value="{{ v.pane_id }}">
           <input type="hidden" name="accion" value="vincular">
           <input type="hidden" name="destino" value="/trabajo?session={{ session }}&ventana={{ v.ventana }}">
           <label>…o vincular a uno que ya existe</label>
           <select name="slot_id" data-combo="si" aria-label="Slot">
-            {% for s in v.slots %}
-            <option value="{{ s.id }}">{{ s.nombre }}</option>
-            {% endfor %}
+            {{ opciones_de_slot(v.slots, v.slots_ajenos) }}
           </select>
           <div class="barra" style="margin-top:8px">
             <button class="principal">Vincular</button>
@@ -374,9 +518,34 @@
         <div class="fila" style="margin-bottom:8px">
           <strong style="font-size:14px;font-weight:500">Sin proyecto</strong>
         </div>
-        <p class="tenue">Esta ruta no pertenece a ningún proyecto registrado, y un
-        slot cuelga de un proyecto. Añade <span class="mono">{{ v.cwd }}</span>
-        a <span class="mono">projects.yml</span> y aparecerá aquí.</p>
+        <p class="tenue">Esta ruta no pertenece a ningún proyecto registrado, así
+        que aquí no se puede <em>crear</em> un slot: un slot cuelga de un
+        proyecto. Añade <span class="mono">{{ v.cwd }}</span> a
+        <span class="mono">projects.yml</span> y podrás.</p>
+
+        {# Pero sí se puede atar a un slot que ya exista, y hace falta: se está
+           en una carpeta cualquiera hablando de otro proyecto más veces de las
+           que parece. Antes este hueco sólo explicaba por qué no se podía hacer
+           nada, y la ventana se quedaba fuera del hub para siempre. #}
+        {% if v.slots_ajenos %}
+        <form method="post" action="/panel/accion" style="margin-top:16px">
+          <input type="hidden" name="pane_id" value="{{ v.pane_id }}">
+          <input type="hidden" name="accion" value="vincular">
+          <input type="hidden" name="destino" value="/trabajo?session={{ session }}&ventana={{ v.ventana }}">
+          <label>Atarla a un slot que ya existe</label>
+          <select name="slot_id" data-combo="si" aria-label="Slot">
+            {{ opciones_de_slot([], v.slots_ajenos) }}
+          </select>
+          <div class="barra" style="margin-top:8px">
+            <button class="principal">Vincular</button>
+          </div>
+        </form>
+        <p class="tenue" style="margin:12px 0 0">
+          La carpeta no cambia: sigue siendo <span class="mono">{{ v.cwd }}</span>.
+          Lo que cambia es de qué trabajo es esta ventana, y con eso vienen su
+          nota y sus lienzos.
+        </p>
+        {% endif %}
       {% endif %}
     </div>
     {% endfor %}
@@ -387,6 +556,32 @@
     {% if not ventanas_estado %}
       <p class="tenue">Elige un slot en la izquierda para ver y editar su nota.</p>
     {% endif %}
+    </div>
+
+    <div class="hoja" data-hoja="lienzos" hidden>
+      <div class="fila" style="gap:6px">
+        <input type="search" id="lienzos-buscar" autocomplete="off" style="flex:1"
+               placeholder="Buscar…  (vacío: los de este proyecto)">
+        {# La puerta de vuelta. Sin ella archivar da miedo, y lo que da miedo no
+           se usa: el panel se seguiría llenando igual. #}
+        <button type="button" id="lienzos-archivados" class="sutil"
+                title="Ver los archivados">Archivo</button>
+      </div>
+      <div id="lienzos-lista"></div>
+      <div id="lienzos-vista"></div>
+    </div>
+
+    <div class="hoja" data-hoja="consultas" hidden>
+      {# Tres filtros y no dos: «pendiente» es la que todavía espera respuesta y
+         es la única sobre la que se puede hacer algo —insistir, o archivarla—,
+         así que separarla de las contestadas es lo que hace útil la lista. #}
+      <div class="fila" style="gap:4px;margin-bottom:6px">
+        <button type="button" class="sutil on" data-filtro="todas">Todas</button>
+        <button type="button" class="sutil" data-filtro="pendientes">Pendientes</button>
+        <button type="button" class="sutil" data-filtro="contestadas">Contestadas</button>
+      </div>
+      <div id="consultas-lista"></div>
+    </div>
   </aside>
 </div>
 
@@ -439,6 +634,108 @@
   const ajuste = new FitAddon.FitAddon();
   term.loadAddon(ajuste);
   term.open(document.getElementById('marco'));
+
+  /* ── copiar al seleccionar ───────────────────────────────────────────────
+   *
+   * 🔴 Esto NO existía, y por eso copiar funcionaba en una ventana y en otra
+   * no: lo que copiaba era el navegador por su cuenta, y su comportamiento por
+   * defecto depende de dónde acabe el foco y de qué haga la aplicación con el
+   * ratón. Una terminal donde copiar funciona a veces es peor que una donde no
+   * funciona nunca, porque se pierde texto creyendo que se tiene.
+   *
+   * Se hace en `mouseup` y no en `onSelectionChange`: el segundo se dispara en
+   * cada píxel del arrastre, y escribir en el portapapeles en cada uno no es
+   * gratis ni tiene sentido. Además `writeText` exige un gesto del usuario, y
+   * soltar el botón LO ES; en mitad del arrastre el navegador puede negarse.
+   *
+   * `127.0.0.1` cuenta como contexto seguro, así que `navigator.clipboard`
+   * está disponible sin HTTPS. Aun así hay un plan B con `execCommand`, que
+   * está obsoleto pero es lo único que queda si el permiso se deniega.
+   */
+  const avisoCopia = document.getElementById('copiado');
+
+  function anunciarCopia(n) {
+    if (!avisoCopia) return;
+    avisoCopia.textContent = `${n} copiados`;
+    avisoCopia.classList.add('visible');
+    clearTimeout(anunciarCopia._t);
+    anunciarCopia._t = setTimeout(() => avisoCopia.classList.remove('visible'), 1400);
+  }
+
+  async function alPortapapeles(texto) {
+    if (!texto) return false;
+    try {
+      await navigator.clipboard.writeText(texto);
+      return true;
+    } catch (e) {}
+    // Plan B: un textarea fuera de pantalla y `execCommand`. Feo y obsoleto,
+    // pero es lo que responde cuando el permiso de portapapeles se deniega.
+    try {
+      const caja = document.createElement('textarea');
+      caja.value = texto;
+      caja.style.cssText = 'position:fixed;top:-9999px;opacity:0';
+      document.body.appendChild(caja);
+      caja.select();
+      const ok = document.execCommand('copy');
+      caja.remove();
+      return ok;
+    } catch (e) { return false; }
+  }
+
+  function avisarDeCopia(texto, ok) {
+    if (ok) anunciarCopia(texto.length);
+    else if (avisoCopia) avisoCopia.textContent = 'no se pudo copiar';
+  }
+
+  async function copiarSeleccion() {
+    const texto = term.getSelection();
+    if (!texto) return;
+    avisarDeCopia(texto, await alPortapapeles(texto));
+  }
+
+  document.getElementById('marco').addEventListener('mouseup', copiarSeleccion);
+
+  /* ── copiar desde DENTRO del panel: OSC 52 ────────────────────────────────
+   *
+   * 🔴 Lo de arriba sólo cubre la selección que hace el navegador, y en un
+   * panel donde corre Claude Code no hay ninguna: la aplicación pide los
+   * eventos de ratón (`mouse_any_flag` medido a SÍ en las tres ventanas), así
+   * que selecciona ella y copia con la secuencia OSC 52. Es también lo que usa
+   * tmux con el `set-clipboard on` de la configuración del usuario.
+   *
+   * xterm.js NO trae esa secuencia implementada: la parsea y la descarta. El
+   * síntoma es exactamente el que se vio — la terminal dice «N caracteres
+   * copiados» porque el mensaje lo pinta la aplicación, y el portapapeles se
+   * queda vacío—, y sólo funcionaba en la ventana donde por casualidad la
+   * selección la había hecho el navegador.
+   *
+   * Verificado antes de escribir esto: se mandó un OSC 52 desde dentro de un
+   * panel y llegó entero al PTY de fuera, atravesando tmux sin tocarse.
+   */
+  const TOPE_OSC52 = 200000;   // ~200 KB: un pegado enorme no puede colgar esto
+
+  term.parser.registerOscHandler(52, (datos) => {
+    const sep = datos.indexOf(';');
+    const carga = sep === -1 ? datos : datos.slice(sep + 1);
+
+    /* 🔴 `?` es la forma de PREGUNTAR qué hay en el portapapeles, y la
+     * respuesta se contestaría por el PTY. Eso deja que cualquier cosa que
+     * corra en un panel —una dependencia, un script pegado— se lleve lo que
+     * el usuario tenga copiado: contraseñas incluidas. No se contesta nunca.
+     * Se devuelve `true` igual, para que la secuencia no se pinte en pantalla. */
+    if (carga === '?' || carga.length > TOPE_OSC52) return true;
+
+    let texto;
+    try {
+      const crudo = atob(carga);
+      const bytes = Uint8Array.from(crudo, c => c.charCodeAt(0));
+      texto = new TextDecoder().decode(bytes);   // el base64 lleva UTF-8 dentro
+    } catch (e) {
+      return true;   // base64 roto: se ignora, pero no se pinta
+    }
+    if (texto) alPortapapeles(texto).then(ok => avisarDeCopia(texto, ok));
+    return true;
+  });
 
   // ── tamaño ────────────────────────────────────────────────────────────────
   let ajustePedido = false;
@@ -872,33 +1169,117 @@
     }
   });
 
-  cargarVentanas();
-  setInterval(cargarVentanas, 5000);
-
   // ── nota con autoguardado ─────────────────────────────────────────────────
   // Se ata a TODAS las notas, una por ventana, no sólo a la que se ve: cambiar
   // de pestaña no recarga la página, así que las demás siguen en el DOM y
   // tienen que guardar en SU slot cuando les toque.
-  document.querySelectorAll('.nota-texto').forEach(nota => {
-    const marca = nota.closest('.por-ventana').querySelector('.nota-estado');
+  const notas = Array.from(document.querySelectorAll('.nota-texto'));
+
+  /* Los slots que él está tecleando ahora mismo y el servidor todavía no ha
+   * confirmado. Es lo que impide que el latido le borre una frase a medio
+   * escribir: ante la duda, manda lo que hay en pantalla. */
+  const sucias = new Set();
+
+  // Varias ventanas del mismo slot comparten nota —es la definición de slot—,
+  // así que hay un `textarea` por ventana y todos son el mismo texto.
+  const hermanas = (slot) => notas.filter(n => n.dataset.slot === String(slot));
+  const marcaDe = (nota) => nota.closest('.por-ventana').querySelector('.nota-estado');
+
+  notas.forEach(nota => {
+    const slot = nota.dataset.slot;
+    const marca = marcaDe(nota);
     let temporizador;
     const guardar = () => {
+      const enviado = nota.value;
       marca.textContent = 'guardando…';
-      fetch(`/api/slot/${nota.dataset.slot}/nota`, {
+      fetch(`/api/slot/${slot}/nota`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nota: nota.value }),
-      }).then(r => { marca.textContent = r.ok ? 'guardada' : 'error al guardar'; })
-        .catch(() => { marca.textContent = 'sin conexión'; });
+        body: JSON.stringify({ nota: enviado }),
+      }).then(r => {
+        // Sólo deja de estar sucia si lo guardado es lo que hay: si siguió
+        // escribiendo mientras la petición volaba, hay cambios más nuevos que
+        // el servidor no tiene, y el latido no puede pisarlos.
+        if (r.ok && nota.value === enviado) sucias.delete(slot);
+        marca.textContent = r.ok ? 'guardada' : 'error al guardar';
+      }).catch(() => { marca.textContent = 'sin conexión'; });
     };
     nota.addEventListener('input', () => {
+      sucias.add(slot);
       marca.textContent = 'sin guardar';
+      // Al instante y sin esperar al latido: la pestaña se cambia en menos de
+      // lo que tarda una vuelta, y ver ahí el texto viejo es exactamente el
+      // fallo que esto viene a arreglar.
+      hermanas(slot).forEach(otra => { if (otra !== nota) otra.value = nota.value; });
       clearTimeout(temporizador);
       temporizador = setTimeout(guardar, 800);
     });
     nota.addEventListener('blur', () => { clearTimeout(temporizador); guardar(); });
   });
 
+  // ── el latido: lo que cambia sin que nadie recargue ───────────────────────
+  /* La vista se pinta entera en el servidor y luego se queda quieta horas. El
+   * punto de estado congelado era peor que no tenerlo: existe para enterarse de
+   * que un segundo slot paró, y sólo se enteraba quien diera F5. */
+  const TITULOS_ESTADO = {{ TITULOS_ESTADO | tojson }};
+  const CLASES_ESTADO = Object.keys(TITULOS_ESTADO);
+  const puntos = Array.from(document.querySelectorAll('[data-slot-punto]'));
+
+  function pintarEstados(estados) {
+    puntos.forEach(punto => {
+      const nuevo = estados[punto.dataset.slotPunto];
+      if (!nuevo || punto.classList.contains(nuevo)) return;
+      CLASES_ESTADO.forEach(c => punto.classList.remove(c));
+      punto.classList.add(nuevo);
+      punto.title = TITULOS_ESTADO[nuevo] || '';
+    });
+  }
+
+  function pintarNotas(frescas) {
+    Object.keys(frescas).forEach(slot => {
+      if (sucias.has(String(slot))) return;
+      hermanas(slot).forEach(nota => {
+        // Nunca se toca el que tiene el cursor dentro. Reemplazar su `value`
+        // manda el cursor al final aunque el texto sea idéntico.
+        if (nota === document.activeElement || nota.value === frescas[slot]) return;
+        nota.value = frescas[slot];
+        marcaDe(nota).textContent = 'actualizada';
+      });
+    });
+  }
+
+  async function pulso() {
+    const pedidas = Array.from(new Set(notas.map(n => n.dataset.slot))).join(',');
+    try {
+      const r = await fetch(`/api/trabajo/pulso?notas=${encodeURIComponent(pedidas)}`);
+      const d = await r.json();
+      if (!d || !d.slots) return;
+      pintarEstados(d.slots);
+      pintarNotas(d.notas || {});
+    } catch (e) {}
+  }
+
+  /* Un solo temporizador para las dos cosas, y arranca aquí abajo cuando todo
+   * lo que usa está declarado: un latido definido antes que sus datos es el
+   * fallo de la zona muerta que dejó el terminal en negro, y el que hizo nacer
+   * `test_vista_trabajo_js.py`. */
+  const LATIDO_MS = 5000;
+  function latir() { cargarVentanas(); pulso(); }
+  let latido = setInterval(latir, LATIDO_MS);
+  latir();
+
+  // Con la pestaña de fondo no hay nada que refrescar y sí una petición cada 5
+  // segundos durante horas. Al volver se late enseguida: si se esperara el
+  // turno, lo primero que se vería al mirar sería justo el dato viejo.
+  document.addEventListener('visibilitychange', () => {
+    clearInterval(latido);
+    if (!document.hidden) { latir(); latido = setInterval(latir, LATIDO_MS); }
+  });
+
 })();
 </script>
+{# Al final y en archivo aparte: el panel de lienzos no puede tumbar la terminal
+   si revienta, y así se prueba ejecutándolo (regla dura 11). #}
+<script src="/static/lienzos.js"></script>
+<script src="/static/consultas.js"></script>
 {% endblock %}

@@ -383,3 +383,114 @@ class _Consumidor:
 
     def todas_las_rutas(self):
         return [self.asiento]
+
+
+def test_verificar_ve_los_kits_en_desarrollo(entorno, monkeypatch, capsys):
+    """🔴 El mismo defecto que tenía `arbol`, en otro comando.
+
+    `verificar <id>` sólo resolvía los instalados, así que fallaba con «no
+    encuentro» justo mientras escribes el kit — que es cuando más se verifica.
+    El arreglo estaba hecho en `estado` y en `arbol` y aquí no; salió aplicando
+    el primer kit a un consumidor real.
+    """
+    raiz = entorno / "endev"
+    _kit_en_desarrollo(raiz)
+    monkeypatch.setattr(
+        kits_cli.registry, "cargar", lambda: [_ProyectoKit("endev", raiz)]
+    )
+
+    assert kits_cli.verificar("endev") == 0
+    assert "manifiesto válido" in capsys.readouterr().out
+
+
+def test_verificar_un_id_que_no_existe_sigue_fallando(entorno, monkeypatch, capsys):
+    """Resolver más no puede volverse resolver cualquier cosa."""
+    monkeypatch.setattr(kits_cli.registry, "cargar", lambda: [])
+    assert kits_cli.verificar("no-existe") == 1
+
+
+# ── instalar un kit que todavía se está escribiendo ──────────────────────────
+#
+# 🔴 Salió de un caso real el 2026-09-03: aplicar un kit a un proyecto empieza
+# por `instalar`, y con un kit en desarrollo el comando moría con un
+# `fatal: Remote branch v0.1 not found in upstream origin` de git en crudo.
+#
+# Ese mensaje no dice qué hacer, y lo que hay que hacer es NADA: el kit ya se
+# resuelve desde el registro y `ruta`, `estado` y `aplicar` funcionaban contra
+# él. Quien lo intentó leyó el fatal, dio el gestor por roto y aplicó el kit a
+# mano. Un paso del procedimiento que falla con el error de otra herramienta se
+# lee como «esto no funciona».
+
+
+@pytest.fixture
+def catalogo_en_desarrollo(entorno, monkeypatch, tmp_path):
+    """Un kit declarado en el catálogo y sin ningún tag publicado."""
+    raiz = tmp_path / "kit-endev"
+    _kit_en_desarrollo(raiz)
+    monkeypatch.setattr(
+        kits, "catalogo",
+        lambda: {"endev": {"id": "endev", "version": "0.1", "origen": str(raiz)}},
+    )
+    monkeypatch.setattr(kits_cli.registry, "cargar", lambda: [_ProyectoKit("endev", raiz)])
+    return raiz
+
+
+def test_instalar_un_kit_EN_DESARROLLO_no_es_un_error(catalogo_en_desarrollo, capsys):
+    assert kits_cli.instalar("endev", None) == 0
+    salida = capsys.readouterr().out
+    assert "EN DESARROLLO" in salida
+    assert str(catalogo_en_desarrollo) in salida, "tiene que decir dónde se resuelve"
+
+
+def test_dice_cómo_congelarlo_en_vez_de_dejarte_a_medias(catalogo_en_desarrollo, capsys):
+    """El siguiente paso, escrito: publicar el tag es lo único que convierte un
+    kit en desarrollo en una versión medible por otros."""
+    kits_cli.instalar("endev", None)
+    assert "tag v0.1" in capsys.readouterr().out
+
+
+def test_la_version_TAMBIEN_se_comprueba_en_desarrollo(catalogo_en_desarrollo, capsys):
+    """🔴 Un kit en desarrollo es UNA versión concreta —la de su `kit.yml`—, no
+    todas las que le pidas. Sin esto, `instalar endev 9.9` contestaba «en
+    desarrollo» y salía con éxito, y quien declarase `9.9` mediría su deriva
+    contra la 0.1 creyendo estar en otra."""
+    assert kits_cli.instalar("endev", "9.9") == 1
+    assert "no existe" in capsys.readouterr().err
+
+
+def test_lo_ya_instalado_se_dice_aunque_el_kit_se_este_escribiendo(
+    catalogo_en_desarrollo, entorno, capsys
+):
+    """Las dos cosas conviven: la copia congelada de la 0.1 en disco y el repo
+    donde nace la siguiente. Confundirlas haría creer que no hay nada instalado
+    cuando sí lo hay."""
+    kits.ruta_de("endev", "0.1").mkdir(parents=True)
+    assert kits_cli.instalar("endev", None) == 0
+    salida = capsys.readouterr().out
+    assert "ya estaba instalado" in salida
+    assert "EN DESARROLLO" not in salida
+
+
+def test_un_kit_NORMAL_sin_su_tag_dice_qué_hacer(entorno, monkeypatch, tmp_path, capsys):
+    """El otro camino: si no está en el registro como kit, el fallo de git sigue
+    siendo un fallo — pero acompañado de las dos salidas que tiene."""
+    raiz = tmp_path / "kit-suelto"
+    _kit_en_desarrollo(raiz)
+    # Un repo de VERDAD y sin tags: es el caso real. Con una carpeta que no es
+    # repo, git se queja de otra cosa —«repository does not exist»— y el test
+    # pasaría por el camino equivocado.
+    import subprocess
+    for orden in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
+                  ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                   "commit", "-qm", "kit"]):
+        subprocess.run(orden, cwd=raiz, capture_output=True, check=False)
+    monkeypatch.setattr(
+        kits, "catalogo",
+        lambda: {"endev": {"id": "endev", "version": "0.1", "origen": str(raiz)}},
+    )
+    monkeypatch.setattr(kits_cli.registry, "cargar", lambda: [])
+
+    assert kits_cli.instalar("endev", None) == 1
+    err = capsys.readouterr().err
+    assert "tag v0.1" in err, "hay que decir cómo publicarlo"
+    assert "tipo: kit" in err, "y la otra salida: declararlo en desarrollo"

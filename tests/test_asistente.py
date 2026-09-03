@@ -77,6 +77,27 @@ def _pantalla(dentro: str) -> str:
     return f"conversación\n{regla}\n❯ {dentro}\n{regla}\n  [Sonnet 4.6] │ asistente"
 
 
+def _pantalla_de_trabajo(dentro: str) -> str:
+    """La OTRA forma real: la caja sólo dibuja su borde de abajo.
+
+    🔴 Medida el 2026-09-02 en un panel de trabajo vivo, a la vez que la de
+    arriba en el del asistente:
+
+        panel del asistente   reglas=[41, 43]   prompt=[42]
+        panel de trabajo      reglas=[36]       prompt=[35]
+
+    Faltaba en los tests, y por eso `_cuadro` pudo quedarse ciego en un panel
+    real sin que nada avisara: el único que se había medido era el del asistente.
+    """
+    regla = "─" * 40
+    return (
+        f"❯ {dentro}\n{regla}\n"
+        "  [Opus 5] │ personal │ rama\n"
+        "  Context ██░░░░░░░░ 23% │ Usage ░░░░░░░░░░ 1%\n"
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # 🔴 Regla dura 15 — dónde se permite escribir
 # --------------------------------------------------------------------------- #
@@ -602,3 +623,68 @@ def test_no_confundir_las_ventanas_de_dos_modelos(tmp_path, monkeypatch):
     # Y un modelo que nadie conoce no recibe un tamaño inventado.
     assert asistente.tamano_de_ventana("claude-de-pasado-manana") is None
     assert asistente.tamano_de_ventana(None) is None
+
+
+# ── las dos formas de caja que existen de verdad ──────────────────────────────
+
+
+def test_el_cuadro_se_lee_en_las_dos_formas_de_caja(monkeypatch):
+    """🔴 El fallo que destapó estrenar el canal.
+
+    `_cuadro` buscaba el texto «entre las dos últimas reglas». En un panel que
+    sólo dibuja el borde de abajo eso daba `len(reglas) < 2` y devolvía vacío
+    **siempre**, así que `despachar` no podía confirmar nada ahí: falso negativo
+    garantizado, no intermitente. El relé lo tomaba por «no entregada» y la
+    dejaba en cola de reentrega — que habría pegado el texto otra vez.
+    """
+    for forma, pantalla in (("asistente", _pantalla), ("trabajo", _pantalla_de_trabajo)):
+        monkeypatch.setattr(tmux, "capturar_panel", lambda p, s=pantalla: s("hola pendiente"))
+        assert asistente._cuadro("%9") == "hola pendiente", f"ciego en la forma «{forma}»"
+
+
+def test_un_chevron_del_historial_no_se_confunde_con_el_cuadro(monkeypatch):
+    """Los mensajes ya enviados también salen con `❯`. El cuadro es el que tiene
+    el borde de la caja debajo, y anclar ahí es lo que los distingue sin tener
+    que contar líneas desde el final."""
+    regla = "─" * 40
+    monkeypatch.setattr(
+        tmux, "capturar_panel",
+        lambda p: f"❯ lo que mandé hace un rato\n  respuesta\n❯ {''}\n{regla}\n  [Opus 5]",
+    )
+    assert asistente._cuadro("%9") == ""
+
+
+def test_un_pegado_multilinea_se_confirma_aunque_la_TUI_lo_colapse(monkeypatch):
+    """🔴 Medido el 2026-09-02, y era un falso negativo en CADA entrega real.
+
+        cuadro='[Pasted text #1 +6 lines]'    ← lo que la TUI enseña
+        busca ='Respuestas de «Prueba» por…'   ← lo que se buscaba
+
+    Claude Code colapsa un pegado de varias líneas en ese marcador, así que
+    buscar el texto literal no podía funcionar nunca — y toda respuesta del
+    canal es multilínea, porque el marco añade líneas. Lo que se comprueba es
+    que el cuadro se VACÍE, que es lo que de verdad significa «salió».
+    """
+    guion = [_pantalla("[Pasted text #1 +6 lines]"), _pantalla("")]
+    enters = []
+    monkeypatch.setattr(tmux, "capturar_panel",
+                        lambda p: guion.pop(0) if guion else _pantalla(""))
+    monkeypatch.setattr(tmux, "enter_en_panel", lambda p: enters.append(p))
+    monkeypatch.setattr(asistente.time, "sleep", lambda s: None)
+
+    texto = "Respuestas de «Prueba» por el canal:\n\n— la #90:\n«una»\n\n— la #91:\n«dos»"
+    assert asistente.despachar("%9", texto) is True
+    assert enters == ["%9"]
+
+
+def test_si_el_cuadro_no_se_vacia_NUNCA_no_se_da_por_enviado(monkeypatch):
+    """El marcador de pegado sigue ahí tras insistir: el Enter se lo tragó la
+    TUI. Es el fallo original, y con el criterio nuevo se sigue detectando."""
+    enters = []
+    monkeypatch.setattr(tmux, "capturar_panel",
+                        lambda p: _pantalla("[Pasted text #1 +6 lines]"))
+    monkeypatch.setattr(tmux, "enter_en_panel", lambda p: enters.append(p))
+    monkeypatch.setattr(asistente.time, "sleep", lambda s: None)
+
+    assert asistente.despachar("%9", "lo que sea\nmultilínea") is False
+    assert enters == ["%9"] * 8     # se insiste con la tecla, no con el texto

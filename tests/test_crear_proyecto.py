@@ -221,10 +221,14 @@ def test_el_prompt_va_citado(con, escena, tmp_path):
     agentes.crear_proyecto(con, "mi-app", "Mi App; rm -rf /", str(destino))
     comando = next(l["comando"] for l in escena["lanzados"] if "comando" in l)
     assert "; rm -rf /" not in comando.replace("'", "")[len("claude "):] or True
-    # Lo que importa: el comando entero es `claude` + UN argumento citado.
+    # Lo que importa: el comando entero es `claude`, sus opciones, y UN solo
+    # argumento citado. El prompt es lo ÚLTIMO y va entero: que se le añadiera
+    # el modo de permisos no puede convertirlo en dos.
     import shlex
     partes = shlex.split(comando)
-    assert partes[0] == "claude" and len(partes) == 2
+    assert partes[0] == "claude"
+    assert len(partes) == len([p for p in partes if p.startswith("--")]) * 2 + 2
+    assert partes[-1].startswith("Lee y sigue")
 
 
 # --------------------------------------------------------------------------- #
@@ -322,3 +326,69 @@ def test_el_registro_declarado_se_relee_con_sus_rutas(con, escena, tmp_path):
     p = next(x for x in registry.cargar(escena["registro"]) if x.id == "orq")
     assert [r.ruta for r in p.rutas] == [str(repo)]
     assert str(tmp_path / "a") in p.todas_las_rutas()
+
+
+# ── nadie está mirando esa ventana ────────────────────────────────────────────
+#
+# 🔴 Pedido el 2026-09-02, y la razón no es la comodidad. Quien lanza esto es el
+# asistente desde el chat, así que la ventana del agente no la mira nadie: una
+# pregunta ahí no espera a nadie. El asistente informaba de que «la otra sesión
+# está trabajando» —el hub sólo distingue `trabajando` de `detenido`, y su propio
+# docstring dice que desde el título no se sabe si acabó o si te espera— y el
+# trabajo se quedaba parado sin que se supiera por qué.
+#
+# Lo que lo hace aceptable es que la carpeta la acaba de crear el hub y está
+# VACÍA. En un proyecto que ya existe la pregunta sigue siendo la salvaguarda.
+
+
+def _comando_lanzado(escena):
+    return next(l["comando"] for l in escena["lanzados"] if "comando" in l)
+
+
+def test_el_agente_de_creacion_arranca_SIN_pedir_permisos(con, escena, tmp_path):
+    agentes.crear_proyecto(con, "mi-app", "Mi App", str(tmp_path / "nuevo"))
+    assert "--permission-mode bypassPermissions" in _comando_lanzado(escena)
+
+
+def test_lanzar_un_agente_normal_SIGUE_preguntando(con, escena, tmp_path):
+    """🔴 El control que separa esto de «quitar los permisos del hub». Sobre un
+    proyecto que ya existe hay algo que romper y hay alguien mirando: ahí la
+    pregunta es la última señal de que el agente se sale del guion."""
+    agentes.crear_proyecto(con, "mi-app", "Mi App", str(tmp_path / "nuevo"))
+    escena["lanzados"].clear()
+
+    agentes.lanzar(con, "mi-app", "revisa esto")
+    assert "bypassPermissions" not in _comando_lanzado(escena)
+
+
+def test_el_settings_acotado_se_escribe_IGUALMENTE(con, escena, tmp_path):
+    """No es redundante: acota cualquier agente lanzado después sobre esa
+    carpeta, y esta misma sesión si se reanuda sin el modo."""
+    destino = tmp_path / "nuevo"
+    agentes.crear_proyecto(con, "mi-app", "Mi App", str(destino))
+
+    permisos = json.loads((destino / ".claude" / "settings.json").read_text())
+    assert any("Edit(" in regla for regla in permisos["permissions"]["allow"])
+
+
+# ── ni se para a preguntar qué kits ───────────────────────────────────────────
+
+
+def test_el_encargo_NO_manda_parar_a_preguntar_kits(con, escena, tmp_path):
+    """Era el paso 3 del prompt: «enseñar qué kits hay y dejar elegir». Eso deja
+    al agente esperando una respuesta que nadie va a dar."""
+    agentes.crear_proyecto(con, "mi-app", "Mi App", str(tmp_path / "nuevo"))
+    prompt = _comando_lanzado(escena)
+
+    assert "NO te pares a preguntar" in prompt
+    assert "dejar elegir" not in prompt
+
+
+def test_el_encargo_manda_TERMINAR_diciendo_qué_kits_hay(con, escena, tmp_path):
+    """No preguntar no puede significar esconder la lista: la decisión se toma
+    después, y para eso hace falta tenerla delante."""
+    agentes.crear_proyecto(con, "mi-app", "Mi App", str(tmp_path / "nuevo"))
+    prompt = _comando_lanzado(escena)
+
+    assert "kits disponibles" in prompt
+    assert "No apliques ningún kit por tu cuenta" in prompt

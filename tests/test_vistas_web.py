@@ -162,3 +162,21 @@ def test_la_paleta_esta_disponible_en_todas_las_pantallas(cliente):
     """Vive en `base.html` porque su valor está en responder desde cualquier sitio."""
     for ruta in ("/", "/respaldo", "/servicios", "/inventario"):
         assert "/static/paleta.js" in cliente.get(ruta).text
+
+
+# ── el latido de la vista de trabajo ──────────────────────────────────────────
+
+def test_el_pulso_responde_sin_notas_que_pedir(cliente):
+    """La página lo llama en cada vuelta, también cuando no hay ninguna nota."""
+    r = cliente.get("/api/trabajo/pulso")
+    assert r.status_code == 200
+    assert r.json() == {"slots": {}, "notas": {}}
+
+
+def test_el_pulso_ignora_lo_que_no_sea_un_id(cliente):
+    """`notas` viene de la URL. Aunque lo escriba la propia página, no se pasa
+    a una consulta sin mirarlo."""
+    r = cliente.get("/api/trabajo/pulso?notas=1,,x,'; DROP TABLE slot;--,2")
+    assert r.status_code == 200
+    assert r.json()["notas"] == {}  # ninguno de esos slots existe
+    assert cliente.get("/api/trabajo/pulso").status_code == 200

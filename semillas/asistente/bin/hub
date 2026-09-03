@@ -16,6 +16,11 @@ el asistente nunca lee la base ni escanea el disco por su cuenta.
   hub nuevo-proyecto --id x --nombre "X" --ruta /abs/x
                                   crea un proyecto vacío y lanza al agente que
                                   lo monta; pregunta antes lo que falte
+  hub lienzo …                    publica algo para que se vea en la web —
+                                  un diagrama, unos puntos que decidir— y
+                                  vuelve a leerlo cuando lo corrijan
+  hub preguntar …                 pregúntale a otra persona cuando él no está,
+                                  y sigue trabajando mientras contesta
 
 🔴 Lo que este script NO hace, y no es un olvido: no borra nada, y no escribe en
 ningún proyecto del usuario. Sobre ellos es sólo lectura. Lo único que escribe es
@@ -53,6 +58,19 @@ def traer(camino: str, cuerpo: dict | None = None) -> str:
     try:
         with urllib.request.urlopen(peticion, timeout=ESPERA) as r:
             return r.read().decode()
+    except urllib.error.HTTPError as exc:
+        # 🔴 Va ANTES que `URLError`, del que hereda. Sin esta rama, un 409 —el
+        # hub diciendo «ya existe y lo editó él, usa --revisar»— salía como «el
+        # hub no responde», con el consejo de mirar `systemctl`. El hub había
+        # respondido, y perfectamente: quien lo lee concluía que el servicio
+        # está caído y perdía el único mensaje que decía qué hacer.
+        #
+        # El cuerpo de un error de la API ES la respuesta: se devuelve tal cual
+        # y lo interpreta quien llamó, que sabe si `ok: false` es esperable.
+        try:
+            return exc.read().decode()
+        except OSError:
+            salir(f"el hub respondió {exc.code} y sin cuerpo")
     except urllib.error.URLError as exc:
         # 🔴 Antes esto decía «compruébalo con systemctl --user status hub-web»,
         # y `Bash(systemctl:*)` está DENEGADO en el settings del asistente: era
@@ -229,9 +247,198 @@ def cmd_nuevo_proyecto(args):
     print("Se ve en /trabajo. Sólo puede escribir dentro de esa carpeta.")
 
 
+def cmd_lienzo(args):
+    """Publica algo para que se vea en la web, y vuelve a leerlo cuando lo corrijan.
+
+    Un lienzo sustituye texto denso; no lo acompaña. Si después de publicarlo
+    hay que repetir el contenido en la terminal, sobra el lienzo.
+
+      hub lienzo nuevo --proyecto X --titulo "T" [--plantilla P] [--slot S]
+                       [--cuerpo -]          ← lee el cuerpo de la entrada
+                       [--revisar|--forzar]  ← si ya existe y lo editó él
+      hub lienzo ver <proyecto> <id>
+      hub lienzo listar <proyecto>
+      hub lienzo buscar <texto>
+    """
+    if not args or args[0] in ("-h", "--help"):
+        print(cmd_lienzo.__doc__)
+        return
+    orden, resto = args[0], args[1:]
+
+    if orden == "nuevo":
+        proyecto = opcion(resto, "--proyecto")
+        titulo = opcion(resto, "--titulo")
+        plantilla = opcion(resto, "--plantilla") or "decisiones"
+        slot = opcion(resto, "--slot")
+        cuerpo = opcion(resto, "--cuerpo")
+        revisar = "--revisar" in resto
+        forzar = "--forzar" in resto
+        if not (proyecto and titulo):
+            salir('hacen falta --proyecto y --titulo. `hub lienzo` para ver la forma.')
+        # `--cuerpo -` lee de la entrada estándar: un diagrama son varias líneas
+        # y meterlas en un argumento de shell obliga a escapar comillas y saltos,
+        # que es justo donde se rompe.
+        if cuerpo == "-":
+            cuerpo = sys.stdin.read()
+
+        r = pedir("/api/lienzo", {
+            "proyecto_id": proyecto, "titulo": titulo, "plantilla": plantilla,
+            "slot": slot, "cuerpo": cuerpo or "",
+            "revisar": revisar, "forzar": forzar,
+        })
+        if not r.get("ok"):
+            # 🔴 El conflicto no es un fallo: es que hay trabajo suyo debajo. Se
+            # dice qué hacer, y NO se reintenta con --forzar por iniciativa
+            # propia — pisar su edición es decisión suya, no tuya.
+            salir(r.get("error", "no se pudo publicar"))
+        l = r["lienzo"]
+        print(f"Publicado: {l['id']}  ({l['plantilla']}, proyecto {l['proyecto_id']})")
+        print("Está en el panel «Lienzos» de /trabajo. Dile que lo mire.")
+        return
+
+    if orden == "ver":
+        if len(resto) < 2:
+            salir("hace falta: hub lienzo ver <proyecto> <id>")
+        r = pedir(f"/api/lienzo/{urllib.parse.quote(resto[0])}"
+                  f"/{urllib.parse.quote(resto[1])}")
+        if not r.get("ok"):
+            salir(r.get("error", "no existe"))
+        l = r["lienzo"]
+        print(f"# {l['titulo']}  ({l['plantilla']})")
+        if l.get("tuyo"):
+            print("# 🔴 Lo ha editado él desde la web después de publicarse.")
+        print(l.get("cuerpo") or "(vacío)")
+        return
+
+    if orden in ("listar", "buscar"):
+        if not resto:
+            salir(f"hace falta: hub lienzo {orden} <{'proyecto' if orden == 'listar' else 'texto'}>")
+        clave = "proyecto" if orden == "listar" else "q"
+        r = pedir("/api/lienzos?" + urllib.parse.urlencode({clave: " ".join(resto)}))
+        if not r.get("ok"):
+            salir(r.get("error", "no se pudo consultar"))
+        if not r["lienzos"]:
+            print("Ninguno.")
+            return
+        for l in r["lienzos"]:
+            marca = " ← editado por él" if l.get("tuyo") else ""
+            print(f"{l['id']:<32} {l['plantilla']:<13} {l['proyecto_id']}"
+                  f"{'/' + l['slot'] if l.get('slot') else ''}{marca}")
+        return
+
+    salir(f"no conozco «{orden}». Son: nuevo, ver, listar, buscar")
+
+
+def cmd_preguntar(args):
+    """Manda una pregunta a otra persona y sigue trabajando mientras contesta.
+
+    🔴 Lo que sale de aquí sale de la máquina. La pregunta tiene que ser
+    AUTOCONTENIDA —respondible desde el móvil, sin abrir nada— y sin datos del
+    proyecto: nada de salida de terminal, código, rutas ni nombres de clientes.
+    Si hace falta ese contexto, la pregunta es para él: `--a mi`, y entonces sólo
+    se le avisa y la lee en el hub.
+
+    Sin pacto de sesión que declare a quién van las preguntas, no se manda nada.
+
+      hub preguntar --proyecto X --a <alias> --texto -
+                    [--slot N] [--panel %7]   ← dónde vuelve la respuesta
+                    [--vence <iso>]           ← el plazo lo fija el PACTO
+                    [--lote <nombre>]         ← varias dudas que vuelven juntas
+
+    Varias preguntas de golpe: sepáralas con una línea `---` en el texto. Salen
+    una a una y **vuelven juntas en un solo mensaje**, porque cada respuesta que
+    entra al panel es un turno y un turno relee el contexto entero.
+      hub preguntar --proyecto X --a mi --texto -    ← para él: no viaja nada
+      hub preguntar ver <id>
+      hub preguntar listar [proyecto]
+    """
+    if not args or args[0] in ("-h", "--help"):
+        print(cmd_preguntar.__doc__)
+        return
+
+    if args[0] == "ver":
+        if len(args) < 2:
+            salir("hace falta: hub preguntar ver <id>")
+        r = pedir(f"/api/pregunta/{urllib.parse.quote(args[1])}")
+        if not r.get("ok"):
+            salir(r.get("error", "no se pudo leer"))
+        q = r["pregunta"]
+        print(f"#{q['id']}  {q['estado']}  ({q['proyecto_id']})")
+        print(q["texto"])
+        if q.get("respuesta"):
+            print(f"\n↳ {q['respuesta']}")
+        if q.get("detalle"):
+            print(f"\n(no se pudo entregar: {q['detalle']})")
+        return
+
+    if args[0] == "listar":
+        consulta = {"proyecto": args[1]} if len(args) > 1 else {}
+        r = pedir("/api/preguntas?" + urllib.parse.urlencode(consulta))
+        if not r["preguntas"]:
+            print("Ninguna.")
+            return
+        for q in r["preguntas"]:
+            destino = "para él" if q["user_id"] is None else str(q["user_id"])
+            print(f"{q['id']:>4}  {q['estado']:<11} {destino:<10} {q['texto'][:60]}")
+        return
+
+    proyecto = opcion(args, "--proyecto")
+    a = opcion(args, "--a")
+    texto = opcion(args, "--texto")
+    if not (proyecto and texto):
+        salir("hacen falta --proyecto y --texto. `hub preguntar` para ver la forma.")
+    # Como en `lienzo`: el texto son varias líneas y meterlas en un argumento
+    # obliga a escapar comillas y saltos, que es donde se rompe.
+    if texto == "-":
+        texto = sys.stdin.read()
+
+    # 🔴 Varias dudas de golpe van en UN LOTE, separadas por una línea `---`.
+    #
+    # No es comodidad: cada respuesta que entra en el panel es un turno, y un
+    # turno relee el contexto entero —medido sobre sesiones reales: 148k tokens
+    # de relectura por llamada, el 69% del coste de la sesión más cara—. Cinco
+    # respuestas sueltas son cinco despertares y cinco cambios de tarea; en
+    # lote son uno.
+    #
+    # Las preguntas VIAJAN sueltas (cada una necesita su mensaje para poder
+    # casar el reply) y VUELVEN juntas.
+    textos = [t.strip() for t in texto.split("\n---\n")]
+    textos = [t for t in textos if t]
+
+    # 🔴 `opcion` CONSUME el argumento de la lista, así que cada opción se lee
+    # una sola vez y se guarda. Leer `--vence` dos veces daba None la segunda, y
+    # el aviso de «sin --vence» salía justo cuando sí se había puesto.
+    vence = opcion(args, "--vence")
+    r = pedir("/api/pregunta", {
+        "proyecto_id": proyecto, "a": a or "",
+        "texto": textos[0] if textos else "", "textos": textos,
+        "lote": opcion(args, "--lote") or "",
+        "slot_id": opcion(args, "--slot"), "pane_id": opcion(args, "--panel"),
+        "vence_en": vence,
+    })
+    if not r.get("ok"):
+        salir(r.get("error", "no se pudo registrar la pregunta"))
+
+    qs = r.get("preguntas") or [r["pregunta"]]
+    ids = ", ".join(f"#{q['id']}" for q in qs)
+    print(f"{'Preguntas' if len(qs) > 1 else 'Pregunta'} {ids} para {r['para']}.")
+    if qs[0]["user_id"] is None:
+        print("No viaja nada: la lee en el hub. Avísale por donde acordarais.")
+        return
+    if len(qs) > 1:
+        print(f"Van en el lote «{r['lote']}»: salen una a una y VUELVEN JUNTAS,")
+        print("en un solo mensaje, cuando estén todas contestadas o venza el plazo.")
+        if not vence:
+            print("⚠️  Sin `--vence`, si una no se contesta el lote no vuelve nunca.")
+    else:
+        print("Sale en la siguiente vuelta del relé. Sigue trabajando:")
+        print(f"la respuesta llega sola al panel. `hub preguntar ver {qs[0]['id']}` para mirarla.")
+
+
 COMANDOS = {
     "estado": cmd_estado, "sesiones": cmd_sesiones, "sesion": cmd_sesion,
     "nota": cmd_nota, "slot": cmd_slot, "nuevo-proyecto": cmd_nuevo_proyecto,
+    "lienzo": cmd_lienzo, "preguntar": cmd_preguntar,
 }
 
 

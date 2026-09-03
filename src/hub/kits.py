@@ -202,7 +202,18 @@ def leer_manifiesto(raiz: Path) -> Kit:
     consume = list(datos.get("consume") or [])
     for lista, campo in ((expone, "expone"), (consume, "consume")):
         for entrada in lista:
-            cid = str((entrada or {}).get("id") or "")
+            # 🔴 La forma corta —`- notificar#enviar-mensaje` en vez de
+            # `- id: notificar#enviar-mensaje`— es el error que sale solo al
+            # escribir un kit a mano, y reventaba con un `AttributeError`
+            # desnudo desde dentro del parser. Esta clase existe para decir qué
+            # falta, no «error»: sin esto, quien escribe su primer kit ve un
+            # traceback del hub y no tiene forma de saber que le sobra un guion.
+            if not isinstance(entrada, dict):
+                raise KitInvalido(
+                    f"`{campo}` trae «{entrada}» suelto. Cada capacidad va como"
+                    f" `- id: dominio#verbo-objeto`, no como texto a secas."
+                )
+            cid = str(entrada.get("id") or "")
             if not _CAPACIDAD.match(cid):
                 raise KitInvalido(
                     f"`{campo}` trae «{cid}»: una capacidad se nombra"
@@ -467,7 +478,12 @@ MARCA_BLOQUE = "<!-- kits — generado, no editar a mano -->"
 # Cuántas líneas de cabecera se toleran al principio de un `materializado`.
 # Suficiente para un comentario de varias líneas; corto para que una diferencia
 # de verdad al principio del archivo no se cuele como si fuera cabecera.
-_LINEAS_CABECERA = 6
+# 🔴 Doce y no seis. En una skill la cabecera NO puede ir la primera —`---` tiene
+# que abrir el archivo o el frontmatter no parsea— así que va detrás de él, y un
+# frontmatter con `name`, `description` larga y algún campo más ya empuja la
+# cabecera más allá de la sexta línea. Cuando eso pasa no falla nada visible:
+# el archivo se queda en `difiere` para siempre y nadie sabe por qué.
+_LINEAS_CABECERA = 12
 
 
 def _sin_cabecera(texto: str, kit_id: str) -> str:
@@ -496,22 +512,62 @@ def _sin_cabecera(texto: str, kit_id: str) -> str:
             ultima = i
     if ultima < 0:
         return texto
+
+    # 🔴 Se quita LA CABECERA, no todo lo que hay antes de ella. Devolver
+    # `lineas[ultima+1:]` daba por bueno el caso en que la cabecera abre el
+    # archivo y rompía el que de verdad importa: **una skill**. Un `SKILL.md`
+    # necesita `---` en su PRIMERA línea o el frontmatter no parsea y la skill
+    # deja de existir para quien la busca, así que la cabecera tiene que ir
+    # detrás del frontmatter — y entonces el recorte se llevaba el frontmatter
+    # entero del destino, dejándolo distinto del origen para siempre. `difiere`
+    # eterno en el modo que existe precisamente para skills, agentes y hooks.
+    #
+    # Con la cabecera al principio el resultado es idéntico al de antes, así que
+    # esto no cambia nada de lo que ya estaba medido.
+    antes = lineas[:ultima]
     resto = lineas[ultima + 1:]
     while resto and not resto[0].strip():          # y la línea en blanco que la separa
         resto = resto[1:]
-    return "".join(resto)
+    return "".join(antes + resto)
 
 
 def _mismo_contenido(origen: Path, destino: Path, kit: Kit) -> bool:
     """Iguales salvo la cabecera generada. Compara bytes si no son texto."""
     try:
-        return (
-            _sin_cabecera(destino.read_text(encoding="utf-8"), kit.id)
-            == _sin_cabecera(origen.read_text(encoding="utf-8"), kit.id)
-        )
+        texto_destino = destino.read_text(encoding="utf-8")
+        texto_origen = origen.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         # Binarios, o un archivo ilegible: se cae al hash de siempre.
         return _hash(origen) == _hash(destino)
+
+    limpio = _sin_cabecera(texto_destino, kit.id)
+    if limpio == _sin_cabecera(texto_origen, kit.id):
+        return True
+
+    # 🔴 Y si sólo baila el espaciado ALREDEDOR de donde estaba la cabecera, es
+    # el mismo archivo.
+    #
+    # `_sin_cabecera` se lleva la cabecera y las líneas en blanco que la siguen,
+    # pero el origen conserva las suyas: si el contenido empezaba con una blanca
+    # justo donde se insertó la cabecera —el caso de una skill, que es
+    # `---` + frontmatter + `---` + blanca + título—, el destino se quedaba con
+    # una línea menos y salía `difiere` PARA SIEMPRE.
+    #
+    # Dependía de un detalle invisible: poner la cabecera pegada al `---` o
+    # después de la blanca daba resultados distintos, y ninguna instrucción lo
+    # decía. Medido el 2026-09-03 sobre dos consumidores del mismo kit: el que
+    # la puso tras la blanca salía al día y el que la pegó al `---`, en rojo.
+    #
+    # Se relaja SÓLO cuando había cabecera —si no la hay, la comparación sigue
+    # siendo exacta al byte— y sólo en líneas vacías: cualquier cambio de
+    # contenido real sigue saliendo.
+    if limpio == texto_destino:
+        return False        # no había cabecera: nada que perdonar
+    return _sin_vacias(limpio) == _sin_vacias(texto_origen)
+
+
+def _sin_vacias(texto: str) -> list[str]:
+    return [l for l in texto.splitlines() if l.strip()]
 
 
 def _apunta_al_kit(raiz_proyecto: Path | None, kit: Kit) -> bool:

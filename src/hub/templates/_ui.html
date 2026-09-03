@@ -50,7 +50,8 @@
   'aviso': '<path d="M9 2.2l6.8 12.3H2.2z"/><path d="M9 7v3.2M9 12.6v.01"/>',
   'ok': '<path d="M3.5 9.5l3.5 3.5L14.5 5"/>',
   'carpeta': '<path d="M2.5 4.5h4.5l1.5 2h7v8h-13z"/>',
-  'llave': '<path d="M9 2.2l5.8 2.5v4.6c0 3.6-5.8 6.3-5.8 6.3S3.2 12.9 3.2 9.3V4.7z"/>',
+  'llave': '<circle cx="6" cy="9" r="3.3"/><path d="M9.2 9H15.5M13 9v2.6M15.5 9v2"/>',
+  'conversacion': '<path d="M15.5 11.2a1.8 1.8 0 01-1.8 1.8H6.5L3 15.8V4.3a1.8 1.8 0 011.8-1.8h8.9a1.8 1.8 0 011.8 1.8z"/><path d="M6.3 6.6h5.4M6.3 9.3h3.4"/>',
   'punto': '<circle cx="9" cy="9" r="4.5" fill="currentColor" stroke="none"/>',
   'agente': '<circle cx="9" cy="6" r="3"/><path d="M3.5 15.5c0-3 2.5-4.5 5.5-4.5s5.5 1.5 5.5 4.5"/>',
   'skill': '<path d="M9 2.2l2 4.4 4.8.5-3.6 3.2 1 4.7L9 12.6l-4.2 2.4 1-4.7L2.2 7.1l4.8-.5z"/>',
@@ -132,6 +133,23 @@
   <details class="menu {{ alineado }}">
     <summary title="{{ etiqueta }}" aria-label="{{ etiqueta }}">{{ icono('ajustes') }}</summary>
     <div class="menu-pop">{{ caller() }}</div>
+  </details>
+{% endmacro %}
+
+{# Y el embudo: para acotar lo que se ve, no para actuar ni para ajustar.
+   Tercer hermano de los dos de arriba y por la misma razón — la forma dice qué
+   hace—, con el añadido de que lleva la cuenta de filtros puestos: un panel
+   cerrado que esconde una lista recortada es la forma más fácil de leer mal una
+   pantalla, así que desde fuera tiene que verse que hay algo puesto.
+
+   Uso:  {% call ui.menu_filtro(activos=2) %}<el formulario>{% endcall %} #}
+{% macro menu_filtro(etiqueta='Filtrar', activos=0, alineado='der') %}
+  <details class="menu filtro {{ alineado }}">
+    <summary title="{{ etiqueta }}" aria-label="{{ etiqueta }}">
+      {{ icono('filtro', 15) }}<span class="et">{{ etiqueta }}</span>
+      {%- if activos %}<span class="cuenta-filtro">{{ activos }}</span>{% endif -%}
+    </summary>
+    <div class="menu-pop pop-filtro">{{ caller() }}</div>
   </details>
 {% endmacro %}
 

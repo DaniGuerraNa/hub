@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import config, tmux
+from . import config, modelos, tmux
 from .models import Proyecto
 
 # La sesión y la ventana del asistente tienen nombre fijo. Es lo que permite
@@ -49,7 +49,10 @@ VENTANA = "asistente"
 # veces a Sonnet 4.6 y otras a Sonnet 5 en la misma tarde, y sus ventanas son de
 # 200k y 1M. Con el alias, el porcentaje de contexto cambiaba de escala sin que
 # nada lo dijera.
-MODELO = "claude-sonnet-5"
+#
+# El valor vive en `modelos.py` con el resto de la política: el asistente y los
+# agentes comparten techo, y un techo escrito en dos sitios se separa solo.
+MODELO = modelos.ASISTENTE
 
 # Tamaño de la ventana de contexto por modelo, para poder dar un porcentaje
 # desde el primer mensaje, antes de que el statusline haya escrito nada.
@@ -181,7 +184,7 @@ def comando_de_arranque(proyecto: Proyecto | None = None) -> str:
     `env` se sustituye a sí mismo por `claude`, así que `pane_current_command`
     sigue diciendo `claude` y `localizar()` no se entera de nada.
     """
-    base = f"claude --model {shlex.quote(MODELO)}"
+    base = f"claude {modelos.bandera(MODELO)}"
     if not proyecto or not proyecto.asiento:
         return base
     ruta = tmux.path_de_usuario(str(Path(proyecto.asiento) / "bin"))
@@ -304,7 +307,7 @@ def _cuadro(pane_id: str) -> str:
 
     Sirve para comprobar si un mensaje se despachó de verdad: si sigue ahí, no
     salió. Es una lectura de la pantalla y por tanto frágil ante un rediseño de
-    la TUI, pero falla de forma **explícita** —devuelve vacío, y `_despachar`
+    la TUI, pero falla de forma **explícita** —devuelve vacío, y `despachar`
     trata «no veo el cuadro» como «no lo puedo confirmar», no como «se envió».
 
     Se busca **línea a línea**, no partiendo la pantalla por una cadena de
@@ -312,16 +315,39 @@ def _cuadro(pane_id: str) -> str:
     ancho del panel —120 caracteres—, así que el `split` devolvía trozos vacíos
     entre medias y el cuadro salía siempre vacío. Efecto: todos los envíos se
     daban por despachados, incluido el que se quedó escrito en la pantalla.
+
+    🔴 Y se ancla en el BORDE INFERIOR de la caja, no en «entre las dos últimas
+    reglas». Medido el 2026-09-02 en dos paneles vivos a la vez:
+
+        panel del asistente   reglas=[41, 43]   prompt=[42]   ← caja con dos bordes
+        panel de trabajo      reglas=[36]       prompt=[35]   ← sólo el de abajo
+
+    Con la versión anterior el segundo daba `len(reglas) < 2` y devolvía vacío
+    **siempre**, así que `despachar` no podía confirmar nada ahí: falso negativo
+    garantizado, no intermitente. Se descubrió estrenando el canal, porque el
+    asistente era el único panel contra el que se había medido esto y el canal
+    escribe en el de cualquier slot.
+
+    Retroceder desde la última regla hasta el `❯` más cercano funciona en las dos
+    formas, y de paso descarta los `❯` del historial —que no tienen una regla
+    debajo— sin necesidad de contar líneas desde el final.
     """
     lineas = tmux.capturar_panel(pane_id).splitlines()
     reglas = [i for i, l in enumerate(lineas) if _es_regla(l)]
-    if len(reglas) < 2:
+    if not reglas:
         return ""
-    contenido = "\n".join(lineas[reglas[-2] + 1:reglas[-1]])
+    fin = reglas[-1]
+    inicio = next(
+        (i for i in range(fin - 1, -1, -1) if lineas[i].strip().startswith(MARCA_LISTO)),
+        None,
+    )
+    if inicio is None:
+        return ""
+    contenido = "\n".join(lineas[inicio:fin])
     return contenido.replace(MARCA_LISTO, "").strip()
 
 
-def _despachar(pane_id: str, texto: str, intentos: int = 8, espera: float = 0.35) -> bool:
+def despachar(pane_id: str, texto: str, intentos: int = 8, espera: float = 0.35) -> bool:
     """Pulsa Enter hasta que el mensaje sale del cuadro de entrada.
 
     🔴 Existe por dos fallos medidos, no por precaución.
@@ -338,18 +364,31 @@ def _despachar(pane_id: str, texto: str, intentos: int = 8, espera: float = 0.35
 
     Se reintenta sólo la tecla, nunca el texto: pegar dos veces mandaría el
     mensaje duplicado, que es peor que no mandarlo.
-    """
-    primera = (texto.strip().splitlines() or [""])[0][:40]
 
+    🔴 Y lo que se mira es si el cuadro está VACÍO, no si el texto sigue dentro.
+    Medido el 2026-09-02 pegando un mensaje de siete líneas:
+
+        cuadro='[Pasted text #1 +6 lines]'   ← lo que se ve
+        busca ='Respuestas de «Prueba» por…'  ← lo que se buscaba
+
+    Claude Code **colapsa un pegado multilínea** en ese marcador, así que buscar
+    el texto literal no podía funcionar nunca — y toda respuesta del canal es
+    multilínea, porque el marco añade líneas. El efecto era un falso negativo
+    garantizado en cada entrega real: se escribía, salía, y se registraba como
+    «no se pudo confirmar».
+
+    «Entró algo y luego el cuadro se vació» comprueba lo mismo —que el Enter no
+    se lo tragó la TUI— y no depende de cómo decida pintar el texto.
+    """
     entro = False
     for _ in range(intentos):
-        if primera and primera in _cuadro(pane_id):
+        if _cuadro(pane_id):
             entro = True
             break
         time.sleep(espera)
 
     if not entro:
-        # No se ve el texto: o la TUI cambió de aspecto y `_cuadro` ya no la
+        # El cuadro sigue vacío: o la TUI cambió de aspecto y `_cuadro` ya no la
         # entiende, o el pegado no llegó. Se pulsa Enter una vez por si acaso y
         # se dice que no se pudo confirmar, en vez de mentir con un `true`.
         tmux.enter_en_panel(pane_id)
@@ -358,7 +397,7 @@ def _despachar(pane_id: str, texto: str, intentos: int = 8, espera: float = 0.35
     for _ in range(intentos):
         tmux.enter_en_panel(pane_id)
         time.sleep(espera)
-        if primera not in _cuadro(pane_id):
+        if not _cuadro(pane_id):
             return True
     return False
 
@@ -403,12 +442,10 @@ def ocupado(pane_id: str | None = None) -> bool | None:
     titulo = tmux.titulo_panel(pane_id)
     if titulo is None:
         return None
-    return _es_spinner(titulo[:1])
-
-
-def _es_spinner(glifo: str) -> bool:
-    """El bloque braille de Unicode, que es donde vive el spinner de Claude Code."""
-    return bool(glifo) and 0x2800 <= ord(glifo) <= 0x28FF
+    # La lectura del glifo vive en `tmux` porque el punto de estado de la barra
+    # de trabajo la necesita igual. Dos copias de este rango serían dos
+    # definiciones de "está pensando" que pueden separarse sin que nada avise.
+    return tmux.es_spinner(titulo)
 
 
 def contexto(ruta_transcript: Path | None = None) -> dict[str, Any] | None:
@@ -555,7 +592,7 @@ def enviar(texto: str, pane_id: str | None = None) -> dict[str, Any]:
     # El Enter no va con el pegado: se pulsa después, cuando se ha visto que el
     # texto entró de verdad en el cuadro.
     tmux.pegar_en_panel(destino, texto, enter=False)
-    despachado = _despachar(destino, texto)
+    despachado = despachar(destino, texto)
     return {"enviado": True, "pane_id": destino, "interno": es_interno(texto),
             "despachado": despachado}
 
@@ -573,7 +610,7 @@ def enviar_comando(cmd: str, argumento: str = "", pane_id: str | None = None) ->
     destino = _autorizar(pane_id)
     tmux.pegar_en_panel(destino, linea, enter=False)
     return {"enviado": True, "comando": cmd, "pane_id": destino,
-            "despachado": _despachar(destino, linea)}
+            "despachado": despachar(destino, linea)}
 
 
 COMANDOS_PERMITIDOS = frozenset({"compact", "clear"})

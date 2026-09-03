@@ -49,6 +49,12 @@ bash scripts/kit.sh instalar <id> [version]
 bash scripts/kit.sh ruta <id> [version]
 ```
 
+**Un kit EN DESARROLLO no se instala**, y `instalar` te lo dirá: se resuelve
+desde el registro, y `ruta`, `estado` y `aplicar` funcionan igual contra él. No
+hace falta publicar ningún tag para aplicarlo. Si ves un error de git sobre una
+rama `vN` que no existe, es una versión vieja del gestor: sigue adelante con
+`ruta`, que es lo único que necesitas de este paso.
+
 ### 2. Enseña el plan y espera
 
 Di, archivo por archivo, qué va a pasar: crear, actualizar, dejar como está. Y

@@ -57,10 +57,10 @@
 
 {% set en_riesgo = repos | selectattr('sin_push') | list | length %}
 
-<div class="con-indice" id="taller-proyecto">
+<div class="con-indice" id="taller-proyecto" data-secciones="proyecto">
   <div class="columna-indice">
   <h2>Secciones</h2>
-  <nav class="indice" id="indice-proyecto">
+  <nav class="indice" id="indice-proyecto" data-indice-secciones>
     <a href="#estado" data-sec="estado">Estado</a>
     {% if repos %}
     <a href="#respaldo" data-sec="respaldo">Respaldo
@@ -332,49 +332,9 @@
   </div>
 </div>
 
-<script>
-// Navegación por secciones. El hash manda —así un enlace a #slots lleva ahí— y
-// si no hay, se recuerda la última mirada: los formularios de esta página hacen
-// POST y redirigen, y volver siempre a «Estado» perdía el sitio en cada acción.
-(() => {
-  const taller = document.getElementById('taller-proyecto');
-  const indice = document.getElementById('indice-proyecto');
-  if (!taller || !indice) return;
-
-  const enlaces = [...indice.querySelectorAll('a[data-sec]')];
-  const existe = (s) => document.getElementById(`sec-${s}`) && enlaces.some((a) => a.dataset.sec === s);
-  const CLAVE = 'hub:proyecto-seccion';
-
-  function mostrar(sec, recordar = true) {
-    if (!existe(sec)) sec = enlaces[0].dataset.sec;
-    for (const s of taller.querySelectorAll('.seccion')) {
-      s.classList.toggle('viendo', s.id === `sec-${sec}`);
-    }
-    for (const a of enlaces) a.classList.toggle('aqui', a.dataset.sec === sec);
-    if (recordar) { try { sessionStorage.setItem(CLAVE, sec); } catch (e) { /* modo privado */ } }
-  }
-
-  // Sólo ahora: hasta aquí la página se ve entera, así que un fallo de script
-  // deja una página larga y no una en blanco.
-  taller.classList.add('con-secciones');
-
-  let guardada = null;
-  try { guardada = sessionStorage.getItem(CLAVE); } catch (e) { /* modo privado */ }
-  mostrar(location.hash.slice(1) || guardada || enlaces[0].dataset.sec, false);
-
-  indice.addEventListener('click', (e) => {
-    const a = e.target.closest('a[data-sec]');
-    if (!a) return;
-    e.preventDefault();
-    // replaceState y no el hash directo: así el botón «atrás» sale del proyecto
-    // en vez de recorrer sus cinco secciones una a una.
-    history.replaceState(null, '', `#${a.dataset.sec}`);
-    mostrar(a.dataset.sec);
-  });
-
-  window.addEventListener('hashchange', () => mostrar(location.hash.slice(1)));
-})();
-</script>
+{# La navegación por secciones vive en `/static/secciones.js`: la usan esta
+   pantalla y /canal, y una copia por vista se desvía en cuanto se toca una. #}
+<script src="/static/secciones.js"></script>
 
 <script>
 document.addEventListener('click', async (e) => {

@@ -64,7 +64,7 @@ fi
 # ~/projects/hub, y no se veía hasta que fallaba en otra máquina.
 UV=$(command -v uv)
 mkdir -p "$UNIDADES"
-for servicio in hub-web hub-snapshotter; do
+for servicio in hub-web hub-snapshotter hub-canal; do
   sed -e "s|@RAIZ@|$RAIZ|g" \
       -e "s|@HUB_HOME@|$HUB_HOME|g" \
       -e "s|@UV@|$UV|g" \
@@ -78,6 +78,11 @@ done
 systemctl --user daemon-reload
 systemctl --user enable --now hub-web hub-snapshotter >/dev/null 2>&1
 bien "arrancados y habilitados para el próximo inicio"
+# 🔴 `hub-canal` se instala pero NO se arranca. Sin `canal.yml` no tiene token, y
+# un servicio que sólo sabe escribir fallos en el registro cada 30 segundos es
+# ruido que enseña a ignorar el registro — justo el sitio donde luego hay que
+# mirar. Se habilita cuando se configure: `systemctl --user enable --now hub-canal`.
+bien "hub-canal instalado y PARADO: arráncalo cuando configures canal.yml"
 
 paso "5/5 · Comprobación"
 # Arrancar no es funcionar: se espera a que conteste de verdad. Dar por bueno un

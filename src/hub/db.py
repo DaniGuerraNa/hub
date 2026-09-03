@@ -179,6 +179,94 @@ CREATE TABLE IF NOT EXISTS conexion_proyecto (
     proyecto_id TEXT NOT NULL,
     PRIMARY KEY (alias, proyecto_id)
 );
+
+-- ── Canal de consulta ───────────────────────────────────────────────────────
+--
+-- Que Claude pueda preguntarle a otra persona cuando el stakeholder no está.
+-- El diseño entero y sus porqués, en PLAN-TELEGRAM.md.
+--
+-- 🔴 Aquí no hay ningún secreto. El token del bot vive fuera, en un archivo con
+-- permisos propios, y de él sólo se guarda un puntero (regla dura 5).
+
+CREATE TABLE IF NOT EXISTS canal_usuario (
+    -- El `id` de Telegram y NO el @username: el username lo cambia su dueño
+    -- cuando quiere y el id no se puede cambiar. Colgar los permisos del
+    -- username los perdería —o peor, se los daría a otro— sin que nadie lo note.
+    user_id   INTEGER PRIMARY KEY,
+    alias     TEXT NOT NULL DEFAULT '',   -- el nombre que le pone el dueño del hub
+    username  TEXT NOT NULL DEFAULT '',   -- informativo, para reconocerlo al darlo de alta
+    nombre    TEXT NOT NULL DEFAULT '',   -- ídem, el que trae Telegram
+    -- pendiente = escribió al bot y no tiene NADA. Es el estado inicial y el
+    -- único que se alcanza solo: dar de alta es siempre un acto del dueño.
+    estado    TEXT NOT NULL DEFAULT 'pendiente',  -- pendiente | activo | bloqueado
+    visto_en  TEXT NOT NULL,
+    nota      TEXT NOT NULL DEFAULT '',
+    -- Quién recibe los AVISOS de las preguntas que son para el dueño del hub.
+    -- A él no le viaja el contenido: sólo «hay una pregunta», y la lee dentro.
+    es_dueno  INTEGER NOT NULL DEFAULT 0,
+    -- El tutorial que el propio bot le manda para explicarle cómo se contesta.
+    -- '' = nunca · 'pedido' = encolado, lo manda el relé · ISO = cuándo se mandó.
+    --
+    -- Lo ENCOLA la web y lo MANDA el relé, y no es ceremonia: hub-web no tiene
+    -- el token del bot a propósito (es el que expone el puerto, regla dura 8),
+    -- así que no puede escribir a nadie ni queriendo.
+    tutorial      TEXT NOT NULL DEFAULT '',
+    -- El mensaje del tutorial al que se le pide practicar el `reply`. Contestarlo
+    -- es el único ensayo posible sin gastarle una pregunta de verdad.
+    tutorial_msg  INTEGER
+);
+
+-- Denegar por defecto: sin fila, no hay permiso. No existe el comodín ni el
+-- permiso global, y es deliberado — con uno, añadir un proyecto se lo regalaría
+-- a quien ya tuviera acceso sin que nadie lo decidiera.
+CREATE TABLE IF NOT EXISTS canal_permiso (
+    user_id     INTEGER NOT NULL REFERENCES canal_usuario(user_id) ON DELETE CASCADE,
+    proyecto_id TEXT NOT NULL REFERENCES proyecto(id) ON DELETE CASCADE,
+    accion      TEXT NOT NULL,   -- recibir-preguntas | responder | leer-estado
+    dado_en     TEXT NOT NULL,
+    PRIMARY KEY (user_id, proyecto_id, accion)
+);
+
+CREATE TABLE IF NOT EXISTS canal_pregunta (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    proyecto_id TEXT NOT NULL REFERENCES proyecto(id) ON DELETE CASCADE,
+    slot_id     INTEGER,          -- a qué panel vuelve la respuesta
+    pane_id     TEXT,             -- el que había al preguntar; se revalida al entregar
+    user_id     INTEGER,          -- NULL = es para el dueño: sólo se le avisa
+    texto       TEXT NOT NULL,
+    -- El id del mensaje en Telegram. Es la clave con la que se casa la
+    -- respuesta: llega como `reply_to_message` y no hay que adivinar nada.
+    message_id  INTEGER,
+    estado      TEXT NOT NULL DEFAULT 'pendiente',
+                -- pendiente | enviada | respondida | entregada | sin-confirmar
+                -- | vencida | archivada
+    -- Preguntas que viajan juntas y VUELVEN juntas. NULL = suelta.
+    lote        TEXT,
+    creada_en   TEXT NOT NULL,
+    enviada_en  TEXT,
+    vence_en    TEXT,             -- lo fija el pacto, no el hub
+    respuesta   TEXT NOT NULL DEFAULT '',
+    respondida_en TEXT,
+    entregada_en  TEXT,
+    detalle     TEXT NOT NULL DEFAULT ''   -- por qué no se pudo entregar, si pasó
+);
+CREATE INDEX IF NOT EXISTS idx_pregunta_estado ON canal_pregunta(estado, vence_en);
+CREATE INDEX IF NOT EXISTS idx_pregunta_msg ON canal_pregunta(message_id);
+
+-- Todo lo que entra y sale, íntegro. Es la monitorización que se pidió, y es lo
+-- que permite auditar después qué se envió exactamente — que importa porque lo
+-- que sale de aquí sale de la máquina.
+CREATE TABLE IF NOT EXISTS canal_registro (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    momento     TEXT NOT NULL,
+    direccion   TEXT NOT NULL,   -- sale | entra | falla
+    user_id     INTEGER,
+    proyecto_id TEXT,
+    pregunta_id INTEGER,
+    detalle     TEXT NOT NULL DEFAULT '',
+    cuerpo      TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_registro_momento ON canal_registro(momento DESC);
 """
 
 # FTS5 no está en todos los builds de SQLite. Si falta, la búsqueda cae a LIKE
@@ -265,6 +353,17 @@ _COLUMNAS_NUEVAS = [
     # foto de hace una semana igual que una recién medida: la pantalla no
     # tenía forma de decir cuál de las dos estaba viendo.
     ("capacidad", "medido_en", "TEXT"),
+    # El lote al que pertenece una pregunta. NULL es una pregunta suelta, que
+    # se entrega en cuanto se contesta — el comportamiento de siempre.
+    #
+    # Existe porque cada respuesta que entra en un panel es un turno de Claude,
+    # y un turno relee el contexto entero: medido sobre sesiones reales, 148k
+    # tokens por llamada y el 69% del coste de la más cara. Cinco respuestas
+    # sueltas son cinco despertares; en lote son uno.
+    ("canal_pregunta", "lote", "TEXT"),
+    ("canal_usuario", "es_dueno", "INTEGER NOT NULL DEFAULT 0"),
+    ("canal_usuario", "tutorial", "TEXT NOT NULL DEFAULT ''"),
+    ("canal_usuario", "tutorial_msg", "INTEGER"),
 ]
 
 

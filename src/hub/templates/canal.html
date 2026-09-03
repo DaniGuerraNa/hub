@@ -1,0 +1,475 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  /* La rejilla de permisos: una fila por persona, una casilla por acción y
+     proyecto. Lo único propio de esta pantalla; el resto viene del sistema. */
+  .permiso { display:flex; flex-wrap:wrap; gap:6px; }
+  .permisos { margin-top:10px; }
+  /* El proyecto como cabecera y sus acciones colgando de una guía: la misma
+     jerarquía que el raíl de /trabajo, para no inventar una segunda forma de
+     decir «esto pertenece a aquello». */
+  .permiso-proy { display:grid; grid-template-columns:130px 1fr; gap:8px;
+                  align-items:center; padding:4px 0; }
+  .permiso-proy + .permiso-proy { border-top:1px solid var(--borde); }
+  .proy-nombre { font-size:12px; color:var(--texto-2); overflow:hidden;
+                 text-overflow:ellipsis; white-space:nowrap; }
+  @media (max-width: 760px) {
+    .permiso-proy { grid-template-columns:1fr; gap:3px; }
+  }
+  .permiso form { display:inline; }
+  .chip { display:inline-flex; align-items:center; gap:5px; padding:3px 9px;
+          border-radius:var(--r-nav); font-size:12px; border:1px solid var(--borde);
+          background:transparent; color:var(--texto-3); }
+  .chip.dado { border-color:transparent;
+               background:color-mix(in srgb, var(--ok) 18%, transparent); color:var(--ok); }
+  .linea-reg { display:grid; grid-template-columns:150px 70px 1fr; gap:10px;
+               padding:5px 0; border-bottom:1px solid var(--borde); font-size:12.5px; }
+  .linea-reg .cuerpo { color:var(--texto-3); white-space:pre-wrap; word-break:break-word; }
+  /* La barra de una sección: el embudo y lo que hay puesto a la izquierda, la
+     cuenta a la derecha. Una sola línea, y los mandos dentro del desplegable. */
+  .barra-secc { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+                margin:10px 0 12px; }
+  /* `cuenta-secc` y no `cifra`: `.cifra` ya es la tarjeta de dato del panorama,
+     con su borde y su padding. Reusar el nombre pintaba un recuadro alrededor
+     del «40 de 53» — el mismo componente diciendo dos cosas distintas. */
+  .barra-secc .cuenta-secc { margin-left:auto; font-size:12px; color:var(--texto-3);
+                             font-variant-numeric:tabular-nums; }
+  /* Los permisos, plegados. Doce proyectos por tres acciones son 36 mandos por
+     persona: con dos personas, la pantalla entera es una rejilla de botones que
+     casi nunca se tocan. Se conceden una vez y se revisan de tarde en tarde, así
+     que el estado normal de esto es cerrado — pero el resumen dice lo que hay
+     dentro, que es lo que se mira a diario. */
+  .plegado-permisos > summary { cursor:pointer; list-style:none; display:flex;
+      align-items:center; gap:8px; padding:7px 0; font-size:13px; color:var(--texto-2); }
+  .plegado-permisos > summary::-webkit-details-marker { display:none; }
+  .plegado-permisos > summary::before { content:'▸'; color:var(--texto-3); font-size:11px; }
+  .plegado-permisos[open] > summary::before { content:'▾'; }
+  .plegado-permisos > summary:hover { color:var(--texto); }
+  /* Un `<a>` que hace de botón: mismo aspecto, pero navega en vez de enviar. */
+  a.boton { display:inline-flex; align-items:center; text-decoration:none; }
+</style>
+
+{{ ui.cabecera_vista('Canal de consulta',
+    'Quién puede responder preguntas de qué proyecto, y todo lo que ha pasado por aquí.') }}
+
+<div class="aviso" style="border-left-color:var(--acento)">
+  {{ ui.placa('conversacion', '', 'lg') }}
+  <div style="flex:1;min-width:0">
+  <h2>Esto no es un canal para mandar instrucciones</h2>
+  <p class="tenue" style="margin:0">
+    Es un canal por el que <strong style="color:var(--texto-2)">Claude pregunta y
+    recibe una respuesta</strong>. Nadie de fuera puede abrir una conversación,
+    mandar un prompt ni ver la salida de un panel: sólo contestar a algo que se le
+    preguntó. El token del bot no está aquí —vive fuera, y de él sólo se guarda un
+    puntero, igual que las conexiones.
+  </p>
+  </div>
+</div>
+
+{% if error %}
+<div class="aviso" style="border-left-color:var(--alerta)">
+  {{ ui.placa('aviso', 'riesgo') }}
+  <div style="flex:1"><strong>No se cambió nada.</strong>
+    <div class="tenue">{{ error }}</div></div>
+</div>
+{% endif %}
+
+{% if not canal_estado.configurado %}
+<div class="aviso" style="border-left-color:var(--espera)">
+  {{ ui.placa('aviso', 'espera') }}
+  <div style="flex:1">
+    <strong>El canal no está configurado, así que no sale ni entra nada.</strong>
+    <div class="tenue">
+      {{ canal_estado.detalle }}. Pon el token en un archivo con permisos propios
+      y apunta a él desde <span class="mono">{{ '~/.local/share/hub/canal.yml' }}</span>:
+      <div class="mono" style="margin-top:6px">token_ref: ~/.secretos/telegram.env#TELEGRAM_BOT_TOKEN</div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ── El índice ─────────────────────────────────────────────────────────────
+   Tres cosas distintas viven en esta pantalla: a quién dejas entrar, qué se ha
+   preguntado y todo lo que ha pasado. Una debajo de otra son cuatro pantallas
+   de scroll —el registro solo son cuarenta líneas—, y lo que se busca casi
+   siempre es sólo una de las tres. Mismo componente que la ficha de proyecto y
+   el inventario, que ya resolvieron esto.
+
+   Las cuentas van en el índice a propósito: son la única forma de ver que hay
+   algo esperando en una sección que no estás mirando. #}
+{% set f = reg_filtros %}
+{% set pf = preg_filtros %}
+{% set params = {'dir': f.dir, 'quien': f.quien or '', 'proy': f.proy,
+                 'psit': pf.psit, 'pproy': pf.pproy} %}
+{# Sin `pag`: al tocar un filtro se vuelve a la primera página. Quedarse en la
+   siete de una lista que ahora tiene dos enseña un «no hay nada» que es falso. #}
+{% macro url_canal(quitar='') -%}
+/canal?{% for k, v in params.items() %}{% if v and k != quitar %}{{ k }}={{ v }}&{% endif %}{% endfor %}
+{%- endmacro %}
+
+{% set pendientes = usuarios | selectattr('estado', 'equalto', 'pendiente') | list %}
+
+<div class="con-indice" id="taller-canal" data-secciones="canal">
+<div class="columna-indice">
+  <nav class="indice" id="indice-canal" data-indice-secciones>
+    <a data-sec="personas" href="#personas">
+      <span class="nom">Personas</span>
+      {# Quien acaba de escribir al bot está esperando a que decidas: es lo
+         único de esta pantalla que pide una acción tuya. #}
+      <span class="cuenta {{ 'aviso' if pendientes }}">
+        {{ (pendientes | length ~ ' nuevo') if pendientes else usuarios | length }}</span>
+    </a>
+    <a data-sec="preguntas" href="#preguntas">
+      <span class="nom">Preguntas</span><span class="cuenta">{{ preg_todas }}</span>
+    </a>
+    <a data-sec="registro" href="#registro">
+      <span class="nom">Registro</span><span class="cuenta">{{ reg_total }}</span>
+    </a>
+  </nav>
+</div>
+
+<div>
+<section class="seccion" id="sec-personas">
+
+{{ ui.seccion('agente', 'Personas') }}
+
+<p class="tenue">
+  No se puede añadir a nadie desde aquí, y no es una carencia: un bot de Telegram
+  sólo puede escribir a quien le haya escrito primero. Quien quiera entrar manda
+  un mensaje al bot, aparece abajo <em>sin ningún permiso</em>, y tú decides.
+</p>
+
+{% for u in usuarios %}
+<div class="tarjeta" style="margin-top:10px">
+  <div class="fila">
+    <div style="flex:1;min-width:0">
+      <strong>{{ u.alias or ('@' ~ u.username if u.username else u.user_id) }}</strong>
+      <span class="tenue mono">
+        {{ u.user_id }}{% if u.username %} · @{{ u.username }}{% endif %}
+        {%- if u.nombre %} · {{ u.nombre }}{% endif %}
+      </span>
+    </div>
+    {# Sin `ui.estado`: no hay dimensión «canal» en insignias.py y registrar una
+       para tres valores sería más pieza que información. #}
+    <span class="insignia {{ 'ok' if u.estado == 'activo'
+                             else ('riesgo' if u.estado == 'bloqueado' else 'espera') }}">
+      {{ u.estado }}</span>
+  </div>
+
+  {# El alias no es cosmético: el @username lo cambia su dueño cuando quiere, y
+     este nombre acaba dentro del marco de la respuesta que lee Claude. #}
+  <form method="post" action="/canal/usuario" class="fila" style="margin-top:8px;gap:6px">
+    <input type="hidden" name="user_id" value="{{ u.user_id }}">
+    <input type="text" name="alias" value="{{ u.alias }}" placeholder="Cómo le llamas tú"
+           style="max-width:220px">
+    {# Acotado: son tres palabras. Un campo mide `width:100%` por defecto —lo
+       correcto en un formulario apilado—, pero dentro de una fila se comía el
+       ancho entero de la tarjeta para elegir entre «activo» y «bloqueado». #}
+    <select name="estado" aria-label="Estado" style="max-width:150px">
+      {% for e in ['pendiente', 'activo', 'bloqueado'] %}
+      <option value="{{ e }}" {{ 'selected' if u.estado == e }}>{{ e }}</option>
+      {% endfor %}
+    </select>
+    {# Marcar al dueño es lo que hace que las preguntas «para mí» avisen a
+       alguien. Sin nadie marcado se quedan esperando un aviso que no existe:
+       pasó con la primera pregunta real del canal, que estuvo horas pendiente
+       sin que nadie se enterara. #}
+    <label class="tenue" style="display:flex;align-items:center;gap:5px">
+      <input type="checkbox" name="es_dueno" value="1" {{ 'checked' if u.es_dueno }}>
+      recibe los avisos
+    </label>
+    <button class="principal">Guardar</button>
+  </form>
+
+  {# El tutorial lo manda el propio bot, en la conversación donde va a
+     contestar: quien va a usar esto lo usa desde el móvil, así que el sitio
+     donde se aprende tiene que ser el sitio donde se responde. #}
+  {% if u.estado == 'activo' %}
+  <form method="post" action="/canal/tutorial" class="fila" style="margin-top:6px;gap:8px">
+    <input type="hidden" name="user_id" value="{{ u.user_id }}">
+    <button class="sutil">{{ 'Volver a mandar el tutorial' if u.tutorial and u.tutorial != 'pedido' else 'Mandarle el tutorial' }}</button>
+    <span class="tenue" style="font-size:12px">
+      {% if u.tutorial == 'pedido' %}en cola, sale en la próxima vuelta del relé
+      {% elif u.tutorial %}enviado el {{ u.tutorial[:10] }}
+      {% else %}tres mensajes: qué es esto, qué no puede hacer, y cómo se contesta
+      {% endif %}
+    </span>
+  </form>
+  {% endif %}
+
+  {# 🔴 Agrupado por proyecto, no en una lista plana. Cada chip decía de qué
+     proyecto era, así que la información estaba; el problema era de forma —una
+     persona con permisos en cinco proyectos son quince chips seguidos y hay que
+     LEER cada etiqueta para saber dónde estás. La agrupación hace ese trabajo.
+
+     Mismo patrón que el raíl de /trabajo, que ya resolvió esto mismo: el
+     proyecto como cabecera y sus cosas colgando de una guía. Y sin repetir el
+     nombre del proyecto en cada chip, que era lo que llenaba la línea. #}
+  {# 🔴 Y plegado, cerrado por defecto. Doce proyectos por tres acciones son 36
+     mandos por persona: con dos personas la pantalla es una rejilla de botones
+     que casi nunca se tocan, y las cosas que sí se miran a diario —quién está
+     esperando, qué se preguntó— quedaban debajo de todo eso.
+
+     Los permisos se conceden una vez y se revisan de tarde en tarde, así que su
+     estado normal es cerrado. Pero el resumen dice lo que hay dentro: un
+     plegado que no cuenta lo que esconde obliga a abrirlo para saber si hace
+     falta abrirlo. #}
+  {% set dados = u.permisos | list %}
+  {% set con_algo = dados | map(attribute='proyecto_id') | unique | list %}
+  <details class="plegado-permisos">
+    <summary>
+      {% if dados %}
+        <span>{{ dados | length }} permiso{{ 's' if dados | length != 1 }}
+          en {{ con_algo | length }} proyecto{{ 's' if con_algo | length != 1 }}</span>
+        <span class="tenue" style="font-size:12px">
+          {{ (proyectos | selectattr('id', 'in', con_algo) | map(attribute='nombre') | list) | join(' · ') }}
+        </span>
+      {% else %}
+        <span class="tenue">Sin ningún permiso: no puede responder a nada</span>
+      {% endif %}
+    </summary>
+  <div class="permisos">
+    {% for p in proyectos %}
+      {% set suyos = u.permisos | selectattr('proyecto_id', 'equalto', p.id) | list %}
+      {# Un proyecto sin nada concedido sólo aparece si se le puede conceder: a
+         alguien bloqueado no se le enseñan doce filas de nada. #}
+      {% if suyos or u.estado == 'activo' %}
+      <div class="permiso-proy">
+        <span class="proy-nombre">{{ p.nombre }}</span>
+        <div class="permiso">
+          {% for a in acciones %}
+            {% set dado = suyos | selectattr('accion', 'equalto', a) | list %}
+            <form method="post" action="/canal/permiso">
+              <input type="hidden" name="user_id" value="{{ u.user_id }}">
+              <input type="hidden" name="proyecto_id" value="{{ p.id }}">
+              <input type="hidden" name="accion" value="{{ a }}">
+              {% if dado %}<input type="hidden" name="quitar" value="1">{% endif %}
+              <button class="chip {{ 'dado' if dado }}"
+                      title="{{ 'Quitar' if dado else 'Conceder' }} «{{ a }}» sobre {{ p.nombre }}">
+                {{ a }}
+              </button>
+            </form>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+  </details>
+</div>
+{% else %}
+<div class="vacio tenue">
+  Todavía no ha escrito nadie al bot. Cuando alguien lo haga aparecerá aquí,
+  sin permisos.
+</div>
+{% endfor %}
+
+</section>
+
+{# ── Preguntas ─────────────────────────────────────────────────────────── #}
+<section class="seccion" id="sec-preguntas">
+
+{{ ui.seccion('documento', 'Preguntas', 'Las de sin destinatario son para ti: su contenido no viaja.') }}
+
+{% set n_pf = (1 if pf.psit else 0) + (1 if pf.pproy else 0) %}
+<div class="barra-secc">
+  {% call ui.menu_filtro(activos=n_pf, alineado='izq') %}
+    {# Los del registro viajan de acompañantes: sin ellos, filtrar aquí borraría
+       en silencio el filtro de la otra sección. #}
+    <form method="get" action="/canal">
+      <input type="hidden" name="dir" value="{{ f.dir }}">
+      <input type="hidden" name="quien" value="{{ f.quien or '' }}">
+      <input type="hidden" name="proy" value="{{ f.proy }}">
+      <label for="fp-sit">En qué punto está</label>
+      <select name="psit" id="fp-sit">
+        <option value="">todas</option>
+        {% for s in situaciones %}
+        <option value="{{ s }}" {{ 'selected' if pf.psit == s }}>{{ s }}</option>
+        {% endfor %}
+      </select>
+      <label for="fp-proy">Proyecto</label>
+      <select name="pproy" id="fp-proy">
+        <option value="">todos</option>
+        {% for p in proyectos %}
+        <option value="{{ p.id }}" {{ 'selected' if pf.pproy == p.id }}>{{ p.nombre }}</option>
+        {% endfor %}
+      </select>
+      <div class="pie">
+        <button class="principal">Aplicar</button>
+        {# Quitar los de aquí conservando los del registro, escritos a mano y no
+           recortando la URL: una cadena que se parchea con `replace` se rompe en
+           cuanto un valor contiene al otro. #}
+        {% if n_pf %}<a class="sutil boton"
+           href="/canal?dir={{ f.dir }}&quien={{ f.quien or '' }}&proy={{ f.proy }}">Quitar</a>{% endif %}
+      </div>
+    </form>
+  {% endcall %}
+
+  {# Lo puesto, a la vista y fuera del desplegable: un filtro que sólo se ve al
+     abrirlo se olvida, y entonces una lista recortada se lee como la entera. #}
+  <div class="chips-filtro">
+    {% if pf.psit %}<a class="chip-filtro" href="{{ url_canal('psit') }}"
+       title="Quitar este filtro">{{ pf.psit }} <span class="quita">×</span></a>{% endif %}
+    {% if pf.pproy %}<a class="chip-filtro" href="{{ url_canal('pproy') }}"
+       title="Quitar este filtro">
+       {{ (proyectos | selectattr('id', 'equalto', pf.pproy) | map(attribute='nombre') | first) or pf.pproy }}
+       <span class="quita">×</span></a>{% endif %}
+  </div>
+
+  <span class="cuenta-secc">
+    {{ preg_mostradas }} de {{ preg_total }}{% if n_pf %} filtradas de {{ preg_todas }}{% endif %}
+  </span>
+</div>
+
+{% for q in preguntas %}
+<div class="tarjeta" style="margin-top:8px">
+  <div class="fila">
+    <span class="tenue mono">#{{ q.id }} · {{ q.proyecto_id }}</span>
+    <div style="flex:1"></div>
+    {# Por su nombre y no por el id: un número de diez cifras no dice a quién se
+       preguntó, y es el mismo criterio con el que se pregunta (`--a ana`). #}
+    <span class="tenue">{{ 'para ti' if q.user_id is none else (q.quien or q.user_id) }}</span>
+    {# `sin-confirmar` va en riesgo y no en espera: no está esperando a nada, ya
+       pasó y hay que ir a mirarlo. En espera se leería como «ya llegará». #}
+    <span class="insignia {{ 'ok' if q.estado in ('entregada', 'respondida')
+                             else ('riesgo' if q.estado in ('vencida', 'archivada', 'sin-confirmar')
+                                   else 'espera') }}">
+      {{ q.estado }}</span>
+  </div>
+  <div style="margin-top:6px;white-space:pre-wrap">{{ q.texto }}</div>
+  {% if q.respuesta %}
+  <div class="tenue" style="margin-top:6px;white-space:pre-wrap">↳ {{ q.respuesta }}</div>
+  {% endif %}
+  {# Dos avisos distintos porque son dos situaciones distintas, y confundirlas es
+     lo que casi duplica un mensaje: en una no se tocó el panel y se reintenta;
+     en la otra el texto YA está escrito y por eso NO se reintenta. #}
+  {% if q.estado == 'sin-confirmar' %}
+  <div class="tenue" style="margin-top:4px;color:var(--alerta)">
+    Se escribió en el panel pero no se pudo confirmar que saliera ({{ q.detalle }}).
+    <strong>No se reintenta</strong>: volver a escribirla la duplicaría. Míralo en
+    el panel — puede estar enviada, o esperando un Enter.
+  </div>
+  {% elif q.detalle %}
+  <div class="tenue" style="margin-top:4px;color:var(--espera)">
+    No se pudo entregar: {{ q.detalle }} — no se tocó el panel, la respuesta sigue
+    guardada y se reintenta.
+  </div>
+  {% endif %}
+</div>
+{% else %}
+<div class="vacio tenue">
+  {% if n_pf %}Ninguna que case con ese filtro.{% else %}Ninguna todavía.{% endif %}
+</div>
+{% endfor %}
+
+</section>
+
+{# ── Registro ──────────────────────────────────────────────────────────── #}
+<section class="seccion" id="sec-registro">
+
+{{ ui.seccion('lineas', 'Registro',
+   'Todo lo que entra y sale, íntegro. Lo que sale de aquí sale de la máquina.') }}
+
+{# Filtros por la URL y no por JavaScript: una vista filtrada se puede guardar,
+   compartir y recargar, y la página sigue siendo HTML servido (decisión 23).
+   `falla` va primero de los tres porque es el único que se busca con prisa.
+
+   🔴 Dentro del embudo y no sueltos encima de la tabla. Todo campo del sistema
+   mide `width:100%` —y debe seguir midiéndolo dentro de un formulario—, así que
+   los tres `<select>` se comían una línea entera cada uno: tres líneas de
+   mandos antes del primer dato, para elegir tres palabras. #}
+{% set n_f = (1 if f.dir else 0) + (1 if f.quien else 0) + (1 if f.proy else 0) %}
+<div class="barra-secc">
+  {% call ui.menu_filtro(activos=n_f, alineado='izq') %}
+    <form method="get" action="/canal">
+      <input type="hidden" name="psit" value="{{ pf.psit }}">
+      <input type="hidden" name="pproy" value="{{ pf.pproy }}">
+      <label for="fr-dir">Qué pasó</label>
+      <select name="dir" id="fr-dir">
+        <option value="">todo</option>
+        {% for d in direcciones %}
+        <option value="{{ d }}" {{ 'selected' if f.dir == d }}>{{ d }}</option>
+        {% endfor %}
+      </select>
+      <label for="fr-quien">Quién</label>
+      <select name="quien" id="fr-quien">
+        <option value="">cualquiera</option>
+        {% for u in usuarios %}
+        <option value="{{ u.user_id }}" {{ 'selected' if f.quien == u.user_id }}>
+          {{ u.alias or ('@' ~ u.username if u.username else u.user_id) }}</option>
+        {% endfor %}
+      </select>
+      <label for="fr-proy">Proyecto</label>
+      <select name="proy" id="fr-proy">
+        <option value="">todos</option>
+        {% for p in proyectos %}
+        <option value="{{ p.id }}" {{ 'selected' if f.proy == p.id }}>{{ p.nombre }}</option>
+        {% endfor %}
+      </select>
+      <div class="pie">
+        <button class="principal">Aplicar</button>
+        {% if n_f %}<a class="sutil boton"
+           href="/canal?psit={{ pf.psit }}&pproy={{ pf.pproy }}">Quitar</a>{% endif %}
+      </div>
+    </form>
+  {% endcall %}
+
+  <div class="chips-filtro">
+    {% if f.dir %}<a class="chip-filtro" href="{{ url_canal('dir') }}"
+       title="Quitar este filtro">{{ f.dir }} <span class="quita">×</span></a>{% endif %}
+    {% if f.quien %}<a class="chip-filtro" href="{{ url_canal('quien') }}"
+       title="Quitar este filtro">
+       {{ (usuarios | selectattr('user_id', 'equalto', f.quien) | map(attribute='alias') | first) or f.quien }}
+       <span class="quita">×</span></a>{% endif %}
+    {% if f.proy %}<a class="chip-filtro" href="{{ url_canal('proy') }}"
+       title="Quitar este filtro">
+       {{ (proyectos | selectattr('id', 'equalto', f.proy) | map(attribute='nombre') | first) or f.proy }}
+       <span class="quita">×</span></a>{% endif %}
+  </div>
+
+  <span class="cuenta-secc">
+    {{ registro | length }} de {{ reg_total }}{% if n_f %} (filtrado){% endif %}
+  </span>
+</div>
+
+{% for r in registro %}
+<div class="linea-reg">
+  <span class="tenue mono">{{ r.momento[:19] | replace('T', ' ') }}</span>
+  <span class="{{ 'urge' if r.direccion == 'falla' }}">{{ r.direccion }}</span>
+  <span class="cuerpo">{{ r.detalle }}{% if r.cuerpo %} — {{ r.cuerpo }}{% endif %}</span>
+</div>
+{% else %}
+<div class="vacio tenue">
+  {% if f.dir or f.quien or f.proy %}Nada que case con ese filtro.
+  {% else %}Nada todavía.{% endif %}
+</div>
+{% endfor %}
+
+{# El paginado sólo aparece si hay más de una página: un «1 de 1» permanente es
+   ruido que enseña a no mirar ahí. #}
+{% if reg_paginas > 1 %}
+{# `url_canal()` y no una cadena a mano: los filtros de preguntas también viajan,
+   o pasar de página perdería lo que se estuviera mirando en la otra sección. #}
+{% set base = url_canal() %}
+<div class="fila" style="gap:8px;margin-top:10px;align-items:center">
+  {% if reg_pag > 1 %}
+  <a class="sutil boton" href="{{ base }}pag={{ reg_pag - 1 }}#registro">← Más reciente</a>
+  {% endif %}
+  <span class="tenue" style="font-size:12px">página {{ reg_pag }} de {{ reg_paginas }}</span>
+  {% if reg_pag < reg_paginas %}
+  <a class="sutil boton" href="{{ base }}pag={{ reg_pag + 1 }}#registro">Más antiguo →</a>
+  {% endif %}
+</div>
+{% endif %}
+
+</section>
+</div>
+</div>
+
+{# La navegación por secciones vive en `/static/secciones.js`: la usan esta
+   pantalla y la ficha de proyecto, y una copia por vista se desvía al tocarla. #}
+<script src="/static/secciones.js"></script>
+
+{% endblock %}

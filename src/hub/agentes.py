@@ -18,7 +18,7 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
-from . import api, config, registry, tmux
+from . import api, config, modelos, registry, tmux
 
 # Un nombre de sesión de tmux no admite cualquier cosa; se deriva del id.
 _NO_VALIDO = re.compile(r"[^\w.\-]+")
@@ -36,9 +36,27 @@ def sesion_para(con: sqlite3.Connection, proyecto_id: str) -> str:
     return _NO_VALIDO.sub("-", proyecto_id) or "hub-agentes"
 
 
-def comando(prompt: str) -> str:
-    """`claude` con un prompt inicial. Sin `-p`: queremos sesión interactiva."""
-    return f"claude {shlex.quote(prompt)}"
+def comando(prompt: str, sin_preguntar: bool = False) -> str:
+    """`claude` con un prompt inicial. Sin `-p`: queremos sesión interactiva.
+
+    `sin_preguntar` arranca en `bypassPermissions`. **No es el modo normal y no
+    debe serlo**: en un proyecto que ya existe, la pregunta es la última señal de
+    que el agente se sale del guion, y con el usuario mirando la ventana esa
+    señal vale. Se usa donde esa premisa no se cumple — ver `crear_proyecto`.
+    """
+    # El modelo va SIEMPRE explícito: sin `--model`, la ventana hereda el
+    # `"model"` de `~/.claude/settings.json` —un ajuste suyo, para sus ventanas—
+    # y el agente nace en lo que hubiera ahí. Ver `modelos.py`.
+    partes = ["claude", modelos.bandera(modelos.AGENTE)]
+    if sin_preguntar:
+        # `--permission-mode` y no `--dangerously-skip-permissions`: son
+        # equivalentes, pero el segundo lleva el nombre puesto para que dé
+        # miedo escribirlo, y el modo es lo que Claude Code muestra en su barra
+        # («⏵⏵ bypass permissions on»). Que se vea en pantalla importa: el
+        # usuario tiene que poder saber en qué modo corre lo que está mirando.
+        partes.append("--permission-mode bypassPermissions")
+    partes.append(shlex.quote(prompt))
+    return " ".join(partes)
 
 
 def lanzar(
@@ -47,6 +65,7 @@ def lanzar(
     prompt: str,
     nombre_ventana: str = "agente",
     ruta: str | None = None,
+    sin_preguntar: bool = False,
 ) -> dict:
     """Abre la ventana y devuelve dónde quedó, para que la UI navegue allí."""
     proyecto = api.obtener_proyecto(con, proyecto_id)
@@ -77,8 +96,8 @@ def lanzar(
     if not tmux.existe_sesion(session):
         tmux.nueva_sesion(session, destino, entorno=entorno)
 
-    indice = tmux.nueva_ventana(session, destino, nombre_ventana[:40], comando(prompt),
-                                entorno)
+    indice = tmux.nueva_ventana(session, destino, nombre_ventana[:40],
+                                comando(prompt, sin_preguntar), entorno)
     return {"session": session, "ventana": indice, "ruta": destino}
 
 
@@ -145,15 +164,20 @@ def _acotar_permisos(destino: Path) -> None:
                         f"Bash(bash {config.RAIZ_REPO}/scripts/kit.sh:*)",
                         f"Read(//{hub}/scripts/**)",
                     ],
-                    # Y hasta aquí. La lista cubre el procedimiento entero; lo
-                    # que se salga de él se PREGUNTA, con el usuario mirando la
-                    # ventana. Perseguir cada permiso hasta que no pregunte
-                    # nunca sería confundir «no molesta» con «está acotado»: la
-                    # pregunta es la última señal de que algo se sale del guion.
+                    # Y hasta aquí. La lista cubre el procedimiento entero.
                     # Fuera de su carpeta no escribe. No está en `deny` a
                     # propósito: si de verdad hace falta tocar algo de fuera,
                     # que lo pregunte y lo apruebe un humano — `deny` ni
                     # siquiera deja llegar la pregunta.
+                    #
+                    # 🔴 Ojo: `crear_proyecto` lanza al agente en
+                    # `bypassPermissions`, así que en la PRIMERA sesión esta
+                    # lista no le frena — la premisa de «que pregunte, con el
+                    # usuario mirando» no se cumplía ahí, porque quien lanza es
+                    # el asistente y nadie está mirando esa ventana. Esto sigue
+                    # escrito porque vale para todo lo demás: cualquier agente
+                    # lanzado luego sobre esta carpeta, o esta misma sesión si
+                    # se reanuda sin el modo, quedan acotados por él.
                     "deny": [],
                 }
             },
@@ -299,6 +323,20 @@ def crear_proyecto(
             apuntadas=_texto_apuntadas(apuntadas),
             ),
             nombre_ventana="nuevo-proyecto", ruta=str(destino),
+            # 🔴 Sin preguntar, y SÓLO aquí. La razón no es la comodidad: es que
+            # quien lanza esto es el asistente desde el chat, así que **nadie
+            # está mirando esa ventana**. Una pregunta en un panel que nadie ve
+            # no es una salvaguarda, es un cuelgue: el asistente informa de que
+            # «la otra sesión está trabajando» —el hub sólo distingue
+            # `trabajando` de `detenido`, no sabe que hay una aprobación
+            # esperando— y el trabajo se queda parado sin que se sepa por qué.
+            # Pasó el 2026-09-02 y es lo que lo motiva.
+            #
+            # Lo que lo hace aceptable es que aquí la carpeta la acaba de crear
+            # el hub y está VACÍA: no hay nada que romper dentro, y el
+            # `settings.json` de al lado sigue acotando al agente si alguien
+            # reanuda la sesión sin este modo.
+            sin_preguntar=True,
         )
     except GuardrailBloqueado as exc:
         return {
@@ -361,9 +399,18 @@ Te toca, dentro de ESTA carpeta y sólo dentro:
 1. Aplicar la capa base y rellenar sus marcadores.
 2. Crear `{estado_ref}` vacío pero con su forma: qué estado tiene, qué hacer al
    volver, qué está bloqueado.
-3. Enseñar qué kits hay y qué aporta cada uno, y dejar elegir. No apliques
-   ninguno por tu cuenta.
-4. Un primer commit.
+3. Un primer commit.
+4. Terminar con un resumen de tres líneas: qué quedó creado, en qué rama, y la
+   lista de kits disponibles con lo que aporta cada uno.
+
+🔴 **NO te pares a preguntar nada, ni siquiera qué kits aplicar.** Nadie está
+mirando esta ventana: la lanzó el asistente desde el chat, y una pregunta aquí
+no espera a nadie — deja el trabajo colgado y desde fuera se ve como «está
+trabajando». Aplicar kits es una decisión suya y la tomará después, con tu lista
+delante y en la conversación donde sí está. Tú déjalo montado y termina.
+
+**No apliques ningún kit por tu cuenta**, ni siquiera si parece obvio: el único
+que se aplica sin preguntar es la capa base, y ya está en el paso 1.
 
 Si algo te pide escribir fuera de esta carpeta, para y dilo: no tienes permiso ahí
 y es a propósito.

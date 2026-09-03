@@ -7,6 +7,14 @@ inyectar un destino arbitrario en la línea de comandos de tmux.
 
 from __future__ import annotations
 
+import asyncio
+import os
+import pty
+import signal
+import termios
+import time
+import tty
+
 import pytest
 
 from hub import terminal, tmux
@@ -200,3 +208,105 @@ def test_ante_la_duda_no_se_encoge(monkeypatch):
 
     monkeypatch.setattr(terminal.tmux, "_correr", explota)
     assert terminal._hay_otro_espectador("hub-work-abc") is True
+
+
+# ── lo que se pega llega entero ───────────────────────────────────────────────
+#
+# 🔴 Salió de un fallo real: el prompt para un `/compact` se pegó en la terminal
+# web y llegó cortado —a mitad de palabra, en varios sitios y no sólo al final—
+# mientras que el mismo texto en trozos pequeños llegaba bien.
+#
+# La causa no estaba en el portapapeles sino aquí: el PTY es NO BLOQUEANTE, así
+# que `os.write` mete lo que cabe y devuelve cuánto. Medido en este mismo
+# montaje: de 16.000 bytes entraron 11.776 y los otros 4.224 se tiraron sin que
+# nadie se enterara.
+
+
+def _pty_que_guarda(destino, esperados):
+    """Un `Adjunto` real sobre un PTY cuyo otro extremo guarda lo que recibe.
+
+    Dos detalles que costaron tres intentos, y ninguno es cosmético:
+
+    · El `sleep` es lo que hace útil la prueba. Durante ese rato nadie lee, el
+      buffer del PTY se llena y `os.write` se queda corto — que es el caso que
+      se quiere provocar. Con un lector inmediato puede entrar todo de una vez
+      y el test pasaría con el código roto.
+    · `head -c` y no `cat`, porque el hijo tiene que terminar **por su cuenta**
+      al llegar a la cuenta. Con `cat` el fin era cerrar el PTY, y cerrarlo
+      manda SIGHUP y descarta lo que el otro extremo aún no había leído: el
+      test acusaba al código de perder bytes que perdía él al recoger.
+    """
+    adjunto = terminal.Adjunto.__new__(terminal.Adjunto)
+    adjunto.pid, adjunto.fd = pty.fork()
+    if adjunto.pid == 0:  # pragma: no cover - proceso hijo
+        os.execvp("sh", ["sh", "-c", f"sleep 0.2; head -c {esperados} > {destino}"])
+        os._exit(1)
+    # En crudo, como lo deja `tmux attach`: en modo canónico el tty DESCARTA
+    # cuando se le llena la cola de línea —medido, 8.928 bytes de 180.000— y esa
+    # pérdida no es la que se está probando aquí.
+    tty.setraw(adjunto.fd)
+    os.set_blocking(adjunto.fd, False)
+    adjunto._pendiente = bytearray()
+    adjunto._esperando = False
+    return adjunto
+
+
+def _recoger(adjunto, destino):
+    """Espera a que el hijo se dé por servido, con tope.
+
+    Si faltan bytes nunca llegará a su cuenta: el tope es para que eso salga
+    como un test en rojo con el diff delante, y no como un cuelgue."""
+    for _ in range(500):
+        if os.waitpid(adjunto.pid, os.WNOHANG)[0]:
+            break
+        time.sleep(0.01)
+    else:
+        os.kill(adjunto.pid, signal.SIGKILL)
+        os.waitpid(adjunto.pid, 0)
+    os.close(adjunto.fd)
+    return destino.read_bytes() if destino.exists() else b""
+
+
+PEGADO = b"".join(b"linea %04d " % i + b"x" * 60 + b"\n" for i in range(2500))
+
+
+def test_un_pegado_grande_llega_ENTERO(tmp_path):
+    """Es el caso del usuario: 160 KB de golpe, como un prompt largo."""
+    destino = tmp_path / "recibido"
+    adjunto = _pty_que_guarda(destino, len(PEGADO))
+    adjunto.escribir(PEGADO)
+    assert _recoger(adjunto, destino) == PEGADO
+
+
+def test_los_pegados_llegan_EN_ORDEN(tmp_path):
+    """Lo que no cabe queda en cola, así que lo siguiente NO puede adelantarse:
+    un pegado reordenado sería peor que uno cortado, porque parece correcto."""
+    destino = tmp_path / "recibido"
+    adjunto = _pty_que_guarda(destino, len(PEGADO) + 101)
+    adjunto.escribir(PEGADO)
+    adjunto.escribir(b"y" * 100 + b"\n")
+    assert _recoger(adjunto, destino) == PEGADO + b"y" * 100 + b"\n"
+
+
+def test_dentro_del_bucle_de_eventos_tampoco_se_pierde_nada(tmp_path):
+    """El camino que usa de verdad el WebSocket.
+
+    Ahí no se puede esperar a que tmux drene —pararía el servidor entero—, así
+    que lo pendiente se aplaza con `add_writer`. Se comprueba que el aplazado
+    también termina de escribir, y que suelta la vigilancia al acabar.
+    """
+    destino = tmp_path / "recibido"
+    adjunto = _pty_que_guarda(destino, len(PEGADO))
+
+    async def escribir_y_dejar_al_bucle():
+        adjunto.escribir(PEGADO)
+        assert adjunto._pendiente, "con un lector dormido tiene que quedar cola"
+        for _ in range(400):
+            if not adjunto._pendiente:
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("la cola nunca se vació")
+
+    asyncio.run(escribir_y_dejar_al_bucle())
+    assert adjunto._esperando is False
+    assert _recoger(adjunto, destino) == PEGADO

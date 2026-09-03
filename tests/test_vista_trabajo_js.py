@@ -29,9 +29,18 @@ CONTEXTO = {
 }
 
 
+# Lo que contesta el hub al latido. El slot del arnés es el 7, y viene con un
+# estado y una nota DISTINTOS de los que la página pintó: si el script no hace
+# nada con la respuesta, el efecto no aparece por ninguna parte.
+PULSO = {"/api/trabajo/pulso": {"slots": {"7": "trabajando"},
+                                "notas": {"7": "lo escribió otro"}}}
+
+
 @pytest.fixture(scope="module")
 def ejecucion(tmp_path_factory):
-    return ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path_factory.mktemp("js"))
+    return ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path_factory.mktemp("js"), PULSO
+    )
 
 
 def test_el_script_arranca_sin_reventar(ejecucion):
@@ -149,3 +158,198 @@ def test_el_ancho_del_terminal_se_mide_no_se_estima():
         "encajar al píxel exacto dejaba 1px de margen y `offsetWidth` es entero: "
         "se exige media celda libre")
     assert "guardia" in guion, "un layout raro no puede colgar la página"
+
+
+# ── el latido, ejecutado ──────────────────────────────────────────────────────
+#
+# La vista se pintaba entera en el servidor y se quedaba quieta. El punto de
+# estado congelado es peor que no tenerlo: existe para enterarse de que un
+# segundo slot paró, y sólo se enteraba quien recargara.
+
+def test_pide_el_pulso_al_arrancar(ejecucion):
+    """Y con las notas que tiene en pantalla, no con todas las del hub."""
+    pulsos = [p for p in ejecucion["peticiones"] if p.startswith("/api/trabajo/pulso")]
+    assert pulsos == ["/api/trabajo/pulso?notas=7"]
+
+
+def test_deja_de_latir_con_la_pestana_de_fondo(ejecucion):
+    """Una petición cada cinco segundos durante horas, para nadie."""
+    assert "document:visibilitychange" in ejecucion["oyentes"]
+
+
+def test_el_latido_arranca_despues_de_lo_que_usa():
+    """🔴 Es el fallo que dejó el terminal en negro y creó este archivo.
+
+    `latir()` toca `notas` y `puntos`, declarados con `const`. Programarlo antes
+    aborta el script entero por la zona muerta temporal, y la página se sirve
+    perfecta mientras el navegador muere en silencio.
+    """
+    guion = script_de("trabajo.html", CONTEXTO)
+    assert guion.index("const notas =") < guion.index("setInterval(latir")
+    assert guion.index("const puntos =") < guion.index("setInterval(latir")
+
+
+def test_las_ventanas_del_mismo_slot_comparten_la_nota_al_instante():
+    """Hay un `textarea` por ventana y todos son el mismo texto.
+
+    Sin copiarlo, escribir en una y cambiar de pestaña enseñaba el texto viejo
+    en la otra hasta recargar — que es el fallo del que sale todo esto. Y se
+    hace al teclear, no en la vuelta siguiente: la pestaña se cambia en menos.
+    """
+    guion = script_de("trabajo.html", CONTEXTO)
+    assert "hermanas" in guion
+    assert "otra.value = nota.value" in guion
+
+
+def test_el_latido_no_pisa_lo_que_se_esta_escribiendo():
+    """Lo que hay en pantalla manda sobre lo que devuelve el servidor.
+
+    Son dos guardas y hacen falta las dos: la nota con cambios sin confirmar, y
+    el `textarea` que tiene el cursor dentro —reemplazar su `value` manda el
+    cursor al final aunque el texto sea idéntico.
+    """
+    guion = script_de("trabajo.html", CONTEXTO)
+    assert "sucias.has(String(slot))" in guion
+    assert "document.activeElement" in guion
+    # Y si siguió escribiendo mientras la petición volaba, sigue sucia.
+    assert "nota.value === enviado" in guion
+
+
+def test_el_punto_se_repinta_con_los_textos_del_servidor():
+    """Una sola definición de las frases: el primer pintado lo hace Jinja y el
+    latido lo rehace el navegador. Dos copias divergen a la primera corrección."""
+    from pathlib import Path
+
+    guion = script_de("trabajo.html", CONTEXTO)
+    assert "const TITULOS_ESTADO = {" in guion
+    assert "Trabajando ahora" in guion  # `tojson` escapa los acentos, no esto
+    # Y la frase está escrita UNA vez en la plantilla: la del `{% set %}`.
+    plantilla = (Path(__file__).parents[1] / "src/hub/templates/trabajo.html").read_text("utf-8")
+    assert plantilla.count("Trabajando ahora") == 1
+
+
+def test_el_punto_cambia_de_verdad_cuando_el_pulso_dice_otra_cosa(ejecucion):
+    """No basta con que pida el pulso: tiene que repintar.
+
+    El fallo silencioso de este cambio es que el HTML se sirva igual de bien, el
+    latido corra, y ningún punto se entere nunca — un `dataset` mal escrito
+    basta. Aquí se ejecuta y se mira lo que escribió en el DOM.
+    """
+    assert "trabajando" in ejecucion["clases"]
+
+
+def test_la_nota_que_cambio_fuera_aparece_sin_recargar(ejecucion):
+    """El asistente escribe notas por su cuenta, y la misma nota puede estar
+    abierta en dos ventanas. Sin esto se veía la vieja hasta dar F5."""
+    assert "lo escribió otro" in ejecucion["valores"]
+
+
+# ── copiar al seleccionar ─────────────────────────────────────────────────────
+#
+# 🔴 Esto no existía. Copiar funcionaba en una ventana y en otra no, porque lo
+# que copiaba era el navegador por su cuenta y su comportamiento por defecto
+# depende de dónde acabe el foco. Una terminal donde copiar funciona A VECES es
+# peor que una donde no funciona nunca: se pierde texto creyendo que se tiene.
+
+
+def _con_seleccion(tmp_path_factory, texto, accion="nodo('marco').disparar('mouseup');",
+                   extra=""):
+    from arnes_js import ejecutar
+    # `globalThis` y no `const`: el guion se inserta dentro de un `try`, y una
+    # declaración de bloque no la ve el `Terminal` del arnés, definido fuera.
+    guion = f"globalThis.SELECCION = {texto!r};\n{extra}\n" + script_de("trabajo.html", CONTEXTO)
+    return ejecutar(guion, tmp_path_factory.mktemp("cp"), PULSO, accion)
+
+
+def test_soltar_el_raton_copia_lo_seleccionado(tmp_path_factory):
+    r = _con_seleccion(tmp_path_factory, "lo que arrastré")
+    assert r["portapapeles"] == ["lo que arrastré"]
+
+
+def test_sin_seleccion_no_se_toca_el_portapapeles(tmp_path_factory):
+    """Un clic suelto no puede borrar lo que tuvieras copiado de antes."""
+    r = _con_seleccion(tmp_path_factory, "")
+    assert r["portapapeles"] == []
+
+
+def test_si_el_portapapeles_se_niega_hay_plan_B(tmp_path_factory):
+    """`navigator.clipboard` puede denegarse. Quedarse ahí sería copiar en
+    silencio a ninguna parte, que es el fallo que esto viene a arreglar."""
+    r = _con_seleccion(tmp_path_factory, "texto", extra="global.CLIPBOARD_FALLA = true;")
+    assert r["portapapeles"] == ["(execCommand)"]
+
+
+def test_se_copia_al_SOLTAR_y_no_en_cada_pixel_del_arrastre():
+    """`onSelectionChange` se dispara en cada píxel: escribir en el portapapeles
+    en todos no es gratis, y `writeText` exige un gesto del usuario — soltar el
+    botón lo es, arrastrar puede no serlo."""
+    guion = script_de("trabajo.html", CONTEXTO)
+    assert "'mouseup', copiarSeleccion" in guion
+    # Se busca la LLAMADA, no la palabra: el porqué está escrito en el comentario
+    # de al lado y encontrarlo ahí no significa que se esté usando.
+    assert "term.onSelectionChange(" not in guion
+
+
+# ── copiar desde DENTRO del panel: OSC 52 ─────────────────────────────────────
+#
+# 🔴 Lo de arriba sólo cubre la selección que hace el NAVEGADOR, y en un panel
+# donde corre Claude Code no hay ninguna: la aplicación pide los eventos de
+# ratón —medido, `mouse_any_flag` a SÍ en las tres ventanas—, así que selecciona
+# ella y copia con OSC 52. Es también lo que usa tmux con `set-clipboard on`.
+#
+# xterm.js no trae esa secuencia: la parsea y la descarta. El síntoma fue
+# exactamente ese — la terminal decía «N caracteres copiados», porque el mensaje
+# lo pinta la aplicación, y al portapapeles no llegaba nada.
+#
+# Comprobado en un PTY real antes de escribir el manejador: la secuencia
+# atraviesa tmux entera y llega al terminal de fuera sin tocarse.
+
+
+def _osc52(tmp_path_factory, carga):
+    from arnes_js import ejecutar
+    guion = "globalThis.SELECCION = '';\n" + script_de("trabajo.html", CONTEXTO)
+    return ejecutar(
+        guion, tmp_path_factory.mktemp("osc"), PULSO,
+        f"TERM.parser._osc[52]({carga!r});",
+    )
+
+
+def test_lo_que_copia_la_aplicacion_del_panel_llega_al_portapapeles(tmp_path_factory):
+    """`aG9sYSBtdW5kbw==` es «hola mundo» en base64, que es como viaja."""
+    r = _osc52(tmp_path_factory, "c;aG9sYSBtdW5kbw==")
+    assert r["portapapeles"] == ["hola mundo"]
+
+
+def test_los_acentos_sobreviven_al_viaje(tmp_path_factory):
+    """El base64 lleva UTF-8 dentro, así que `atob` a secas parte los acentos:
+    da un byte por carácter y «ó» son dos. Sin `TextDecoder` se copiaría mojibake
+    — y copiar mal es peor que no copiar, porque no se nota hasta después."""
+    import base64
+    carga = base64.b64encode("función · ñandú «cita»".encode()).decode()
+    r = _osc52(tmp_path_factory, f"c;{carga}")
+    assert r["portapapeles"] == ["función · ñandú «cita»"]
+
+
+def test_NUNCA_se_contesta_a_quien_PREGUNTA_que_hay_copiado(tmp_path_factory):
+    """🔴 `OSC 52 ... ?` pide leer el portapapeles, y la respuesta saldría por el
+    PTY. Contestar dejaría que cualquier cosa que corra en un panel se lleve lo
+    que el usuario tenga copiado —contraseñas incluidas— sin que se vea nada."""
+    r = _osc52(tmp_path_factory, "c;?")
+    assert r["portapapeles"] == []
+    # Y no se escribe de vuelta por el socket, que es por donde saldría.
+    assert r["errores"] == []
+
+
+def test_un_base64_roto_no_tumba_la_terminal(tmp_path_factory):
+    """Llega por el mismo canal que el texto de la pantalla: si un byte suelto
+    puede reventar el manejador, cualquier salida rara deja la terminal muerta."""
+    r = _osc52(tmp_path_factory, "c;no-es-base64-@@@")
+    assert r["portapapeles"] == []
+    assert r["errores"] == []
+
+
+def test_el_manejador_se_registra_para_la_secuencia_52(tmp_path_factory):
+    from arnes_js import ejecutar
+    guion = "globalThis.SELECCION = '';\n" + script_de("trabajo.html", CONTEXTO)
+    r = ejecutar(guion, tmp_path_factory.mktemp("osc"), PULSO)
+    assert 52 in r["osc"]

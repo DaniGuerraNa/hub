@@ -513,6 +513,45 @@ button.icono-solo:hover { background: var(--superficie2); color: var(--texto); }
 .menu-pop button.peligro { color: var(--alerta); }
 .menu-pop button.peligro:hover { background: color-mix(in srgb, var(--alerta) 18%, transparent); }
 .menu-pop .separador { height: 1px; background: var(--borde); margin: 4px 2px; }
+
+/* ── El embudo: acotar lo que se ve ────────────────────────────────────────
+   Los filtros eran tres `<select>` sueltos encima de la tabla. Como todo campo
+   del sistema mide `width:100%` —y debe seguir midiéndolo dentro de un
+   formulario—, cada uno se comía una línea entera de la pantalla para elegir
+   una palabra: tres líneas de mandos antes de llegar al primer dato.
+   Aquí caben en un botón, y el formulario se despliega debajo con sitio de
+   sobra para las etiquetas, que fuera no cabían. */
+.menu.filtro > summary { width: auto; gap: 6px; grid-auto-flow: column;
+                         padding: 0 11px; font-size: 13px; font-weight: 500; }
+.menu.filtro .cuenta-filtro {
+  display: inline-grid; place-items: center; min-width: 17px; height: 17px;
+  padding: 0 5px; border-radius: 9999px; font-size: 11px; font-weight: 600;
+  background: var(--acento); color: var(--lienzo); font-variant-numeric: tabular-nums;
+}
+.pop-filtro { min-width: 236px; padding: 12px; gap: 0; }
+.pop-filtro label { margin: 0 0 4px; }
+.pop-filtro label + * { margin-bottom: 10px; }
+/* Los botones del pie NO son filas de menú: van uno al lado del otro y el de
+   aplicar pesa más. Sin esto heredarían el `width:100%` de `.menu-pop button`
+   y volverían a apilarse, que es el problema del que venimos. */
+.pop-filtro .pie { display: flex; gap: 6px; align-items: center; }
+.pop-filtro .pie button, .pop-filtro .pie a.boton { width: auto; justify-content: center; }
+/* Y recuperando su relleno: `.menu-pop button` lo aplana a transparente —lo
+   correcto para una fila de menú—, pero aquí «Aplicar» es el botón que cierra
+   la tarea y se quedaba indistinguible de un enlace de texto. */
+.pop-filtro .pie button.principal { background: var(--elevado); color: var(--texto); }
+.pop-filtro .pie button.principal:hover {
+  background: color-mix(in srgb, var(--elevado) 70%, var(--texto-4)); }
+/* Lo que hay puesto, fuera del panel: un filtro activo que sólo se ve al abrir
+   el desplegable es un filtro que se olvida, y entonces la lista recortada se
+   lee como la lista entera. */
+.chips-filtro { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.chip-filtro { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px;
+  border-radius: var(--r-nav); font-size: 12px; text-decoration: none;
+  background: color-mix(in srgb, var(--acento) 15%, transparent); color: var(--acento); }
+.chip-filtro:hover { background: color-mix(in srgb, var(--acento) 26%, transparent);
+                     text-decoration: none; }
+.chip-filtro .quita { font-size: 13px; line-height: 1; opacity: .75; }
 .menu-pop .rotulo-menu { font-size: 10px; text-transform: uppercase; letter-spacing: .1em;
   color: var(--texto-4); padding: 7px 10px 3px; }
 /* Un menú de ajustes puede llevar controles, no sólo acciones. */
@@ -742,6 +781,7 @@ dialog.paleta li .detalle {
       ('/respaldo', 'respaldo', 'Respaldo', 'escudo'),
       ('/servicios', 'servicios', 'Servicios', 'pilas'),
       ('/conexiones', 'conexiones', 'Conexiones', 'enlace'),
+      ('/canal', 'canal', 'Canal', 'conversacion'),
       ('/contexto', 'contexto', 'Contexto', 'documento')] %}
   <a href="{{ ruta }}" class="enlace {{ 'aqui' if seccion == clave }}" title="{{ nombre }}">
     {{ ui.icono(icono) }}<span class="nom">{{ nombre }}</span>

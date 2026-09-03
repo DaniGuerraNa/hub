@@ -23,9 +23,9 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import (agentes, api, asistente, busqueda, catalogo, config, db,
-               insignias, registry, servicios, slots, snapshotter, terminal,
-               tmux, transcripts)
+from . import (agentes, api, asistente, busqueda, canal, catalogo, config, db,
+               insignias, lienzos, registry, rele, servicios, slots, snapshotter,
+               terminal, tmux, transcripts)
 from . import conexiones as conexiones_mod
 from . import repos as repos_git
 
@@ -444,6 +444,222 @@ async def conexiones_nueva(request: Request):
     return _volver("/conexiones")
 
 
+# ───────────────────────── canal de consulta ─────────────────────────
+#
+# Quién puede recibir preguntas de qué proyecto, y qué ha pasado por el canal.
+# 🔴 Aquí NO se manda nada: preguntar es de `hub preguntar` y del relé. Esta
+# pantalla concede y audita, que son las dos cosas que sólo puede hacer él.
+
+
+# Cuántas entradas del registro por página. 40 es lo que cabe sin scroll infinito
+# y sin obligar a paginar por todo: el registro crece y no se poda nunca, porque
+# es la auditoría de lo que sale de la máquina.
+POR_PAGINA = 40
+
+
+@app.get("/canal")
+def canal_vista(
+    request: Request,
+    error: str = "",
+    dir: str = "",
+    quien: int | None = None,
+    proy: str = "",
+    pag: int = 1,
+    psit: str = "",
+    pproy: str = "",
+):
+    """La matriz de permisos y el registro de todo lo que entra y sale.
+
+    Los filtros del registro van por la URL y no por JavaScript: así una vista
+    filtrada se puede guardar, compartir y recargar, y la página sigue siendo
+    HTML servido (decisión 23).
+    """
+    con = conexion()
+    try:
+        pag = max(1, int(pag or 1))
+        filtros = {
+            "direccion": dir or None,
+            "user_id": quien,
+            "proyecto_id": proy or None,
+        }
+        total = canal.cuenta_registro(con, **filtros)
+        vistas = canal.preguntas(con, pproy or None, situacion=psit or None)
+        return _vista(
+            request,
+            "canal.html",
+            {
+                "usuarios": canal.usuarios(con),
+                "proyectos": api.listar_proyectos(con),
+                "acciones": canal.ACCIONES,
+                "preguntas": vistas[:30],
+                # Las dos cifras: sin la de arriba, un filtro que deja 30 y el
+                # tope que deja 30 se ven exactamente igual.
+                "preg_mostradas": len(vistas[:30]),
+                "preg_total": len(vistas),
+                "preg_todas": canal.cuenta_preguntas(con),
+                "preg_filtros": {"psit": psit, "pproy": pproy},
+                "situaciones": tuple(canal.SITUACIONES),
+                "registro": canal.registro(
+                    con, POR_PAGINA, desde=(pag - 1) * POR_PAGINA, **filtros
+                ),
+                "reg_total": total,
+                "reg_pag": pag,
+                "reg_paginas": max(1, -(-total // POR_PAGINA)),
+                "reg_filtros": {"dir": dir, "quien": quien, "proy": proy},
+                "direcciones": ("sale", "entra", "falla"),
+                "canal_estado": rele.estado(),
+                "error": error,
+                "titulo": "Canal",
+                "seccion": "canal",
+            },
+        )
+    finally:
+        con.close()
+
+
+@app.post("/canal/usuario")
+async def canal_usuario(request: Request):
+    """Alias, estado y nota. Dar de alta es SIEMPRE un acto suyo, y pasa aquí."""
+    formulario = await request.form()
+    con = conexion()
+    try:
+        user_id = int(formulario.get("user_id") or 0)
+        canal.editar_usuario(
+            con,
+            user_id,
+            alias=formulario.get("alias"),
+            estado=formulario.get("estado"),
+            nota=formulario.get("nota"),
+        )
+        # Sólo se toca si esta persona pasa a serlo o deja de serlo: una casilla
+        # sin marcar en OTRA ficha no puede desmarcar al dueño de golpe.
+        if formulario.get("es_dueno"):
+            canal.marcar_dueno(con, user_id)
+        elif (actual := canal.dueno(con)) and actual["user_id"] == user_id:
+            canal.marcar_dueno(con, None)
+        con.commit()
+    except (canal.CanalInvalido, ValueError) as exc:
+        return _volver(f"/canal?error={quote(str(exc))}")
+    finally:
+        con.close()
+    return _volver("/canal")
+
+
+@app.post("/canal/tutorial")
+async def canal_tutorial(request: Request):
+    """Encola el tutorial. **No lo manda**: eso es del relé, que es quien tiene
+    el token. `hub-web` no puede escribirle a nadie ni queriendo."""
+    formulario = await request.form()
+    con = conexion()
+    try:
+        canal.pedir_tutorial(con, int(formulario.get("user_id") or 0))
+        con.commit()
+    except (canal.CanalInvalido, ValueError) as exc:
+        return _volver(f"/canal?error={quote(str(exc))}")
+    finally:
+        con.close()
+    return _volver("/canal")
+
+
+@app.post("/canal/permiso")
+async def canal_permiso(request: Request):
+    """Concede o revoca UNA acción sobre UN proyecto. No hay atajos por diseño."""
+    formulario = await request.form()
+    con = conexion()
+    try:
+        user_id = int(formulario.get("user_id") or 0)
+        proyecto_id = str(formulario.get("proyecto_id") or "")
+        accion = str(formulario.get("accion") or "")
+        if formulario.get("quitar"):
+            canal.revocar(con, user_id, proyecto_id, accion)
+        else:
+            canal.conceder(con, user_id, proyecto_id, accion)
+        con.commit()
+    except (canal.CanalInvalido, ValueError) as exc:
+        return _volver(f"/canal?error={quote(str(exc))}")
+    finally:
+        con.close()
+    return _volver("/canal")
+
+
+@app.post("/api/pregunta")
+async def api_pregunta(request: Request):
+    """Registra una pregunta. **No la manda**: eso es del relé, en su vuelta.
+
+    Separado a propósito. Si esto hablara con Telegram, `hub-web` —que expone el
+    puerto y con él una shell (regla dura 8)— necesitaría el token, y la única
+    razón de que el relé sea un proceso aparte es que no lo tenga.
+    """
+    datos = await request.json()
+    con = conexion()
+    try:
+        destino = str(datos.get("a") or "").strip()
+        user_id = None
+        if destino and destino.lower() not in ("mi", "mí", "yo", "dueño", "dueno"):
+            usuario = canal.por_alias(con, destino)
+            if not usuario:
+                return {"ok": False, "error": f"no conozco a «{destino}»: nadie con ese alias"}
+            user_id = usuario["user_id"]
+
+        # Varias preguntas en una sola llamada son un LOTE: viajan sueltas —cada
+        # una necesita su mensaje para poder casar el reply— pero **vuelven
+        # juntas**, en un solo turno. El lote nace completo aquí, y por eso
+        # saber si está entero es contar filas y no adivinar si vendrán más.
+        textos = datos.get("textos")
+        if not isinstance(textos, list) or not textos:
+            textos = [str(datos.get("texto") or "")]
+        lote = str(datos.get("lote") or "").strip() or None
+        if len(textos) > 1 and not lote:
+            lote = canal.nombre_de_lote(str(datos.get("proyecto_id") or ""))
+
+        creadas = [
+            canal.crear_pregunta(
+                con,
+                str(datos.get("proyecto_id") or ""),
+                str(t or ""),
+                user_id=user_id,
+                slot_id=datos.get("slot_id"),
+                pane_id=datos.get("pane_id"),
+                vence_en=datos.get("vence_en"),
+                lote=lote,
+            )
+            for t in textos
+        ]
+        con.commit()
+        return {"ok": True, "pregunta": canal.ver_pregunta(con, creadas[0]),
+                "preguntas": [canal.ver_pregunta(con, i) for i in creadas],
+                "lote": lote,
+                "para": "el dueño del hub" if user_id is None else destino}
+    except canal.SinPermiso as exc:
+        return {"ok": False, "error": str(exc)}
+    except canal.CanalInvalido as exc:
+        return {"ok": False, "error": str(exc)}
+    finally:
+        con.close()
+
+
+@app.get("/api/pregunta/{pregunta_id}")
+def api_ver_pregunta(pregunta_id: int):
+    con = conexion()
+    try:
+        pregunta = canal.ver_pregunta(con, pregunta_id)
+        if not pregunta:
+            return {"ok": False, "error": f"no hay ninguna pregunta {pregunta_id}"}
+        return {"ok": True, "pregunta": pregunta}
+    finally:
+        con.close()
+
+
+@app.get("/api/preguntas")
+def api_preguntas(proyecto: str = "", estado: str = "", slot: int | None = None):
+    con = conexion()
+    try:
+        return {"ok": True,
+                "preguntas": canal.preguntas(con, proyecto or None, estado or None, slot)}
+    finally:
+        con.close()
+
+
 @app.get("/contexto")
 def contexto_vista(request: Request):
     """Todo el estado, escrito para pegarlo al principio de una sesión."""
@@ -667,6 +883,138 @@ def api_kits():
         con.close()
 
 
+# ───────────────────────────── lienzos ─────────────────────────────
+#
+# Lo que Claude publica para que se vea aquí. La carpeta es la fuente de verdad
+# (regla dura 1): estos endpoints la leen y la escriben, y no hay índice que
+# mantener sincronizado.
+
+
+def _ficha_lienzo(lienzo, con_cuerpo: bool = False) -> dict:
+    ficha = {
+        "id": lienzo.id,
+        "titulo": lienzo.titulo,
+        "plantilla": lienzo.plantilla,
+        "proyecto_id": lienzo.proyecto_id,
+        "slot": lienzo.slot,
+        "publicado_en": lienzo.publicado_en,
+        "archivado_en": lienzo.archivado_en,
+        # Lo que decide si Claude puede republicar encima. Va en la ficha para
+        # que el panel lo pueda enseñar sin una segunda llamada.
+        "tuyo": lienzo.editado_por_el_usuario(),
+    }
+    if con_cuerpo:
+        ficha["cuerpo"] = lienzo.cuerpo
+    return ficha
+
+
+@app.get("/api/lienzos")
+def api_lienzos(proyecto: str = "", q: str = "", archivados: int = 0):
+    """Los del proyecto, o los que casen con `q` en todos los proyectos.
+
+    Buscar sale del proyecto a propósito: el panel enseña lo que tienes delante
+    y buscar sirve justamente para lo que no. Y **buscar sí encuentra los
+    archivados**: archivar los quita de la lista, no de la memoria.
+    """
+    try:
+        hallados = (lienzos.buscar(q) if q
+                    else (lienzos.listar(proyecto, archivados=bool(archivados))
+                          if proyecto else []))
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return {"ok": True, "lienzos": [_ficha_lienzo(l) for l in hallados]}
+
+
+@app.get("/api/lienzo/{proyecto_id}/{lienzo_id}")
+def api_lienzo(proyecto_id: str, lienzo_id: str):
+    try:
+        lienzo = lienzos.leer(proyecto_id, lienzo_id)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    if lienzo is None:
+        return JSONResponse({"ok": False, "error": "no existe"}, status_code=404)
+    return {"ok": True, "lienzo": _ficha_lienzo(lienzo, con_cuerpo=True)}
+
+
+@app.post("/api/lienzo")
+async def api_lienzo_publicar(request: Request):
+    """Publica un lienzo. Es lo que ejecuta `hub lienzo nuevo`.
+
+    🔴 `SinPermiso` se devuelve como **409**, no como 400: no es una petición
+    mal formada, es un conflicto con algo que ya existe y que el usuario tocó.
+    El mensaje trae las dos salidas, y quien lo lee es un agente — así que tiene
+    que poder decidir sin preguntar dos veces.
+    """
+    datos = await request.json()
+    proyecto_id = (datos.get("proyecto_id") or "").strip()
+    titulo = (datos.get("titulo") or "").strip()
+    if not proyecto_id or not titulo:
+        return JSONResponse(
+            {"ok": False, "error": "hacen falta `proyecto_id` y `titulo`"},
+            status_code=400,
+        )
+    try:
+        lienzo = lienzos.escribir(
+            proyecto_id=proyecto_id,
+            titulo=titulo,
+            cuerpo=datos.get("cuerpo") or "",
+            plantilla=(datos.get("plantilla") or "decisiones"),
+            slot=datos.get("slot") or None,
+            forzar=bool(datos.get("forzar")),
+            revisar=bool(datos.get("revisar")),
+        )
+    except lienzos.SinPermiso as exc:
+        return JSONResponse({"ok": False, "error": str(exc), "conflicto": True},
+                            status_code=409)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return {"ok": True, "lienzo": _ficha_lienzo(lienzo)}
+
+
+@app.post("/api/lienzo/{proyecto_id}/{lienzo_id}/archivar")
+async def api_lienzo_archivar(proyecto_id: str, lienzo_id: str, request: Request):
+    """Fuera de la lista, no del disco. Reversible, y siempre un acto humano
+    (principio 9: el hub no poda nada por su cuenta)."""
+    datos = await request.json()
+    try:
+        lienzo = lienzos.archivar(proyecto_id, lienzo_id, bool(datos.get("archivar", True)))
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    if lienzo is None:
+        return JSONResponse({"ok": False, "error": "no existe"}, status_code=404)
+    return {"ok": True, "lienzo": _ficha_lienzo(lienzo)}
+
+
+@app.post("/api/lienzo/{proyecto_id}/{lienzo_id}")
+async def api_lienzo_guardar(proyecto_id: str, lienzo_id: str, request: Request):
+    """Guarda lo que ha editado el usuario en la web.
+
+    No toca `publicado_en`: esa marca es de la última vez que escribió Claude, y
+    es contra ella contra la que se protege la edición.
+    """
+    datos = await request.json()
+    try:
+        lienzo = lienzos.leer(proyecto_id, lienzo_id)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    if lienzo is None:
+        return JSONResponse({"ok": False, "error": "no existe"}, status_code=404)
+    lienzos.guardar_edicion(lienzo, datos.get("cuerpo") or "")
+    return {"ok": True, "lienzo": _ficha_lienzo(lienzo)}
+
+
+@app.delete("/api/lienzo/{proyecto_id}/{lienzo_id}")
+def api_lienzo_borrar(proyecto_id: str, lienzo_id: str):
+    """Borrar es del usuario (regla dura 3): el hub no poda lienzos por su cuenta."""
+    try:
+        borrado = lienzos.borrar(proyecto_id, lienzo_id)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    if not borrado:
+        return JSONResponse({"ok": False, "error": "no existe"}, status_code=404)
+    return {"ok": True}
+
+
 def _ventana_activa(session: str) -> int | None:
     """Qué ventana de esa sesión está en primer plano, según tmux."""
     try:
@@ -731,6 +1079,22 @@ async def api_guardar_nota(slot_id: int, request: Request):
     try:
         api.guardar_nota(con, slot_id, cuerpo.get("nota", ""))
         return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.get("/api/trabajo/pulso")
+def api_pulso_trabajo(notas: str = ""):
+    """El latido de la vista de trabajo: estado de los slots y notas frescas.
+
+    `notas` es una lista de ids separados por coma —los del panel derecho—. Se
+    filtra a dígitos aquí y no en el modelo: lo que llega de la URL no se pasa a
+    una consulta sin mirarlo, aunque el parámetro sea de la propia página.
+    """
+    ids = [int(x) for x in notas.split(",") if x.strip().isdigit()]
+    con = conexion()
+    try:
+        return api.pulso_trabajo(con, ids)
     finally:
         con.close()
 

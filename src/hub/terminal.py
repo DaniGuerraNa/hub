@@ -15,6 +15,7 @@ import asyncio
 import fcntl
 import os
 import pty
+import select
 import signal
 import subprocess
 import struct
@@ -32,6 +33,11 @@ PREFIJO_ESPEJO = tmux.PREFIJO_ESPEJO
 
 # La validación vive en el adaptador: es la última frontera antes de tmux.
 DestinoInvalido = tmux.DestinoInvalido
+
+# Lo que se espera a que el PTY admita más bytes cuando no hay bucle de eventos
+# que avise. Un `tmux attach` vivo drena en microsegundos; si tarda un segundo
+# es que no está leyendo, y entonces vale más cortar que colgar la petición.
+ESPERA_HUECO = 1.0
 
 
 def sesiones_disponibles() -> list[dict]:
@@ -232,11 +238,76 @@ class Adjunto:
             os._exit(1)
         _redimensionar(self.fd, filas, columnas)
         os.set_blocking(self.fd, False)
+        self._pendiente = bytearray()
+        self._esperando = False
 
     def escribir(self, datos: bytes) -> None:
+        """Escribe TODO lo que le den, aunque no quepa de una vez.
+
+        🔴 El fd es NO BLOQUEANTE, así que `os.write` mete lo que cabe en el
+        buffer del PTY y **devuelve cuánto**: sin mirar ese retorno, el resto se
+        tira en silencio. Medido en un PTY igual que este: de 16.000 bytes
+        entraron 11.776 y se perdieron 4.224, y la llamada siguiente dio
+        `BlockingIOError` — que se atrapaba con el resto de `OSError` y se
+        ignoraba, así que el trozo siguiente desaparecía entero.
+
+        Se ve pegando un texto largo en la terminal web: llega cortado a mitad
+        de palabra, en varios sitios y no sólo al final, porque cada trozo del
+        pegado pierde su cola. Con textos cortos no pasa nunca — que es
+        justamente lo que lo hacía parecer cosa del portapapeles.
+        """
+        self._pendiente += datos
+        self._vaciar()
+
+    def _vaciar(self) -> None:
+        """Empuja lo pendiente, y lo que no quepa queda para el siguiente hueco.
+
+        El orden se conserva porque todo pasa por la misma cola: mientras haya
+        pendiente, lo nuevo se encola detrás en vez de adelantarse.
+        """
+        while self._pendiente:
+            try:
+                escritos = os.write(self.fd, self._pendiente)
+            except BlockingIOError:
+                escritos = 0
+            except OSError:
+                # El otro extremo se fue: lo pendiente ya no tiene destino.
+                self._pendiente.clear()
+                break
+            if escritos:
+                del self._pendiente[:escritos]
+                continue
+            if self._aplazar():
+                return  # se sigue solo cuando el PTY acepte más
+            # Sin bucle de eventos (tests, usos síncronos) se espera aquí, con
+            # tope: colgar el servidor es peor que perder un pegado.
+            if not select.select([], [self.fd], [], ESPERA_HUECO)[1]:
+                break
+        self._soltar_espera()
+
+    def _aplazar(self) -> bool:
+        """Pide que nos avisen cuando el PTY vuelva a admitir bytes.
+
+        Con `add_writer`, simétrico al `add_reader` de `bombear()`: esto corre
+        dentro del manejador del WebSocket, y esperar ahí a que tmux drene
+        pararía el servidor entero.
+        """
         try:
-            os.write(self.fd, datos)
-        except OSError:
+            bucle = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        if not self._esperando:
+            bucle.add_writer(self.fd, self._vaciar)
+            self._esperando = True
+        return True
+
+    def _soltar_espera(self) -> None:
+        if not self._esperando:
+            return
+        self._esperando = False
+        try:
+            asyncio.get_running_loop().remove_writer(self.fd)
+        except (RuntimeError, OSError, ValueError):
             pass
 
     def redimensionar(self, filas: int, columnas: int) -> None:
@@ -247,6 +318,10 @@ class Adjunto:
 
     def cerrar(self) -> None:
         """Cierra el cliente, no los procesos: equivale a desatacharse."""
+        # Antes de cerrar el fd: un `add_writer` sobre un descriptor ya cerrado
+        # deja al bucle vigilando un número que el sistema puede reasignar.
+        self._soltar_espera()
+        self._pendiente.clear()
         try:
             os.kill(self.pid, signal.SIGTERM)
         except ProcessLookupError:
