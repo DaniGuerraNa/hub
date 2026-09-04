@@ -117,6 +117,11 @@ que nadie ha visto en rojo no es evidencia.
 Si el kit consume algo **opcional**, demuéstralo también funcionando **sin** el
 proveedor. Mientras eso no se haya visto, «opcional» es una afirmación.
 
+Y si lo va a instalar alguien que no eres tú, **la sala limpia** antes de
+publicar: `bash scripts/sala-limpia/sala.sh kit <ruta>` instala el kit con un
+Claude sin contexto en un contenedor vacío y enseña cuántas preguntas hace y
+qué deja. El procedimiento está en `producto/conocimiento/08-sala-limpia.md`.
+
 ## 6. Publica y da de alta
 
 ```bash

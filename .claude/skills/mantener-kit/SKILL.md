@@ -69,3 +69,8 @@ donde se lea.
 - ¿El `CHANGELOG` dice quién decidió?
 - ¿Se ha visto el instrumento fallar? Rompe un archivo propagado, comprueba que
   sale `difiere`, restaura, comprueba que vuelve.
+- Si la versión la va a instalar **otra persona**: pásala por la sala limpia
+  (`scripts/sala-limpia/sala.sh`, procedimiento en
+  `producto/conocimiento/08-sala-limpia.md`) y anota turnos y preguntas en el
+  `README` del kit. Lo que aquí funciona con tu `~/.claude` y tu tmux abierto
+  no es lo que va a ver quien lo reciba.

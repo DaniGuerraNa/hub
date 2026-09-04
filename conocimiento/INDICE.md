@@ -12,6 +12,7 @@ haga falta.
 | [`05-el-asistente.md`](05-el-asistente.md) | Qué es el chat, qué puede y qué no |
 | [`06-problemas.md`](06-problemas.md) | Algo no funciona |
 | [`07-la-api.md`](07-la-api.md) | Leer lo que el hub mide desde un script |
+| [`08-sala-limpia.md`](08-sala-limpia.md) | Probar una instalación del hub o de un kit como la vería otra persona, y auditar un kit |
 
 🔴 **Si la pregunta es «¿puedo abrir el puerto a la red?», la respuesta es no**, y
 no hace falta abrir ningún documento para decirlo: la pantalla `/terminal` da

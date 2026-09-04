@@ -229,3 +229,24 @@ def test_el_arranque_a_mano_levanta_la_web_y_el_snapshotter():
     assert "python -m hub.snapshotter" in texto
     instalador = (RAIZ / "scripts" / "instalar.sh").read_text(encoding="utf-8")
     assert "scripts/arrancar.sh" in instalador.split('paso "4/5')[1]
+
+
+# ── la sala limpia ───────────────────────────────────────────────────────────
+
+def test_la_sala_limpia_esta_completa_y_sin_rastros_personales():
+    """Los tres archivos existen, los dos guiones son ejecutables, y la imagen no
+    hornea nada de esta máquina: las credenciales entran en `arrancar`, no aquí."""
+    sala = RAIZ / "scripts" / "sala-limpia"
+    for nombre in ("Dockerfile", "sala.sh", "persona.sh"):
+        assert (sala / nombre).is_file(), nombre
+    for guion in ("sala.sh", "persona.sh"):
+        assert os.access(sala / guion, os.X_OK), guion
+    dockerfile = (sala / "Dockerfile").read_text(encoding="utf-8")
+    assert "credentials" not in dockerfile
+    # Ningún home que no sea el de la persona, ni rutas de la máquina de nadie.
+    assert re.findall(r"/home/(?!persona\b)\w+", dockerfile) == []
+    assert "/mnt/" not in dockerfile
+    assert "USER persona" in dockerfile          # nunca root: claude se niega
+    sala_sh = (sala / "sala.sh").read_text(encoding="utf-8")
+    assert "-p " not in sala_sh.split("docker run -d")[1].split("\n")[0]  # sin puertos mapeados
+    assert "08-sala-limpia.md" in (RAIZ / "producto/conocimiento/INDICE.md").read_text(encoding="utf-8")
