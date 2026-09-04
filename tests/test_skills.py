@@ -41,7 +41,7 @@ def test_el_frontmatter_permite_descubrirla(skill: Path):
 def test_las_ordenes_que_cita_existen(skill: Path):
     """Una skill que manda correr un script inexistente falla en manos del usuario."""
     texto = skill.read_text(encoding="utf-8")
-    for guion in re.findall(r"bash (scripts/[\w.-]+)", texto):
+    for guion in re.findall(r"bash (scripts/[\w./-]+)", texto):
         assert (RAIZ / guion).is_file(), f"{skill.parent.name} cita {guion}, que no existe"
 
 

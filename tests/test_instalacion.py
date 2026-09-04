@@ -249,4 +249,6 @@ def test_la_sala_limpia_esta_completa_y_sin_rastros_personales():
     assert "USER persona" in dockerfile          # nunca root: claude se niega
     sala_sh = (sala / "sala.sh").read_text(encoding="utf-8")
     assert "-p " not in sala_sh.split("docker run -d")[1].split("\n")[0]  # sin puertos mapeados
-    assert "08-sala-limpia.md" in (RAIZ / "producto/conocimiento/INDICE.md").read_text(encoding="utf-8")
+    # En el repo de desarrollo el índice está en producto/; en el publicado, en conocimiento/.
+    indice = next(r for r in (RAIZ / "producto/conocimiento/INDICE.md", RAIZ / "conocimiento/INDICE.md") if r.is_file())
+    assert "08-sala-limpia.md" in indice.read_text(encoding="utf-8")
