@@ -116,6 +116,42 @@
     }));
   }
 
+  /* El aviso vive encima del hilo y no lo pisa: la conversación es lo que uno
+   * está leyendo, y borrarla para poner un error sería cambiar un problema por
+   * dos. Se retira solo en cuanto un sondeo vuelve bien. */
+  function avisar(texto) {
+    let banda = document.getElementById('asistente-aviso');
+    if (!texto) { if (banda) banda.remove(); return; }
+    if (!banda) {
+      banda = document.createElement('div');
+      banda.id = 'asistente-aviso';
+      banda.className = 'asistente-aviso';
+      hilo.parentNode.insertBefore(banda, hilo);
+    }
+    banda.textContent = texto;
+  }
+
+  /* Por qué falló, en una frase que se pueda leer.
+   *
+   * El hub contesta JSON en `/api/…` con su propio motivo dentro —«la clave
+   * conexiones está dos veces, línea 282»—, y ésa es justo la frase que hace
+   * falta. Si no lo trae, al menos el código: «el hub respondió 422» ya dice
+   * dónde mirar, y es infinitamente más que el silencio de antes. */
+  async function porQue(r) {
+    if (!r) return 'el hub no respondió';
+    try {
+      const d = await r.clone().json();
+      // Las dos primeras líneas con algo, no sólo la primera: la primera nombra
+      // el archivo y la segunda dice QUÉ le pasa —«la clave conexiones está dos
+      // veces»—, que es la mitad con la que se arregla.
+      if (d && d.error) {
+        return String(d.error).split('\n').map(s => s.trim())
+          .filter(Boolean).slice(0, 2).join(' — ');
+      }
+    } catch {}
+    return `el hub respondió ${r.status}`;
+  }
+
   // ── Sondeo ───────────────────────────────────────────────────────────────
 
   async function refrescar() {
@@ -127,8 +163,9 @@
       // Un 500 daba `datos = {}`, que abajo es indistinguible de «no hay nada
       // que contar». Se convierte en error para que lo recoja el catch y se
       // pueda DECIR, en vez de quedarse callado con cara de estar cargando.
-      if (!r || !r.ok) throw new Error(`el hub respondió ${r ? r.status : 'nada'}`);
+      if (!r || !r.ok) throw new Error(await porQue(r));
       const datos = await r.json();
+      avisar(null);   // volvió: se retira el aviso anterior, si lo había
       pintarLuz(datos);
       pintarContexto(datos.contexto);
       pintarConfirmacion(datos.confirmacion);
@@ -153,10 +190,16 @@
       }
     } catch (e) {
       // Un sondeo fallido no puede romper la página: el hub puede estar
-      // reiniciándose y la pestaña tiene que seguir ahí cuando vuelva. Pero
-      // callarse del todo es lo que producía el «Cargando…» eterno, así que se
-      // dice — y sólo si no hay conversación pintada, que no se borra por un
-      // sondeo perdido. El siguiente ciclo lo sustituye solo.
+      // reiniciándose y la pestaña tiene que seguir ahí cuando vuelva. Y la
+      // conversación NO se borra por un sondeo perdido.
+      //
+      // 🔴 Pero el aviso va SIEMPRE, no sólo con el hilo vacío. Ésa era la
+      // versión anterior, y por eso esto se vivió en silencio: con diez
+      // mensajes ya pintados no había ningún `#asistente-vacio`, así que un
+      // 422 en cada sondeo no cambiaba un solo píxel. Se preguntó algo, no
+      // apareció nada, no apareció ningún error, y hubo que abrir la terminal
+      // para descubrir que el hub llevaba rato sin poder leer su registro.
+      avisar(String(e && e.message || e));
       if (document.getElementById('asistente-vacio')) {
         hilo.innerHTML = '<p id="asistente-vacio">No se pudo hablar con el hub.'
           + ' Se reintenta solo.</p>';
@@ -202,7 +245,18 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ texto }),
     });
-    const d = (r && r.ok && await r.json()) || {};
+    // 🔴 Un HTTP que no es `ok` se quedaba en `{}`, y entonces ninguna de las
+    // dos ramas de abajo entraba: ni se decía nada ni se devolvía lo escrito.
+    // La pregunta desaparecía de la caja y no pasaba nada más. Es el peor de
+    // los tres fallos de este archivo, porque además se lleva el texto.
+    if (!r || !r.ok) {
+      const porq = await porQue(r);
+      avisar(porq);
+      HubUI.avisar({ titulo: 'No se pudo enviar', mensaje: porq });
+      caja.value = texto;
+      return;
+    }
+    const d = (await r.json()) || {};
     if (d.ok === false) {
       HubUI.avisar({ titulo: 'No se pudo enviar', mensaje: d.error || 'sin detalle' });
       caja.value = texto;   // no se pierde lo escrito

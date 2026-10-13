@@ -26,7 +26,8 @@ avisa, y la respuesta se queda guardada para reintentarla.
 
 from __future__ import annotations
 
-from . import asistente, tmux
+from . import asistente, tmux, tui
+from .tui import Agente
 
 
 class PanelNoApto(RuntimeError):
@@ -53,34 +54,65 @@ class EscritoSinConfirmar(PanelNoApto):
     """
 
 
+def quien_hay(pane_id: str) -> tuple[Agente | None, str]:
+    """Qué agente corre ahí ahora, o por qué no se puede afirmar que haya uno."""
+    try:
+        titulo = tmux.titulo_panel(pane_id)
+    except tmux.DestinoInvalido:
+        return None, "el identificador de panel no es válido"
+    except tmux.TmuxNoDisponible:
+        return None, "tmux no responde"
+
+    if titulo is None:
+        return None, "el panel ya no existe"
+
+    agente = tui.detectar(pane_id)
+    if agente is None:
+        # Es el caso real que esto existe para atrapar: el usuario salió del
+        # agente y el panel es su shell. Escribir ahí ejecutaría comandos.
+        return None, "en ese panel no corre ningún agente que el hub reconozca"
+    return agente, ""
+
+
 def panel_apto(pane_id: str) -> tuple[bool, str]:
-    """Si en `pane_id` sigue corriendo un Claude Code que acepta entrada.
+    """Si en `pane_id` sigue corriendo un agente que acepta entrada.
 
     Devuelve el motivo además del veredicto: quien deniega tiene que poder decir
     por qué, porque el usuario que se quedó sin su respuesta merece saberlo y
     porque «no se pudo entregar» a secas no se puede depurar.
-    """
-    try:
-        titulo = tmux.titulo_panel(pane_id)
-    except tmux.DestinoInvalido:
-        return False, "el identificador de panel no es válido"
-    except tmux.TmuxNoDisponible:
-        return False, "tmux no responde"
 
-    if titulo is None:
-        return False, "el panel ya no existe"
-    if not tmux.tiene_glifo_estado(titulo):
-        # Ni braille ni ✳: ahí no hay una TUI de Claude Code reportando estado.
-        # Es el caso real que esto existe para atrapar — el usuario salió de
-        # `claude` y el panel es su shell.
-        return False, "en ese panel ya no corre Claude Code"
-    if not asistente.listo(pane_id):
-        return False, "Claude Code está arrancando y todavía no acepta entrada"
-    if asistente.ocupado(pane_id):
-        # No se encola: Claude Code ya tiene su propia cola y duplicarla haría
-        # que el hub creyera saber un orden que no controla. Se dice y se
-        # reintenta en la siguiente vuelta del relé.
+    🔴 «Un agente» y no «Claude Code» desde el 2026-09-12 (decisión 200). La
+    condición de la regla 15 nunca fue el nombre del programa: es que el hub
+    **sepa qué hay dentro**. Reconocer también a Codex la cumple sobre otro
+    programa, y se apoya en una señal más fuerte que la de antes —el proceso en
+    primer plano que reporta tmux, no una cadena que pinta la aplicación—.
+    """
+    agente, motivo = quien_hay(pane_id)
+    if agente is None:
+        return False, motivo
+    if not tui.listo(agente, pane_id):
+        if agente is tui.CLAUDE and asistente.menu_abierto(tmux.capturar_panel(pane_id)):
+            # Distinto de «arrancando»: eso se arregla esperando, y esto no se
+            # arregla nunca solo (decisión 265).
+            return False, (f"{agente.nombre} está esperando que contestes algo en su "
+                           "pantalla (por ejemplo, si confías en la carpeta)")
+        return False, f"{agente.nombre} está arrancando y todavía no acepta entrada"
+    if tui.ocupado(agente, pane_id):
+        # No se encola: el agente ya tiene su propia cola y duplicarla haría que
+        # el hub creyera saber un orden que no controla. Se dice y se reintenta.
         return False, "está trabajando ahora mismo"
+    # 🔴 Un cuadro de permisos abierto **no es un panel libre**, y el glifo no lo
+    # distingue: el agente no está pensando, está esperando a que alguien pulse.
+    # Pegar ahí no llega al cuadro de entrada —lo recoge el diálogo—, `despachar`
+    # no vería salir el texto y levantaría `EscritoSinConfirmar`, que **saca el
+    # mensaje de la cola para siempre**. O sea: se perdería.
+    #
+    # Importa desde que los agentes de encargo corren en modo `manual`
+    # (decisión 226), pero el agujero estaba igual para el canal de consulta y
+    # para los mensajes programados. Sólo se comprueba en Claude Code, porque
+    # sus marcas están medidas y de Codex no se conoce ningún diálogo (200).
+    if agente is tui.CLAUDE and asistente.esperando_confirmacion(pane_id):
+        return False, "está esperando que alguien apruebe un permiso suyo"
     return True, ""
 
 
@@ -141,11 +173,21 @@ def entregar(pane_id: str, texto: str) -> None:
     apto, motivo = panel_apto(pane_id)
     if not apto:
         raise PanelNoApto(motivo)
+    agente, _ = quien_hay(pane_id)
 
     # El Enter no va con el pegado. `despachar` espera a VER el texto en el
     # cuadro y sólo entonces pulsa (regla dura 17): escribir no es haber
     # enviado, y un «entregado» sobre un mensaje que sigue en pantalla es la
     # peor forma de fallar aquí porque nadie se entera.
     tmux.pegar_en_panel(pane_id, texto, enter=False)
-    if not asistente.despachar(pane_id, texto):
+    if not asistente.despachar(
+        pane_id, texto,
+        leer_cuadro=lambda p: tui.cuadro(agente, p),
+        # 🔴 El «Enter por si acaso» sólo se permite donde se han medido los
+        # diálogos de permiso. En Claude Code están (`_MARCAS_CONFIRMACION`); de
+        # Codex no se ha visto ninguno, así que pulsar a ciegas ahí podría estar
+        # respondiendo a un cuadro que el hub no sabe leer. Si no se ve el texto
+        # entrar, no se pulsa nada y se dice que no se pudo confirmar.
+        enter_a_ciegas=agente is tui.CLAUDE,
+    ):
         raise EscritoSinConfirmar("se escribió pero no se pudo confirmar que saliera")

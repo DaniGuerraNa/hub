@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 from pathlib import Path
@@ -91,17 +92,82 @@ def orden_base() -> list[str]:
     # `aparte` y no `socket`: este módulo importa el módulo `socket` y una
     # variable con ese nombre lo sombrearía dentro de la función.
     aparte = os.environ.get("HUB_TMUX_SOCKET")
-    return ["tmux", "-L", aparte] if aparte else ["tmux"]
+    # 🔴 `-f /dev/null`: el servidor aparte NO lee el `~/.tmux.conf` de quien
+    # ejecuta. Con tmux-continuum ahí, cada servidor nuevo restauraba las
+    # sesiones reales del usuario —también el de pruebas—, así que un test
+    # encontraba una sesión `encargos` que no había creado y no la limpiaba:
+    # sus ventanas se acumulaban de una ejecución a otra hasta tumbarlo (264).
+    return ["tmux", "-L", aparte, "-f", "/dev/null"] if aparte else ["tmux"]
+
+
+# Órdenes que pueden CREAR el servidor de tmux. No importan por lo que hacen,
+# sino por de quién queda colgando el servidor que arrancan.
+_PUEDEN_CREAR_SERVIDOR = {"new-session", "new"}
+
+# Un cgroup propio y transitorio para la orden. `--collect` lo recoge solo
+# cuando ya no queda nada dentro.
+_PREFIJO_DESASIR = ["systemd-run", "--user", "--scope", "--quiet", "--collect"]
+
+# Se prueba una vez por proceso: preguntar por systemd en cada llamada costaría
+# un subproceso de más en el camino más caliente del hub.
+_puede_desasir: bool | None = None
+
+
+def _hay_donde_desasir() -> bool:
+    """Si esta máquina puede darle al servidor de tmux un cgroup propio.
+
+    Se comprueba ejecutando de verdad, no mirando si el binario existe: en un
+    contenedor `systemd-run` está instalado y falla igual por no haber bus.
+    """
+    global _puede_desasir
+    if _puede_desasir is None:
+        _puede_desasir = False
+        if shutil.which("systemd-run") and os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+            try:
+                sonda = subprocess.run(
+                    [*_PREFIJO_DESASIR, "true"],
+                    capture_output=True, timeout=10, check=False,
+                )
+                _puede_desasir = sonda.returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                _puede_desasir = False
+    return _puede_desasir
 
 
 def _correr(args: list[str], entrada: str | None = None) -> str:
+    orden = [*orden_base(), *args]
+
+    # 🔴 El servidor de tmux hereda el cgroup de quien lo arranca (decisión 153).
+    # `hub-web` corre bajo systemd, y systemd mata el cgroup entero al parar o
+    # reiniciar una unidad: si el servidor nace ahí dentro, una caída de la web
+    # se lleva por delante TODAS las sesiones de trabajo. Pasó el 2026-09-04 —
+    # tres abortos de `hub-web` en 81 segundos, tres servidores de tmux muertos.
+    # Envolver sólo lo que puede crear el servidor basta: si ya existe, ninguna
+    # otra orden lo re-parenta.
+    desasida = args and args[0] in _PUEDEN_CREAR_SERVIDOR and _hay_donde_desasir()
+    if desasida:
+        orden = [*_PREFIJO_DESASIR, *orden]
+
     try:
         salida = subprocess.run(
-            [*orden_base(), *args], input=entrada, capture_output=True, text=True,
+            orden, input=entrada, capture_output=True, text=True,
             timeout=10, check=False,
         )
     except FileNotFoundError as exc:  # tmux no instalado
         raise TmuxNoDisponible("tmux no está en el PATH") from exc
+
+    # Si el que falló fue `systemd-run`, se repite a pelo. No puede duplicar una
+    # sesión: cuando no consigue montar el scope, ni siquiera llega a ejecutar
+    # la orden. Y quedarse sin terminal por no poder aislar un cgroup sería
+    # cambiar un riesgo por una avería.
+    if desasida and salida.returncode != 0:
+        try:
+            salida = subprocess.run(
+                [*orden_base(), *args], input=entrada, capture_output=True,
+                text=True, timeout=10, check=False,
+            )
+        except FileNotFoundError as exc:
+            raise TmuxNoDisponible("tmux no está en el PATH") from exc
     if salida.returncode != 0:
         err = salida.stderr.strip()
         # 🔴 «error connecting to …» es lo que dice tmux cuando el SOCKET no
@@ -330,13 +396,21 @@ def nueva_ventana(
     comando: str | None = None,
     entorno: dict[str, str] | None = None,
 ) -> int | None:
-    """Crea una ventana y devuelve su índice, para poder navegar hasta ella."""
+    """Crea una ventana y devuelve su índice, para poder navegar hasta ella.
+
+    Sin `ruta` se abre donde está la ventana actual de esa sesión, que es lo que
+    significa «una ventana más aquí». 🔴 Sin el `-c`, tmux hereda el cwd de quien
+    creó la SESIÓN: para todo lo que abre el hub eso es `hub-web`, que corre bajo
+    systemd desde el directorio del hub. El botón daba una shell en el código del
+    hub en vez de en el proyecto, y no había nada en la pantalla que lo explicara.
+    """
     validar_sesion(session)
     args = ["new-window", "-P", "-F", "#{window_index}", "-t", f"={session}:"]
     for clave, valor in (entorno or {}).items():
         args += ["-e", f"{clave}={valor}"]
-    if ruta:
-        args += ["-c", ruta]
+    # `-c` admite un formato de tmux, resuelto contra el destino: es el idioma
+    # de tmux para «aquí mismo» y evita una consulta extra.
+    args += ["-c", ruta or "#{pane_current_path}"]
     if nombre:
         args += ["-n", nombre]
     if comando:
@@ -360,6 +434,7 @@ def nueva_sesion(
     nombre_ventana: str | None = None,
     comando: str | None = None,
     entorno: dict[str, str] | None = None,
+    conservar: bool = False,
 ) -> None:
     """Crea la sesión desasida.
 
@@ -378,13 +453,32 @@ def nueva_sesion(
         args += ["-n", nombre_ventana]
     if comando:
         args.append(comando)
+    # Ver `abrir_ventana`: aquí importa aún más, porque una sesión cuyo único
+    # comando muere desaparece ENTERA, y con ella cualquier forma de mirar.
+    if conservar:
+        args += [";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"]
     _correr(args)
 
 
 def panel_de_sesion(session: str) -> str:
-    """El panel activo de una sesión: lo que `new-session -d` no devuelve."""
+    """El panel activo de una sesión: lo que `new-session -d` no devuelve.
+
+    🔴 **`list-panes`, no `display-message`.** `display-message -p -t "=sesión"
+    "#{pane_id}"` devuelve una línea VACÍA: con un destino de sesión no hay panel
+    con el que resolver el formato, y da igual que haya un cliente atacado —se
+    midió con y sin—. Es prima hermana de la decisión 21: otro comando de tmux
+    que acepta el prefijo `=` y luego no hace lo que parece.
+
+    El síntoma no era un error, y por eso duró: `slots.abrir()` sólo entra aquí
+    cuando **no hay servidor de tmux**, o sea en una instalación recién hecha
+    (decisión 151). La ventana se abría bien, así que parecía funcionar; lo que
+    no pasaba era el `vincular()` de después, y el slot se quedaba sin su
+    ventana. Justo el caso que la decisión 151 existía para arreglar, y justo el
+    que no se ve en una máquina donde siempre hay tmux abierto.
+    """
     validar_sesion(session)
-    return _correr(["display-message", "-p", "-t", f"={session}", "#{pane_id}"]).strip()
+    paneles = _correr(["list-panes", "-t", f"={session}", "-F", "#{pane_id}"]).split()
+    return paneles[0] if paneles else ""
 
 
 def renombrar_ventana(session: str, indice: int, nombre: str) -> None:
@@ -414,16 +508,28 @@ def escribir_titulo(pane_id: str, titulo: str) -> None:
 
 
 def abrir_ventana(ruta: str, nombre: str, comando: str | None = None,
-                  session: str | None = None) -> str:
+                  session: str | None = None,
+                  conservar: bool = False) -> str:
     """Abre una ventana nueva en la ruta del slot.
 
     La UI LANZA terminales, no las hospeda: sin PTY, sin rendering, sin resize.
     """
     args = ["new-window", "-P", "-F", "#{pane_id}", "-c", ruta, "-n", nombre]
+    # 🔴 Sin `-e PATH=`: se probó y NO llega al proceso —la ventana nueva sale
+    # con el PATH del CLIENTE que la pide, que desde systemd es el del servicio
+    # y encuentra otro `claude` (decisión 231)—. El PATH va DENTRO del comando
+    # con `env`, que es lo que la regla dura 18 ya prescribía para el primer
+    # panel de una sesión; ver `slots.abrir`.
     if session:
         args += ["-t", session]
     if comando:
         args.append(comando)
+    # 🔴 `remain-on-exit` en la MISMA orden que crea la ventana, no en otra
+    # después: un comando que muere al instante cerraría la ventana entre las
+    # dos y se llevaría el motivo (decisión 231). `new-window` deja la ventana
+    # nueva como actual de su sesión, y `-t =sesion:` es esa ventana.
+    if conservar and session:
+        args += [";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"]
     return _correr(args).strip()
 
 
@@ -489,19 +595,86 @@ def _panel_activo_de(session: str) -> str | None:
 
 
 def titulo_panel(pane_id: str) -> str | None:
-    """El `pane_title` crudo, con su glifo de estado. None si el panel murió."""
+    """El `pane_title` crudo, con su glifo de estado. None si el panel murió.
+
+    🔴 **Se pide el `pane_id` junto al título y se comprueba que coincide**, y
+    no es puntillismo: `display-message -t %999` sobre un panel que ya no existe
+    **sale con código 0 y devuelve una cadena vacía**. Medido el 18-sep, no
+    supuesto. Sin esta comprobación esta función nunca devolvía `None`, así que
+    la rama «el panel ya no existe» de `entrega.quien_hay` era **código muerto**:
+    un panel cerrado se rechazaba igual —porque `tui.detectar` tampoco encuentra
+    a nadie— pero con el motivo equivocado, y quien leyera el registro buscaría
+    un agente que se salió a una shell donde lo que había era una ventana
+    cerrada. Dos averías distintas contadas como la misma.
+    """
     validar_panel(pane_id)
     try:
-        return _correr(["display-message", "-p", "-t", pane_id, "#{pane_title}"]).strip()
+        salida = _correr(
+            ["display-message", "-p", "-t", pane_id, "#{pane_id}\t#{pane_title}"]
+        )
     except (TmuxNoDisponible, RuntimeError):
         return None
+    visto, _, titulo = salida.partition("\t")
+    return titulo.strip() if visto.strip() == pane_id else None
 
 
-def capturar_panel(pane_id: str) -> str:
-    """Lo que se ve en el panel ahora mismo. Cadena vacía si no se puede leer."""
+def comando_de_panel(pane_id: str) -> str:
+    """El proceso en primer plano del panel. Cadena vacía si no se puede leer.
+
+    Es la señal FUERTE sobre qué hay dentro: lo reporta tmux del tty, no lo
+    pinta la aplicación. Sirve para afirmar («aquí corre `codex`»), nunca para
+    negar: quien arranca un agente por un envoltorio o un alias hace que esto
+    diga `node` o `sh` con el agente perfectamente vivo — ver `tiene_glifo_estado`.
+    """
     validar_panel(pane_id)
     try:
-        return _correr(["capture-pane", "-p", "-t", pane_id])
+        return _correr(
+            ["display-message", "-p", "-t", pane_id, "#{pane_current_command}"]
+        ).strip()
+    except (TmuxNoDisponible, RuntimeError):
+        return ""
+
+
+def panel_muerto(pane_id: str) -> bool:
+    """Si el proceso del panel ya terminó (y la ventana sigue por `remain-on-exit`)."""
+    validar_panel(pane_id)
+    return _correr(["display-message", "-p", "-t", pane_id, "#{pane_dead}"]).strip() == "1"
+
+
+def conservar_al_morir(pane_id: str, conservar: bool) -> None:
+    """`remain-on-exit` sobre UN panel: que morir deje el error a la vista.
+
+    Sin esto, un comando que falla al arrancar cierra la ventana y se lleva el
+    motivo: el hub lo daba por abierto y nadie veía el «option … is invalid»
+    (decisión 231). Se enciende sólo mientras se comprueba el arranque y se
+    apaga después, para que salir de un agente a mano siga cerrando la ventana.
+    """
+    validar_panel(pane_id)
+    _correr(["set-option", "-p", "-t", pane_id, "remain-on-exit", "on" if conservar else "off"])
+
+
+def matar_panel(pane_id: str) -> None:
+    validar_panel(pane_id)
+    _correr(["kill-pane", "-t", pane_id])
+
+
+def capturar_panel(pane_id: str, unir_lineas: bool = False,
+                   con_historia: bool = False) -> str:
+    """Lo que se ve en el panel ahora mismo. Cadena vacía si no se puede leer.
+
+    `unir_lineas` pide `-J`, que junta las líneas que el terminal partió por
+    ancho. Hace falta para **buscar** un texto: un comando de 37 caracteres en
+    un panel de 30 sale cortado en dos y no casa con la cadena que se escribió.
+    """
+    validar_panel(pane_id)
+    try:
+        # `con_historia` pide también el scrollback (`-S -`). Hace falta para
+        # leer lo que escribió un proceso que murió: el rótulo «Pane is dead»
+        # que pinta tmux desplaza su salida fuera de la pantalla visible
+        # (medido: sin `-S` la captura traía sólo el rótulo).
+        return _correr(["capture-pane", "-p", *(["-J"] if unir_lineas else []),
+                        *(["-S", "-"] if con_historia else []),
+                        "-t", pane_id])
     except (TmuxNoDisponible, RuntimeError):
         return ""
 

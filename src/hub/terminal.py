@@ -174,6 +174,17 @@ def crear_espejo(session: str, ventana: int | None = None) -> str:
     en la terminal nativa.
     """
     tmux.validar_sesion(session)
+    # 🔴 `new-session -t X` NO falla cuando `X` no existe: tmux lee `-t` como el
+    # nombre de un GRUPO, y si no hay ninguno lo crea —con una sesión vacía
+    # dentro y una shell en el cwd de quien llama, que aquí es `hub-web`, o sea
+    # el directorio del propio hub—. El síntoma es de los malos: la terminal
+    # abre, no dice nada, y enseña un prompt en la carpeta del hub en lugar del
+    # trabajo que se iba a ver. Comprobar antes convierte eso en una frase.
+    if not tmux.existe_sesion(session):
+        raise RuntimeError(
+            f"la sesión «{session}» ya no existe en tmux — se habrá cerrado su "
+            "última ventana. Vuelve a abrirla desde su slot."
+        )
 
     limpiar_espejos_huerfanos()
     nombre = f"{PREFIJO_ESPEJO}{session}-{uuid.uuid4().hex[:6]}"
@@ -240,6 +251,26 @@ class Adjunto:
         os.set_blocking(self.fd, False)
         self._pendiente = bytearray()
         self._esperando = False
+        self._leyendo = False
+
+    def vigilar_lectura(self, al_haber_datos) -> None:
+        """Pide que el bucle avise cuando el PTY tenga algo que contar.
+
+        Lo registra el Adjunto y no quien lo consume porque el fd es suyo: quien
+        cierra un descriptor tiene que ser el mismo que lo deja de vigilar, o
+        acaban descoordinados — que es exactamente lo que reventaba el proceso.
+        """
+        asyncio.get_running_loop().add_reader(self.fd, al_haber_datos)
+        self._leyendo = True
+
+    def _soltar_lectura(self) -> None:
+        if not self._leyendo:
+            return
+        self._leyendo = False
+        try:
+            asyncio.get_running_loop().remove_reader(self.fd)
+        except (RuntimeError, OSError, ValueError):
+            pass
 
     def escribir(self, datos: bytes) -> None:
         """Escribe TODO lo que le den, aunque no quepa de una vez.
@@ -317,10 +348,19 @@ class Adjunto:
             pass
 
     def cerrar(self) -> None:
-        """Cierra el cliente, no los procesos: equivale a desatacharse."""
-        # Antes de cerrar el fd: un `add_writer` sobre un descriptor ya cerrado
-        # deja al bucle vigilando un número que el sistema puede reasignar.
+        """Cierra el cliente, no los procesos: equivale a desatacharse.
+
+        🔴 Primero se suelta TODO lo que el bucle vigila sobre este fd, y sólo
+        después se cierra (decisión 156). Cerrarlo antes deja a uvloop —que es
+        libuv, en C— pidiéndole a `epoll_ctl` un descriptor muerto, y ante un
+        errno que no espera libuv llama a `abort()`: el proceso entero se muere
+        sin traza, sin excepción y sin nada en el registro. Reproducido: 960
+        conexiones cortadas en seco contra un hub aislado lo tumban.
+        """
+        # El de escritura ya estaba; faltaba el de lectura, que lo ponía
+        # `bombear` y se soltaba en su propio `finally` — o sea, más tarde.
         self._soltar_espera()
+        self._soltar_lectura()
         self._pendiente.clear()
         try:
             os.kill(self.pid, signal.SIGTERM)
@@ -352,7 +392,6 @@ class Adjunto:
 
 async def bombear(adjunto: Adjunto, enviar) -> None:
     """Lee el PTY y empuja al WebSocket hasta que el attach termine."""
-    bucle = asyncio.get_running_loop()
     cola: asyncio.Queue[bytes | None] = asyncio.Queue()
 
     def al_haber_datos() -> None:
@@ -364,7 +403,7 @@ async def bombear(adjunto: Adjunto, enviar) -> None:
             datos = b""
         cola.put_nowait(datos or None)
 
-    bucle.add_reader(adjunto.fd, al_haber_datos)
+    adjunto.vigilar_lectura(al_haber_datos)
     try:
         while True:
             datos = await cola.get()
@@ -372,7 +411,34 @@ async def bombear(adjunto: Adjunto, enviar) -> None:
                 return
             await enviar(datos)
     finally:
+        adjunto._soltar_lectura()
+
+
+async def soltar(adjunto: Adjunto, bombeo: "asyncio.Task | None") -> None:
+    """Desmonta el transporte en el único orden que no revienta el proceso.
+
+    🔴 `tarea.cancel()` sólo AGENDA la cancelación: el `finally` de `bombear`
+    —donde se suelta el vigilante del fd— no ha corrido todavía cuando `cancel()`
+    devuelve. Cerrar el Adjunto ahí mismo era cerrar un fd que el bucle seguía
+    vigilando, y eso mata el proceso (decisión 156).
+
+    Esperar a la tarea arregla además un segundo daño, más callado: si el fd se
+    cierra antes, su número se reasigna al PTY de la conexión siguiente, y el
+    `remove_reader` tardío de la tarea vieja le quita el vigilante a la nueva.
+    La terminal se abre, se ve, y no vuelve a refrescarse nunca.
+    """
+    if bombeo is not None:
+        bombeo.cancel()
         try:
-            bucle.remove_reader(adjunto.fd)
-        except (OSError, ValueError):
+            await bombeo
+        except (asyncio.CancelledError, Exception):
+            # 🔴 Se traga TODO lo que traiga la tarea, no sólo la cancelación.
+            # `send_bytes` sobre un socket que el cliente cortó en seco lanza
+            # `RuntimeError`, y esperar la tarea sin atraparlo hacía que la
+            # excepción escapara del `finally` y `destruir_espejo` no llegara a
+            # correr: 42 espejos colgando en una prueba de 960 cortes, y cada
+            # conexión nueva barriéndolos uno a uno hasta que la web dejó de
+            # contestar. Antes no se veía porque nadie esperaba a la tarea.
+            # `BaseException` no: un Ctrl-C tiene que seguir subiendo.
             pass
+    adjunto.cerrar()

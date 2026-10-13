@@ -14,7 +14,13 @@ from __future__ import annotations
 
 import pytest
 
+from datetime import datetime, timedelta, timezone
+
 from hub import canal, entrega, rele, telegram
+
+
+def _momento(iso: str) -> datetime:
+    return datetime.fromisoformat(iso).astimezone(timezone.utc)
 
 
 class BotFalso:
@@ -201,6 +207,46 @@ def test_lo_que_no_se_pudo_entregar_se_reintenta(escena, panel_ok):
 
     assert rele.reintentar_entregas(escena) == 1
     assert canal.ver_pregunta(escena, pid)["estado"] == "entregada"
+
+
+def test_una_respuesta_sin_panel_al_que_volver_se_dice_en_vez_de_saltarse(escena, panel_ok):
+    """🔴 El fallo que se comió siete respuestas: sin `pane_id` el relé hacía
+    `continue` en cada vuelta y nadie se enteraba nunca."""
+    pid = canal.crear_pregunta(escena, "contab", "¿lleva IVA?", user_id=777)  # sin panel
+    canal.anotar_respuesta(escena, pid, 777, "sí")
+
+    assert rele.reintentar_entregas(escena) == 0
+    pregunta = canal.ver_pregunta(escena, pid)
+    assert pregunta["detalle"] == canal.SIN_DESTINO
+    assert pregunta["respuesta"] == "sí"          # la respuesta NO se pierde
+    assert panel_ok == []                          # y no se escribió en ningún panel
+
+
+def test_lo_que_no_tiene_destino_se_apunta_una_vez_y_no_llena_el_registro(escena):
+    """El relé pasa cada 27 s: repetir la línea haría ilegible el registro."""
+    pid = canal.crear_pregunta(escena, "contab", "¿lleva IVA?", user_id=777)
+    canal.anotar_respuesta(escena, pid, 777, "sí")
+
+    for _ in range(3):
+        rele.reintentar_entregas(escena)
+
+    lineas = [r for r in canal.registro(escena, 50) if r["pregunta_id"] == pid]
+    assert len([r for r in lineas if canal.SIN_DESTINO in r["detalle"]]) == 1
+
+
+def test_elegido_el_panel_a_mano_la_respuesta_entra_donde_se_dijo(escena, panel_ok):
+    """La salida del atasco: el destino lo pone una persona y entonces sí vuelve."""
+    pid = canal.crear_pregunta(escena, "contab", "¿lleva IVA?", user_id=777)
+    canal.anotar_respuesta(escena, pid, 777, "sí")
+    rele.reintentar_entregas(escena)               # queda marcada sin destino
+
+    canal.apuntar_destino(escena, pid, "%9", slot_id=3)
+    assert rele.entregar_respuesta(escena, pid) is True
+
+    pregunta = canal.ver_pregunta(escena, pid)
+    assert pregunta["estado"] == "entregada"
+    assert pregunta["detalle"] == ""               # el motivo viejo ya no es cierto
+    assert "sí" in panel_ok[0]
 
 
 # ── lo que sale ───────────────────────────────────────────────────────────────
@@ -568,3 +614,101 @@ def test_una_respuesta_de_verdad_sigue_funcionando_tras_el_tutorial(escena, pane
         escena, telegram.partes_del_mensaje(_update(responde_a=5001))
     ) == "respondida"
     assert len(panel_ok) == 1
+
+
+# ── los tres avisos (decisión 166) ────────────────────────────────────────────
+#
+# Quién decide QUÉ avisar se prueba entero en `test_avisos.py`, sin red. Aquí
+# sólo la mitad que es del relé: a quién sale, qué se apunta y qué pasa cuando
+# Telegram no está.
+
+
+def _sesion_parada(con, monkeypatch):
+    """Un slot que el relé vio trabajar y parar hace rato, con el hub latiendo.
+
+    Va contra el reloj de verdad porque `rele.enviar_avisos` usa `ahora()`: el
+    muestreo tiene que estar FRESCO o saldría además el aviso de latido perdido,
+    y los tres avisos salen de la misma vuelta.
+    """
+    from hub import avisos, slots
+
+    ahora = _momento(avisos.ahora())
+    hace_rato = (ahora - timedelta(minutes=15)).isoformat(timespec="seconds")
+
+    slot_id = slots.crear(con, "contab", "cierre de agosto")
+    con.execute(
+        "INSERT INTO snapshot (id, tomado_en, server_pid, preservado) VALUES (1,?,99,0)",
+        (avisos.ahora(),),
+    )
+    con.execute(
+        """INSERT INTO panel (snapshot_id, pane_id, session, window_idx, pane_idx,
+                              cwd, titulo, comando, etiqueta, proyecto_id, slot_id)
+           VALUES (1,'%1','trabajo',0,0,'/home/x','⠋ trabajando','node','','contab',?)""",
+        (slot_id,),
+    )
+    quieto = lambda pane_id: False   # noqa: E731 - sin cuadro de permisos
+    avisos.revisar(con, momento=hace_rato, esperando=quieto, arranque=hace_rato)
+    con.execute("UPDATE panel SET titulo='✳ listo' WHERE pane_id='%1'")
+    avisos.revisar(con, momento=hace_rato, esperando=quieto, arranque=hace_rato)
+
+    monkeypatch.setattr(rele, "ajustes", dict)
+    monkeypatch.setattr(avisos, "ARRANQUE", hace_rato)
+    return "%1"
+
+
+def test_el_aviso_de_una_sesion_parada_sale_solo_al_dueno(escena, monkeypatch):
+    """🔴 Nunca a quien tiene permiso sobre el proyecto.
+
+    Esa persona pidió poder contestar preguntas, no enterarse de que hay una
+    sesión suya corriendo: mandárselo sacaría de la máquina algo que nadie de
+    fuera pidió, y a un destinatario que no lo esperaba.
+    """
+    canal.marcar_dueno(escena, 777)
+    _sesion_parada(escena, monkeypatch)
+
+    bot = BotFalso()
+    assert rele.enviar_avisos(escena, bot) == 1
+    (destino, texto), = bot.enviados
+    assert destino == 777
+    assert "cierre de agosto" in texto
+
+
+def test_un_aviso_no_se_repite_en_cada_vuelta(escena, monkeypatch):
+    """Un aviso cada 25 segundos se silencia el mismo día, y entonces no avisa
+    tampoco el que importa."""
+    canal.marcar_dueno(escena, 777)
+    _sesion_parada(escena, monkeypatch)
+
+    bot = BotFalso()
+    assert rele.enviar_avisos(escena, bot) == 1
+    assert rele.enviar_avisos(escena, bot) == 0
+    assert len(bot.enviados) == 1
+
+
+def test_si_telegram_no_responde_el_aviso_NO_se_da_por_mandado(escena, monkeypatch):
+    """46 fallos de red en cinco días: darlo por mandado al primer timeout es
+    perder el aviso justo cuando la red va mal."""
+    canal.marcar_dueno(escena, 777)
+    _sesion_parada(escena, monkeypatch)
+
+    caido = BotFalso(falla=telegram.TelegramCaido("timeout"))
+    assert rele.enviar_avisos(escena, caido) == 0
+    assert canal.registro(escena)[0]["direccion"] == "falla"
+
+    # Y en la vuelta siguiente, con la red de vuelta, sale.
+    bueno = BotFalso()
+    assert rele.enviar_avisos(escena, bueno) == 1
+
+
+def test_sin_dueno_el_aviso_se_dice_una_vez_y_no_cada_vuelta(escena, monkeypatch):
+    """Se apunta igual: el registro es donde se mira qué pasó, y el mismo fallo
+    cada 25 s lo deja ilegible."""
+    _sesion_parada(escena, monkeypatch)
+
+    bot = BotFalso()
+    assert rele.enviar_avisos(escena, bot) == 0
+    assert rele.enviar_avisos(escena, bot) == 0
+    fallas = [r for r in canal.registro(escena) if r["direccion"] == "falla"]
+    assert len(fallas) == 1
+    assert "nadie está marcado como dueño" in fallas[0]["detalle"]
+    assert bot.enviados == []

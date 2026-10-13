@@ -10,6 +10,9 @@
 #   0  todo lo imprescindible está
 #   1  falta algo imprescindible
 set -uo pipefail
+# `$USER` no siempre existe (docker exec, algunos sudo y lanzadores), y con
+# `set -u` reventaba justo al comprobar el linger. Visto instalando en limpio.
+YO=${USER:-$(id -un)}
 
 falta=0
 avisos=0
@@ -78,6 +81,15 @@ fi
 # Ubuntu que no era WSL.
 if systemctl --user show-environment >/dev/null 2>&1; then
   linea "$ok" "systemd --user" "activo: los servicios arrancan solos"
+  # Que systemd responda AHORA no dice que vaya a seguir: sin linger se apaga
+  # entero al cerrar la última sesión de login (decisión 155).
+  if [ "$(loginctl show-user "$YO" -p Linger --value 2>/dev/null)" = "yes" ]; then
+    linea "$ok" "linger" "activo: el hub sobrevive a cerrar la terminal"
+  else
+    avisos=$((avisos + 1))
+    linea "$ojo" "linger" "apagado: el hub morirá al cerrar la última sesión de login"
+    printf '        → arréglalo con: loginctl enable-linger %s\n' "$YO"
+  fi
 else
   avisos=$((avisos + 1)); linea "$ojo" "systemd --user" "no responde: el hub no arrancará solo, pero se puede arrancar a mano"
   if grep -qi microsoft /proc/version 2>/dev/null && [ ! -f /.dockerenv ]; then

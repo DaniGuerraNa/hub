@@ -300,6 +300,36 @@
     pintarBoton();
   }
 
+  /* Confirmación para formularios que hacen algo irreversible.
+   *
+   * `<form data-confirmar="mensaje" data-confirmar-titulo="…" data-confirmar-ok="…">`
+   * y ya. Existe porque las acciones destructivas del hub estaban repartidas
+   * entre JavaScript —que sí preguntaba, con `HubUI.confirmar`— y formularios
+   * normales, que no preguntaban nada: cerrar una ventana desde el raíl mataría
+   * lo que corriera dentro con un solo clic y sin vuelta atrás.
+   *
+   * No se cuelga de `HubUI`: ése es el contrato de «las tres formas de
+   * preguntar» y tiene un test que lo afirma entero. Esto es comportamiento,
+   * como los combos de abajo.
+   *
+   * Delegado en `document` y no atado a cada formulario: hay listas que se
+   * repintan solas, y un enganche por nodo se pierde en el primer repintado. */
+  document.addEventListener('submit', async (e) => {
+    const form = e.target;
+    if (!form.dataset || !form.dataset.confirmar || form.dataset.confirmado) return;
+    e.preventDefault();
+    const ok = await HubUI.confirmar({
+      titulo: form.dataset.confirmarTitulo || '¿Seguro?',
+      mensaje: form.dataset.confirmar,
+      aceptar: form.dataset.confirmarOk || 'Sí',
+      peligro: true,
+    });
+    if (!ok) return;
+    // La marca evita volver a entrar aquí con el envío de verdad.
+    form.dataset.confirmado = '1';
+    form.submit();
+  }, true);
+
   const combos = () => document.querySelectorAll('select[data-combo="si"]');
   combos().forEach(comboDe);
   // Global aparte y no colgado de `HubUI`: eso es el contrato de los diálogos

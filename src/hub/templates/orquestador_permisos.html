@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  .permiso-fila { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 0;
+                  border-bottom:1px solid var(--borde); }
+  .permiso-fila .nombre { flex:1; min-width:140px; }
+  .permiso-fila select { width:auto; }
+  .niveles dt { font-weight:600; margin-top:8px; }
+  .niveles dd { margin:0; color:var(--texto-3); font-size:12.5px; }
+</style>
+
+{{ ui.cabecera_vista('Permisos del orquestador',
+   'A qué proyectos llega y con cuánta libertad. Sólo se conceden aquí; él no
+    puede cambiarlos.') }}
+
+<p style="margin:-6px 0 14px"><a href="/orquestador">← Volver a las tareas</a></p>
+
+
+<div class="tarjeta">
+  {% set niveles = p.niveles %}{% set descripcion = p.descripcion %}{% set siempre = p.siempre_del_dueno %}
+  {% for p in p.proyectos %}
+  <form method="post" action="/orquestador/permiso" class="permiso-fila">
+    <input type="hidden" name="proyecto_id" value="{{ p.id }}">
+    <span class="nombre">{{ p.nombre }}</span>
+    {% if p.guardrail == 'never' %}
+      <span class="tenue" style="font-size:12px">never en projects.yml</span>
+    {% else %}
+      <select name="nivel" aria-label="Nivel en {{ p.nombre }}">
+        {% for n in niveles %}
+        <option value="{{ n }}" {{ 'selected' if n == p.nivel }}>{{ n }}</option>
+        {% endfor %}
+      </select>
+      <button class="boton">Guardar</button>
+    {% endif %}
+  </form>
+  {% endfor %}
+</div>
+
+<div class="tarjeta" style="margin-top:14px">
+  <dl class="niveles" style="margin:0">
+    {% for n in niveles[1:] %}
+    <dt>{{ n }}</dt><dd>{{ descripcion[n] }}</dd>
+    {% endfor %}
+    <dt>Nunca sin ti, en ningún nivel</dt>
+    <dd>{{ siempre | join('; ') }}.</dd>
+  </dl>
+  <p class="tenue" style="font-size:12.5px;margin:12px 0 0">
+    Un proyecto con <code>guardrail: never</code> se queda en «nada» se ponga lo
+    que se ponga. El nivel es un pacto que cumplen los modelos, no una cerradura:
+    con las sesiones en skip permissions no hay nada debajo que frene. Lo que no
+    debe pasar nunca en un proyecto va como <code>deny</code> en su
+    <code>.claude/settings.json</code>.
+  </p>
+</div>
+
+{% endblock %}

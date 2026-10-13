@@ -117,3 +117,24 @@ bash scripts/kit.sh estado [proyecto]    # qué está al día y qué ha derivado
 bash scripts/kit.sh arbol                # quién provee qué, y qué falta
 bash scripts/kit.sh verificar <ruta|id>  # ¿el manifiesto es válido?
 ```
+
+## Dar de alta un servidor, y guardar un secreto
+
+Dos cosas que antes se hacían a mano en cuatro pasos repartidos entre
+`~/.ssh/config`, `ssh-keygen`, `ssh-copy-id` y el formulario de `/conexiones`, y
+donde el formato tenía que salir exacto:
+
+```bash
+bash scripts/alta-conexion.sh <alias> <host> <usuario> [puerto]
+bash scripts/guardar-secreto.sh <ruta-del-archivo> <NOMBRE_DE_LA_CLAVE>
+```
+
+🔴 **Ningún secreto se pasa por argumento**, y ésa es la razón de que existan.
+La contraseña del servidor la pide `ssh-copy-id` directamente y es de un solo
+uso —después se entra con la clave—; el valor de `guardar-secreto` se teclea sin
+eco. Un secreto en la línea de comandos queda en el historial del shell y lo ve
+cualquiera que mire `ps` mientras corre: dos sitios donde nadie lo va a borrar.
+
+El alta **comprueba que se entra sin contraseña** antes de darse por buena. Que
+`ssh-copy-id` no falle no significa que se entre, y esa diferencia es la que
+convierte un despliegue en un fallo a las tres de la mañana.

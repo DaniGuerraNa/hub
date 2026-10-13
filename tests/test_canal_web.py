@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from hub import canal, db, web
+from hub import canal, db, rele, web
 
 
 @pytest.fixture
@@ -400,3 +400,98 @@ def test_la_pregunta_dice_a_QUIEN_se_le_hizo_no_su_id(cliente):
     preguntas = _sec(cliente.get("/canal").text, "preguntas")
     assert "ana" in preguntas
     assert "777" not in preguntas
+
+
+# ── que se pueda comprobar que los avisos van a llegar ────────────────────────
+
+
+def _canal_configurado(monkeypatch):
+    """El bloque de avisos sólo se pinta con el canal en pie: sin token no hay
+    nada que comprobar y la pantalla ya lo dice más arriba."""
+    monkeypatch.setattr(
+        rele, "estado", lambda: {"configurado": True, "detalle": "ok"}
+    )
+    monkeypatch.setattr(rele, "ajustes", dict)
+
+
+def test_la_pantalla_dice_a_quien_le_llegarian_los_avisos(cliente, con, monkeypatch):
+    """🔴 Es lo único del hub que se verifica NO estando delante.
+
+    Si la pantalla no lo dice, el ensayo del §8 se hace a ciegas: se espera un
+    mensaje, no llega, y no hay forma de distinguir «no había nada que avisar»
+    de «nadie está marcado como dueño».
+    """
+    _canal_configurado(monkeypatch)
+    canal.anotar_contacto(con, 777, "ana_t", "Ana")
+    canal.editar_usuario(con, 777, alias="ana", estado="activo")
+    canal.marcar_dueno(con, 777)
+    con.commit()
+
+    html = cliente.get("/canal").text
+    assert "Los tres avisos van a ana" in html
+    assert "a los 3 min" in html and "a los 10 min" in html
+
+
+def test_sin_dueno_la_pantalla_avisa_de_que_los_avisos_no_van_a_ninguna_parte(
+    cliente, con, monkeypatch
+):
+    _canal_configurado(monkeypatch)
+    html = cliente.get("/canal").text
+    assert "no tienen adónde ir" in html
+
+
+def test_los_avisos_apagados_se_ven_apagados(cliente, con, monkeypatch):
+    """Apagarlos es legítimo; no saber que están apagados, no."""
+    _canal_configurado(monkeypatch)
+    monkeypatch.setattr(rele, "ajustes", lambda: {"avisos": {"activos": False}})
+    canal.anotar_contacto(con, 777, "ana_t", "Ana")
+    canal.marcar_dueno(con, 777)
+    con.commit()
+
+    assert "Los avisos están apagados" in cliente.get("/canal").text
+
+
+def test_entregar_a_mano_exige_un_panel_que_exista(cliente, monkeypatch):
+    """Un `pane_id` escrito en el formulario no es un panel: se mira el muestreo."""
+    _activar(cliente)
+    con = web.conexion()
+    pid = canal.crear_pregunta(con, "contab", "¿lleva IVA?", user_id=777)
+    canal.anotar_respuesta(con, pid, 777, "sí")
+    con.commit()
+    con.close()
+    monkeypatch.setattr(web.api, "panel_por_id", lambda con, pane_id: None)
+
+    r = cliente.post(f"/canal/pregunta/{pid}/entregar", data={"pane_id": "%99"},
+                     follow_redirects=False)
+
+    assert r.status_code in (302, 303)
+    assert "muestreo" in r.headers["location"]
+    con = web.conexion()
+    assert canal.ver_pregunta(con, pid)["pane_id"] is None
+    con.close()
+
+
+def test_entregar_a_mano_lleva_la_respuesta_al_panel_elegido(cliente, monkeypatch):
+    """La salida del atasco, de punta a punta: él elige y la respuesta vuelve."""
+    _activar(cliente)
+    con = web.conexion()
+    pid = canal.crear_pregunta(con, "contab", "¿lleva IVA?", user_id=777)
+    canal.anotar_respuesta(con, pid, 777, "sí")
+    con.commit()
+    con.close()
+    escrito: list[str] = []
+    monkeypatch.setattr(web.api, "panel_por_id",
+                        lambda con, pane_id: {"pane_id": pane_id, "slot_id": 3})
+    monkeypatch.setattr(rele.entrega, "panel_apto", lambda pane_id: (True, ""))
+    monkeypatch.setattr(rele.entrega, "entregar",
+                        lambda pane_id, texto: escrito.append((pane_id, texto)))
+
+    cliente.post(f"/canal/pregunta/{pid}/entregar", data={"pane_id": "%9"},
+                 follow_redirects=False)
+
+    con = web.conexion()
+    pregunta = canal.ver_pregunta(con, pid)
+    con.close()
+    assert pregunta["estado"] == "entregada"
+    assert pregunta["slot_id"] == 3
+    assert escrito and escrito[0][0] == "%9" and "sí" in escrito[0][1]

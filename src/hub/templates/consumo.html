@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+
+<style>
+  /* La barra de reparto por proyecto. Un `div` con ancho en porcentaje y nada
+     más: el sistema visual hace la profundidad con tono, no con sombras, así
+     que la barra es un bloque de acento sobre superficie y ya está. */
+  .barra { height:6px; border-radius:3px; background:var(--superficie2);
+           overflow:hidden; margin-top:7px; }
+  .barra > i { display:block; height:100%; background:var(--acento); }
+  .cifra-td { text-align:right; font-variant-numeric:tabular-nums;
+              color:var(--texto-2); white-space:nowrap; }
+  .tabla-consumo { width:100%; border-collapse:collapse; }
+  /* 🔴 El hueco entre columnas no es estético: sin él «51.802» y «42,6 M» salían
+     pegados —`51.80242,6 M`— y la cifra se volvía ilegible justo donde se está
+     comparando. Se ve en una captura y no leyendo el CSS (regla dura 20). */
+  .tabla-consumo th, .tabla-consumo td { padding-left:26px; }
+  .tabla-consumo th:first-child, .tabla-consumo td:first-child { padding-left:0; }
+  .tabla-consumo th { text-align:right; font-size:11px; text-transform:uppercase;
+                      letter-spacing:.09em; color:var(--texto-3); font-weight:500;
+                      padding-bottom:8px; border-bottom:1px solid var(--borde);
+                      white-space:nowrap; }
+  .tabla-consumo th:first-child { text-align:left; }
+  .tabla-consumo td { padding-top:11px; padding-bottom:11px;
+                      border-bottom:1px solid var(--borde); vertical-align:top; }
+  .tabla-consumo tr:last-child td { border-bottom:0; }
+  /* La tabla no cabe en un móvil y no se debe encoger: se desliza dentro de su
+     caja, que es lo que la regla de que el body nunca scrollea de lado pide. */
+  .desliza { overflow-x:auto; }
+  /* Las tajadas de una categoría, en una sola barra horizontal. Es la misma
+     información que una tarta y se compara mejor entre categorías, porque todas
+     empiezan y acaban en el mismo sitio. */
+  .cinta { display:flex; height:10px; border-radius:5px; overflow:hidden;
+           background:var(--superficie2); margin:8px 0 10px; }
+  .cinta > i { display:block; min-width:1px; }
+  .tajadas { display:flex; flex-wrap:wrap; gap:4px 16px; font-size:12.5px; }
+  .tajadas > div { display:flex; align-items:center; gap:7px; color:var(--texto-3); }
+  .tajadas b { color:var(--texto-2); font-weight:550;
+               font-variant-numeric:tabular-nums; }
+</style>
+
+{% call ui.cabecera_vista('Consumo',
+    'Cuántos tokens ha costado cada proyecto, leído del registro de Claude Code.
+     El hub no mide esto: lo lee y lo reparte.') %}
+  {{ ui.filtro_proyecto('/consumo', c.proyectos_del_filtro, proyecto) }}
+{% endcall %}
+
+{% if not c.hay_registro %}
+  <div class="aviso" style="border-left-color:var(--alerta)">
+    {{ ui.placa('aviso', 'espera') }}
+    <div style="flex:1">
+      <strong>Todavía no hay ninguna medición.</strong>
+      <div class="tenue">El registro se lee de <code>{{ c.carpeta }}</code> en el
+        ciclo lento del snapshotter, cada diez minutos. Si esa carpeta no existe,
+        no hay nada que contar: Claude Code la crea al usarla.</div>
+    </div>
+  </div>
+{% else %}
+
+{# 🔴 La ventana ANTES de las cifras, no debajo. Claude Code poda los
+   transcripts a los 30 días, así que esto no es un histórico — y un número
+   grande sin su ventana se lee como total. Debajo ya se habría leído. #}
+<div class="aviso" style="border-left-color:var(--acento);margin-bottom:14px">
+  {{ ui.placa('documento', 'neutro') }}
+  <div style="flex:1">
+    <strong style="font-weight:550">Esto son los últimos
+      {{ c.por_dia | length }} días, no el histórico.</strong>
+    <div class="tenue">Del {{ c.desde[:10] }} al {{ c.hasta[:10] }}. Claude Code
+      poda su registro, así que lo de antes ya no existe en ningún sitio y el hub
+      no puede inventarlo. Tampoco hay euros aquí: convertir tokens a dinero pide
+      una tabla de precios que cambia sola y que no se puede verificar contra
+      nada, y una cifra que no se puede defender no se enseña.</div>
+  </div>
+</div>
+
+<div class="cifras">
+  <div class="cifra">{{ ui.placa('conversacion', 'neutro') }}
+    <b>{{ numero(c.totales.peticiones) }}</b><span>peticiones a la API</span></div>
+  <div class="cifra">{{ ui.placa('lapiz', 'neutro') }}
+    <b>{{ millones(c.totales.salida) }}</b><span>tokens de salida</span></div>
+  <div class="cifra">{{ ui.placa('pilas', 'neutro') }}
+    <b>{{ millones(c.totales.escritura) }}</b><span>caché escrita</span></div>
+  <div class="cifra">{{ ui.placa('lineas', 'neutro') }}
+    <b>{{ millones(c.totales.lectura) }}</b><span>caché leída</span></div>
+</div>
+
+{# ── La gráfica ────────────────────────────────────────────────────────── #}
+{% if c.grafica.columnas %}
+<h2 class="con-placa">{{ ui.placa('lineas') }}<span>Día a día</span></h2>
+<div class="tarjeta">
+  {{ ui.grafica_apilada(c.grafica) }}
+  <div class="leyenda">
+    {% for s in c.grafica.series %}
+    <div><i style="background:var(--serie-{{ s.tono if s.tono else 'otros' }})"></i>
+      {{ s.nombre }} <span class="tenue">· {{ millones(s.total) }}</span></div>
+    {% endfor %}
+  </div>
+  <p class="tenue" style="margin:10px 0 0">
+    Cada columna es un día y su altura el total de ese día; el día más alto son
+    {{ millones(c.grafica.tope) }}. Los tonos van por tamaño —el más fuerte es el
+    proyecto que más gastó— y no por identidad: en este hub el color dice cuánta
+    atención pide algo, y una paleta por proyecto rompería esa lectura en todas
+    las demás pantallas.
+  </p>
+</div>
+{% endif %}
+
+{# ── Reparto por proyecto ──────────────────────────────────────────────── #}
+<h2 class="con-placa">{{ ui.placa('rejilla') }}<span>Por proyecto</span>
+  <span class="cuenta">{{ c.proyectos | length }}</span></h2>
+
+<div class="tarjeta desliza">
+  <table class="tabla-consumo">
+    <thead><tr>
+      <th>Proyecto</th><th>Peticiones</th><th>Salida</th>
+      <th>Caché escrita</th><th>Caché leída</th><th>Parte</th>
+    </tr></thead>
+    <tbody>
+      {% for e in c.proyectos %}
+      <tr>
+        <td style="min-width:220px">
+          {% if e.proyecto_id %}
+            <a href="/proyecto/{{ e.proyecto_id }}"><strong style="font-weight:550">{{ e.nombre }}</strong></a>
+          {% else %}
+            <strong style="font-weight:550">{{ e.nombre }}</strong>
+          {% endif %}
+          <div class="tenue" style="font-size:12px">
+            {% for modelo, n in e.modelos[:3] %}{{ modelo }} ({{ numero(n) }}){% if not loop.last %} · {% endif %}{% endfor %}
+          </div>
+          {% if not e.proyecto_id %}
+            {# No es un hueco: es la lista de carpetas donde se ha trabajado sin
+               darlas de alta en el hub. Enseñarla es lo que la vuelve útil. #}
+            <div class="tenue" style="font-size:12px;margin-top:4px">
+              Carpetas sin dar de alta en <code>projects.yml</code>:
+              {% for ruta, _ in e.rutas[:3] %}<code>{{ ruta }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+              {% if e.rutas | length > 3 %} y {{ e.rutas | length - 3 }} más{% endif %}
+            </div>
+          {% endif %}
+        </td>
+        <td class="cifra-td">{{ numero(e.peticiones) }}</td>
+        <td class="cifra-td">{{ millones(e.salida) }}</td>
+        <td class="cifra-td">{{ millones(e.escritura) }}</td>
+        <td class="cifra-td">{{ millones(e.lectura) }}</td>
+        <td style="min-width:110px">
+          <div class="cifra-td">{{ numero(e.parte, 1) }}%</div>
+          <div class="barra"><i style="width:{{ numero(e.parte, 1) }}%"></i></div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{# ── Por categoría ─────────────────────────────────────────────────────── #}
+<h2 class="con-placa">{{ ui.placa('rejilla') }}<span>Por categoría</span></h2>
+<div class="rejilla">
+  {% for cat in c.categorias %}
+  <div class="tarjeta">
+    <strong style="font-weight:550">{{ cat.etiqueta }}</strong>
+    <div class="tenue" style="font-size:12.5px">{{ cat.que_es }}</div>
+    <div class="cinta">
+      {% for t in cat.tajadas %}
+      <i style="width:{{ '%.2f' | format(t.parte) }}%;background:var(--serie-{{ t.tono }})"
+         title="{{ t.valor }} — {{ millones(t.total) }} ({{ numero(t.parte, 1) }} %)"></i>
+      {% endfor %}
+    </div>
+    <div class="tajadas">
+      {% for t in cat.tajadas %}
+      <div><i style="width:9px;height:9px;border-radius:2px;flex:none;
+                     background:var(--serie-{{ t.tono }})"></i>
+        {{ t.valor }} <b>{{ numero(t.parte, 1) }} %</b></div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{# ── Qué es cada columna ───────────────────────────────────────────────── #}
+<h2 class="con-placa">{{ ui.placa('aviso') }}<span>Por qué no es un solo número</span></h2>
+<div class="tarjeta">
+  <p class="tenue" style="margin:0 0 10px">
+    Los cuatro recuentos no cuestan lo mismo ni quieren decir lo mismo, así que
+    sumarlos en «tokens» a secas junta cosas distintas. Ordenados por volumen:
+  </p>
+  {% for campo, etiqueta, que_es in c.tipos %}
+  <div class="fila">
+    <div style="flex:1;min-width:0">
+      <strong style="font-weight:550">{{ etiqueta }}</strong>
+      <div class="tenue" style="font-size:12.5px">{{ que_es }}</div>
+    </div>
+    <div class="cifra-td">{{ millones(c.totales[campo]) }}</div>
+  </div>
+  {% endfor %}
+  <p class="tenue" style="margin:10px 0 0">
+    De la salida, <strong style="color:var(--texto-2)">{{ millones(c.totales.razonado) }}</strong>
+    son de razonamiento — pero repartidos entre sólo
+    <strong style="color:var(--texto-2)">{{ numero(c.totales.razonadas) }}</strong>
+    peticiones de {{ numero(c.totales.peticiones) }}, o sea el
+    {{ numero(100 * c.totales.razonadas / c.totales.peticiones, 0) }} %. Sin ese
+    segundo número el primero se lee como «razona poco cada vez», y lo que pasa
+    es que casi nunca razona. Va dentro de la salida y no al lado: sumarlo aparte
+    lo contaría dos veces.
+  </p>
+</div>
+
+
+
+<p class="tenue" style="margin-top:12px">
+  Leído de <code>{{ c.carpeta }}</code>{% if c.medido_en %}, medido el
+  {{ c.medido_en[:19] | replace('T', ' ') }}{% endif %}. Se relee entero en el
+  ciclo lento del snapshotter, cada diez minutos.
+</p>
+
+{% endif %}
+{% endblock %}

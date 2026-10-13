@@ -31,16 +31,20 @@ SRC = RAIZ / "src" / "hub"
 ALIAS = {"fable", "sonnet", "opus", "haiku"}
 
 
-def test_el_techo_es_sonnet() -> None:
-    """Decisión suya: *«nada del hub debería usar más de sonnet»*."""
-    assert modelos.AGENTE in modelos.PERMITIDOS
-    assert modelos.ASISTENTE in modelos.PERMITIDOS
-    prohibidos = {m for m in modelos.PERMITIDOS if "opus" in m or "fable" in m}
-    assert not prohibidos, f"por encima del techo acordado: {prohibidos}"
+def test_el_techo_es_sonnet_salvo_el_orquestador() -> None:
+    """Decisión suya: *«nada del hub debería usar más de sonnet»* — y su
+    excepción del 2026-09-22 (decisión 257): el orquestador y las sesiones que
+    abre van en Opus. Lo mecánico sigue en Sonnet."""
+    for mecanico in (modelos.AGENTE, modelos.ASISTENTE):
+        assert mecanico in modelos.PERMITIDOS
+        assert "opus" not in mecanico and "fable" not in mecanico
+    excepciones = {modelos.ORQUESTADOR, modelos.SESION_ORQUESTADA}
+    por_encima = {m for m in modelos.PERMITIDOS if "opus" in m or "fable" in m}
+    assert por_encima <= excepciones, f"por encima del techo acordado: {por_encima - excepciones}"
 
 
 def test_ningun_modelo_es_un_alias() -> None:
-    for modelo in {modelos.AGENTE, modelos.ASISTENTE} | set(modelos.PERMITIDOS):
+    for modelo in {modelos.AGENTE, modelos.ASISTENTE, modelos.ORQUESTADOR} | set(modelos.PERMITIDOS):
         assert modelo not in ALIAS, (
             f"«{modelo}» es un alias y resuelve a lo que toque ese día;"
             " va el id exacto (decisión 91)"
@@ -87,6 +91,11 @@ def test_nadie_en_src_arranca_claude_sin_modelo() -> None:
                 continue
             # `panel["comando"] == "claude"` mira lo que ya corre; no arranca nada.
             if "==" in linea:
+                continue
+            # Un `tui.Agente(...)` declara qué agente RECONOCER en un panel que
+            # ya existe. Misma categoría que el `==` de arriba: el descriptor no
+            # tiene ningún campo con el que se pueda lanzar nada.
+            if "Agente(" in linea:
                 continue
             # La excepción declarada, en el renglón o justo encima —que es donde
             # cae un comentario—. Es lo que la separa de un descuido: se ve con

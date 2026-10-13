@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS slot (
     nota             TEXT NOT NULL DEFAULT '',
     comando          TEXT,
     autostart_claude INTEGER NOT NULL DEFAULT 0,
+    restaurar        INTEGER NOT NULL DEFAULT 0,
     status           TEXT NOT NULL DEFAULT 'activo',
     creado_en        TEXT NOT NULL,
     ultima_actividad TEXT
@@ -128,6 +129,31 @@ CREATE TABLE IF NOT EXISTS descartado (
     PRIMARY KEY (pane_id, server_pid)
 );
 
+-- Ventanas que no quiere tener delante: servidores de node, logs, una shell
+-- suelta. No se borra nada ni se toca tmux — sólo dejan de ocupar sitio en la
+-- bandeja.
+--
+-- 🔴 Se identifica por NOMBRE, no por `pane_id`, y ésa es toda la diferencia con
+-- `descartado`. Un `pane_id` muere con el servidor de tmux y además se RECICLA:
+-- al reiniciar, `%0` es otra ventana cualquiera. Un descarte por panel se
+-- deshace solo cada vez que se reinicia tmux —justo lo que no sirve para un
+-- servidor de node que está siempre— y, peor, podría esconder una ventana
+-- distinta que heredó el identificador.
+--
+-- `window_idx` NULL significa la sesión entera. Ocultar UNA ventana va por
+-- índice, y el índice sí se mueve si se reordenan o se cierra una anterior: es
+-- el precio de poder ocultar una sola, y por eso lo que se oculta se enseña
+-- siempre contado y se puede volver a mostrar de un clic.
+CREATE TABLE IF NOT EXISTS oculto (
+    session    TEXT NOT NULL,
+    window_idx INTEGER,
+    creado_en  TEXT NOT NULL
+);
+-- NULL no es igual a NULL en un PRIMARY KEY, así que «la sesión entera» podría
+-- guardarse dos veces. El índice sobre `IFNULL` es lo que hace que `INSERT OR
+-- IGNORE` de verdad ignore el duplicado.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_oculto ON oculto(session, IFNULL(window_idx, -1));
+
 -- ── Respaldo de repos ──────────────────────────────────────────────────────
 -- El hub nació de descubrir 473 commits sin respaldo. Derivado de git:
 -- se borra y se rehace en cada escaneo.
@@ -148,6 +174,37 @@ CREATE TABLE IF NOT EXISTS repo (
     head          TEXT,
     medido_en     TEXT NOT NULL,
     PRIMARY KEY (ruta)
+);
+
+-- ── Consumo de tokens ──────────────────────────────────────────────────────
+-- Leído del registro de Claude Code (`~/.claude/projects/*.jsonl`), no medido
+-- por el hub: se borra y se rehace en cada escaneo, como `repo`.
+--
+-- La clave es (ruta, día, modelo) y no el proyecto: el proyecto se recalcula al
+-- escanear, así que dar de alta uno nuevo reclasifica su historia sola. Y el
+-- modelo va en la clave porque un token de Opus y uno de Haiku no son la misma
+-- cosa; sumarlos sin poder separarlos después sería tirar la única parte del
+-- dato que dice cuánto pesa.
+CREATE TABLE IF NOT EXISTS consumo (
+    proyecto_id TEXT,             -- NULL = ese cwd no cae en ningún proyecto
+    ruta        TEXT NOT NULL,
+    dia         TEXT NOT NULL,
+    modelo      TEXT NOT NULL,
+    peticiones  INTEGER NOT NULL DEFAULT 0,
+    entrada     INTEGER NOT NULL DEFAULT 0,
+    escritura   INTEGER NOT NULL DEFAULT 0,   -- caché escrita
+    lectura     INTEGER NOT NULL DEFAULT 0,   -- caché leída
+    salida      INTEGER NOT NULL DEFAULT 0,
+    -- Está DENTRO de `salida`, no al lado. Sumarlo al total lo contaría dos veces.
+    razonado    INTEGER NOT NULL DEFAULT 0,
+    -- Cuántas de esas peticiones razonaron. Sin esto, «4,5 M de razonamiento
+    -- sobre 64,7 M de salida» se lee como «razona poco en cada turno», y lo que
+    -- pasa de verdad es que sólo el 13 % de las peticiones razonó.
+    razonadas   INTEGER NOT NULL DEFAULT 0,
+    desde       TEXT NOT NULL DEFAULT '',
+    hasta       TEXT NOT NULL DEFAULT '',
+    medido_en   TEXT NOT NULL,
+    PRIMARY KEY (ruta, dia, modelo)
 );
 
 -- ── Servicios Docker ───────────────────────────────────────────────────────
@@ -267,6 +324,193 @@ CREATE TABLE IF NOT EXISTS canal_registro (
     cuerpo      TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_registro_momento ON canal_registro(momento DESC);
+
+-- ── Mensajes programados ────────────────────────────────────────────────────
+--
+-- Un texto que se escribe en el panel de un slot a una hora. Lo escribe el
+-- dueño del hub y va a su propia terminal, así que NO lleva el marco de
+-- `entrega.marcar`, que existe para lo que entra de fuera (regla dura 22).
+--
+-- 🔴 `cuando` va en UTC, como todo lo demás de esta base. La hora local la pone
+-- y la lee el navegador: el servidor no adivina zonas. Con CST (UTC−6) una
+-- confusión aquí no es un detalle, son seis horas.
+--
+-- No hay `pane_id`: el panel se resuelve EN EL INSTANTE de entregar, desde el
+-- slot. Guardarlo al programar sería fijar un permiso que caduca — entre
+-- programar y entregar pueden pasar horas y el slot puede vivir ya en otra
+-- ventana (regla dura 15).
+CREATE TABLE IF NOT EXISTS mensaje_programado (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    slot_id     INTEGER NOT NULL REFERENCES slot(id) ON DELETE CASCADE,
+    texto       TEXT NOT NULL,
+    cuando      TEXT NOT NULL,            -- UTC, ISO 8601
+    estado      TEXT NOT NULL DEFAULT 'pendiente',
+                -- pendiente | entregando | entregado | no-entregado
+                -- | caducado | sin-confirmar | cancelado
+                --
+                -- 🔴 «entregando» se escribe ANTES de tocar el panel, y por
+                -- eso es lo que garantiza UN SOLO intento: un mensaje que se
+                -- quede ahí es uno cuyo proceso murió a mitad, y no se
+                -- reintenta — se enseña para que lo mire una persona.
+    creado_en   TEXT NOT NULL,
+    intentado_en TEXT,                    -- último intento, haya salido o no
+    entregado_en TEXT,
+    motivo      TEXT NOT NULL DEFAULT ''  -- por qué no se pudo, si no se pudo
+);
+CREATE INDEX IF NOT EXISTS idx_programado_cuando
+    ON mensaje_programado(estado, cuando);
+
+-- ── Lo que el relé ya vio, para no avisar dos veces ─────────────────────────
+--
+-- Una fila por panel de slot —y una, `hub`, por el latido—. NO es estado: es
+-- una caché de lo último que se vio, reconstruible mirando tmux (regla dura 1).
+-- Perderla cuesta silencio, no avisos repetidos: `avisos.py` no avisa nunca del
+-- primer vistazo, sólo de una parada que vio producirse.
+--
+-- `desde` es la edad del episodio y sólo se mueve cuando el estado cambia; es
+-- lo único contra lo que tiene sentido comparar un umbral. `avisado` se limpia
+-- en cada cambio, y eso es lo que hace que cada episodio avise UNA vez.
+CREATE TABLE IF NOT EXISTS aviso (
+    clave   TEXT PRIMARY KEY,   -- el `pane_id`, o «hub» para el latido
+    estado  TEXT NOT NULL,
+    previo  TEXT,               -- de dónde viene el episodio; NULL si es el primero
+    desde   TEXT NOT NULL,      -- UTC, cuándo empezó este episodio
+    avisado TEXT                -- UTC, cuándo salió su aviso; NULL si no salió
+);
+
+-- ── La salud de la máquina, medida en el ciclo lento ───────────────────────
+--
+-- Una fila por magnitud y sólo la ÚLTIMA: no es un histórico. Volver a medir la
+-- reconstruye entera (regla dura 1), y guardar la serie convertiría al hub en un
+-- sistema de monitorización, que es lo que el principio 9 dice que no es.
+--
+-- `valor` a NULL con `texto` lleno es una fecha o un nombre —cuándo arrancó
+-- Windows, qué GPU hay—; las dos formas conviven porque la pantalla y las
+-- alarmas leen de la misma tabla y no de dos.
+CREATE TABLE IF NOT EXISTS maquina (
+    clave     TEXT PRIMARY KEY,
+    valor     REAL,
+    texto     TEXT NOT NULL DEFAULT '',
+    unidad    TEXT NOT NULL DEFAULT '',
+    medido_en TEXT NOT NULL
+);
+
+-- ── Encargos: un MVP descrito por audio ─────────────────────────────────────
+--
+-- Otra persona cuenta su negocio por Telegram y de ahí sale algo desplegado que
+-- puede mirar. El planteamiento y sus 24 decisiones están en dos lienzos del
+-- proyecto `hub`; lo que hay que saber para leer estas tablas es esto:
+--
+-- 🔴 **Canal aparte del de consulta** (decisión n1). Bot propio, servicio propio
+-- (`hub-encargos`), registro de personas propio y permisos propios. No se toca
+-- nada de `canal_*`: lo que un encargo necesita es provocar trabajo, y ése es
+-- justo el poder que el canal de consulta se negó a tener. Mezclarlos habría
+-- abierto esa puerta para todos.
+--
+-- 🔴 **La base es el índice; la ficha es un archivo** (regla dura 1). Lo que la
+-- persona contó vive en `HUB_HOME/encargos/<id>/ficha.json`, que escribe el
+-- agente entrevistador. Aquí está el estado, la cola y el rastro — lo que hace
+-- falta para saber qué falta por entregar, no la entrevista.
+
+CREATE TABLE IF NOT EXISTS encargo (
+    -- El slug es también la carpeta y el subdominio: un solo nombre para las
+    -- tres cosas, porque tres nombres para lo mismo es cómo se despliega un
+    -- encargo encima de otro.
+    id             TEXT PRIMARY KEY,
+    titulo         TEXT NOT NULL DEFAULT '',
+    user_id        INTEGER NOT NULL,   -- de quién es el negocio
+    estado         TEXT NOT NULL DEFAULT 'recogiendo',
+                   -- recogiendo | propuesta | aprobado | construyendo
+                   -- | publicado | descartado
+    ronda          INTEGER NOT NULL DEFAULT 1,
+    -- Dónde vive el entrevistador. NO se guarda su `pane_id`: se resuelve en el
+    -- instante de entregar, como en `mensaje_programado` y por lo mismo — entre
+    -- que llega un audio y se entrega puede haber pasado un compact entero.
+    slot_id        INTEGER,
+    url            TEXT,
+    -- El mensaje del plan que se le mandó al dueño. Se aprueba RESPONDIÉNDOLO
+    -- (decisión n14): un «sí» suelto en otra conversación no puede lanzar una
+    -- construcción, que es la acción más privilegiada del sistema.
+    plan_msg       INTEGER,
+    -- Cuándo se le dijo a la persona que esperase. Se pone cuando el agente
+    -- lleva rato sin poder recibir y sirve para dos cosas: no repetir el aviso,
+    -- y saber que hay que decirle «ya estoy» al reanudar.
+    avisado_espera TEXT,
+    creado_en      TEXT NOT NULL,
+    actualizado_en TEXT NOT NULL,
+    nota           TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_encargo_estado ON encargo(estado);
+
+-- Quién puede hablar con el bot de encargos. Mismo modelo que `canal_usuario` y
+-- por el mismo motivo: la Bot API no deja escribir a un teléfono que no habló
+-- primero, así que el alta se invierte —aparece quien escribió y el dueño lo
+-- aprueba— y escribirle al bot no concede absolutamente nada.
+CREATE TABLE IF NOT EXISTS encargo_persona (
+    user_id  INTEGER PRIMARY KEY,
+    username TEXT NOT NULL DEFAULT '',
+    nombre   TEXT NOT NULL DEFAULT '',
+    alias    TEXT NOT NULL DEFAULT '',
+    estado   TEXT NOT NULL DEFAULT 'pendiente',  -- pendiente | activo | bloqueado
+    es_dueno INTEGER NOT NULL DEFAULT 0,
+    visto_en TEXT NOT NULL,
+    nota     TEXT NOT NULL DEFAULT '',
+    -- De confianza: sus planes se construyen sin esperar la aprobación del
+    -- dueño (decisión 236). Lo marca él, en el hub, por persona.
+    de_confianza INTEGER NOT NULL DEFAULT 0
+);
+
+-- 🔴 **La cola, que es la pieza que hace que esto no pierda nada.**
+--
+-- El agente NO es quien recibe. El relé escucha siempre y aparca aquí lo que
+-- llega; el agente lo recoge cuando su panel está apto. Escribir directo en el
+-- panel haría que un audio llegado en mitad de un compact entrara en una TUI que
+-- no está lista, y la regla dura 17 dice que escribir no es haber enviado.
+--
+-- Las dos direcciones viven en la misma tabla a propósito: lo que se enseña a
+-- una persona que pregunta «¿qué le dije al bot?» es la conversación entera, y
+-- partirla en dos tablas obliga a recomponerla en cada consulta.
+CREATE TABLE IF NOT EXISTS encargo_mensaje (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- `ON UPDATE CASCADE` porque el id de un encargo SÍ cambia: nace
+    -- provisional y se renombra en cuanto se sabe cómo se llama el negocio.
+    -- Sin esto, renombrar fallaría con una violación de clave ajena justo
+    -- cuando el encargo ya tiene toda la conversación colgando.
+    encargo_id  TEXT NOT NULL
+                REFERENCES encargo(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    direccion   TEXT NOT NULL,                  -- entra | sale
+    user_id     INTEGER,
+    clase       TEXT NOT NULL DEFAULT 'texto',  -- texto | audio | muestras
+    texto       TEXT NOT NULL DEFAULT '',
+    -- Ruta local: el audio recibido, o el PNG que hay que mandar. Nunca el
+    -- contenido, que en un audio de tres minutos no tiene por qué caber aquí.
+    adjunto     TEXT NOT NULL DEFAULT '',
+    -- Botones bajo el mensaje, como JSON [[texto, dato], …] (decisión 237).
+    botones     TEXT NOT NULL DEFAULT '',
+    message_id  INTEGER,
+    estado      TEXT NOT NULL DEFAULT 'en-cola',
+                -- entra: en-cola | entregado | sin-confirmar | descartado
+                -- sale:  en-cola | enviado | fallido
+    lote        TEXT,           -- con qué otros mensajes entró al panel de una vez
+    recibido_en TEXT NOT NULL,
+    movido_en   TEXT,
+    detalle     TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_encargo_mensaje
+    ON encargo_mensaje(encargo_id, direccion, estado, id);
+
+-- Todo lo que entra y sale, como en el canal de consulta y por lo mismo: lo que
+-- sale de aquí sale de la máquina, y hay que poder auditar después qué salió.
+CREATE TABLE IF NOT EXISTS encargo_registro (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    momento     TEXT NOT NULL,
+    direccion   TEXT NOT NULL,   -- sale | entra | falla
+    user_id     INTEGER,
+    encargo_id  TEXT,
+    detalle     TEXT NOT NULL DEFAULT '',
+    cuerpo      TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_encargo_registro ON encargo_registro(momento DESC);
 """
 
 # FTS5 no está en todos los builds de SQLite. Si falta, la búsqueda cae a LIKE
@@ -346,6 +590,14 @@ def conectar(ruta: Path | None = None) -> sqlite3.Connection:
 # EXISTS` no las agrega a una tabla vieja, así que se aseguran una a una.
 _COLUMNAS_NUEVAS = [
     ("capacidad", "medible", "INTEGER NOT NULL DEFAULT 1"),
+    ("encargo_persona", "de_confianza", "INTEGER NOT NULL DEFAULT 0"),
+    ("encargo_mensaje", "botones", "TEXT NOT NULL DEFAULT ''"),
+    # En qué etapa está el encargo: «maqueta» (estático, para pasear y
+    # corregir barato) o «sistema» (con base de datos y acceso, decisión 244).
+    ("encargo", "etapa", "TEXT NOT NULL DEFAULT 'maqueta'"),
+    # Por dónde habla la persona: telegram, o el chat web para quien no lo
+    # tiene (decisión 246). Lo que sale va por su canal.
+    ("encargo_persona", "canal", "TEXT NOT NULL DEFAULT 'telegram'"),
     ("proyecto", "tipo", "TEXT NOT NULL DEFAULT 'proyecto'"),
     ("repo", "repo_comun", "TEXT"),
     ("repo", "head", "TEXT"),
@@ -361,9 +613,16 @@ _COLUMNAS_NUEVAS = [
     # tokens por llamada y el 69% del coste de la más cara. Cinco respuestas
     # sueltas son cinco despertares; en lote son uno.
     ("canal_pregunta", "lote", "TEXT"),
+    ("consumo", "razonadas", "INTEGER NOT NULL DEFAULT 0"),
     ("canal_usuario", "es_dueno", "INTEGER NOT NULL DEFAULT 0"),
     ("canal_usuario", "tutorial", "TEXT NOT NULL DEFAULT ''"),
     ("canal_usuario", "tutorial_msg", "INTEGER"),
+    # Qué slots quiere volver a tener delante tras un apagón. Marca humana y por
+    # slot: nada automático sobre los slots (regla dura 3, principio 9).
+    ("slot", "restaurar", "INTEGER NOT NULL DEFAULT 0"),
+    # De dónde viene el episodio. Se guarda y no se deduce: en la vuelta
+    # siguiente el estado ya no cambia, así que deducirlo perdía el origen.
+    ("aviso", "previo", "TEXT"),
 ]
 
 

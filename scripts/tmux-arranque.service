@@ -1,0 +1,26 @@
+# Arranca el servidor de tmux al encender, sin que nadie abra una terminal.
+#
+# Por qué (medido el 2026-09-23, en el ensayo de arranque en frío): el hub
+# subió solo, pero tmux no existía hasta que alguien lo abría a mano. En cuanto
+# se abrió, tmux-continuum (`@continuum-restore 'on'` en ~/.tmux.conf) devolvió
+# las 24 ventanas a sus rutas. Faltaba sólo quién lo arrancara estando fuera.
+#
+# - `systemd-run --scope`: el servidor queda en un cgroup propio, como lo arranca
+#   el hub (tmux._PREFIJO_DESASIR). Parar o reiniciar esta unidad NO mata tmux.
+# - La sesión `arranque` existe sólo para que el servidor nazca; se quita cuando
+#   ya hay otras (la restauración tarda unos segundos). Si la restauración no
+#   trajo nada, se queda: quitarla apagaría el servidor.
+# - Sólo abre shells en sus rutas: continuum no relanza claude ni nada más.
+[Unit]
+Description=tmux al arrancar (tmux-continuum restaura las sesiones)
+After=default.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecCondition=/bin/sh -c '! /usr/bin/tmux has-session 2>/dev/null'
+ExecStart=/usr/bin/systemd-run --user --scope --quiet --collect /usr/bin/tmux new-session -d -s arranque
+ExecStartPost=/bin/sh -c 'sleep 25; [ "$(/usr/bin/tmux list-sessions 2>/dev/null | wc -l)" -gt 1 ] && /usr/bin/tmux kill-session -t =arranque || true'
+
+[Install]
+WantedBy=default.target

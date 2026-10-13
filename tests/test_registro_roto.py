@@ -125,3 +125,68 @@ def test_la_web_lo_cuenta_en_vez_de_reventar(tmp_path):
             os.environ["HUB_PROJECTS_YML"] = antes
         for modulo in (config, db, web):
             importlib.reload(modulo)
+
+
+# ── Lo que contesta a `/api/…` cuando el registro no carga ────────────────────
+
+@pytest.fixture
+def cliente_roto(tmp_path):
+    """Un hub con el registro ilegible, montado como el test de arriba.
+
+    El caso es el real: `projects.yml` con la clave `conexiones` dos veces, que
+    es como quedó la máquina al dar de alta la primera conexión desde la UI.
+    """
+    import importlib
+    import os
+
+    from fastapi.testclient import TestClient
+
+    from hub import config, db, web
+
+    roto = tmp_path / "projects.yml"
+    roto.write_text("proyectos: []\nconexiones:\n  - alias: a\n"
+                    "conexiones:\n  - alias: b\n", encoding="utf-8")
+    antes = os.environ.get("HUB_PROJECTS_YML")
+    os.environ["HUB_PROJECTS_YML"] = str(roto)
+    for modulo in (config, db, web):
+        importlib.reload(modulo)
+    try:
+        yield TestClient(web.app, raise_server_exceptions=False)
+    finally:
+        if antes is None:
+            os.environ.pop("HUB_PROJECTS_YML", None)
+        else:
+            os.environ["HUB_PROJECTS_YML"] = antes
+        for modulo in (config, db, web):
+            importlib.reload(modulo)
+
+
+def test_a_la_api_se_le_contesta_JSON_con_el_motivo_dentro(cliente_roto):
+    """🔴 Devolver una página HTML aquí dejaba mudo al panel del asistente: su
+    JavaScript hace `r.json()`, se encontraba una página, y el motivo se perdía.
+
+    El hub SABÍA qué pasaba —«la clave conexiones está dos veces, línea 282»— y
+    esa frase no llegó a ninguna pantalla: hubo que abrir una terminal para
+    enterarse de que el hub llevaba rato sin poder leer su registro.
+    """
+    r = cliente_roto.get("/api/asistente")
+    assert r.status_code == 422
+    assert r.headers["content-type"].startswith("application/json")
+    assert "YAML" in r.json()["error"]
+    assert "conexiones" in r.json()["error"]
+
+
+def test_a_una_pantalla_se_le_sigue_contestando_una_pagina(cliente_roto):
+    """La otra mitad del cambio, y la que se pierde de un tijeretazo: la página
+    explica qué archivo es y cómo arreglarlo, y eso en un navegador se lee mejor
+    que un JSON. Sólo `/api/…` cambia de formato.
+
+    Se usa `/refrescar` porque es una de las rutas que de verdad relee el
+    registro; `/trabajo` sirve de la base y sigue dando 200 con el archivo roto,
+    que es a propósito —lo último medido sigue siendo cierto— pero no sirve para
+    probar esto.
+    """
+    r = cliente_roto.post("/refrescar")
+    assert r.status_code == 422
+    assert "text/html" in r.headers["content-type"]
+    assert "El registro no se puede leer" in r.text

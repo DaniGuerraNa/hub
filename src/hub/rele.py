@@ -16,13 +16,15 @@ Corre como servicio propio (`hub-canal.service`), separado de `hub-web`: es el
 
 from __future__ import annotations
 
+import contextlib
+import json
 import sqlite3
 import time
 from typing import Any
 
 import yaml
 
-from . import canal, config, db, entrega, telegram
+from . import avisos, canal, config, db, entrega, orquestador, panico, telegram
 
 # Entre vueltas. El long polling ya espera dentro de `getUpdates`, así que esto
 # sólo evita un bucle cerrado cuando la API contesta al instante o falla.
@@ -94,6 +96,21 @@ def procesar_mensaje(con: sqlite3.Connection, msg: dict) -> str:
             cuerpo=msg["texto"],
         )
         return "sin-alta"
+
+    # 🔴 Antes de exigir `reply`, porque el botón de pánico es un mensaje suelto
+    # —y tiene que poder escribirse con el hub caído, que es cuando no hay
+    # ninguna pregunta a la que responder—. Sólo el dueño: para cualquier otro
+    # es un mensaje suelto más y cae en la rama de abajo.
+    if panico.reconocer(msg["texto"]):
+        propietario = canal.dueno(con)
+        if not propietario or propietario["user_id"] != msg["user_id"]:
+            canal.registrar(
+                con, "falla", "pidió el botón de pánico sin ser el dueño",
+                user_id=msg["user_id"],
+            )
+            return "panico-denegado"
+        canal.registrar(con, "entra", "botón de pánico", user_id=msg["user_id"])
+        return "panico"
 
     responde_a = msg.get("responde_a")
     if not responde_a:
@@ -322,6 +339,75 @@ def avisar_al_dueno(con: sqlite3.Connection, bot_: telegram.Bot, pregunta: dict)
     return True
 
 
+def enviar_avisos(con: sqlite3.Connection, bot_: telegram.Bot) -> int:
+    """Los tres avisos de la decisión 166. Devuelve cuántos salieron.
+
+    Lo manda el relé y no el snapshotter por la regla dura 22: aquí es donde
+    vive el token. Quién decide qué avisar es `avisos.py`, que no toca la red.
+
+    🔴 Sólo al dueño, y sólo el aviso. Un aviso de sistema mandado a quien tiene
+    permiso sobre un proyecto sacaría de la máquina que hay una sesión suya
+    corriendo, que es información que nadie de fuera ha pedido.
+    """
+    quien = canal.dueno(con)
+    salidos = 0
+    for aviso in avisos.revisar(con, ajustes=ajustes()):
+        if not quien:
+            # Se marca igual para no repetir esto en cada vuelta: el registro es
+            # donde se mira qué pasó, y un mismo fallo cada 25 s lo hace ilegible.
+            avisos.marcar_avisado(con, aviso["clave"])
+            canal.registrar(
+                con, "falla",
+                f"aviso «{aviso['clase']}» sin destino: nadie está marcado como dueño en /canal",
+            )
+            continue
+        try:
+            bot_.enviar(int(quien["user_id"]), aviso["texto"])
+        except telegram.TelegramCaido as exc:
+            # Sin marcar: la red se cae 46 veces en cinco días en este canal y
+            # el aviso sigue siendo cierto en la vuelta siguiente.
+            canal.registrar(con, "falla", f"no salió el aviso «{aviso['clase']}»: {exc}")
+            continue
+        avisos.marcar_avisado(con, aviso["clave"])
+        canal.registrar(
+            con, "sale", f"aviso «{aviso['clase']}» (sin contenido)",
+            user_id=quien["user_id"],
+        )
+        salidos += 1
+    return salidos
+
+
+def enviar_timbres(con: sqlite3.Connection, bot_: telegram.Bot) -> int:
+    """Los avisos del orquestador: «hay una pregunta», «terminó». Sólo al dueño.
+
+    🔴 Timbre y no mensaje (regla dura 22): sale el id de la tarea y qué pasó;
+    el pedido, la pregunta o la respuesta de una sesión se leen en el hub. Un timbre que no sale se queda para la vuelta siguiente; uno sin
+    dueño se descarta y se dice, igual que los avisos.
+    """
+    quien = canal.dueno(con)
+    salidos = 0
+    for ruta in orquestador.timbres_pendientes():
+        try:
+            texto = json.loads(ruta.read_text(encoding="utf-8"))["texto"]
+        except (OSError, ValueError, KeyError) as exc:
+            canal.registrar(con, "falla", f"timbre ilegible {ruta.name}: {exc}")
+            ruta.unlink(missing_ok=True)
+            continue
+        if not quien:
+            canal.registrar(con, "falla", "timbre del orquestador sin destino: nadie es dueño en /canal")
+            ruta.unlink(missing_ok=True)
+            continue
+        try:
+            bot_.enviar(int(quien["user_id"]), f"🧭 {texto}\nMíralo en el hub → Orquestador.")
+        except telegram.TelegramCaido as exc:
+            canal.registrar(con, "falla", f"no salió un timbre del orquestador: {exc}")
+            break
+        ruta.unlink(missing_ok=True)
+        canal.registrar(con, "sale", "timbre del orquestador", user_id=quien["user_id"])
+        salidos += 1
+    return salidos
+
+
 def enviar_pendientes(con: sqlite3.Connection, bot_: telegram.Bot) -> int:
     """Manda las preguntas que todavía no salieron. Devuelve cuántas.
 
@@ -393,7 +479,13 @@ def reintentar_entregas(con: sqlite3.Connection) -> int:
         # entregarla a destiempo.
         if pregunta["lote"] and not canal.lote_entregado(con, pregunta["lote"]):
             continue
-        if pregunta["pane_id"] and entregar_respuesta(con, pregunta["id"]):
+        # 🔴 Sin panel al que volver no hay entrega posible, pero **se dice**.
+        # Esto era un `continue` silencioso, y por eso siete respuestas de un
+        # proyecto real se quedaron esperando un reintento que no existía.
+        if not pregunta["pane_id"]:
+            canal.marcar_sin_destino(con, pregunta["id"])
+            continue
+        if entregar_respuesta(con, pregunta["id"]):
             n += 1
     return n
 
@@ -412,6 +504,27 @@ def entregar_lotes(con: sqlite3.Connection, momento: str | None = None) -> int:
 # --------------------------------------------------------------------------- #
 
 
+def atender_panico(con: sqlite3.Connection, bot_: telegram.Bot, user_id: int) -> bool:
+    """Reinicia el hub y **cuenta si quedó vivo**, no si la orden salió.
+
+    Va aquí y no en `procesar_mensaje` por lo mismo que el ensayo: esa función
+    es la única sin red, y es lo que permite probar el dominio entero sin tocar
+    internet. Se avisa antes de empezar porque reiniciar tarda unos segundos y
+    un silencio, cuando alguien acaba de escribir «pánico» desde 2 000 km, se
+    lee como que tampoco eso funcionó.
+    """
+    with contextlib.suppress(telegram.TelegramCaido):
+        bot_.enviar(user_id, "Reiniciando el hub, dame unos segundos…")
+
+    bien, detalle = panico.reiniciar()
+    canal.registrar(
+        con, "sale" if bien else "falla", f"botón de pánico: {detalle}", user_id=user_id,
+    )
+    with contextlib.suppress(telegram.TelegramCaido):
+        bot_.enviar(user_id, ("✅ " if bien else "🔴 ") + detalle)
+    return bien
+
+
 def una_vuelta(con: sqlite3.Connection, bot_: telegram.Bot, offset: int | None) -> int | None:
     """Una iteración completa. Devuelve el offset siguiente.
 
@@ -419,6 +532,8 @@ def una_vuelta(con: sqlite3.Connection, bot_: telegram.Bot, offset: int | None) 
     """
     enviar_tutoriales(con, bot_)
     enviar_pendientes(con, bot_)
+    enviar_avisos(con, bot_)
+    enviar_timbres(con, bot_)
     reintentar_entregas(con)
     # Antes de `revisar_vencimientos`: una pregunta vencida de un lote es lo que
     # LIBERA al lote —se entrega lo que haya diciendo cuál falta—, y marcarla
@@ -434,7 +549,10 @@ def una_vuelta(con: sqlite3.Connection, bot_: telegram.Bot, offset: int | None) 
         offset = int(update.get("update_id", 0)) + 1
         msg = telegram.partes_del_mensaje(update)
         if msg:
-            if procesar_mensaje(con, msg) == "ensayo":
+            hecho = procesar_mensaje(con, msg)
+            if hecho == "panico":
+                atender_panico(con, bot_, int(msg["user_id"]))
+            if hecho == "ensayo":
                 # Se contesta desde aquí y no desde `procesar_mensaje`: esa
                 # función es la única sin red, y es lo que permite probar el
                 # dominio entero sin tocar internet.

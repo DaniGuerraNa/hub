@@ -209,11 +209,25 @@
 {% endif %}
 
 {% if ver == 'kits' %}
-<h2 class="con-placa" style="margin-top:0">{{ ui.placa('rejilla') }}<span>Kits</span>
+<h2 class="con-placa" style="margin-top:0">{{ ui.placa('rejilla') }}
+  {# Un kit mirándose a sí mismo NO está «usando kits»: ahí la lista es él y sus
+     consumidores, que es la pregunta contraria. #}
+  {%- set mirando_un_kit = kits | selectattr('id', 'equalto', proyecto) | list -%}
+  <span>{{ 'Kits que usa este proyecto' if proyecto and not mirando_un_kit else 'Kits' }}</span>
   <span class="apunte">{{ kits | length }}</span>
   <button class="principal" id="nuevo-kit">Kit nuevo</button></h2>
 
-{% if not kits %}
+{% if not kits and proyecto %}
+{# Filtrado y sin nada NO es lo mismo que no tener kits: decir «todavía no
+   tienes ningún kit» mientras hay siete sería mentir sobre el hub entero. #}
+<div class="tarjeta">
+  <p style="margin:0 0 6px">Este proyecto no declara ningún kit.</p>
+  <p class="tenue" style="margin:0">
+    El censo lo lleva el consumidor, en su <span class="mono">.claude/hub/kits.yml</span>:
+    si usa uno y no está ahí declarado, el hub no puede saberlo ni medir su deriva.
+  </p>
+</div>
+{% elif not kits %}
 <div class="tarjeta">
   <p style="margin:0 0 6px">Todavía no tienes ningún kit.</p>
   <p class="tenue" style="margin:0">

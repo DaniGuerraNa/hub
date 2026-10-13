@@ -36,18 +36,36 @@ def sesion_para(con: sqlite3.Connection, proyecto_id: str) -> str:
     return _NO_VALIDO.sub("-", proyecto_id) or "hub-agentes"
 
 
-def comando(prompt: str, sin_preguntar: bool = False) -> str:
+def comando(prompt: str, sin_preguntar: bool = False, modo: str = "") -> str:
     """`claude` con un prompt inicial. Sin `-p`: queremos sesión interactiva.
 
     `sin_preguntar` arranca en `bypassPermissions`. **No es el modo normal y no
     debe serlo**: en un proyecto que ya existe, la pregunta es la última señal de
     que el agente se sale del guion, y con el usuario mirando la ventana esa
     señal vale. Se usa donde esa premisa no se cumple — ver `crear_proyecto`.
+
+    🔴 `modo` existe porque **sin él se hereda el del usuario, y eso no es
+    ninguno**. Se descubrió el 18-sep mirando un agente real: el `settings.json`
+    que lo acota estaba puesto y aun así corría en `auto`, o sea aprobándose
+    todo — el valor por omisión de esta instalación. Un agente que trabaja a
+    partir de lo que cuenta alguien de fuera **tiene que decir en qué modo
+    corre**, no confiar en el que hubiera. Los modos que acepta Claude Code son
+    `manual`, `acceptEdits`, `auto`, `dontAsk`, `plan` y `bypassPermissions`; el
+    de «pregunta siempre» es `manual`.
+
+    🔴 **`manual` es el nombre desde la 2.1.2xx; antes se llamaba `default`**, y
+    la 2.1.112 rechaza `manual` y muere al arrancar. Se descubrió con dos
+    binarios en la misma máquina y ventanas que encontraban uno u otro según
+    quién las abría (decisión 231). No se adivina la versión aquí: se abre con
+    el PATH del usuario, que es donde está el `claude` que él usa, y una
+    ventana que muere al arrancar se dice en vez de darse por abierta.
     """
     # El modelo va SIEMPRE explícito: sin `--model`, la ventana hereda el
     # `"model"` de `~/.claude/settings.json` —un ajuste suyo, para sus ventanas—
     # y el agente nace en lo que hubiera ahí. Ver `modelos.py`.
     partes = ["claude", modelos.bandera(modelos.AGENTE)]
+    if modo:
+        partes.append(f"--permission-mode {shlex.quote(modo)}")
     if sin_preguntar:
         # `--permission-mode` y no `--dangerously-skip-permissions`: son
         # equivalentes, pero el segundo lleva el nombre puesto para que dé

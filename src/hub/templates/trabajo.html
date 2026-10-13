@@ -33,6 +33,123 @@
             position:relative; }
 
   .tirador { cursor:col-resize; background:transparent; }
+
+  /* ── El móvil ───────────────────────────────────────────────────────────
+     🔴 Medido en un navegador a 390 px, no razonado (regla dura 20): las tres
+     columnas fijas —240 de raíl, 330 de nota— pedían 580 px, así que la vista
+     de trabajo se arrastraba de lado **190 px** en un móvil. Y es la pantalla
+     que más se va a usar viajando, que es cuando no hay forma de arreglarlo.
+
+     Se apila en vez de encogerse: un terminal de 100 px de ancho no es un
+     terminal más pequeño, es un terminal inservible. Los tiradores se van —no
+     se arrastra una columna que ya ocupa el ancho entero, y a dedo no se
+     acierta un asa de 5 px— y con ellos dejan de contar `--w-rail` y
+     `--w-nota`, que sólo alimentan el `grid-template-columns`.
+
+     El corte va en 720 px: por encima cabe el taller entero, y ahí no se toca
+     nada. Comprobado midiendo el escritorio a 1440 px antes y después. */
+  /* 🔴 ANTES del @media, no después. Las dos reglas son `#ir-a` (0,1,0), o sea
+     misma especificidad, así que gana la última escrita: puesta debajo dejaba el
+     `select` invisible también en el móvil. Es la trampa de las decisiones 202 y
+     207 por cuarta vez, y esta vez cayó en el mismo día que se documentó.
+
+     El `select` es exclusivo del móvil: en el escritorio el raíl entero cabe y
+     se ve de un vistazo, que es mejor que un desplegable. */
+  #ir-a { display:none; }
+
+  @media (max-width: 720px) {
+    .taller, .taller.sin-rail, .taller.sin-nota, .taller.sin-rail.sin-nota {
+      display:flex; flex-direction:column; overflow-y:auto;
+    }
+    .taller > .tirador { display:none; }
+    /* 🔴 En el móvil el raíl NO se encoge: se sustituye. Darle «un tercio»
+       sonaba razonable en el escritorio y en un teléfono son 287 px de 844
+       —una pantalla es para trabajar, no para tener el índice a la vista—.
+       Queda el `select`, que ocupa una fila y abre el selector del sistema. */
+    .rail { flex:none; max-height:none; border-right:0; padding:8px 12px;
+            border-bottom:1px solid var(--borde); }
+    .rail .grupo { display:none; }
+    #ir-a { display:block; width:100%; margin:0; }
+    /* 🔴 Alto FIJO, no un mínimo. Por debajo de 860 px `base.html` pone el
+       body en `display:block`, así que `body.completo` deja de sujetar la
+       altura y un `min-height` con `flex:1` deja que el terminal crezca con su
+       contenido: medido, 1523 px de alto y la nota a 2060 px del principio, o
+       sea dos pantallas por debajo del pliegue. Con `60vh` el taller entero
+       cabe en pantalla y media. */
+    .centro { flex:none; height:60vh; }
+    .nota { flex:none; max-height:60vh; border-left:0;
+            border-top:1px solid var(--borde); }
+    .nota-texto { min-height:120px; }
+  }
+  /* ── el terminal a solas ──────────────────────────────────────────────
+   *
+   * *«¿Podemos hacer que la terminal sea más grande o botón de full screen?»*
+   * (2026-09-16, desde el teléfono). Dos capas, y la primera es la que siempre
+   * funciona: esconder lo que no es terminal. En el móvil eso son 154 px de
+   * 844 —el raíl de iconos, la cabecera y el `select`—; la segunda capa pide
+   * pantalla completa al navegador, que además se lleva su propia barra de
+   * direcciones, pero no está en todas partes (iOS no la da para un elemento
+   * cualquiera) y por eso no puede ser la única.
+   *
+   * 🔴 `body.completo.terminal-sola` y no `body.terminal-sola`: la regla del
+   * `@media` es `.rail-global, body.completo .rail-global`, o sea (0,2,1), la
+   * misma que tendría `body.terminal-sola .rail-global`. A igualdad manda el
+   * orden, y confiar en el orden es justo lo que ha fallado cuatro veces
+   * (decisiones 202, 207, 208). Con las dos clases son (0,3,1) y gana por
+   * especificidad, que no depende de dónde acabe escrito esto.
+   *
+   * La barra de controles NO se esconde: es por donde se vuelve. */
+  /* `teclado-abierto` va junto a `terminal-sola` en todas estas reglas: cuando
+     sale el teclado quedan ~340 px de alto, y el raíl, la cabecera, el `select`
+     y la nota se comerían 251 de ellos. Mientras se escribe, lo único que hace
+     falta ver es lo que se escribe. */
+  body.completo.terminal-sola .rail-global, body.completo.teclado-abierto .rail-global,
+  body.completo.terminal-sola .rail,        body.completo.teclado-abierto .rail,
+  body.completo.terminal-sola .nota,        body.completo.teclado-abierto .nota,
+  body.completo.terminal-sola header,       body.completo.teclado-abierto header { display: none; }
+  /* El marco cuando ES la pantalla: sin el fondo del navegador asomando por los
+     bordes, y sin que xterm herede un alto que ya no vale. */
+  /* En el flujo normal el envoltorio es transparente: hereda el reparto que
+     tenía el marco y no cambia nada de lo medido hasta ahora. */
+  #lienzo-terminal { flex:1; min-height:0; display:flex; position:relative; }
+  #lienzo-terminal > #marco { flex:1; min-height:0; }
+  /* A pantalla completa, el envoltorio es el lienzo y el marco se posiciona
+     dentro: así el teclado puede encogerlo y desplazarlo, que es lo que la hoja
+     del navegador impide hacer sobre el propio elemento a pantalla completa. */
+  #lienzo-terminal:fullscreen { background: var(--lienzo); }
+  #lienzo-terminal:fullscreen > #marco { position:absolute; left:0; right:0; }
+  body.terminal-sola #pantalla-completa { color: var(--acento); }
+  /* 🔴 Esconder no es agrandar. Medido: escondiendo el raíl, el `select` y la
+     cabecera el terminal seguía en 506 px y quedaban **241 px vacíos** debajo,
+     porque en móvil `.centro` lleva `height:60vh` FIJO —puesto a propósito, que
+     ahí un `flex:1` lo dejaba crecer con su contenido hasta 1523 px—. A solas sí
+     hay un alto que repartir, así que se le da: la columna vale la pantalla y el
+     terminal se queda con lo que sobre después de la nota.
+
+     `dvh` y no `vh`: en un móvil la barra de direcciones aparece y desaparece, y
+     `vh` se queda con la pantalla sin barra — o sea con un terminal que sobresale
+     por abajo justo mientras se lee. `vh` va delante como respaldo para quien no
+     entienda `dvh`. */
+  /* 🔴 El alto va en `.principal-col`, y sólo ahí. Costó tres intentos y los
+     tres fallaron por lo mismo, que sólo se vio recorriendo la cadena entera:
+
+         BODY            display:block   ← en móvil; aquí acaba el flujo normal
+           .principal-col  flex:1 1 0%   ← su padre es BLOCK: aquí sí manda `height`
+             .envoltura    flex:1 1 0%   ┐ todos hijos de un flex en COLUMNA, y ahí
+               .taller     flex:1 1 0%   │ `flex-basis` manda sobre `height`: darles
+                 .centro   flex:1 1 auto ┘ altura no hace absolutamente nada
+
+     Ponérselo a `.taller` movió el terminal 3 px; a `.envoltura`, lo encogió.
+     Puesto arriba, el `flex:1` de cada hijo reparte solo hasta el terminal.
+
+     `dvh` y no `vh`: en un móvil la barra de direcciones aparece y desaparece, y
+     `vh` se queda con la pantalla SIN barra, o sea con un terminal que sobresale
+     por abajo justo mientras se lee. `vh` va delante como respaldo. */
+  body.completo.terminal-sola .principal-col,
+  body.completo.teclado-abierto .principal-col { height: 100vh; height: var(--alto-util, 100dvh); }
+  body.completo.terminal-sola .centro,
+  body.completo.teclado-abierto .centro { flex: 1 1 auto; height: auto; min-height: 0; }
+
   .tirador:hover, .tirador.activo { background:var(--acento); opacity:.35; }
 
   .grupo { margin-bottom:18px; }
@@ -44,9 +161,24 @@
   .grupo + .grupo { border-top:1px solid var(--borde); padding-top:14px; }
 
   .proyecto { margin-bottom:8px; }
-  .proyecto > .cabecera { display:block; padding:4px 10px; font-size:13px; font-weight:600;
-                          color:var(--texto); letter-spacing:.01em; }
-  .proyecto > .cabecera:hover { color:var(--acento); text-decoration:none; }
+  .proyecto .cabecera { display:block; padding:4px 10px 4px 0; font-size:13px; font-weight:600;
+                        color:var(--texto); letter-spacing:.01em; flex:1; min-width:0;
+                        overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .proyecto .cabecera:hover { color:var(--acento); text-decoration:none; }
+  .fila-proyecto { display:flex; align-items:center; }
+  /* El triángulo es un botón de verdad y no el propio título: el título ya
+     lleva a la ficha del proyecto, y robarle el clic para plegar rompería el
+     único camino que hay hasta ella desde aquí. */
+  .plegar { background:none; border:0; cursor:pointer; color:var(--texto-3);
+            padding:4px 6px 4px 8px; line-height:1; font-size:10px;
+            transition:transform .12s; transform:rotate(90deg); }
+  .plegar:hover { color:var(--texto); }
+  .proyecto.plegado .plegar { transform:rotate(0deg); }
+  .proyecto.plegado > .hijos { display:none; }
+  /* Plegado, el número dice cuánto hay debajo: una lista que se esconde sin
+     decir cuánto esconde se lee como una lista vacía. */
+  .cuenta-slots { font-size:11px; color:var(--texto-3); padding-right:8px; }
+  .proyecto:not(.plegado) .cuenta-slots { display:none; }
   /* La guía vertical dice «esto cuelga de lo de arriba» sin gastar una palabra. */
   .proyecto > .hijos { margin-left:16px; padding-left:8px; border-left:1px solid var(--borde); }
   .vacio { padding:4px 10px; font-size:11px; color:var(--texto-3); font-style:italic; }
@@ -71,6 +203,31 @@
   .punto.cerrado    { background:transparent; box-shadow:inset 0 0 0 1px var(--borde); }
   /* La ruta se alinea con el nombre, no con el punto. */
   .item .sub { padding-left:11px; }
+
+  /* La fila de una ventana suelta lleva su acción de ocultar al lado, y sólo
+     aparece al pasar por encima: son diez filas, y diez botones «Ocultar»
+     permanentes compiten con lo único que se hace casi siempre, que es abrir.
+     Con el teclado sí se ve siempre —`:focus-within`—, porque quien no usa el
+     ratón no tiene forma de descubrir lo que sólo sale al pasar. */
+  .fila-suelta { display:flex; align-items:center; gap:4px; }
+  .fila-suelta > .item { flex:1; min-width:0; }
+  .fila-suelta .ocultar-una { opacity:0; transition:opacity .12s; }
+  .fila-suelta:hover .ocultar-una,
+  .fila-suelta:focus-within .ocultar-una { opacity:1; }
+  .fila-suelta .ocultar-una button { font-size:11px; padding:2px 6px; }
+  .fila-suelta .peligro-sutil:hover { color:var(--alerta); }
+
+  .slot-vacio { padding:24px; max-width:52ch; display:flex; flex-direction:column; gap:10px; }
+  .slot-vacio p { margin:0; }
+
+  details.ocultas { padding:2px 10px; }
+  details.ocultas > summary { font-size:11px; color:var(--texto-3); cursor:pointer;
+                              font-style:italic; list-style:none; }
+  details.ocultas > summary::before { content:"+ "; }
+  .fila-oculta { display:flex; align-items:center; gap:6px; padding:3px 0; font-size:11px; }
+  .fila-oculta > .mono { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
+                         white-space:nowrap; color:var(--texto-3); }
+  .fila-oculta button { font-size:11px; padding:2px 6px; }
   @keyframes latido { 0%, 100% { opacity:1; } 50% { opacity:.2; } }
   @media (prefers-reduced-motion: reduce) { .punto.trabajando { animation:none; } }
 
@@ -83,6 +240,14 @@
   .pestana.activa { background:var(--superficie); color:var(--texto);  }
   .pestana .idx { font-family:ui-monospace,monospace; font-size:10px; opacity:.6; }
   .pestana .txt { overflow:hidden; text-overflow:ellipsis; }
+  /* Una pestaña que no es de este slot se apaga y lleva marca. No es color
+     nuevo: es la escala de atención de siempre —`--espera` para «esto no está
+     donde parece»— y el tono apagado que este sistema usa para lo secundario. */
+  .pestana.huerfana, .pestana.ajena { color:var(--texto-4); }
+  .pestana .marca { font-size:10px; letter-spacing:.04em; padding:1px 6px;
+                    border-radius:999px; background:var(--superficie2);
+                    color:var(--espera); flex:none; white-space:nowrap; }
+  .pestana.huerfana.activa, .pestana.ajena.activa { color:var(--texto-2); }
   .pestana .cerrar { opacity:0; padding:0 2px; border-radius:3px; }
   .pestana:hover .cerrar { opacity:.55; }
   .pestana .cerrar:hover { opacity:1; color:var(--alerta); background:var(--elevado); }
@@ -188,6 +353,16 @@
     background:var(--acento); vertical-align:2px; margin-left:2px; }
   #lienzos-punto.hay, #consultas-punto.hay { display:inline-block; }
 
+  /* Los programados reusan la ficha de las consultas: son lo mismo —algo con
+     estado que acaba en el panel— y dos aspectos para lo mismo obligan a
+     aprenderse dos. Lo propio es el botón de cancelar y la hora. */
+  #programar-texto { width:100%; min-height:64px; font-size:13px; resize:vertical; }
+  #programar-cuando { width:100%; }
+  .programado .cancelar { float:right; background:none; border:0; padding:0 2px;
+    color:var(--texto-4); cursor:pointer; font-size:11px; }
+  .programado .cancelar:hover { color:var(--alerta); }
+  .programado .motivo { font-size:11px; color:var(--texto-3); margin-top:3px; }
+
   #lienzos-buscar { width:100%; margin-bottom:8px; font-size:12.5px; }
   #lienzos-lista { overflow-y:auto; max-height:44%; }
   .lienzo-item { border:1px solid var(--borde); border-radius:10px; padding:8px 10px;
@@ -225,7 +400,75 @@
   .dec .dbb button { padding:3px 11px; font-size:12px; }
   .lienzo-crudo { font:11.5px/1.6 var(--mono, ui-monospace, monospace);
     white-space:pre-wrap; color:var(--texto-3); }
-  .lanzar-slot { margin:0 0 6px 22px; }
+  .lienzo-fallo { font-size:12px; color:var(--espera); margin:0 0 6px; }
+
+  /* Los diagramas (`arquitectura` y `pasos`).
+   *
+   * 🔴 El color vive AQUÍ y no en el JavaScript que dibuja: las cajas salen con
+   * su clase y el sistema visual les pone el tono. Un hex dentro del motor
+   * sería la única pieza del hub que no cambia cuando cambie la paleta.
+   * `max-width:100%` es lo que deja que el mismo SVG encoja en el panel y se
+   * vea a tamaño natural dentro de la lupa. */
+  .lienzo-svg { display:block; max-width:100%; height:auto; margin:2px 0 8px; }
+  .lienzo-svg .nd rect { fill:var(--superficie); stroke:var(--texto-4); stroke-width:1.5; }
+  .lienzo-svg .nd text { fill:var(--texto); font:12.5px Inter, system-ui, sans-serif; }
+  .lienzo-svg .nd { cursor:default; }
+  .lienzo-svg .nd:hover rect { filter:brightness(1.35); }
+  .lienzo-svg .nd-entrada rect { fill:var(--superficie2); stroke:var(--acento); }
+  .lienzo-svg .nd-computo rect { stroke:var(--espera); }
+  .lienzo-svg .nd-cola    rect { stroke:var(--ok); }
+  .lienzo-svg .nd-almacen rect { stroke:var(--texto-4); }
+  .lienzo-svg .ar { fill:none; stroke:var(--acento); stroke-width:1.5; }
+  .lienzo-svg .ar.flojo { stroke:var(--texto-4); stroke-dasharray:4 3; }
+  /* El contenido de un `marker` no hereda del camino que lo usa: se pinta aquí. */
+  .lienzo-svg marker.flu path { fill:var(--acento); }
+  .lienzo-svg marker.lec path { fill:var(--texto-4); }
+
+  .lienzo-leyenda { display:flex; gap:10px; flex-wrap:wrap; font-size:11px;
+    color:var(--texto-4); margin-bottom:4px; }
+  .lienzo-leyenda i { display:inline-block; width:9px; height:9px; border-radius:3px;
+    margin-right:4px; vertical-align:-1px; border:1.5px solid var(--texto-4);
+    background:var(--superficie); }
+  .lienzo-leyenda .nd-entrada i { border-color:var(--acento); background:var(--superficie2); }
+  .lienzo-leyenda .nd-computo i { border-color:var(--espera); }
+  .lienzo-leyenda .nd-cola    i { border-color:var(--ok); }
+
+  /* La lupa: el diagrama a pantalla completa. El panel mide ~330 px y una
+     arquitectura de cinco niveles mide mil — dentro se escala hasta que las
+     etiquetas no se leen, que es la única forma en que este motor falla sin
+     que nada parezca roto. */
+  .lienzo-lupa { position:fixed; inset:0; z-index:60; background:rgba(6,10,14,.82);
+    display:flex; align-items:center; justify-content:center; padding:24px; }
+  .lienzo-lupa .lupa-caja { background:var(--superficie); border:1px solid var(--borde);
+    border-radius:16px; padding:14px 16px; max-width:min(1200px, 94vw); max-height:92vh;
+    display:flex; flex-direction:column; min-height:0; }
+  .lienzo-lupa .cabl { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .lienzo-lupa .cabl b { flex:1; font-size:14px; }
+  .lienzo-lupa .lupa-tela { overflow:auto; min-height:0; }
+  .lienzo-lupa .lienzo-svg { max-width:none; }
+
+  /* La `comparativa`. Una tabla y no tarjetas: lo que decide es dónde difieren
+     las opciones, y eso sólo se ve con los valores del mismo criterio uno
+     encima de otro. Con scroll propio porque el panel es estrecho y la
+     alternativa —romper las columnas— es perder justo esa comparación. */
+  .lienzo-tabla { overflow-x:auto; margin-bottom:8px; }
+  .lienzo-tabla table { border-collapse:collapse; font-size:12px; width:100%; }
+  .lienzo-tabla th, .lienzo-tabla td { border:1px solid var(--borde); padding:5px 8px;
+    text-align:left; vertical-align:top; }
+  .lienzo-tabla thead th { color:var(--texto-3); font-weight:600; font-size:11px;
+    text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
+  .lienzo-tabla tbody th { font-weight:500; color:var(--texto); }
+  .lienzo-tabla td { color:var(--texto-2); }
+  .lienzo-tabla .nota-op { font-size:11px; color:var(--texto-4); margin-top:2px;
+    font-weight:400; }
+  .lienzo-tabla tr.elegida { background:color-mix(in srgb, var(--acento) 10%, transparent); }
+  .et-eleccion { font-size:10px; padding:1px 7px; border-radius:999px; margin-left:5px;
+    background:color-mix(in srgb, var(--acento) 18%, transparent); color:var(--acento); }
+  .lienzo-porque { font-size:12px; color:var(--texto-2); margin:0 0 8px; }
+  /* Las dos acciones de un slot cerrado, en una sola fila: «Lanzar» es lo que
+     se hace casi siempre y «Quitar» lo que se hace una vez, así que van juntas
+     pero no compiten — el peligro se distingue por el tono, no por el tamaño. */
+  .lanzar-slot { display:flex; gap:6px; margin:0 0 6px 22px; }
   .por-ventana { display:none; flex-direction:column; flex:1; min-height:0; }
   .por-ventana.viendo { display:flex; }
   .por-ventana summary { font-size:12px; }
@@ -256,6 +499,20 @@
    *
    * `overflow-y` sigue siendo `scroll`: xterm mueve el viewport por código
    * (`scrollTop`) para pintar el scrollback. Se oculta la barra, no el scroll. */
+  /* 🔴 `touch-action: none`, y es lo que hacía que el dedo no sirviera de nada.
+   *
+   * `.xterm-viewport` tiene `overflow-y: scroll`, así que un arrastre dentro de
+   * ella lo reclama el NAVEGADOR como scroll nativo: mueve el viewport, xterm lo
+   * devuelve al fondo en cuanto se entera, y el `preventDefault` del manejador
+   * de abajo ya no puede quitárselo —cuando el gesto está reclamado, llega
+   * tarde—. El síntoma era exacto: *«no puedo scrollear aún»*, sin que nada
+   * fallara por ninguna parte.
+   *
+   * Con `none` el navegador no reclama nada y todos los `touchmove` llegan al
+   * manejador, que los convierte en ruedas. El precio es el pellizco para hacer
+   * zoom DENTRO de la terminal, y ahí no se pierde nada: el tamaño de letra
+   * tiene sus botones A− / A+ al lado. */
+  #marco, .xterm, .xterm-viewport, .xterm-screen { touch-action: none; }
   .xterm-viewport {
     background: var(--lienzo) !important;
     scrollbar-width: none;          /* estándar */
@@ -286,13 +543,59 @@
        'cerrado':    'Sin ventana abierta',
      } %}
   <nav class="rail">
+    {# En el móvil el raíl entero se cambia por esto: un `select` nativo, que
+       abre el selector del sistema y se maneja con el pulgar. Medido en su
+       teléfono el 2026-09-16 — la lista ocupaba 287 px de una pantalla de 844,
+       un tercio, para no elegir nada la mayor parte del tiempo.
+
+       🔴 Las opciones salen del MISMO bucle que los enlaces de abajo, no de una
+       segunda consulta: dos fuentes para la misma lista se separan en cuanto
+       alguien toque una (es la primera regla de `CLAUDE.md` aplicada a una
+       plantilla). Lo único que no viaja es el botón «Lanzar» de un slot cerrado,
+       y no hace falta: el área central ya ofrece «Abrir una ventana aquí».
+
+       Depende de JavaScript, y aquí eso es gratis: sin JavaScript no hay
+       terminal, así que esta pantalla no existe. #}
+    <select id="ir-a" aria-label="Ir a un slot o ventana">
+      {% for p in proyectos | selectattr('en_uso') | list %}
+      <optgroup label="{{ p.nombre }}">
+        {% for s in p.slots %}
+        <option value="/trabajo?slot={{ s.id }}"
+                {% if slot and s.id == slot.id %}selected{% endif %}>
+          {{ s.nombre }}{% if s.estado == 'cerrado' %} · sin ventana{% endif %}</option>
+        {% endfor %}
+        {% if not p.slots %}
+        <option value="/proyecto/{{ p.id }}">{{ p.nombre }} · sin slots</option>
+        {% endif %}
+      </optgroup>
+      {% endfor %}
+      {% if sueltas %}
+      <optgroup label="Sin organizar">
+        {% for v in sueltas %}
+        <option value="/trabajo?session={{ v.session }}{% if v.ventana is not none %}&ventana={{ v.ventana }}{% endif %}"
+                {% if v.session == session and v.ventana == ventana and not slot %}selected{% endif %}>
+          {{ v.etiqueta }} · {{ v.session }}</option>
+        {% endfor %}
+      </optgroup>
+      {% endif %}
+    </select>
+
     {% set en_uso = proyectos | selectattr('en_uso') | list %}
     {% if en_uso %}
     <div class="grupo">
       <div class="rotulo">Proyectos</div>
       {% for p in en_uso %}
-      <div class="proyecto">
-        <a class="cabecera" href="/proyecto/{{ p.id }}">{{ p.nombre }}</a>
+      {# `mirando` lo decide el servidor, que ya sabe de qué proyecto cuelga el
+         slot abierto. El script no tiene que ir a buscarlo al DOM: menos
+         adivinanza y, sobre todo, una condición que se puede probar. #}
+      <div class="proyecto {{ 'mirando' if slot and slot.proyecto_id == p.id }}"
+           data-proyecto="{{ p.id }}">
+        <div class="fila-proyecto">
+          <button type="button" class="plegar" aria-expanded="true"
+                  title="Plegar o desplegar este proyecto">▶</button>
+          <a class="cabecera" href="/proyecto/{{ p.id }}">{{ p.nombre }}</a>
+          <span class="cuenta-slots">{{ p.slots | length or '' }}</span>
+        </div>
         <div class="hijos">
           {# El punto lleva `title` porque el color solo no dice nada la primera
              vez que lo ves, y porque «detenido» significa dos cosas que el
@@ -308,11 +611,27 @@
              único «Lanzar» vivía en /proyecto: quien entraba a trabajar veía
              «Sin ventana abierta» y ninguna forma de abrirla. #}
           {% if s.estado == 'cerrado' %}
-          <form method="post" action="/slot/{{ s.id }}/abrir" class="lanzar-slot">
-            <input type="hidden" name="proyecto_id" value="{{ p.id }}">
-            <input type="hidden" name="destino" value="/trabajo?slot={{ s.id }}">
-            <button class="sutil" title="Abre una ventana de tmux en la ruta del slot (o en el asiento del proyecto)">Lanzar</button>
-          </form>
+          <div class="lanzar-slot">
+            <form method="post" action="/slot/{{ s.id }}/abrir" class="enlinea">
+              <input type="hidden" name="proyecto_id" value="{{ p.id }}">
+              <input type="hidden" name="destino" value="/trabajo?slot={{ s.id }}">
+              <button class="sutil" title="Abre una ventana de tmux en la ruta del slot (o en el asiento del proyecto)">Lanzar</button>
+            </form>
+            {# Un slot que ya no se va a usar se quita desde donde estorba, no
+               yendo a buscar la ficha del proyecto. Con confirmación y diciendo
+               qué se lleva: la nota de un slot es lo único del hub que no se
+               reconstruye escaneando (regla dura 1), y archivar existe para no
+               tener que borrar. #}
+            <form method="post" action="/slot/{{ s.id }}/estado" class="enlinea"
+                  data-confirmar-titulo="Borrar el slot «{{ s.nombre }}»"
+                  data-confirmar-ok="Borrarlo"
+                  data-confirmar="Se borra del hub{% if s.nota %} y con él su nota, que no se puede recuperar{% endif %}. No toca nada en el disco. Si sólo quieres quitarlo de en medio, archívalo desde la ficha del proyecto.">
+              <input type="hidden" name="proyecto_id" value="{{ p.id }}">
+              <input type="hidden" name="accion" value="borrar">
+              <input type="hidden" name="destino" value="/trabajo">
+              <button class="sutil peligro-sutil" title="Borra el slot del hub; no toca el disco">Quitar</button>
+            </form>
+          </div>
           {% endif %}
           {% endfor %}
           {# Sin esto la cabecera queda huérfana y se lee como un ítem más. #}
@@ -329,25 +648,75 @@
 
     <div class="grupo">
       <div class="rotulo">Sin organizar</div>
-      {% for s in sesiones %}
-      <a class="item {{ 'activo' if s.session == session and not slot }}"
-         href="/trabajo?session={{ s.session }}">
-        <span class="punto"></span>{{ s.session }}
-        <span class="sub">
-          {% if s.sin_slot %}{{ s.sin_slot }} de {{ s.ventanas }} ventana{{ 's' if s.ventanas != 1 }} sin slot
-          {%- else %}ya organizada{% endif %}
-        </span>
-      </a>
+      {# Una fila por VENTANA, no por sesión. Por sesión, una medio organizada
+         —dos ventanas en un slot y la tercera suelta— salía a la vez arriba
+         bajo su slot y aquí abajo, y al pulsarla se abría la ventana ACTIVA,
+         que solía ser una de las ya vinculadas: la suelta que justificaba la
+         entrada no se veía por ninguna parte. #}
+      {% for v in sueltas %}
+      <div class="fila-suelta">
+        <a class="item {{ 'activo' if v.session == session and v.ventana == ventana and not slot }}"
+           href="/trabajo?session={{ v.session }}{% if v.ventana is not none %}&ventana={{ v.ventana }}{% endif %}">
+          <span class="punto"></span>{{ v.etiqueta }}
+          <span class="sub">
+            {%- if v.desconocida %}{{ v.session }} · sin ver todavía
+            {%- else %}{{ v.session }}:{{ v.ventana }}{% if v.ruta_corta %} · {{ v.ruta_corta }}{% endif %}
+            {%- endif %}
+          </span>
+        </a>
+        {# Ocultar vive AQUÍ y no en un menú de la portada: el sitio donde algo
+           estorba es el sitio donde uno quiere quitarlo de en medio. #}
+        {% if v.pane_id %}
+        {# Dos acciones y NO son la misma. Ocultar la quita de la lista y la deja
+           corriendo; cerrar mata lo que haya dentro. Estaban las dos ausentes
+           aquí: para lo segundo había que ir a las pestañas, y allí la × se
+           escondía justo cuando la sesión tenía una sola ventana — que es la
+           forma de casi todo lo que se acumula en esta bandeja. #}
+        <form method="post" action="/panel/accion" class="ocultar-una">
+          <input type="hidden" name="pane_id" value="{{ v.pane_id }}">
+          <input type="hidden" name="accion" value="ocultar">
+          <input type="hidden" name="destino" value="/trabajo?session={{ session }}{% if ventana is not none %}&ventana={{ ventana }}{% endif %}">
+          <button class="sutil" title="Quitarla de la bandeja sin cerrarla: sigue corriendo">Ocultar</button>
+        </form>
+        <form method="post" action="/panel/accion" class="ocultar-una"
+              data-confirmar-titulo="{% if v.ultima %}Cerrar «{{ v.session }}»{% else %}Cerrar la ventana {{ v.session }}:{{ v.ventana }}{% endif %}"
+              data-confirmar-ok="{% if v.ultima %}Cerrar la sesión{% else %}Cerrar la ventana{% endif %}"
+              data-confirmar="«{{ v.etiqueta }}»{% if v.ultima %} es la única ventana de «{{ v.session }}», así que se cierra la sesión entera.{% endif %} Muere todo lo que esté corriendo dentro.">
+          <input type="hidden" name="pane_id" value="{{ v.pane_id }}">
+          <input type="hidden" name="accion" value="cerrar_ventana">
+          {# Si lo que se cierra es de la sesión que se está mirando, no se puede
+             volver aquí: la sesión puede haber muerto con ella y quedaría un
+             terminal atado a algo que ya no existe. #}
+          <input type="hidden" name="destino" value="{% if v.session == session %}/trabajo{% else %}/trabajo?session={{ session }}{% if ventana is not none %}&ventana={{ ventana }}{% endif %}{% endif %}">
+          <button class="sutil peligro-sutil" title="{% if v.ultima %}Cierra la ventana y con ella la sesión «{{ v.session }}»{% else %}Cierra la ventana y mata lo que corra dentro{% endif %}">Cerrar</button>
+        </form>
+        {% endif %}
+      </div>
       {% else %}
       <div class="vacio">Todo vinculado a un slot.</div>
       {% endfor %}
-      {% if sesiones_organizadas %}
-      {# Se dice cuántas se ocultan: una lista que esconde cosas en silencio se
-         lee como una lista incompleta. #}
-      <div class="vacio">
-        + {{ sesiones_organizadas | length }} sesión{{ 'es' if sesiones_organizadas | length != 1 }}
-        ya en slots, arriba
-      </div>
+
+      {# Lo oculto se cuenta SIEMPRE y se puede destapar de un clic. Una lista
+         que esconde en silencio se lee como la lista completa, y entonces
+         «no aparece» y «no existe» dejan de distinguirse. #}
+      {% if ocultas %}
+      <details class="ocultas">
+        <summary>{{ ocultas | length }} oculta{{ 's' if ocultas | length != 1 }}</summary>
+        {% for v in ocultas %}
+        <form method="post" action="/oculto/mostrar" class="fila-oculta">
+          <input type="hidden" name="session" value="{{ v.session }}">
+          <input type="hidden" name="ventana" value="{{ v.ventana if v.ventana is not none }}">
+          <input type="hidden" name="destino" value="/trabajo?session={{ session }}{% if ventana is not none %}&ventana={{ ventana }}{% endif %}">
+          <span class="mono">{{ v.session }}{% if v.ventana is not none %}:{{ v.ventana }}{% endif %}</span>
+          <button class="sutil" title="Volver a enseñarla en la bandeja">Mostrar</button>
+        </form>
+        {% endfor %}
+        {# El raíl sólo puede listar lo oculto que hoy está ABIERTO: se compone
+           de las ventanas vivas. Una sesión de node apagada tiene su regla
+           guardada y no aparece aquí, así que hay que decir dónde está la lista
+           entera — si no, ocultarla y apagarla la dejaría sin forma de volver. #}
+        <div class="vacio">Las que hoy no estén abiertas se destapan desde el panorama.</div>
+      </details>
       {% endif %}
     </div>
   </nav>
@@ -370,6 +739,8 @@
         <button id="mas" class="sutil" title="Aumentar la letra" aria-label="Aumentar la letra">A+</button>
       </div>
       <button id="alternar-nota" class="sutil" title="Mostrar u ocultar la nota">Nota</button>
+      <button id="pantalla-completa" class="sutil" aria-pressed="false"
+              title="Darle la pantalla entera al terminal">⤢</button>
       {% call ui.menu_ajustes('Ajustes de la vista') %}
         <div class="rotulo-menu">Reparto de la pantalla</div>
         <button type="button" data-preset="comodo">Cómodo</button>
@@ -383,7 +754,34 @@
       <span id="estado" class="tenue"></span>
     </div>
     <div class="pestanas" id="ventanas"></div>
-    <div id="marco"></div>
+    {# Un slot sin ninguna ventana abierta. Antes este caso no existía porque se
+       tapaba solo: la vista cogía prestada la primera sesión de tmux que
+       hubiera y pintaba SU terminal debajo del nombre de este slot. Ahora se
+       dice, y se ofrece lo único que hay que hacer aquí. #}
+    {% if slot and not session %}
+    <div class="slot-vacio">
+      <p><strong>«{{ slot.nombre }}» no tiene ninguna ventana abierta.</strong></p>
+      <p class="tenue">Este slot es una línea de trabajo, no una terminal: existe
+      aunque no haya nada corriendo. Ábrela y se queda atada a él.</p>
+      <form method="post" action="/slot/{{ slot.id }}/abrir">
+        <input type="hidden" name="proyecto_id" value="{{ slot.proyecto_id }}">
+        <input type="hidden" name="destino" value="/trabajo?slot={{ slot.id }}">
+        <button class="principal" title="Abre una ventana de tmux en la ruta del slot">Abrir una ventana aquí</button>
+      </form>
+      {% if slot.ruta %}<p class="tenue mono">{{ slot.ruta }}</p>{% endif %}
+    </div>
+    {% endif %}
+    {# 🔴 El envoltorio existe SÓLO para la pantalla completa, y por una razón
+       que no se puede rodear: la hoja del navegador le fija el tamaño al
+       elemento a pantalla completa con `!important`, y eso le gana hasta a un
+       estilo en línea — es lo único del CSS que no se puede pisar desde el
+       autor. Medido en su teléfono: con `height:435px` puesto a mano, el marco
+       seguía midiendo 806.
+
+       Así que va a pantalla completa ESTE, que puede quedarse del tamaño que
+       quiera el navegador, y el terminal se coloca dentro, donde sí mandamos
+       nosotros. #}
+    <div id="lienzo-terminal"><div id="marco"></div></div>
     {# Confirmación de que el texto salió al portapapeles. Sin ella, copiar y no
        copiar se ven exactamente igual, que es como se pierde una selección
        creyendo que se tiene. #}
@@ -404,6 +802,10 @@
          meterla en el motor de lienzos obligaría a inventarle un tipo y a
          duplicar ese estado en dos sitios que luego divergen. #}
       <button type="button" data-hoja="consultas">Consultas <span id="consultas-punto"></span></button>
+      {# Programados aparte de las consultas aunque las dos acaben en el panel:
+         una consulta la hace Claude y espera respuesta de fuera; esto lo
+         escribe él para su propio Claude. Mismo destino, origen opuesto. #}
+      <button type="button" data-hoja="programados">Programados</button>
     </div>
 
     <div class="hoja" data-hoja="nota">
@@ -593,6 +995,38 @@
       </div>
       <div id="consultas-lista"></div>
     </div>
+
+    <div class="hoja" data-hoja="programados" hidden>
+      {# Sin slot no hay destino: el mensaje se entrega al panel del slot, que es
+         la única forma de cumplir la condición de la regla dura 15 —el hub abrió
+         esa ventana y puede comprobar qué corre dentro—. El JS enseña u oculta
+         este formulario según la ventana que se esté mirando. #}
+      <div id="programar-forma" hidden>
+        <label for="programar-texto">Mensaje</label>
+        <textarea id="programar-texto"
+                  placeholder="Lo que quieres que lea Claude a esa hora…"></textarea>
+        <label for="programar-cuando" style="margin-top:8px">A qué hora</label>
+        {# `datetime-local` a propósito: se escribe en la hora de quien mira y el
+           JS la pasa a UTC antes de mandarla. El servidor RECHAZA una hora sin
+           zona en vez de suponer una — aquí, suponer mal son seis horas. #}
+        <input type="datetime-local" id="programar-cuando">
+        <div class="barra" style="margin-top:8px">
+          <button type="button" id="programar-enviar" class="aceptar">Programar</button>
+          <span class="tenue" id="programar-estado"></span>
+        </div>
+        <p class="tenue" style="margin:8px 0 0">
+          Va tu texto tal cual, sin nada añadido. Se escribe en la ventana de este
+          slot a esa hora y sólo si ahí sigue corriendo un agente (Claude Code o
+          Codex). <strong>Se intenta una vez</strong>: si no se puede, no se manda
+          y aquí se dice por qué.
+        </p>
+      </div>
+      <p class="tenue" id="programar-sin-slot" hidden>
+        Esta ventana no pertenece a ningún slot, así que no hay dónde entregar un
+        mensaje. Dale un slot en la pestaña «Nota».
+      </p>
+      <div id="programados-lista" style="margin-top:12px"></div>
+    </div>
   </aside>
 </div>
 
@@ -602,7 +1036,18 @@
 (function () {
   const SESION = {{ (session or '') | tojson }};
   const VENTANA = {{ ventana | tojson }};
-  if (!SESION) { document.getElementById('estado').textContent = 'sin sesiones de tmux'; return; }
+  // El slot que la cabecera está anunciando. Las pestañas lo necesitan
+  // para poder decir cuáles NO son suyas.
+  const SLOT = {{ (slot.id if slot else none) | tojson }};
+  // Sin sesión hay DOS casos y decir el que no es despista: puede que no haya
+  // ningún tmux, o puede que este slot no tenga ventana abierta —que tiene su
+  // propio bloque arriba, con el botón de abrirla—.
+  const SLOT_VACIO = document.querySelector('.slot-vacio') !== null;
+  if (!SESION) {
+    document.getElementById('estado').textContent =
+      SLOT_VACIO ? 'este slot no tiene ventana abierta' : 'sin sesiones de tmux';
+    return;
+  }
 
   const guardado = {
     get: (k, d) => { try { return JSON.parse(localStorage.getItem('hub.' + k)) ?? d; } catch { return d; } },
@@ -610,6 +1055,19 @@
   };
 
   const taller = document.getElementById('taller');
+  /* El selector de móvil. Navega y ya: no hay estado que mantener, porque la
+   * página que carga vuelve a pintar el `selected` que toca desde el servidor. */
+  /* `selectorMovil` y no `irA`: ya hay una `function irA(indice)` más abajo que
+   * salta de ventana, y un `const` con ese nombre rompe el script ENTERO con un
+   * SyntaxError — sin terminal y sin ningún síntoma en el HTTP 200. Lo cazó el
+   * arnés de la regla 11 al primer intento. */
+  const selectorMovil = document.getElementById('ir-a');
+  if (selectorMovil) {
+    selectorMovil.addEventListener('change', () => {
+      if (selectorMovil.value) location.href = selectorMovil.value;
+    });
+  }
+
   const estado = document.getElementById('estado');
 
   // Estado de la conexión declarado ARRIBA a propósito: `reajustar()` lo lee, y
@@ -645,6 +1103,65 @@
   const ajuste = new FitAddon.FitAddon();
   term.loadAddon(ajuste);
   term.open(document.getElementById('marco'));
+
+  /* ── el dedo, que aquí es la rueda ───────────────────────────────────────
+   *
+   * 🔴 En el móvil no se podía recorrer el historial: *«no puedo hacer scroll
+   * en la terminal, sólo veo el último pedazo»* (2026-09-16).
+   *
+   * El historial NO lo guarda xterm: lo guarda tmux, y se recorre con la rueda
+   * porque el espejo lleva `mouse on` (`terminal.py`). En un teléfono no hay
+   * rueda, y la barra de scroll está oculta a propósito —ocupaba columnas de
+   * texto, y por qué está documentado arriba—, así que no quedaba ningún gesto.
+   *
+   * Se traduce el arrastre vertical a eventos `wheel` y se DEJA QUE XTERM LOS
+   * CODIFIQUE. Inventar aquí la secuencia SGR sería adivinar qué modo de ratón
+   * pidió la aplicación de dentro, y son varios; xterm ya lo sabe porque él
+   * negoció el modo. Va por el mismo canal que las teclas que él escribe: esto
+   * no inyecta nada por su cuenta, traduce un gesto suyo.
+   *
+   * `passive:false` para poder frenar el scroll de la página: sin eso el gesto
+   * mueve el documento y la terminal se queda igual. */
+  const PASO_RUEDA = 24;            // px de arrastre por muesca, ~una línea
+  const marcoTerm = document.getElementById('marco');
+  // A pantalla completa va el envoltorio, no el marco: ver el comentario del
+  // marcado. Al elemento a pantalla completa no se le puede cambiar el tamaño.
+  const lienzoTerm = document.getElementById('lienzo-terminal');
+  let dedoY = null, arrastre = 0;
+
+  marcoTerm.addEventListener('touchstart', (e) => {
+    // Un solo dedo. Con dos, el gesto es del navegador (zoom) y no se toca.
+    if (e.touches.length !== 1) { dedoY = null; return; }
+    dedoY = e.touches[0].clientY;
+    arrastre = 0;
+  }, { passive: true });
+
+  marcoTerm.addEventListener('touchmove', (e) => {
+    if (dedoY === null || e.touches.length !== 1) return;
+    const y = e.touches[0].clientY;
+    arrastre += dedoY - y;
+    dedoY = y;
+    /* Se frena SIEMPRE, no sólo al completar una muesca: si se deja pasar el
+     * primer tramo, el navegador da el gesto por suyo y ya no lo suelta. */
+    e.preventDefault();
+    if (Math.abs(arrastre) < PASO_RUEDA) return;
+    /* Medido el 2026-09-16 con el modo de ratón activo: `.xterm`,
+     * `.xterm-viewport` y `.xterm-screen` producen los tres `ESC[<64;1;1M`;
+     * `#marco` NO, porque el manejador de xterm vive DENTRO y un evento no
+     * burbujea hacia abajo. Se usa la raíz `.xterm`, que no depende de cómo
+     * xterm reparta sus hijos. */
+    const destino = document.querySelector('.xterm') || marcoTerm;
+    while (Math.abs(arrastre) >= PASO_RUEDA) {
+      const haciaArriba = arrastre < 0;
+      arrastre += haciaArriba ? PASO_RUEDA : -PASO_RUEDA;
+      destino.dispatchEvent(new WheelEvent('wheel', {
+        deltaY: haciaArriba ? -PASO_RUEDA : PASO_RUEDA,
+        deltaMode: 0, bubbles: true, cancelable: true,
+      }));
+    }
+  }, { passive: false });
+
+  marcoTerm.addEventListener('touchend', () => { dedoY = null; }, { passive: true });
 
   /* ── copiar al seleccionar ───────────────────────────────────────────────
    *
@@ -814,6 +1331,122 @@
     }
   }
 
+  /* ── el terminal a solas ─────────────────────────────────────────────────
+   *
+   * Dos capas independientes, y ése es el punto: esconder lo que no es terminal
+   * funciona en cualquier navegador, y la pantalla completa del sistema —que se
+   * lleva además la barra de direcciones— se pide sólo si existe. Si falla o no
+   * está, la primera capa ya ha dado lo suyo y no se avisa de nada: no hay nada
+   * que el usuario pueda hacer al respecto.
+   *
+   * 🔴 Se reajusta SIEMPRE después, porque cambiar el alto sin decírselo a xterm
+   * y a tmux deja las dos partes creyendo tamaños distintos — que es el fallo de
+   * las decisiones 90 y 93, y su síntoma son letras que no están. */
+  const botonPantalla = document.getElementById('pantalla-completa');
+
+  function pintarBotonPantalla() {
+    const a_solas = document.body.classList.contains('terminal-sola');
+    botonPantalla.setAttribute('aria-pressed', String(a_solas));
+    botonPantalla.title = a_solas
+      ? 'Devolver el raíl y la cabecera' : 'Darle la pantalla entera al terminal';
+    reajustar();
+  }
+
+  botonPantalla.addEventListener('click', () => {
+    const entrando = !document.body.classList.contains('terminal-sola');
+    document.body.classList.toggle('terminal-sola', entrando);
+    /* 🔴 La pantalla completa se le pide al MARCO DEL TERMINAL, no al documento.
+     * Pedírsela al documento daba «la página a pantalla completa», que no es lo
+     * mismo: el terminal seguía siendo una región con su barra, sus pestañas y
+     * la nota alrededor. Él lo dijo exacto: *«no hace el fullscreen de terminal
+     * sino de la página, yo esperaría que fuera a terminal completa»*.
+     *
+     * Con el marco, el navegador esconde todo lo demás y la salida la da el
+     * sistema (gesto atrás, Escape). La promesa se ignora a propósito: si la
+     * niega —iOS no la concede para un elemento cualquiera— queda la capa de
+     * CSS, que esconde el cromo y la nota y ya deja el terminal casi solo. */
+    if (entrando) {
+      lienzoTerm.requestFullscreen?.().catch(() => {});
+    } else if (document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => {});
+    }
+    pintarBotonPantalla();
+  });
+
+  /* Salir con el gesto del sistema no pasa por el botón. Sin esto, el hub se
+   * quedaría creyendo que sigue a solas y el raíl no volvería nunca. */
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && document.body.classList.contains('terminal-sola')) {
+      document.body.classList.remove('terminal-sola');
+    }
+    pintarBotonPantalla();
+  });
+
+  /* ── el teclado del móvil ────────────────────────────────────────────────
+   *
+   * *«¿Podemos hacer que la terminal haga el resize cuando saque el teclado
+   * para que vea que estoy escribiendo?»* (2026-09-16).
+   *
+   * 🔴 El teclado **no encoge la página**: la tapa. Por defecto el navegador
+   * sólo encoge el *viewport visual* y deja el de maquetación igual, así que
+   * `100dvh` sigue valiendo la pantalla entera y la mitad de abajo —donde está
+   * el cursor— queda debajo del teclado. No hay ningún evento de `resize` de
+   * ventana que lo cuente: hay que preguntarle a `visualViewport`.
+   *
+   * Lo que se hace: pasar el alto visible a una variable de CSS, esconder el
+   * cromo mientras se escribe (con el teclado quedan ~340 px y el cromo son
+   * 251) y reajustar xterm para que el prompt quede justo encima del teclado.
+   *
+   * El umbral del 75 % distingue el teclado de la barra de direcciones, que
+   * también encoge el viewport visual pero mucho menos. Sin él, desplazarse por
+   * la página escondería el raíl a cada momento. */
+  const vista = window.visualViewport;
+  if (vista) {
+    let tecladoAbierto = false;
+    const mirarTeclado = () => {
+      const util = Math.round(vista.height);
+      document.documentElement.style.setProperty('--alto-util', util + 'px');
+      const abierto = util < window.innerHeight * 0.75;
+      if (abierto !== tecladoAbierto) {
+        tecladoAbierto = abierto;
+        document.body.classList.toggle('teclado-abierto', abierto);
+      }
+      /* 🔴 En pantalla completa nativa, las reglas de arriba no le llegan al
+       * marco: el navegador lo saca del flujo y lo pinta en la capa superior
+       * con `position:fixed; inset:0`, o sea pegado a los cuatro bordes de la
+       * PANTALLA — el teclado le pasa por encima y el alto no cambia. Por eso
+       * en modo normal funcionaba y en pantalla completa no.
+       *
+       * Se le fija a mano, y `bottom:auto` es imprescindible: con `inset:0`
+       * puesto, arriba y abajo ya están anclados y un `height` a secas no
+       * decide nada. En línea, que es lo único que le gana a la hoja del
+       * navegador. */
+      if (document.fullscreenElement === lienzoTerm) {
+        /* 🔴 `top` TAMBIÉN, y esto es lo que faltaba. Medido en su teléfono el
+         * 2026-09-16: al abrirse el teclado Chrome no sólo encoge el viewport
+         * visual (759 → 435) sino que además lo **desplaza** 257 px hacia
+         * abajo. Un elemento a pantalla completa es `position:fixed` respecto
+         * al viewport de maquetación, que no se mueve: se queda anclado arriba,
+         * 257 px por encima de lo que se ve. Con el alto bien puesto y sin esto,
+         * media terminal cae fuera de pantalla por arriba — que es justo lo que
+         * él veía: «sí hace el resize al escribir pero no al abrir el teclado». */
+        marcoTerm.style.setProperty('top', Math.round(vista.offsetTop) + 'px');
+        marcoTerm.style.setProperty('bottom', 'auto');
+        marcoTerm.style.setProperty('height', util + 'px');
+      } else {
+        marcoTerm.style.removeProperty('top');
+        marcoTerm.style.removeProperty('bottom');
+        marcoTerm.style.removeProperty('height');
+      }
+      reajustar();
+    };
+    vista.addEventListener('resize', mirarTeclado);
+    /* También en `scroll`: con el teclado abierto el navegador desplaza el
+     * viewport visual sin cambiar su alto, y sin esto el terminal se queda
+     * dibujado donde estaba. */
+    vista.addEventListener('scroll', mirarTeclado);
+  }
+
   function reajustar() {
     if (ajustePedido) return;   // varias llamadas seguidas hacen un solo fit
     ajustePedido = true;
@@ -878,7 +1511,8 @@
     const marca = document.getElementById('cols');
     if (!marca) return;
     try {
-      const r = await fetch(`/api/sesion/${encodeURIComponent(SESION)}/ventanas`);
+      const r = await fetch(`/api/sesion/${encodeURIComponent(SESION)}/ventanas`
+        + (SLOT ? `?slot=${SLOT}` : ''));
       const vs = await r.json();
       const v = Array.isArray(vs) ? vs.find(x => x.indice === activa) : null;
       const suyas = v && v.ancho;
@@ -928,7 +1562,20 @@
     foco:   { fuente: 13, rail: false, nota: false },
   };
 
-  function aplicarPreset(nombre) {
+  /* `conFuente` distingue ELEGIR un preset de RESTAURARLO al cargar, y esa
+   * distinción es todo el arreglo.
+   *
+   * 🔴 Al arrancar, esto se llamaba igual que al hacer clic, así que
+   * `fuente(p.fuente)` pisaba el tamaño guardado **y lo reescribía encima**:
+   * los tres `guardado.set('fuente', ...)` del archivo no servían para nada y
+   * cualquier ajuste —«+», «−», «Ajustar a tmux»— se perdía en la siguiente
+   * carga. Medido en el arnés: con el preset «cómodo», `fontSize` acababa en 14
+   * y `hub.fuente` en localStorage también, viniera de donde viniera.
+   *
+   * En un teléfono es donde se nota: ahí se toca el tamaño casi siempre.
+   * Elegir un preset SÍ pone el suyo, y eso es lo que deja siempre una salida
+   * de un tamaño ilegible sin tener que acertar cuántas veces dar a «+». */
+  function aplicarPreset(nombre, conFuente = true) {
     const p = PRESETS[nombre]; if (!p) return;
     taller.classList.toggle('sin-rail', !p.rail);
     taller.classList.toggle('sin-nota', !p.nota);
@@ -939,7 +1586,7 @@
     // Cerrar el menú de ajustes al elegir: el efecto se ve en la pantalla de
     // detrás, y dejarlo abierto lo tapa justo cuando hay que juzgarlo.
     document.querySelectorAll('details.menu[open]').forEach(m => { m.open = false; });
-    fuente(p.fuente);
+    fuente(conFuente ? p.fuente : guardado.get('fuente', p.fuente));
   }
 
   document.querySelectorAll('[data-preset]').forEach(b =>
@@ -980,7 +1627,7 @@
     });
   });
 
-  aplicarPreset(guardado.get('preset', 'comodo'));
+  aplicarPreset(guardado.get('preset', 'comodo'), false);
   if (guardado.get('sinNota', false)) taller.classList.add('sin-nota');
   addEventListener('resize', reajustar);
 
@@ -1006,7 +1653,7 @@
     ws.onopen = () => { intentos = 0; estado.textContent = ''; reajustar(); term.focus(); };
     ws.onmessage = e => term.write(new Uint8Array(e.data));
     ws.onerror = () => { estado.textContent = 'error de conexión'; };
-    ws.onclose = () => {
+    ws.onclose = async () => {
       if (cerradoAposta) return;
       intentos++;
       // Espera creciente hasta 10 s: si WSL se está reiniciando, no sirve
@@ -1014,6 +1661,23 @@
       const espera = Math.min(10000, 500 * 2 ** Math.min(intentos, 5));
       estado.textContent = `desconectado · reintento en ${Math.round(espera / 1000)} s`;
       setTimeout(conectar, espera);
+      /* 🔴 Y se PREGUNTA por qué, porque de un apretón de manos rechazado el
+       * navegador no sabe nada: el servidor contesta 403 antes del `accept()`
+       * —lo que pide la decisión 163— y aquí sólo llega un cierre 1006. Sin esto
+       * la pantalla dice «desconectado» ante una terminal que está cerrada a
+       * propósito, y desde fuera eso es buscar un fallo que no existe.
+       *
+       * Va DESPUÉS de programar el reintento, no en su lugar: si él abre el
+       * interruptor, la terminal tiene que engancharse sola sin recargar. Y si
+       * la pregunta falla, no se toca el mensaje: entonces sí que era la red. */
+      try {
+        const r = await fetch('/api/acceso/terminal');
+        const d = r.ok ? await r.json() : null;
+        if (d && !d.de_casa && !d.remota_abierta) {
+          estado.innerHTML = 'la terminal desde fuera está <strong>cerrada</strong> — '
+            + '<a href="/acceso">ábrela en Acceso</a>';
+        }
+      } catch (e) { /* sin red, el mensaje de arriba ya es el correcto */ }
     };
   }
 
@@ -1057,15 +1721,21 @@
   let firmaPintada = null;
 
   function pintarVentanas() {
-    const firma = JSON.stringify(ventanas.map(v => [v.indice, v.etiqueta]));
+    // 🔴 `pertenece` va en la firma: sin él, vincular una ventana cambiaba
+    // el dato y la pestaña seguía pintada como antes hasta recargar, que es
+    // la misma clase de mentira que esto viene a quitar.
+    const visibles = ventanasVisibles();
+    const firma = JSON.stringify(visibles.map(v => [v.indice, v.etiqueta, v.pertenece]));
     if (firma !== firmaPintada) {
       firmaPintada = firma;
-      cajaVentanas.innerHTML = ventanas.map(v => `
-        <div class="pestana" data-ir="${v.indice}"
-             title="${escapar(v.etiqueta)} — doble clic para renombrar">
+      cajaVentanas.innerHTML = visibles.map(v => `
+        <div class="pestana ${clasePertenencia(v)}" data-ir="${v.indice}"
+             title="${escapar(v.etiqueta)}${escapar(porQue(v))} — doble clic para renombrar">
           <span class="idx">${v.indice}</span>
           <span class="txt">${escapar(v.etiqueta)}</span>
-          ${ventanas.length > 1 ? `<span class="cerrar" data-cerrar="${v.indice}">×</span>` : ''}
+          ${glifoDe(v)}
+          <span class="cerrar" data-cerrar="${v.indice}"
+                title="${ventanas.length === 1 ? 'Cerrar la ventana y con ella la sesión' : 'Cerrar la ventana'}">×</span>
         </div>`).join('') +
         `<div class="pestana" id="nueva-ventana" title="Ventana nueva en la ruta del slot">+</div>`;
     }
@@ -1074,26 +1744,130 @@
     });
   }
 
+  /* Las ventanas de OTRO slot de la misma sesión no salen en la franja.
+   *
+   * Cuando una sesión era de un solo slot, enseñarlas marcadas bastaba. Pero
+   * una sesión llegó a tener cuatro slots, y cada slot enseñaba las ventanas de
+   * los otros tres: *«tengo ventanas repetidas… deberían tener solo una»*. Cada
+   * una ya tiene su sitio —su slot—, así que aquí sobran (decisión 263).
+   *
+   * Salvo la que se está mirando: si el terminal enseña una ventana ajena, su
+   * pestaña tiene que estar, con su marca, o la pantalla mentiría sobre qué
+   * se ve. Las sueltas (`ninguno`) siguen: no tienen otro sitio en el que
+   * verse desde aquí.
+   *
+   * 🔴 Cerrar mira `ventanas`, no `visibles`: «la última ventana» es la última
+   * de la SESIÓN, y cerrar la única pestaña visible no tumba la sesión. */
+  function ventanasVisibles() {
+    return ventanas.filter(v => v.pertenece !== 'otro' || String(v.indice) === String(activa));
+  }
+
+  /* 🔴 Una pestaña que no es del slot de la cabecera tiene que decirlo.
+   *
+   * Es el defecto que él llevaba reportando desde hacía semanas: la sesión
+   * `Personal` tiene tres ventanas, dos del slot «Hub - Dev» y una suelta, y
+   * las tres se pintaban idénticas bajo ese rótulo. La suelta salía además
+   * abajo en «Sin organizar», así que la misma ventana estaba en dos sitios
+   * diciendo cosas contrarias. El panel derecho ya lo decía bien —«Sin slot»—
+   * pero sólo después de pulsarla.
+   *
+   * `nueva` no se marca: el snapshotter puede ir hasta un ciclo por detrás, y
+   * pintar «sin slot» sobre una ventana recién creada sería cambiar una mentira
+   * por otra. */
+  function clasePertenencia(v) {
+    if (v.pertenece === 'ninguno') return 'huerfana';
+    if (v.pertenece === 'otro') return 'ajena';
+    return '';
+  }
+
+  /* La marca es una PALABRA, no un glifo. Un símbolo hay que aprendérselo, y
+   * quien abre esta pantalla lleva semanas viendo la misma ventana en dos
+   * sitios: lo que necesita es leer por qué. Además usa el mismo término que el
+   * panel derecho —«Sin slot»— para que las dos mitades de la pantalla no
+   * nombren de dos formas distintas lo mismo. */
+  function glifoDe(v) {
+    if (v.pertenece === 'ninguno') return '<span class="marca">sin slot</span>';
+    if (v.pertenece === 'otro') {
+      return `<span class="marca">${escapar((v.slot && v.slot.nombre) || 'otro slot')}</span>`;
+    }
+    return '';
+  }
+
+  function porQue(v) {
+    if (v.pertenece === 'ninguno') return ' — sin slot: sale en «Sin organizar»';
+    if (v.pertenece === 'otro') {
+      return ` — es del slot «${(v.slot && v.slot.nombre) || 'otro'}», no de éste`;
+    }
+    return '';
+  }
+
   function escapar(s) {
     return String(s).replace(/[&<>"']/g, c =>
       ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
   }
 
+  /* Por qué no hay pestañas, dicho donde iban las pestañas.
+   *
+   * 🔴 Esta función tenía DOS salidas mudas —un `return` cuando la respuesta no
+   * era una lista y un `catch {}` al final— y las dos se saltaban
+   * `mostrarPanelDe`, o sea la línea que marca qué ventana se está mirando. Sin
+   * esa marca, el panel de la derecha no sabe de qué slot es esta ventana y el
+   * de programados se queda sin poder programar nada, sin que nada en la
+   * pantalla diga por qué. Es la regla dura 21 con otro traje: lo que se traga
+   * un fallo aquí sale como un bug de interfaz a tres capas de distancia. */
+  function sinVentanas(porque) {
+    if (cajaVentanas) {
+      cajaVentanas.innerHTML =
+        `<span class="tenue" style="padding:4px 8px">Sin pestañas: ${escapar(porque)}</span>`;
+    }
+    // Para que el próximo pintado bueno reescriba: la firma se compara contra
+    // lo último PINTADO, y esto acaba de pisarlo.
+    firmaPintada = null;
+  }
+
   async function cargarVentanas() {
+    if (!SESION) {
+      sinVentanas('esta vista no está atada a ninguna sesión de tmux');
+      return;
+    }
     try {
-      const r = await fetch(`/api/sesion/${encodeURIComponent(SESION)}/ventanas`);
+      // Con el slot: sin él, el hub no puede decir qué ventanas son de otro
+      // slot de la misma sesión y las da todas por de éste (decisión 263).
+      const r = await fetch(`/api/sesion/${encodeURIComponent(SESION)}/ventanas`
+        + (SLOT ? `?slot=${SLOT}` : ''));
+      if (!r.ok) {
+        sinVentanas(`el hub respondió ${r.status} al pedir las ventanas de «${SESION}»`);
+        return;
+      }
       const nuevas = await r.json();
-      if (!Array.isArray(nuevas)) return;
+      if (!Array.isArray(nuevas)) {
+        sinVentanas(`«${SESION}» no devolvió una lista de ventanas`);
+        return;
+      }
+      if (!nuevas.length) {
+        sinVentanas(`la sesión «${SESION}» no tiene ventanas en el último muestreo`);
+        return;
+      }
       ventanas = nuevas;
       // Sin ventana pedida, la activa es la que tmux ya tenía marcada.
       if (activa === null) {
         const marcada = ventanas.find(v => v.activa);
         if (marcada) activa = marcada.indice;
       }
+      /* Y si la pedida ya no existe —se cerró, o se renumeró al cerrar otra—,
+       * se cae a la que tmux tiene marcada. Antes se quedaba apuntando a una
+       * ventana que no está: ningún bloque casa, no se marca ninguna, y el
+       * panel de la derecha deja de saber de qué slot es esto. */
+      if (!ventanas.some(v => v.indice === activa)) {
+        const marcada = ventanas.find(v => v.activa) || ventanas[0];
+        activa = marcada.indice;
+      }
       pintarVentanas();
       mostrarPanelDe(activa);
       medirDesfase();
-    } catch {}
+    } catch (e) {
+      sinVentanas('no se pudieron pedir: ' + String((e && e.message) || e));
+    }
   }
 
   function irA(indice) {
@@ -1119,10 +1893,19 @@
     if (cerrar !== undefined && cerrar !== null) {
       e.stopPropagation();
       const v = ventanas.find(x => String(x.indice) === String(cerrar));
+      /* 🔴 La × NO se esconde cuando queda una sola ventana. Se escondía, y con
+       * eso una sesión de una ventana —que es la mayoría de lo que se acumula
+       * en la bandeja— no se podía cerrar desde el hub por ningún camino: había
+       * que ir a la terminal. Lo que sí cambia es lo que se avisa, porque lo que
+       * pasa es distinto: tmux mata la SESIÓN al morir su última ventana. */
+      const ultima = ventanas.length === 1;
       const ok = await HubUI.confirmar({
-        titulo: `Cerrar la ventana ${cerrar}`,
-        mensaje: `«${v ? v.etiqueta : ''}»\n\nMata todo lo que esté corriendo dentro.`,
-        aceptar: 'Cerrar la ventana',
+        titulo: ultima ? `Cerrar «${SESION}»` : `Cerrar la ventana ${cerrar}`,
+        mensaje: ultima
+          ? `«${v ? v.etiqueta : ''}» es la única ventana de «${SESION}».\n\n`
+            + `Al cerrarla se cierra la sesión entera, y muere todo lo que esté corriendo dentro.`
+          : `«${v ? v.etiqueta : ''}»\n\nMata todo lo que esté corriendo dentro.`,
+        aceptar: ultima ? 'Cerrar la sesión' : 'Cerrar la ventana',
         peligro: true,
       });
       if (!ok) return;
@@ -1130,13 +1913,28 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accion: 'cerrar' }),
       });
+      /* Sin sesión no hay nada que recargar: quedarse aquí dejaría el terminal
+       * atado a algo que ya no existe y las pestañas pidiendo ventanas de una
+       * sesión muerta. Se sale a /trabajo, que elige lo que siga vivo. */
+      if (ultima) { location.href = '/trabajo'; return; }
       return cargarVentanas();
     }
     if (e.target.id === 'nueva-ventana' || (e.target.closest && e.target.closest('#nueva-ventana'))) {
-      await fetch(`/api/sesion/${encodeURIComponent(SESION)}/ventanas`, {
+      /* El hub contesta {ok:false, error} cuando no puede —la sesión ya no
+       * existe, por ejemplo— y esto lo tiraba a la basura: el botón no hacía
+       * nada y nada lo explicaba. Un fallo mudo se lee como «está roto». */
+      const r = await fetch(`/api/sesion/${encodeURIComponent(SESION)}/ventanas`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ruta: RUTA_BASE }),
       });
+      const d = await r.json().catch(() => ({}));
+      if (!d.ok) {
+        HubUI.avisar({
+          titulo: 'No se pudo abrir la ventana',
+          mensaje: d.error || `el hub respondió ${r.status}`,
+        });
+        return;
+      }
       await cargarVentanas();
       if (ventanas.length) irA(ventanas[ventanas.length - 1].indice);
       return;
@@ -1291,6 +2089,8 @@
 </script>
 {# Al final y en archivo aparte: el panel de lienzos no puede tumbar la terminal
    si revienta, y así se prueba ejecutándolo (regla dura 11). #}
+<script src="/static/plegar.js"></script>
 <script src="/static/lienzos.js"></script>
 <script src="/static/consultas.js"></script>
+<script src="/static/programados.js"></script>
 {% endblock %}

@@ -66,6 +66,13 @@ def _datos_aparte(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "HUB_HOME", casa)
     monkeypatch.setattr(config, "DB_PATH", casa / "hub.db")
     monkeypatch.setattr(config, "HUB_KITS", casa / "kits")
+    # 🔴 Y el registro de Claude Code, por lo mismo y en la dirección segura.
+    # `consumo.carpeta()` cae por omisión a `~/.claude/projects`, o sea 1,5 GB
+    # de transcripts REALES de quien ejecuta la suite: un test que se olvidara de
+    # apuntarlo a otro sitio no fallaría, tardaría diez segundos y daría cifras
+    # distintas en cada máquina. Apuntando a una carpeta que no existe, el que se
+    # olvide se lleva un `ConsumoNoMedido` y se entera.
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path / "registro-que-no-existe"))
 
 
 @pytest.fixture

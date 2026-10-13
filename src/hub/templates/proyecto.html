@@ -29,7 +29,12 @@
   /* En columnas y no en lista: un proyecto medido tenía seis rutas, y apiladas empujaban
      la sección medio scroll hacia abajo. Se reparten en las columnas que quepan
      sin partir una ruta, que es lo que `auto-fill` con un mínimo generoso hace. */
-  .ficha .rutas { display:grid; grid-template-columns:repeat(auto-fill, minmax(600px, 1fr));
+  /* `min(600px, 100%)` y no `600px` a secas: `auto-fill` con un mínimo fijo
+     mantiene la columna a 600 px aunque la pantalla mida 390, y entonces la
+     ficha entera se arrastra de lado. Medido: 240 px de desborde en un móvil.
+     Por encima de 600 px de ancho no cambia nada. */
+  .ficha .rutas { display:grid;
+                  grid-template-columns:repeat(auto-fill, minmax(min(600px, 100%), 1fr));
                   gap:2px 32px; }
 
 </style>
@@ -70,6 +75,11 @@
     {% if servicios.total %}
     <a href="#servicios" data-sec="servicios">Servicios
       <span class="cuenta">{{ servicios.contenedores | length }}</span>
+    </a>
+    {% endif %}
+    {% if consumo.hay_datos %}
+    <a href="#consumo" data-sec="consumo">Consumo
+      <span class="cuenta">{{ numero(consumo.totales.parte, 1) }}&nbsp;%</span>
     </a>
     {% endif %}
     <a href="#paneles" data-sec="paneles">Paneles
@@ -172,6 +182,40 @@
     </span>
   </div>
 {% endfor %}
+</div>
+</section>
+{% endif %}
+
+{% if consumo.hay_datos %}
+<section class="seccion" id="sec-consumo">
+<h2 class="con-placa">{{ ui.placa('lineas', 'neutro') }}
+  <span>Consumo</span>
+  <span class="apunte">{{ numero(consumo.totales.parte, 1) }} % de todo lo gastado
+    · <a href="/consumo?proyecto={{ p.id }}">ver todo</a></span></h2>
+<div class="panel">
+  <div class="fila">
+    <span class="pila">
+      <span class="etiqueta">{{ numero(consumo.totales.peticiones) }} peticiones</span>
+      {# La ventana va también aquí y no sólo en `/consumo`: quien entra por la
+         ficha de un proyecto no ha pasado por la otra pantalla, y sin la fecha
+         estas cifras se leen como el histórico del proyecto. #}
+      <span class="mono dato" data-que="ventana">del {{ consumo.desde[:10] }}
+        al {{ consumo.hasta[:10] }} — Claude Code poda su registro a los 30 días</span>
+    </span>
+  </div>
+  <div class="fila">
+    {% for campo, etiqueta, _ in consumo.tipos %}
+    <span class="pila" style="flex:1">
+      <span class="etiqueta">{{ millones(consumo.totales[campo]) }}</span>
+      <span class="tenue" style="font-size:12px">{{ etiqueta }}</span>
+    </span>
+    {% endfor %}
+  </div>
+  {% if consumo.grafica.columnas %}
+  <div style="padding:10px 14px 12px">
+    {{ ui.grafica_apilada(consumo.grafica, "baja") }}
+  </div>
+  {% endif %}
 </div>
 </section>
 {% endif %}
@@ -301,6 +345,10 @@
       <label>
         <input type="checkbox" name="autostart_claude" value="1" style="width:auto"
           {% if s.autostart_claude %}checked{% endif %}> arrancar <code>claude</code>
+      </label>
+      <label>
+        <input type="checkbox" name="restaurar" value="1" style="width:auto"
+          {% if s.restaurar %}checked{% endif %}> devolverlo tras un apagón
       </label>
       <label>Mover a otro proyecto (id, vacío = no mover)</label>
       <input type="text" name="mover_a" placeholder="{{ p.id }}">

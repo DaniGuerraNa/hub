@@ -4,6 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ titulo }} · Hub</title>
+
+{# El icono y la pantalla completa en el móvil (decisión 168). SIN service
+   worker a propósito: cachearía, y enseñaría una pantalla vieja como si fuera
+   de ahora — la forma exacta de mentir que este hub tiene prohibida. El precio
+   es que Chrome no ofrece «instalar» sin él; «añadir a la pantalla de inicio»
+   sí funciona, y es lo que se quería. En iOS lo dan las dos metas de Apple. #}
+<link rel="icon" href="/static/icono.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/icono-192.png">
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Hub">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
 /* ───────────────────────────────────────────────────────────────────────────
    Sistema de diseño: "Midnight SRE console".
@@ -92,6 +105,23 @@
   --t-metodo:    #b48ce8;
   --t-script:    #dfa95f;
   --t-plantilla: #6fb2d2;
+
+  /* Rampa de series, para las gráficas de consumo. 🔴 NO es una paleta por
+     categoría: son seis tonos del MISMO acento, del más saturado al más
+     apagado, y se reparten por tamaño —la serie mayor se lleva el más fuerte—.
+     Así el color sigue sin codificar identidad, que es lo que la escala de
+     atención de arriba protege: aquí codifica RANGO, que es una magnitud y se
+     lee sola sin leyenda. Seis hues distintos habrían sido una segunda excepción
+     al «el color dice cuánta atención pide esto», y con dos excepciones ya no
+     hay regla. La profundidad por tono es además lo que este sistema hace en
+     todas partes. */
+  --serie-1: #3fb9d4;
+  --serie-2: #3a9fb8;
+  --serie-3: #35869c;
+  --serie-4: #2f6d80;
+  --serie-5: #2a5566;
+  --serie-6: #243f4d;
+  --serie-otros: #2b3543;   /* lo que no cabe en las seis, sin rango propio */
 
   /* El botón deja de ser una píldora. Un rectángulo redondeado de 9px es la
      misma forma que ya tienen los ítems del raíl y las placas de los iconos:
@@ -188,17 +218,45 @@ body.completo .rail-global .nom,
 body.completo .rail-global .cuenta,
 body.completo .rail-global .marca > span { display: none; }
 body.completo .rail-global a.enlace { justify-content: center; padding: 9px 0; }
-/* En modo compacto los proyectos se quedan fuera: sin su nombre son puntos de
-   color sueltos que no dicen a dónde llevan. Se llega a ellos por Panorama o
-   por la paleta, que es un atajo más rápido que un icono adivinado. */
-body.completo .rail-global a.enlace:not(:has(svg)) { display: none; }
 body.completo .rail-global .marca { justify-content: center; padding: 5px 0 12px; }
 @media (max-width: 860px) {
   body { display: block; }
-  .rail-global { position: static; width: auto; height: auto; flex-direction: row;
-                 flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--borde); }
+  /* 🔴 Re-declarar `body.completo`, no sólo `body`. Es la trampa de la decisión
+     202 otra vez, y por tercera vez: `body.completo` (0,1,1) le gana a `body`
+     (0,0,1) en TODO lo que no se vuelva a declarar aquí dentro. Cambiar el
+     `display` no tocó el `height:100vh; overflow:hidden`, así que en /trabajo el
+     móvil recortaba el contenido sin dejar desplazarse.
+
+     Medido a 390 px el 2026-09-16, con el hub ya en el móvil: contenido de
+     1176 px dentro de 844, **332 px cortados**, y la pestaña «Nota» a 1079 px —
+     235 por debajo del corte y sin ninguna forma de llegar a ella. La pantalla
+     se veía entera y sana; lo que faltaba no se veía. */
+  body.completo { height: auto; overflow: visible; }
+  /* Y lo mismo con el ancho del raíl: `body.completo .rail-global` (0,2,1) le
+     ganaba a esta regla (0,1,0), así que en /trabajo el raíl se quedaba en sus
+     56 px de escritorio y sus once iconos se apilaban en una tira de 244 px de
+     alto — un cuarto de la pantalla del móvil para no elegir nada. En fila
+     ocupan uno. */
+  .rail-global,
+  body.completo .rail-global { position: static; width: auto; height: auto;
+                 padding: 8px 10px; flex-direction: row; flex-wrap: wrap;
+                 border-right: 0; border-bottom: 1px solid var(--borde); }
   .rail-global .rotulo { display: none; }
 }
+
+/* ── Gráficas ───────────────────────────────────────────────────────────── */
+/* `preserveAspectRatio="none"` deja que el SVG estire a lo ancho: son
+   rectángulos, así que estirarlos sólo cambia el grosor de las columnas y no
+   deforma ninguna forma reconocible. El alto va en píxeles para que no crezca
+   sola en una pantalla ancha. */
+.grafica { width: 100%; height: 170px; display: block; }
+.grafica.baja { height: 96px; }
+.eje { display: flex; justify-content: space-between; font-size: 12px;
+       color: var(--texto-4); margin-top: 6px; }
+.leyenda { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; }
+.leyenda > div { display: flex; align-items: center; gap: 7px; font-size: 12.5px;
+                 color: var(--texto-3); }
+.leyenda i { width: 11px; height: 11px; border-radius: 3px; flex: none; }
 
 /* ── Navegación ─────────────────────────────────────────────────────────── */
 /* La cabecera NO es una caja. Era una tarjeta con fondo, borde y esquinas
@@ -344,7 +402,9 @@ a:hover { text-decoration: underline; }
 .fila { display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .pila { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .barra { display: flex; gap: 8px; align-items: center; }
-.rejilla { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+/* `min(340px, 100%)`: un mínimo fijo desborda la pantalla en un móvil de 320 px. */
+.rejilla { display: grid; gap: 12px;
+           grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); }
 
 /* ── Botones: píldora siempre ───────────────────────────────────────────── */
 /* ── Botones: superficie, no contorno ──────────────────────────────────────
@@ -624,6 +684,10 @@ form.enlinea { display: inline; }
 /* El aviso lleva placa y se dispone en fila. El color entra por el borde
    izquierdo y por el icono, nunca como relleno del bloque: un panel rojo
    entero fue justo lo que se descartó al comparar maquetas. */
+/* Una ruta en `<code>` no tiene espacios por donde partir: en el teléfono
+   empujaba la página entera hacia un lado (medido: /acceso a 390 px). */
+code { overflow-wrap: anywhere; }
+
 .aviso {
   display: flex; gap: 18px; align-items: flex-start;
   border: 1px solid var(--borde); background: var(--superficie);
@@ -718,6 +782,12 @@ dialog.paleta li .detalle {
 @keyframes latido { 50% { opacity: .25; } }
 
 #asistente-cuerpo { display: none; flex-direction: column; height: 50vh; min-height: 0; }
+/* La banda de aviso del asistente. Va con `--riesgo` porque significa «hay algo
+   que hacer»: el hub no está contestando y hasta que se arregle no hay
+   conversación. No tapa el hilo — se inserta encima. */
+.asistente-aviso { margin: 0 12px 8px; padding: 8px 11px; border-radius: var(--r-nav);
+                   background: var(--superficie2); border-left: 3px solid var(--riesgo);
+                   color: var(--texto-2); font-size: 12.5px; line-height: 1.45; }
 #asistente.abierto #asistente-cuerpo { display: flex; }
 #asistente-hilo {
   flex: 1; min-height: 0; overflow-y: auto;
@@ -754,14 +824,21 @@ dialog.paleta li .detalle {
 </style>
 </head>
 <style>
-  .aviso-accion { margin:8px 16px; padding:8px 12px; border:1px solid var(--acento);
-                  border-radius:10px; color:var(--texto); background:var(--superficie); font-size:13px; }
+  .aviso-accion { display:flex; gap:10px; align-items:center; margin:8px 16px; padding:8px 12px;
+                  border:1px solid var(--acento); border-radius:10px; color:var(--texto);
+                  background:var(--superficie); font-size:13px; transition:opacity .5s; }
+  /* Lo que salió bien se lee una vez y se va (`_volver(..., fugaz=True)`). */
+  .aviso-accion.fugaz { border-color:transparent; background:var(--superficie2); color:var(--texto-2); }
+  .aviso-accion.ido { opacity:0; }
+  .aviso-accion button { margin-left:auto; background:none; border:0; color:var(--texto-3);
+                         font-size:16px; line-height:1; padding:0 2px; cursor:pointer; }
 </style>
 <body class="{{ 'completo' if ancho_completo else '' }}">
 
 {# ── Raíl global ────────────────────────────────────────────────────────────
-   Los proyectos viven aquí con su estado: se ve cuál está parado y cuál tiene
-   commits en riesgo sin entrar en ninguno. `rail` lo inyecta `web.py` en TODAS
+   Sólo vistas. Los proyectos vivieron aquí con su estado hasta el 2026-09-22
+   (decisión 253): en el móvil el menú se llenaba de ellos antes de llegar a
+   nada, y ya tienen su sitio en Panorama y en la paleta. `rail` lo inyecta `web.py` en TODAS
    las vistas mediante un procesador de contexto — si dependiera de que cada
    vista se acordase de pasarlo, la que se olvidara perdería la navegación. #}
 {% set rail = rail | default({}, true) %}
@@ -782,10 +859,17 @@ dialog.paleta li .detalle {
       ('/', 'panorama', 'Panorama', 'casa'),
       ('/trabajo', 'trabajo', 'Trabajo', 'terminal'),
       ('/inventario', 'inventario', 'Inventario', 'lineas'),
+      ('/archivos', 'archivos', 'Archivos', 'carpeta'),
+      ('/intercambio', 'intercambio', 'Intercambio', 'intercambio'),
       ('/respaldo', 'respaldo', 'Respaldo', 'escudo'),
       ('/servicios', 'servicios', 'Servicios', 'pilas'),
+      ('/maquina', 'maquina', 'Máquina', 'equipo'),
+      ('/consumo', 'consumo', 'Consumo', 'lineas'),
       ('/conexiones', 'conexiones', 'Conexiones', 'enlace'),
+      ('/orquestador', 'orquestador', 'Orquestador', 'agente'),
       ('/canal', 'canal', 'Canal', 'conversacion'),
+      ('/encargos', 'encargos', 'Encargos', 'bandeja'),
+      ('/acceso', 'acceso', 'Acceso', 'llave'),
       ('/contexto', 'contexto', 'Contexto', 'documento')] %}
   <a href="{{ ruta }}" class="enlace {{ 'aqui' if seccion == clave }}" title="{{ nombre }}">
     {{ ui.icono(icono) }}<span class="nom">{{ nombre }}</span>
@@ -799,21 +883,6 @@ dialog.paleta li .detalle {
   </a>
   {% endfor %}
 
-  {% if rail.proyectos %}
-  <div class="rotulo">Proyectos</div>
-  {% for x in rail.proyectos %}
-  <a href="/proyecto/{{ x.id }}" class="enlace {{ 'aqui' if proyecto_actual == x.id }}"
-     title="{{ x.nombre }}">
-    {{ ui.estado('status', x.status, false) }}<span class="nom">{{ x.nombre }}</span>
-    {% if x.sin_push %}<span class="cuenta urge">{{ x.sin_push }}</span>{% endif %}
-  </a>
-  {% endfor %}
-  {% if rail.ocultos %}
-  <a href="/" class="enlace" style="color:var(--texto-4);font-size:12.5px" title="Ver todos en el panorama">
-    <span style="width:16px"></span><span class="nom">+{{ rail.ocultos }} sin actividad</span>
-  </a>
-  {% endif %}
-  {% endif %}
 </nav>
 
 <div class="principal-col">
@@ -829,7 +898,12 @@ dialog.paleta li .detalle {
   </header>
   {# Lo que falló en la acción anterior, dicho aquí y no tragado (regla 21). #}
   {% if request is defined and request.query_params.get('aviso') %}
-  <p class="aviso-accion" role="alert">{{ request.query_params.get('aviso') }}</p>
+  {% set fugaz = request.query_params.get('fugaz') %}
+  <div class="aviso-accion {{ 'fugaz' if fugaz }}" data-aviso-fugaz role="{{ 'status' if fugaz else 'alert' }}">
+    <span>{{ request.query_params.get('aviso') }}</span>
+    <button type="button" aria-label="Cerrar" data-cerrar-aviso>×</button>
+  </div>
+  <script src="/static/aviso-fugaz.js" defer></script>
   {% endif %}
   {% block contenido %}{% endblock %}
 </div>

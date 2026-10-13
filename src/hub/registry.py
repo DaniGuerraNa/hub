@@ -20,8 +20,10 @@ from pathlib import Path
 
 import yaml
 
+from typing import get_args
+
 from . import config
-from .models import Conexion, Proyecto, Ruta
+from .models import Conexion, Dominio, Proyecto, Ruta
 
 
 @contextlib.contextmanager
@@ -191,6 +193,7 @@ def cargar(ruta: Path | None = None) -> list[Proyecto]:
         raise YamlInvalido("`proyectos:` tiene que ser una lista.")
 
     proyectos = []
+    desconocidos: list[str] = []
     for i, crudo in enumerate(crudos, 1):
         if not isinstance(crudo, dict):
             raise YamlInvalido(
@@ -429,6 +432,42 @@ def _insertar(
         _insertar_bajo_cerrojo(ruta, seccion, limpio, clave, valor)
 
 
+def _abrir_seccion(filas: list[str], seccion: str) -> tuple[int | None, list[str]]:
+    """Encuentra la sección y, si está escrita en línea y vacía, la abre.
+
+    🔴 Esto es el fallo que rompía el registro entero, y era de primer uso: la
+    plantilla que se publica trae `conexiones: []` —vacía a propósito—, y aquí
+    se buscaba una línea **exactamente igual** a `conexiones:`. Como no casaba,
+    se caía a «no existe la sección» y se añadía otra al final: clave duplicada.
+    A partir de ahí `projects.yml` no carga, y con él se caen el snapshotter, el
+    asistente y todo lo que pida el registro. Medido: **la primera conexión que
+    alguien da de alta desde la UI** dejaba el hub sin registro.
+
+    Una sección en línea y **vacía** se convierte en cabecera (`conexiones:`), que
+    es exactamente lo mismo en YAML. Una en línea **con contenido** no se toca:
+    ahí no se puede insertar un bloque sin reescribir el valor, y reescribir a
+    ciegas el archivo que alguien edita a mano es peor que decir que no.
+    """
+    cabecera = f"{seccion}:"
+    for i, linea in enumerate(filas):
+        limpia = linea.rstrip("\n").rstrip()
+        if limpia == cabecera:
+            return i, filas
+        if limpia.startswith(cabecera):
+            resto = limpia[len(cabecera):].strip()
+            if resto in ("[]", "{}", "~", "null", ""):
+                filas = list(filas)
+                filas[i] = cabecera + "\n"
+                return i, filas
+            raise YamlInvalido(
+                f"`{seccion}` está escrita en una sola línea con contenido "
+                f"(`{limpia}`) y aquí no se puede insertar sin reescribirla.\n\n"
+                "Pásala a la forma de lista, con un guion por elemento, y "
+                "vuelve a intentarlo."
+            )
+    return None, filas
+
+
 def _insertar_bajo_cerrojo(
     ruta: Path, seccion: str, limpio: dict, clave: str, valor: str
 ) -> None:
@@ -453,9 +492,7 @@ def _insertar_bajo_cerrojo(
         texto += "\n"
     filas = texto.splitlines(keepends=True)
 
-    inicio = next(
-        (i for i, l in enumerate(filas) if l.rstrip("\n") == f"{seccion}:"), None
-    )
+    inicio, filas = _abrir_seccion(filas, seccion)
     if inicio is None:
         nuevo = texto + ("\n" if texto else "") + f"{seccion}:\n" + bloque
     else:
@@ -470,8 +507,14 @@ def _insertar_bajo_cerrojo(
 
     # Se comprueba ANTES de tocar el disco. Dejar `projects.yml` sin parsear
     # dejaría al hub sin proyectos, y por un formulario.
+    #
+    # 🔴 Con el MISMO lector estricto que usa `_leer`, no con `safe_load`.
+    # `safe_load` admite claves duplicadas en silencio —se queda con la última—
+    # así que esta comprobación daba por bueno un archivo que el propio hub
+    # rechaza al leerlo: escribía, y a partir de ahí el registro no cargaba. Un
+    # validador más laxo que el lector no valida nada.
     try:
-        comprobado = yaml.safe_load(nuevo) or {}
+        comprobado = yaml.load(nuevo, _SinDuplicados) or {}
     except yaml.YAMLError as exc:
         raise YamlInvalido(f"El resultado no sería YAML válido: {exc}") from exc
     if not any(

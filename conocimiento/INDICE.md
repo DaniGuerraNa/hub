@@ -13,6 +13,7 @@ haga falta.
 | [`06-problemas.md`](06-problemas.md) | Algo no funciona |
 | [`07-la-api.md`](07-la-api.md) | Leer lo que el hub mide desde un script |
 | [`08-sala-limpia.md`](08-sala-limpia.md) | Probar una instalación del hub o de un kit como la vería otra persona, y auditar un kit |
+| [`09-orquestador-e-intercambio.md`](09-orquestador-e-intercambio.md) | Mandar trabajo a las sesiones sin estar delante, sus permisos, y pasar archivos desde el teléfono |
 
 🔴 **Si la pregunta es «¿puedo abrir el puerto a la red?», la respuesta es no**, y
 no hace falta abrir ningún documento para decirlo: la pantalla `/terminal` da

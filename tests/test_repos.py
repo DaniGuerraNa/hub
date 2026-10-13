@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import time
 
 import pytest
 
@@ -216,3 +217,71 @@ def test_un_git_que_falla_no_tumba_la_medicion(monkeypatch, repo):
         assert repos.estado_de(str(repo)) is None
     finally:
         repos._hay_git.cache_clear()  # el caché no puede filtrarse a otros tests
+
+
+def test_un_archivo_que_solo_cambio_de_fin_de_linea_no_cuenta_como_sucio(con_remoto):
+    """La regla dura 13, medida: 3006 archivos «sucios» de los que 79 lo eran.
+
+    Un árbol clonado desde Windows y leído desde WSL tiene CRLF en disco y LF en
+    el índice, así que `git status` marca TODO. Es el caso general de este hub
+    —casi todo lo que vigila vive en `/mnt/c`—, no una rareza: sin esto la
+    pantalla diría «66 repos con cambios sin commitear» todos los días hasta que
+    se aprendiera a no mirarla.
+    """
+    archivo = con_remoto / "uno"
+    archivo.write_bytes(archivo.read_bytes().replace(b"\n", b"\r\n") + b"\r\n")
+    assert repos.estado_de(str(con_remoto))["sucios"] == 0
+
+
+def test_un_cambio_de_verdad_cuenta_aunque_el_archivo_tambien_lleve_crlf(con_remoto):
+    """La otra mitad: ignorar el retorno de carro no puede tapar trabajo real."""
+    (con_remoto / "uno").write_bytes(b"uno\r\notra linea de verdad\r\n")
+    assert repos.estado_de(str(con_remoto))["sucios"] == 1
+
+
+def test_un_archivo_borrado_y_sin_commitear_sigue_siendo_un_cambio(con_remoto):
+    """`--numstat` da `0 n` en un borrado, y filtrar por «0 añadidas» lo perdía:
+    28 de los 107 del workspace laboral eran exactamente esto."""
+    (con_remoto / "uno").unlink()
+    assert repos.estado_de(str(con_remoto))["sucios"] == 1
+
+
+def test_los_archivos_de_una_carpeta_sin_seguir_se_cuentan_uno_a_uno(con_remoto):
+    """`status --porcelain` colapsa la carpeta entera en una línea. Si el disco
+    muere se pierden los tres, no «uno»."""
+    nueva = con_remoto / "sin-seguir"
+    nueva.mkdir()
+    for n in ("a", "b", "c"):
+        (nueva / n).write_text(n, encoding="utf-8")
+    assert repos.estado_de(str(con_remoto))["sucios"] == 3
+
+
+def test_un_escaneo_truncado_no_se_come_siempre_a_los_ultimos_proyectos(
+    con, con_remoto, monkeypatch, tmp_path
+):
+    """Truncar por orden es peor que truncar: faltan SIEMPRE los mismos.
+
+    El recorrido era secuencial y rompía el bucle de proyectos entero, así que
+    al añadir los 66 repos del workspace laboral —61 s ellos solos— todo lo que
+    viniera después en `projects.yml` se quedaba sin medir ciclo tras ciclo, y
+    nadie lo notaba porque la tabla conservaba su cifra vieja. Ahora se lanzan
+    todos a la vez y al agotarse el presupuesto se recoge lo que ya terminó.
+    """
+    segundo = tmp_path / "segundo"
+    shutil.copytree(con_remoto, segundo)
+    tarde = Proyecto(id="tarde", nombre="Tarde", asiento=str(segundo))
+
+    lento = Proyecto(id="lento", nombre="Lento", asiento=str(con_remoto))
+    original = repos.estado_de
+
+    def despacio(ruta):
+        if ruta == str(con_remoto):
+            time.sleep(1.0)
+        return original(ruta)
+
+    monkeypatch.setattr(repos, "estado_de", despacio)
+    monkeypatch.setattr(repos, "PRESUPUESTO_SEGUNDOS", 0.4)
+    repos.escanear(con, [lento, tarde])
+
+    medidos = {f["proyecto_id"] for f in con.execute("SELECT proyecto_id FROM repo")}
+    assert "tarde" in medidos, "el proyecto del final se quedó sin medir por ir el último"

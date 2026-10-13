@@ -1,0 +1,24 @@
+[Unit]
+# El relé del canal de ENCARGOS. Servicio propio y separado de `hub-canal`, y no
+# es organización: son dos bots con dos tokens, y ninguno de los dos procesos
+# debe ver el del otro (decisión n11). Además, un fallo en lo nuevo no puede
+# llevarse por delante el canal de consulta, que se usa a diario.
+#
+# `hub-web` no ve ninguno de los dos: expone el puerto —y con él el endpoint de
+# terminal, que da acceso de shell (regla dura 8)—.
+Description=Hub — relé del canal de encargos (Telegram)
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@RAIZ@
+Environment=HUB_HOME=@HUB_HOME@
+Environment=PATH=@PATH@
+ExecStart=@UV@ run python -m hub.rele_encargos
+Restart=always
+# Como el otro relé: si Telegram no responde, reintentar cada diez segundos no lo
+# trae antes y sólo llena el registro de ruido.
+RestartSec=30
+
+[Install]
+WantedBy=default.target

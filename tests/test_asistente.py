@@ -688,3 +688,55 @@ def test_si_el_cuadro_no_se_vacia_NUNCA_no_se_da_por_enviado(monkeypatch):
 
     assert asistente.despachar("%9", "lo que sea\nmultilínea") is False
     assert enters == ["%9"] * 8     # se insiste con la tecla, no con el texto
+
+
+# ── El diálogo de confianza de la primera vez (decisión 265) ────────────────
+
+# Capturada tal cual en una instalación limpia, el 13-oct. El `❯` es el
+# cursor del menú, no el del cuadro de entrada.
+DIALOGO_DE_CONFIANZA = """ Accessing workspace:
+ /home/persona/projects/asistente
+ Quick safety check: Is this a project you created or one you trust? (Like your
+ own code, a well-known open source project, or work from your team). If not,
+ take a moment to review what's in this folder first.
+ Claude Code'll be able to read, edit, and execute files here.
+ Security guide
+ ❯ No, exit
+   Yes, I trust this folder
+ Enter to confirm · Esc to cancel"""
+
+
+def test_con_el_dialogo_de_confianza_no_esta_listo(monkeypatch):
+    """🔴 Lo daba por listo: pegaba el mensaje, Enter elegía «No, exit» y
+    Claude Code se cerraba con tmux detrás, sin que nada lo dijera."""
+    monkeypatch.setattr(tmux, "capturar_panel", lambda p: DIALOGO_DE_CONFIANZA)
+    assert not asistente.listo("%9")
+
+
+def test_con_el_dialogo_en_pantalla_no_se_envia_nada(tmux_falso, monkeypatch):
+    monkeypatch.setattr(tmux, "capturar_panel", lambda p: DIALOGO_DE_CONFIANZA)
+
+    r = asistente.enviar("¿cuántos proyectos tengo?")
+
+    assert r["enviado"] is False
+    assert tmux_falso["pegado"] == []
+
+
+def test_el_cuadro_de_verdad_sigue_estando_listo(monkeypatch):
+    monkeypatch.setattr(tmux, "capturar_panel", lambda p: _pantalla(""))
+    assert asistente.listo("%9")
+
+
+def test_abrir_el_asistente_acepta_antes_su_carpeta(tmux_falso, proyectos, monkeypatch):
+    """La carpeta la sembró el hub: no hay nada que preguntarle a nadie."""
+    from hub import agentes
+    confiadas = []
+    monkeypatch.setattr(agentes, "_confiar", lambda d: confiadas.append(str(d)))
+    tmux_falso["sesiones"].clear()
+    tmux_falso["paneles"] = []
+    monkeypatch.setattr(tmux, "nueva_sesion", lambda *a, **k: None)
+
+    with pytest.raises(asistente.AsistenteNoDisponible):
+        asistente.asegurar_sesion(proyectos)   # sin panel de mentira que aparezca
+
+    assert confiadas == [proyectos[1].asiento]

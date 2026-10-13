@@ -532,7 +532,21 @@ SITUACIONES = {
     "pendientes": "respuesta = '' AND estado NOT IN ('vencida', 'archivada')",
     "contestadas": "respuesta <> ''",
     "atascadas": "estado IN ('sin-confirmar', 'vencida') OR detalle <> ''",
+    # 🔴 Contestada y sin panel al que volver. Va aquí y **no** como estado
+    # nuevo por lo que dice el comentario de arriba: los estados describen el
+    # transporte, y no tener destino es una propiedad de la pregunta —está
+    # escrita en `pane_id` desde que se creó—. Un estado obligaría además a
+    # migrar filas para decir algo que ya se sabe mirándolas.
+    "sin-destino": (
+        "respuesta <> '' AND (pane_id IS NULL OR pane_id = '') "
+        "AND estado NOT IN ('archivada', 'entregada')"
+    ),
 }
+
+# Lo que se escribe en `detalle` la primera vez que una respuesta se queda sin
+# a dónde ir. Es una constante porque el relé la escribe y la pantalla la lee.
+SIN_DESTINO = "se creó sin panel al que volver: no hay ninguna sesión a la que entregarla"
+
 
 
 def preguntas(
@@ -665,6 +679,65 @@ def marcar_escrita_sin_confirmar(
         con,
         "falla",
         f"escrita en el panel sin confirmar, NO se reintenta: {motivo}",
+        proyecto_id=(pregunta or {}).get("proyecto_id"),
+        pregunta_id=int(pregunta_id),
+    )
+
+
+def marcar_sin_destino(con: sqlite3.Connection, pregunta_id: int) -> bool:
+    """Contestada, y la pregunta nació fuera de un slot: no hay panel al que volver.
+
+    🔴 Antes esto era un `continue` mudo en el relé. La respuesta existía, nadie
+    podía entregarla y **ninguna vuelta lo decía**: se apilaron siete así entre
+    el 9 y el 17 de septiembre y sólo se vieron mirando la base a mano. Que un
+    caso no tenga salida automática es aceptable; que no se diga, no.
+
+    No se archiva sola ni se le inventa un destino —eso lo decide una persona
+    (principio 9)—: se anota el motivo, que es lo que la saca en «atascadas» y
+    en su propia situación. Se escribe **una sola vez**: el relé pasa por aquí
+    cada vuelta y repetir el registro lo llenaría de la misma línea.
+    """
+    pregunta = ver_pregunta(con, pregunta_id)
+    if not pregunta or pregunta["detalle"]:
+        return False
+    con.execute(
+        "UPDATE canal_pregunta SET detalle=? WHERE id=?", (SIN_DESTINO, int(pregunta_id))
+    )
+    registrar(
+        con,
+        "falla",
+        f"contestada y {SIN_DESTINO}",
+        proyecto_id=pregunta.get("proyecto_id"),
+        pregunta_id=int(pregunta_id),
+    )
+    return True
+
+
+def apuntar_destino(
+    con: sqlite3.Connection,
+    pregunta_id: int,
+    pane_id: str,
+    slot_id: int | None = None,
+) -> None:
+    """El panel al que volver, elegido a mano cuando la pregunta nació sin él.
+
+    Se limpia `detalle` a propósito: el motivo que había —«no hay a dónde
+    entregarla»— deja de ser cierto en cuanto hay destino, y dejarlo escrito
+    haría que la pantalla siguiera pidiendo algo ya hecho. Si la entrega falla,
+    escribe el suyo.
+
+    Quién puede escribir en ese panel no se decide aquí: lo comprueba `entrega`
+    en el instante de escribir, que es la regla dura 15.
+    """
+    con.execute(
+        "UPDATE canal_pregunta SET pane_id=?, slot_id=?, detalle='' WHERE id=?",
+        (pane_id, slot_id, int(pregunta_id)),
+    )
+    pregunta = ver_pregunta(con, pregunta_id)
+    registrar(
+        con,
+        "sale",
+        f"destino elegido a mano: {pane_id}",
         proyecto_id=(pregunta or {}).get("proyecto_id"),
         pregunta_id=int(pregunta_id),
     )

@@ -12,8 +12,13 @@ set -euo pipefail
 HUB_HOME=${HUB_HOME:-$HOME/.local/share/hub}
 UNIDADES=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 
-systemctl --user disable --now hub-web hub-snapshotter >/dev/null 2>&1 || true
-rm -f "$UNIDADES/hub-web.service" "$UNIDADES/hub-snapshotter.service"
+# Los cuatro, y los dos relés no estaban: `instalar.sh` los escribe y esto los
+# dejaba atrás, así que desinstalar y volver a instalar arrastraba una unidad
+# vieja apuntando a la ruta anterior. Salió al añadir `hub-encargos`.
+SERVICIOS="hub-web hub-snapshotter hub-canal hub-encargos"
+# shellcheck disable=SC2086
+systemctl --user disable --now $SERVICIOS >/dev/null 2>&1 || true
+for servicio in $SERVICIOS; do rm -f "$UNIDADES/$servicio.service"; done
 systemctl --user daemon-reload
 printf '  ✓ servicios detenidos y eliminados\n'
 

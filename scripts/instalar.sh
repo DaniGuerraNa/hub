@@ -16,6 +16,9 @@
 #                     igual y se sobreescribirían— y para máquinas sin
 #                     `systemd --user`, donde el hub se arranca a mano.
 set -euo pipefail
+# `$USER` no siempre existe (docker exec, algunos sudo y lanzadores), y con
+# `set -u` reventaba justo al comprobar el linger. Visto instalando en limpio.
+YO=${USER:-$(id -un)}
 
 RAIZ=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 HUB_HOME=${HUB_HOME:-$HOME/.local/share/hub}
@@ -73,7 +76,7 @@ fi
 # ~/projects/hub, y no se veía hasta que fallaba en otra máquina.
 UV=$(command -v uv)
 mkdir -p "$UNIDADES"
-for servicio in hub-web hub-snapshotter hub-canal; do
+for servicio in hub-web hub-snapshotter hub-canal hub-encargos; do
   sed -e "s|@RAIZ@|$RAIZ|g" \
       -e "s|@HUB_HOME@|$HUB_HOME|g" \
       -e "s|@UV@|$UV|g" \
@@ -84,6 +87,24 @@ for servicio in hub-web hub-snapshotter hub-canal; do
   bien "$UNIDADES/$servicio.service"
 done
 
+# 🔴 Sin linger, `systemd --user` entero se apaga al cerrar la última sesión de
+# login y vuelve con la siguiente (decisión 155). Medido el 2026-09-04 tras
+# reiniciar la PC: el gestor se recicló TRES veces en tres minutos y se llevó
+# `hub-web` cada vez — el síntoma que se ve es «el hub me deja entrar y se muere
+# a los pocos segundos», que no parece un problema de sesión de login.
+if [ "$(loginctl show-user "$YO" -p Linger --value 2>/dev/null)" = "yes" ]; then
+  # Se mira antes de pedirlo: activarlo puede denegarse a un usuario normal
+  # aunque ya esté puesto, y entonces se avisaba de un fallo que no existía.
+  bien "linger ya activo: el hub sigue vivo aunque cierres la terminal"
+elif loginctl enable-linger "$YO" >/dev/null 2>&1; then
+  bien "linger activado: el hub sigue vivo aunque cierres la terminal"
+else
+  # No es fatal: con una sesión abierta el hub funciona. Se dice en voz alta
+  # porque el fallo que provoca aparece horas después y en otro sitio.
+  printf '    ⚠ no se pudo activar el linger: el hub morirá al cerrar la última sesión\n'
+  printf '      arréglalo con: loginctl enable-linger %s\n' "$YO"
+fi
+
 systemctl --user daemon-reload
 systemctl --user enable --now hub-web hub-snapshotter >/dev/null 2>&1
 bien "arrancados y habilitados para el próximo inicio"
@@ -92,6 +113,9 @@ bien "arrancados y habilitados para el próximo inicio"
 # ruido que enseña a ignorar el registro — justo el sitio donde luego hay que
 # mirar. Se habilita cuando se configure: `systemctl --user enable --now hub-canal`.
 bien "hub-canal instalado y PARADO: arráncalo cuando configures canal.yml"
+# Y lo mismo, por lo mismo, con el relé de encargos: sin `encargos.yml` no tiene
+# token y sólo sabría apuntar fallos.
+bien "hub-encargos instalado y PARADO: arráncalo cuando configures encargos.yml"
 
 paso "5/5 · Comprobación"
 # Arrancar no es funcionar: se espera a que conteste de verdad. Dar por bueno un

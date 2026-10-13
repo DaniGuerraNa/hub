@@ -12,6 +12,20 @@ from hub.models import Proyecto
 from hub.registry import Atribuidor
 
 
+@pytest.fixture(autouse=True)
+def tmux_de_la_muestra(monkeypatch):
+    """El servidor de tmux es el de la muestra de mentira (pid 100), no el de la
+    máquina donde corre la suite.
+
+    🔴 `vincular` le pregunta el epoch al tmux REAL. Sin esto, el resultado
+    dependía de si quien corre los tests tiene tmux abierto: aquí lo está, el
+    pid no casaba con el 100 de la muestra y la separación de ventanas fallaba;
+    en una máquina recién instalada, sin tmux, pasaba. Un test cuyo veredicto
+    depende de la máquina no prueba nada.
+    """
+    monkeypatch.setattr(tmux, "servidor_pid", lambda: 100)
+
+
 @pytest.fixture
 def escena(con, monkeypatch):
     con.execute("INSERT INTO proyecto (id, nombre, asiento) VALUES ('demo','Demo','/tmp/demo')")
@@ -285,7 +299,11 @@ def test_abrir_crea_la_sesion_cuando_tmux_no_tiene_servidor(escena, monkeypatch)
     assert pane == "%9"
     assert [l[0] for l in llamadas] == ["nueva"]
     _, args, kw = llamadas[0]
-    assert args[1] == "/tmp/demo" and args[2] == "Primer slot" and args[3] == "claude"
+    assert args[1] == "/tmp/demo" and args[2] == "Primer slot"
+    # 🔴 El PATH va DENTRO del comando (regla 18, decisión 231): el `-e` de
+    # `new-session` no alcanza al primer panel, ni el de `new-window` al
+    # proceso. Se sigue pasando como entorno además, para la shell que quede.
+    assert args[3] == "env PATH=/usr/bin claude"
     assert kw["entorno"]["PATH"] == "/usr/bin"
     assert escena.execute("SELECT slot_id FROM binding WHERE pane_id='%9'").fetchone()[0] == slot_id
 

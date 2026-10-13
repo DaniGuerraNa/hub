@@ -4,7 +4,7 @@ Está en un módulo propio porque es una **política**, no un detalle de cada
 sitio: lo que el hub lanza no elige modelo por su cuenta, y quien quiera saber
 con qué corre su máquina mira aquí, no cinco archivos.
 
-🔴 **Nada que arranque el hub pasa de Sonnet.** Sembrar la capa base, aplicar un
+🔴 **Nada que arranque el hub pasa de Sonnet, salvo el orquestador** (257). Sembrar la capa base, aplicar un
 kit o crear un proyecto es trabajo mecánico —copiar archivos declarados, escribir
 un `kits.yml`, medir deriva—, y decisión suya: *«nada del hub debería usar más de
 sonnet, las operaciones no son complejas»*. Un modelo más caro ahí no hace el
@@ -30,6 +30,15 @@ import shlex
 #: El que usan los agentes que lanza el hub (crear proyecto, aplicar kit, …).
 AGENTE = "claude-sonnet-5"
 
+# 🔴 La excepción, y con su fecha (decisión 257). El techo de Sonnet se puso
+# cuando lo que el hub arrancaba era mecánico; el orquestador no lo es —parte
+# una tarea en pasos, decide y le pide trabajo a las sesiones—, y las sesiones
+# que abre hacen trabajo real de proyecto. Lo dijo él el 2026-09-22: *«esto sí
+# necesita opus, no puede usar sonnet; esa regla era porque el alcance del hub
+# en ese momento no era tan grande»*. Sigue siendo id exacto (decisión 91).
+ORQUESTADOR = "claude-opus-5-5"
+SESION_ORQUESTADA = "claude-opus-5-5"
+
 #: El asistente. Mismo techo, decisión propia (74): *«por ahora dejemos sonnet
 #: para el asistente, y vemos qué tal se comporta»*.
 ASISTENTE = "claude-sonnet-5"
@@ -42,6 +51,7 @@ PERMITIDOS = frozenset(
         "claude-sonnet-5",
         "claude-sonnet-4-6",
         "claude-haiku-4-5",
+        "claude-opus-5-5",
     }
 )
 

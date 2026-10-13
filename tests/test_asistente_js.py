@@ -71,10 +71,16 @@ def test_el_texto_del_usuario_se_escapa_antes_de_pintarlo(guion):
     assert "escapar(m.texto)" in guion
 
 
-def test_lo_escrito_no_se_pierde_si_el_envio_falla(guion):
-    """Perder un mensaje largo porque el asistente estaba ocupado sería la peor
-    manera de fallar aquí."""
-    assert guion.count("caja.value = texto") == 2
+# 🔴 Aquí vivía `test_lo_escrito_no_se_pierde_si_el_envio_falla`, que contaba
+# apariciones de `caja.value = texto` en el fuente y exigía que fueran DOS.
+#
+# Se ha movido a `test_asistente_cargando_js.py`, donde se comprueba
+# ejecutando el script. El motivo es el que dice la regla dura 11: contar
+# cadenas no prueba el comportamiento y sí se rompe cuando el comportamiento
+# MEJORA. Pasó literalmente: al añadir el tercer camino que devuelve el texto
+# —el que faltaba, el de un HTTP que no es `ok`— el contador pasó a 3 y el test
+# se puso en rojo por un arreglo. Un test que hay que actualizar cada vez que
+# el código acierta enseña a actualizarlo sin leerlo.
 
 
 def test_no_existe_ninguna_llamada_de_borrado(guion):

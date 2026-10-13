@@ -44,7 +44,7 @@
     {{ ui.placa('mas', '', 'sm') }}<strong style="font-weight:550">Añadir una conexión</strong>
   </summary>
   <form method="post" action="/conexiones/nueva" style="margin-top:14px">
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:0 22px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(230px,100%),1fr));gap:0 22px">
       <div>
         <label>Alias</label>
         <input type="text" name="alias" required placeholder="vps-pruebas"

@@ -81,8 +81,82 @@
 </script>
 {% endif %}
 
+{# ── Volver después de un apagón ─────────────────────────────────────────────
+   Un botón, nunca algo automático (regla dura 3). Y deliberadamente poca cosa:
+   abre las ventanas en su ruta con el comando ESCRITO Y SIN LANZAR (decisión
+   165), así que no gasta cuota, no levanta sesiones sin nadie delante y no toca
+   docker. Sólo sale si hay slots marcados: un botón que no hace nada es peor
+   que ningún botón. #}
+{% if r.para_restaurar %}
+<div class="aviso" style="border-left-color:var(--acento)">
+  {{ ui.placa('terminal', '', 'lg') }}
+  <div style="flex:1;min-width:0">
+    <h2>Puedes volver a dejarlo como estaba</h2>
+    <p class="tenue" style="margin:0 0 10px">
+      {% for s in r.para_restaurar %}<code>{{ s.nombre }}</code>{% if not loop.last %} · {% endif %}{% endfor %}
+    </p>
+    <p class="tenue" style="margin:0 0 12px;max-width:72ch">
+      Cada una en su ruta, con su comando escrito
+      <strong style="color:var(--texto-2)">sin ejecutarlo</strong>: lo lanzas tú
+      cuando lo veas. No relanza sesiones, no arranca contenedores.
+    </p>
+
+    {% set rr = r.restauracion %}
+    {% if rr.candidatos %}
+    {# 🔴 La muestra se elige a mano y se enseña el plan antes de abrir nada. El
+       16-sep hubo dos muestras marcadas «antes de un corte» con los mismos slots
+       y casi los mismos paneles, y sólo una era el escritorio de trabajo:
+       ninguna regla las distinguía. Se ve y se decide (principio 9). #}
+    <form method="get" action="/" class="barra" style="gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <label style="margin:0;text-transform:none;letter-spacing:0">Volver a como estaba el</label>
+      <select name="muestra" onchange="this.form.submit()" style="width:auto;max-width:100%">
+        {% for c in rr.candidatos %}
+        <option value="{{ c.id }}" {% if rr.muestra and c.id == rr.muestra.id %}selected{% endif %}>
+          {{ c.tomado_en[8:10] }}/{{ c.tomado_en[5:7] }} {{ c.tomado_en[11:16] }} UTC ·
+          {{ c.ventanas }} ventana{{ 's' if c.ventanas != 1 }} ·
+          {{ c.procesos | join(', ') or 'sin procesos' }}
+        </option>
+        {% endfor %}
+      </select>
+      <noscript><button class="boton sutil">Ver</button></noscript>
+    </form>
+
+    <div class="tarjeta" style="margin:0 0 12px;padding:0">
+      {% for v in rr.ventanas %}
+      <div style="display:flex;gap:10px;align-items:baseline;padding:8px 12px;
+                  border-bottom:1px solid var(--borde);font-size:13px">
+        <span style="flex:none;font-weight:550">{{ v.nombre }}</span>
+        <span class="tenue mono" style="flex:1;min-width:0;overflow:hidden;
+              text-overflow:ellipsis;white-space:nowrap">{{ v.ruta or '—' }}</span>
+        <span class="insignia {{ 'riesgo' if not v.ruta else '' }}">
+          {{ v.comando.split(' ')[0] if v.comando else ('no se abre' if not v.ruta else 'shell') }}</span>
+      </div>
+      {% if v.aviso %}
+      <p class="tenue" style="margin:0;padding:0 12px 8px;font-size:12px;color:var(--alerta)">{{ v.aviso }}</p>
+      {% endif %}
+      {% endfor %}
+      {% if not rr.ventanas %}
+      <p class="tenue" style="margin:0;padding:12px">Esa muestra no tiene ninguna ventana de estos slots.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/restaurar">
+      <input type="hidden" name="destino" value="/">
+      {% if rr.muestra %}<input type="hidden" name="muestra" value="{{ rr.muestra.id }}">{% endif %}
+      <button class="boton primario">
+        Abrir {{ rr.ventanas | length or '' }} ventana{{ 's' if (rr.ventanas | length) != 1 }}</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 {% if r.recuperacion %}
 <div class="aviso">
+  {# Envuelto: `.aviso` es flex en fila, y con el título, el párrafo, la lista
+     y los botones sueltos dentro salían en cuatro columnas — y en el teléfono
+     empujaban la página a 615 px (medido el 13-oct con datos reales). #}
+  <div style="flex:1;min-width:0">
   <h2>Se perdió una sesión de trabajo</h2>
   <p class="tenue" style="margin:0 0 10px">
     Última muestra antes del corte: {{ r.recuperacion.tomado_en }} ·
@@ -94,17 +168,18 @@
     <li>
       <div class="pila">
         <span class="etiqueta">{{ p.etiqueta }}</span>
-        <span class="mono">{{ p.cwd }}</span>
+        <span class="mono" style="overflow-wrap:anywhere">{{ p.cwd }}</span>
         {% if p.slot_nombre %}<span class="tenue">slot: {{ p.slot_nombre }}</span>{% endif %}
       </div>
     </li>
     {% endfor %}
   </ul>
-  <div class="barra" style="margin-top:12px">
+  <div class="barra" style="margin-top:12px;flex-wrap:wrap">
     <a class="boton principal" href="/trabajo">Ir a trabajar</a>
     <form method="post" action="/recuperacion/{{ r.recuperacion.id }}/revisada" class="enlinea">
       <button class="aceptar">Ya lo revisé</button>
     </form>
+  </div>
   </div>
 </div>
 {% endif %}
@@ -145,7 +220,7 @@
   {% endif %}
 </p>
 
-{% if r.bandeja %}
+{% if r.bandeja or r.ocultas %}
 <h2 class="con-placa">{{ ui.placa('bandeja', 'espera') }}
   <span>Bandeja de entrada</span>
   <span class="apunte">{{ r.bandeja | length }} paneles sin slot</span></h2>
@@ -211,6 +286,23 @@
         {% endif %}
         <div class="separador"></div>
         {% endif %}
+        {# Ocultar y descartar NO son lo mismo, y por eso están los dos.
+           Descartar es por panel y muere con el servidor de tmux: vale para un
+           panel de una vez. Ocultar es por nombre y sobrevive al reinicio, que
+           es lo que hace falta para un servidor de node que está siempre
+           abierto y nunca va a ser un trabajo. #}
+        <div class="rotulo-menu">Quitarla de en medio</div>
+        <form method="post" action="/panel/accion">
+          <input type="hidden" name="pane_id" value="{{ p.pane_id }}">
+          <input type="hidden" name="accion" value="ocultar">
+          <button type="submit" title="No la cierra: sigue corriendo, sólo deja de salir en la bandeja">Ocultar esta ventana</button>
+        </form>
+        <form method="post" action="/panel/accion">
+          <input type="hidden" name="pane_id" value="{{ p.pane_id }}">
+          <input type="hidden" name="accion" value="ocultar_sesion">
+          <button type="submit" title="Oculta todas las ventanas de «{{ p.session }}», también las que abra después">Ocultar «{{ p.session }}» entera</button>
+        </form>
+        <div class="separador"></div>
         <form method="post" action="/panel/accion">
           <input type="hidden" name="pane_id" value="{{ p.pane_id }}">
           <input type="hidden" name="accion" value="descartar">
@@ -220,6 +312,25 @@
     </div>
   </div>
 {% endfor %}
+{% if r.ocultas %}
+  {# Se dice cuánto se esconde y se puede deshacer aquí mismo. Una lista que
+     esconde en silencio se lee como la lista completa: entonces «no aparece» y
+     «no existe» dejan de distinguirse, y este hub existe justo para lo
+     contrario. #}
+  <div class="fila ocultas">
+    <span class="tenue">Ocultas: no salen en la bandeja ni en la barra de trabajo. Siguen corriendo.</span>
+    <div class="der lista-ocultas">
+      {% for v in r.ocultas %}
+      <form method="post" action="/oculto/mostrar">
+        <input type="hidden" name="session" value="{{ v.session }}">
+        <input type="hidden" name="ventana" value="{{ v.window_idx if v.window_idx is not none }}">
+        <input type="hidden" name="destino" value="/">
+        <button class="sutil" title="Volver a enseñarla">{{ v.session }}{% if v.window_idx is not none %}:{{ v.window_idx }}{% else %} (entera){% endif %} ✕</button>
+      </form>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
 </div>
 {% endif %}
 

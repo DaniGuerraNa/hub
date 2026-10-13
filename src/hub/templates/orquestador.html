@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+
+{# Un punto por paso del plan: verdes los hechos, latiendo el de ahora, grises
+   los que faltan. Pequeño a propósito: se lee de un vistazo en el teléfono sin
+   quitarle sitio a lo que importa, que es qué pidió y qué contestó. #}
+{% macro puntos(t) %}
+{%- if t.puntos -%}
+<span class="puntos" role="img"
+      aria-label="{{ t.puntos | select('equalto', 'hecho') | list | length }} de {{ t.puntos | length }} pasos">
+  {%- for p in t.puntos -%}
+    {%- if not loop.first %}<i class="l {{ 'hecho' if p in ['hecho', 'ahora', 'pregunta'] }}"></i>{% endif -%}
+    <i class="p {{ p }}"></i>
+  {%- endfor -%}
+</span>
+{%- endif -%}
+{% endmacro %}
+
+{% block contenido %}
+
+<style>
+  /* Pensada para el teléfono: es desde donde se le dan las tareas estando
+     fuera. Lo que pide atención —su pregunta— arriba; lo hecho, plegado abajo;
+     los permisos, en su propia pantalla. */
+  .orq { display:grid; gap:14px; }
+  .orq .tarjeta h2 { margin:0 0 8px; font-size:15px; }
+  .orq textarea { width:100%; min-height:90px; }
+  .orq .acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+  .orq .acciones .estado-audio { font-size:12.5px; color:var(--texto-3); flex-basis:100%; }
+  .cabeza-orq { display:flex; gap:10px; align-items:flex-start; justify-content:space-between;
+                flex-wrap:wrap; margin-bottom:14px; }
+  /* Un resumen largo empujaba la lista fuera de la pantalla: se lee dentro de
+     su recuadro, y lo de abajo sigue a mano. */
+  .resumen-tarea { max-height:14em; overflow:auto; }
+  button.grabando { border-color:var(--riesgo); color:var(--riesgo); }
+  .bandeja { border-left:3px solid var(--espera); }
+  .pregunta { white-space:pre-wrap; font-size:14.5px; line-height:1.5; margin:0 0 10px; }
+  .pedido { white-space:pre-wrap; margin:0; line-height:1.5; }
+  .plan { white-space:pre-wrap; font-size:13px; line-height:1.5; color:var(--texto-2);
+          background:var(--superficie2); border-radius:10px; padding:10px 12px; margin:6px 0 0;
+          overflow-x:auto; }
+  .estado-tarea { font-size:11px; white-space:nowrap; }
+  .estado-tarea.en-cola { color:var(--texto-3); }
+  .estado-tarea.activa, .estado-tarea.esperando-sesion { color:var(--acento); }
+  .estado-tarea.esperando-dueno { color:var(--espera); }
+  .estado-tarea.terminada { color:var(--ok); }
+  .estado-tarea.detenida { color:var(--riesgo); }
+
+  /* Los puntos del plan. */
+  .puntos { display:inline-flex; align-items:center; vertical-align:middle; }
+  .puntos .p { width:7px; height:7px; border-radius:50%; background:var(--borde); flex:none; }
+  .puntos .l { width:9px; height:1.5px; background:var(--borde); flex:none; }
+  .puntos .p.hecho, .puntos .l.hecho { background:var(--ok); }
+  .puntos .p.ahora { background:var(--acento); animation:latir 1.3s ease-in-out infinite; }
+  .puntos .p.pregunta { background:var(--espera); animation:latir 1.3s ease-in-out infinite; }
+  .puntos .p.parado { background:transparent; box-shadow:inset 0 0 0 1.5px var(--texto-4); }
+  @keyframes latir { 50% { opacity:.25; } }
+  @media (prefers-reduced-motion: reduce) { .puntos .p { animation:none !important; } }
+
+  .bitacora { list-style:none; padding:0; margin:6px 0 0; }
+  .bitacora li { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; padding:7px 0;
+                 border-bottom:1px solid var(--borde); font-size:12.5px; }
+  .bitacora .cuando { color:var(--texto-4); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .bitacora .que { color:var(--texto-2); }
+  .bitacora .texto { grid-column:1 / -1; color:var(--texto-3); white-space:pre-wrap;
+                     word-break:break-word; max-height:9.5em; overflow:auto; }
+
+  .lista-tareas { list-style:none; padding:0; margin:0; }
+  .lista-tareas li { border-bottom:1px solid var(--borde); }
+  .lista-tareas a { display:grid; grid-template-columns:1fr auto; gap:2px 10px; padding:8px 0;
+                    color:var(--texto); text-decoration:none; }
+  .lista-tareas .resumen { grid-column:1 / -1; color:var(--texto-3); font-size:12.5px;
+                           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lista-tareas .meta { font-size:12px; color:var(--texto-3); }
+  .lista-tareas a[aria-current] .resumen { color:var(--texto); }
+
+  .filtros { display:flex; gap:6px; flex-wrap:wrap; margin:10px 0 6px; }
+  .filtros a { font-size:12px; padding:3px 10px; border-radius:9999px; text-decoration:none;
+               color:var(--texto-3); background:var(--superficie2); }
+  .filtros a.aqui { color:var(--texto); background:color-mix(in srgb, var(--acento) 22%, transparent); }
+  .filtros .n { color:var(--texto-4); margin-left:3px; font-variant-numeric:tabular-nums; }
+
+</style>
+
+<div class="cabeza-orq">
+  {{ ui.cabecera_vista('Orquestador',
+     'Le das una tarea; él se la pide a la sesión de cada proyecto, espera, lee
+      y sigue. Tú contestas aquí lo que pregunte.') }}
+  <a class="boton" href="/orquestador/permisos">Permisos · {{ o.con_alcance }}</a>
+</div>
+
+{% set d = o.detalle %}
+<div class="orq">
+
+
+{# ── La bandeja: lo que pide atención va primero ─────────────────────────── #}
+{% if o.viva and o.viva.pregunta %}
+<div class="tarjeta bandeja" id="bandeja">
+  <h2>Te pregunta</h2>
+  <p class="pregunta">{{ o.viva.pregunta.texto }}</p>
+  <form method="post" action="/orquestador/responder">
+    <input type="hidden" name="tarea_id" value="{{ o.viva.id }}">
+    <input type="hidden" name="origen" value="texto" id="respuesta-origen">
+    <textarea name="texto" id="respuesta-texto" required
+              placeholder="Tu respuesta. Puedes dictarla."></textarea>
+    <div class="acciones">
+      <button class="boton principal">Responder</button>
+      <button type="button" class="boton" data-grabar="respuesta-texto"
+              data-grabar-estado="respuesta-audio" data-grabar-origen="respuesta-origen">Dictar</button>
+      <span class="estado-audio" id="respuesta-audio"></span>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+{# ── La tarea que se mira: la de ahora, o la que se eligió de la lista ────── #}
+{% if d %}
+<div class="tarjeta" id="tarea">
+  <div class="fila" style="align-items:flex-start;gap:10px">
+    <div class="pila" style="flex:1;min-width:0;gap:4px">
+      <span class="tenue" style="font-size:12px">{{ d.id }} · {{ d.creada_local }}
+        {% if d.origen == 'audio' %}· dictada{% endif %}
+        {% if d.proyectos %}· {{ d.proyectos | join(', ') }}{% endif %}</span>
+      <span style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <span class="estado-tarea {{ d.estado }}">● {{ d.etiqueta }}</span>
+        {{ puntos(d) }}
+        {% if d.puntos and d.viva %}<span class="tenue" style="font-size:11px">paso {{ d.paso or 1 }} de {{ d.pasos }}</span>{% endif %}
+      </span>
+    </div>
+    {% if d.estado in ['en-cola', 'activa', 'esperando-sesion', 'esperando-dueno'] %}
+    <form method="post" action="/orquestador/detener" class="enlinea"
+          data-confirmar-titulo="Detener la tarea"
+          data-confirmar-ok="Detenerla"
+          data-confirmar="{% if d.estado == 'en-cola' %}Sale de la cola y no se hará.{% else %}Se interrumpe al orquestador y a las sesiones que trabajan para ella. Lo que ya hicieron, hecho está.{% endif %}">
+      <input type="hidden" name="tarea_id" value="{{ d.id }}">
+      <button class="declinar peligro-sutil">{{ 'Quitar de la cola' if d.estado == 'en-cola' else 'Detener' }}</button>
+    </form>
+    {% elif o.viva and o.viva.id != d.id %}
+    <a class="boton" href="/orquestador">Ver la de ahora</a>
+    {% endif %}
+  </div>
+
+  <p class="pedido" style="margin-top:10px">{{ d.pedido }}</p>
+
+  {% if d.resumen %}
+  <label>Resumen</label>
+  <p class="pedido resumen-tarea">{{ d.resumen }}</p>
+  {% elif d.avance %}
+  <label>Cómo va</label>
+  <p class="pedido">{{ d.avance }}</p>
+  {% endif %}
+
+  {% if d.esperando %}
+  <label>Esperando a</label>
+  <ul class="limpia">
+    {% for e in d.esperando %}
+    <li class="tenue" style="font-size:13px">
+      {{ e.proyecto }} · <span class="mono">{{ e.pane_id }}</span> ·
+      {{ 'que quede libre' if e.tipo == 'libre' else 'su respuesta' }}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if d.plan %}
+  <details>
+    <summary>Plan</summary>
+    <pre class="plan">{{ d.plan }}</pre>
+  </details>
+  {% endif %}
+
+  <details>
+    <summary>Bitácora ({{ d.bitacora | length }})</summary>
+    <ul class="bitacora">
+      {% for b in d.bitacora %}
+      <li>
+        <span class="cuando">{{ b.hora }}</span>
+        <span class="que">{{ b.tipo }}{% if b.proyecto %} · {{ b.proyecto }}{% endif %}</span>
+        {% if b.texto %}<span class="texto">{{ b.texto }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </details>
+</div>
+{% endif %}
+
+{# ── Una tarea nueva ──────────────────────────────────────────────────────── #}
+<div class="tarjeta">
+  <h2>Nueva tarea</h2>
+  <form method="post" action="/orquestador/tarea">
+    <input type="hidden" name="origen" value="texto" id="pedido-origen">
+    <textarea name="pedido" id="pedido" required
+              placeholder="Ej.: en mi-app revisa el estado; si faltan las pruebas, despliega en vps-test, genera el APK y déjamelo en Intercambio."></textarea>
+    <div class="acciones">
+      <button class="boton principal">Encolar</button>
+      <button type="button" class="boton" data-grabar="pedido"
+              data-grabar-estado="pedido-audio" data-grabar-origen="pedido-origen">Dictar</button>
+      <span class="estado-audio" id="pedido-audio">
+        {% if o.viva %}Hay una en curso: ésta espera su turno.{% endif %}
+      </span>
+    </div>
+  </form>
+  {% if not o.con_alcance %}
+  <p class="tenue" style="margin:10px 0 0;font-size:12.5px">
+    Todavía no llega a ningún proyecto: dale alcance en
+    <a href="/orquestador/permisos">Permisos</a>.
+  </p>
+  {% endif %}
+</div>
+
+{# ── La cola ──────────────────────────────────────────────────────────────── #}
+{% if o.cola %}
+<div class="tarjeta">
+  <h2>En cola ({{ o.cola | length }})</h2>
+  <ul class="lista-tareas">
+    {% for t in o.cola %}
+    <li><a href="/orquestador?tarea={{ t.id }}#tarea">
+      <span class="meta">{{ t.creada_local }}</span>
+      <span></span>
+      <span class="resumen">{{ t.pedido }}</span></a></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{# ── Lo hecho, plegado y por proyecto ─────────────────────────────────────── #}
+{% if o.lista or o.filtro %}
+<div class="tarjeta">
+  <details {{ 'open' if o.filtro or (d and not d.viva) }}>
+    <summary>Hechas y detenidas{% if o.filtro %} · {{ o.filtro }}{% endif %}
+      ({{ o.lista | length }}{% if o.mas %}+{% endif %})</summary>
+    {% if o.por_proyecto | length > 1 or o.filtro %}
+    <nav class="filtros" aria-label="Filtrar por proyecto">
+      <a href="/orquestador" class="{{ 'aqui' if not o.filtro }}">Todos</a>
+      {% for p in o.por_proyecto %}
+      <a href="/orquestador?proyecto={{ p.id | urlencode }}"
+         class="{{ 'aqui' if o.filtro == p.id }}">{{ p.nombre }}<span class="n">{{ p.tareas }}</span></a>
+      {% endfor %}
+    </nav>
+    {% endif %}
+    <ul class="lista-tareas">
+      {% for t in o.lista %}
+      <li><a href="/orquestador?tarea={{ t.id }}{% if o.filtro %}&proyecto={{ o.filtro | urlencode }}{% endif %}#tarea"
+             {% if d and d.id == t.id %}aria-current="true"{% endif %}>
+        <span class="meta"><span class="estado-tarea {{ t.estado }}">● {{ t.etiqueta }}</span>
+          · {{ t.creada_local }}{% if t.proyectos %} · {{ t.proyectos | join(', ') }}{% endif %}</span>
+        {{ puntos(t) }}
+        <span class="resumen">{{ t.pedido }}</span></a></li>
+      {% else %}
+      <li class="tenue" style="padding:8px 0;font-size:13px">Nada en este proyecto todavía.</li>
+      {% endfor %}
+    </ul>
+    {% if o.mas %}<p class="tenue" style="font-size:12px;margin:8px 0 0">Y {{ o.mas }} más antiguas.</p>{% endif %}
+  </details>
+</div>
+{% endif %}
+
+</div>
+
+<script src="/static/grabar.js"></script>
+{% endblock %}

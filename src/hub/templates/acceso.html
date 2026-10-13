@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  /* El QR es lo único propio de esta pantalla. Cuadrado, con su propio fondo
+     claro: un QR pintado con el color del tema sobre lienzo oscuro no lo lee
+     ningún móvil, así que aquí el blanco es funcional y no decorativo. */
+  .qr { background:#fff; color:#000; padding:14px; border-radius:var(--r-tarjeta);
+        width:max-content; margin:14px auto 8px; }
+  .qr svg { display:block; }
+  .codigo { font-family:var(--mono, ui-monospace, monospace); font-size:12.5px;
+            color:var(--texto-3); text-align:center; word-break:break-all; }
+</style>
+
+{{ ui.cabecera_vista('Acceso',
+    'Por qué nombres se entra al hub, qué aparatos pueden, y si la terminal está abierta desde fuera.') }}
+
+{% if error %}
+<div class="aviso" style="border-left-color:var(--alerta)">
+  {{ ui.placa('aviso', 'riesgo') }}
+  <div style="flex:1"><strong>El archivo de acceso dice algo que no se puede obedecer.</strong>
+    <div class="tenue">{{ error }}</div></div>
+</div>
+{% endif %}
+
+{# ── El interruptor de la terminal ─────────────────────────────────────── #}
+<div class="aviso" style="border-left-color:{{ 'var(--alerta)' if terminal_remota else 'var(--acento)' }}">
+  {{ ui.placa('terminal', 'riesgo' if terminal_remota else '', 'lg') }}
+  <div style="flex:1;min-width:0">
+    <h2>La terminal desde fuera está {{ 'ABIERTA' if terminal_remota else 'cerrada' }}</h2>
+    <p class="tenue" style="margin:0 0 10px">
+      La terminal es el único sitio del hub que da una shell. Todo lo demás
+      —proyectos, notas, slots, lienzos, el asistente— no la da y no tiene por
+      qué cargar con su riesgo, así que va en su propio interruptor.
+      <strong style="color:var(--texto-2)">Se apaga sola cada vez que se
+      reinicia el hub</strong>, a propósito: así abrirla vuelve a ser una
+      decisión y no una puerta que lleva meses abierta porque un día se abrió.
+      Desde esta misma máquina la terminal funciona siempre; esto sólo afecta a
+      entrar por el nombre de la red privada.
+    </p>
+    <form method="post" action="/acceso/terminal">
+      <input type="hidden" name="abrir" value="{{ 0 if terminal_remota else 1 }}">
+      <button class="boton {{ '' if terminal_remota else 'primario' }}">
+        {{ 'Cerrarla' if terminal_remota else 'Abrirla hasta el próximo reinicio' }}
+      </button>
+    </form>
+  </div>
+</div>
+
+{# ── Alta de un aparato ────────────────────────────────────────────────── #}
+<h2 class="con-placa">{{ ui.placa('mas') }}<span>Dar de alta un aparato</span></h2>
+
+{% if pendiente %}
+<div class="tarjeta">
+  <strong style="font-weight:550">{{ pendiente.nombre }}</strong>
+  <p class="tenue" style="margin:6px 0 0">
+    Escanéalo con la cámara del aparato. El código sirve
+    <strong style="color:var(--texto-2)">una sola vez</strong> y caduca en
+    {{ minutos }} minutos.
+  </p>
+  <div class="qr">{{ qr | safe }}</div>
+  <div class="codigo">{{ enlace }}</div>
+</div>
+{% else %}
+<div class="tarjeta">
+  <form method="post" action="/acceso/alta" style="display:flex;gap:8px;flex-wrap:wrap">
+    <input name="nombre" placeholder="Móvil, portátil del viaje…" required
+           style="flex:1;min-width:220px">
+    <button class="boton primario">Generar el QR</button>
+  </form>
+  <p class="tenue" style="margin:10px 0 0">
+    El nombre es para reconocerlo después y poder quitarlo sin dudar cuál es.
+  </p>
+</div>
+{% endif %}
+
+{# ── Los aparatos que pueden entrar ────────────────────────────────────── #}
+<h2 class="con-placa">{{ ui.placa('llave') }}<span>Aparatos dados de alta</span>
+  <span class="cuenta">{{ dispositivos | length }}</span></h2>
+
+{% if dispositivos %}
+<div class="tarjeta">
+  {% for d in dispositivos %}
+  <div class="fila">
+    <div style="flex:1;min-width:0">
+      <strong style="font-weight:550">{{ d.nombre }}</strong>
+      <div class="tenue" style="font-size:12.5px">
+        alta {{ d.alta[:10] }} ·
+        {% if d.ultimo_uso %}visto {{ d.ultimo_uso[:16] | replace('T', ' ') }}
+        {% else %}sin usar todavía{% endif %}
+      </div>
+    </div>
+    <form method="post" action="/acceso/revocar">
+      <input type="hidden" name="dispositivo_id" value="{{ d.id }}">
+      <button class="boton">Quitar</button>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+<p class="tenue" style="margin-top:8px">
+  Quitar uno surte efecto en la petición siguiente, no cuando caduque nada: si
+  se pierde un aparato, se quita y deja de entrar.
+</p>
+{% else %}
+<div class="tarjeta tenue">
+  Ninguno todavía. Desde esta máquina no hace falta; desde fuera, sí.
+</div>
+{% endif %}
+
+{# ── Los nombres ───────────────────────────────────────────────────────── #}
+<h2 class="con-placa">{{ ui.placa('enlace') }}<span>Nombres por los que se entra</span></h2>
+<div class="tarjeta">
+  {% for h in hosts %}
+  <div class="fila">
+    <code>{{ h }}</code>
+    <span class="tenue" style="font-size:12.5px">{{ 'de casa' if h in locales else 'de la red privada' }}</span>
+  </div>
+  {% endfor %}
+  {% if hosts | length == locales | length %}
+  <p class="tenue" style="margin:10px 0 0">
+    Todavía no hay ninguno de fuera, así que al hub sólo se llega desde esta
+    máquina. Cuando la red privada le dé un nombre, va así en
+    <code>{{ archivo }}</code>:
+  </p>
+  <pre style="margin:8px 0 0"><code>hosts:
+  - esta-maquina.tu-red.ts.net</code></pre>
+  {% endif %}
+  <p class="tenue" style="margin:10px 0 0">
+    Se editan en <code>{{ archivo }}</code> y el hub los relee al arrancar.
+    Tienen que ser nombres <strong style="color:var(--texto-2)">exactos</strong>:
+    un comodín se rechaza, porque sin validar el <code>Host</code> los nombres de
+    sesión se pueden enumerar desde cualquier página abierta en el navegador.
+  </p>
+</div>
+
+{% endblock %}

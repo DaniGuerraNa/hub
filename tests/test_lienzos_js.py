@@ -82,7 +82,7 @@ global.document = {
   getElementById: (id) => nodos[id] || null,
   // `SIN_VENTANA` simula un slot recién creado que todavía no tiene ninguna
   // ventana abierta: entonces ese bloque no existe en el DOM.
-  querySelector: (sel) => (sel === '.por-ventana:not([hidden])' && !global.SIN_VENTANA)
+  querySelector: (sel) => (sel === '.por-ventana.viendo' && !global.SIN_VENTANA)
     ? ventana : null,
   querySelectorAll: (sel) => {
     if (sel === '.pest-lado button') return [nodos['pest-lienzos']];
@@ -171,7 +171,7 @@ function decsDe(caja) {
 function hash(s){ let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) | 0; return h; }
 
 // ── fetch gobernado desde el test ──────────────────────────────────────────
-const LIENZO = { id: 'revision', titulo: 'Revisión', plantilla: 'decisiones',
+const LIENZO = { id: 'revision', titulo: 'Revisión', plantilla: PLANTILLA_DEL_TEST,
                  proyecto_id: 'pedidos', slot: 'refactor', publicado_en: null,
                  tuyo: false, cuerpo: CUERPO_DEL_TEST };
 
@@ -187,7 +187,7 @@ global.fetch = async (url, opciones) => {
   }
   if (url.startsWith('/api/lienzos')) {
     return { ok: true, status: 200, json: async () => ({ ok: true, lienzos: [
-      { id: 'revision', titulo: 'Revisión', plantilla: 'decisiones',
+      { id: 'revision', titulo: 'Revisión', plantilla: PLANTILLA_DEL_TEST,
         proyecto_id: 'pedidos', slot: 'refactor', publicado_en: null, tuyo: false }]})};
   }
   return { ok: true, status: 200, json: async () => ({ ok: true, lienzo: LIENZO }) };
@@ -197,6 +197,23 @@ global.fetch = async (url, opciones) => {
 nuevo('lienzos-lista'); nuevo('lienzos-vista');
 nuevo('lienzos-buscar'); nuevo('lienzos-punto');
 nuevo('pest-lienzos').dataset.hoja = 'lienzos';
+
+// El botón de la lupa: el script lo busca por id nada más pintar un diagrama,
+// así que tiene que existir ANTES, no cuando el test quiera pulsarlo.
+nuevo('lienzo-ampliar');
+
+// La lupa monta una capa nueva sobre el documento. Es lo único del panel que
+// crea nodos en vez de pintar dentro de los suyos.
+let creados = 0;
+document.createElement = (etiqueta) => {
+  const n = nuevo(`creado-${etiqueta}-${creados++}`);
+  n.className = '';
+  n.remove = () => { REG.cerrada = true; };
+  return n;
+};
+document.body = { appendChild(n) { REG.capa = n; } };
+document.addEventListener = (ev, fn) => { (REG.globales ||= {})[ev] = fn; };
+document.removeEventListener = () => { REG.sueltos = true; };
 """
 
 FINAL = r"""
@@ -215,17 +232,21 @@ global.vistaDe = () => nodos['lienzos-vista'];
     peticiones: REG.peticiones,
     archivados: REG.archivados || [],
     corto: !!REG.corto,
+    capa: REG.capa ? String(REG.capa.innerHTML) : null,
+    cerrada: !!REG.cerrada,
+    sueltos: !!REG.sueltos,
   }));
 })();
 """
 
 
-def _correr(accion: str = "", cuerpo: str = CUERPO) -> dict:
+def _correr(accion: str = "", cuerpo: str = CUERPO, plantilla: str = "decisiones") -> dict:
     node = shutil.which("node")
     if not node:
         pytest.skip("hace falta node para ejecutar el JS")
     guion = (
         f"const CUERPO_DEL_TEST = {json.dumps(cuerpo)};\n"
+        f"const PLANTILLA_DEL_TEST = {json.dumps(plantilla)};\n"
         + ARNES
         + GUION.read_text(encoding="utf-8")
         + FINAL.replace("ACCION", accion)
@@ -308,7 +329,8 @@ def test_si_el_guardado_falla_se_avisa_y_no_se_pinta_como_decidido():
         "    return { ok: true, status: 200, json: async () => ({ ok: true }) };",
         "return { ok: false, status: 500, json: async () => ({}) };")
     node = shutil.which("node") or pytest.skip("hace falta node")
-    guion = (f"const CUERPO_DEL_TEST = {json.dumps(CUERPO)};\n" + guion_roto
+    guion = (f"const CUERPO_DEL_TEST = {json.dumps(CUERPO)};\n"
+             'const PLANTILLA_DEL_TEST = "decisiones";\n' + guion_roto
              + GUION.read_text(encoding="utf-8")
              + FINAL.replace("ACCION",
                              'decs[0].querySelectorAll(".dbb button")[0].disparar("click");'))
@@ -453,3 +475,234 @@ def test_responder_NO_cierra_el_punto_que_estas_contestando():
     guion = GUION.read_text(encoding="utf-8")
     tras_guardar = guion.split("previo = campo.value;")[1][:400]
     assert "pintar(l)" not in tras_guardar
+
+
+# ── los motores de dibujo: `arquitectura`, `pasos`, `comparativa` ─────────────
+#
+# 🔴 Estaban pendientes desde el 2026-09-02 (punto n2 de «Pendientes de
+# lienzos»): el hub sólo sabía pintar `decisiones`, así que un lienzo de las
+# otras tres se guardaba bien y se veía como el YAML en crudo. El primero que
+# lo destapó fue uno de `pasos` de verdad — diez pasos hasta el 23 de
+# septiembre— publicado desde otra terminal.
+
+ARQ = """plantilla: arquitectura
+piezas:
+  - {id: apigw, tipo: entrada, nombre: "API Gateway /pedidos"}
+  - {id: l1, tipo: computo, nombre: "validar"}
+  - {id: q1, tipo: cola, nombre: "SQS pedidos"}
+  - {id: db2, tipo: almacen, nombre: "DynamoDB idempotencia"}
+flujo:
+  - apigw -> l1
+  - l1 ~> db2
+  - l1 -> q1
+"""
+
+PASOS = """plantilla: pasos
+piezas:
+  - {id: p1, tipo: entrada, nombre: "1 - Respaldo del trabajo: tar.gz nuevo y patron en projects.yml"}
+  - {id: p2, tipo: computo, nombre: "2 - Transporte: Tailscale en Windows, tailnet lock, RDP"}
+  - {id: p3, tipo: almacen, nombre: "3 - Ensayo con corte real"}
+flujo:
+  - p1 -> p2
+  - p2 -> p3
+"""
+
+COMP = """plantilla: comparativa
+criterios: [peso, licencia, "sin build"]
+opciones:
+  - nombre: Drawflow
+    valores: ["45 KB", MIT, "si"]
+    nota: "vanilla, nodos HTML"
+  - nombre: Cytoscape
+    valores: ["365 KB", MIT]
+eleccion: Drawflow
+porque: "seis veces mas ligero que lo que ya se lleva vendorizado"
+"""
+
+
+def test_una_arquitectura_se_dibuja_en_vez_de_verse_como_yaml():
+    salida = _correr(cuerpo=ARQ, plantilla="arquitectura")
+    assert "<svg" in salida["vista"]
+    assert "lienzo-crudo" not in salida["vista"]
+    # Las cuatro piezas, cada una con el color de su tipo puesto por su clase.
+    assert salida["vista"].count("<rect") == 4
+    for tipo in ("entrada", "computo", "cola", "almacen"):
+        assert f"nd-{tipo}" in salida["vista"]
+
+
+def test_ningun_color_literal_sale_del_motor():
+    """🔴 El sistema visual manda: el tono lo pone `trabajo.html` desde los
+    tokens, no el JavaScript que dibuja. Un hex aquí sería la única pieza del
+    hub que no cambia cuando cambie la paleta."""
+    import re
+    guion = GUION.read_text(encoding="utf-8")
+    # La maqueta de la que se portó esto llevaba su paleta dentro, en hex. Lo
+    # que se busca es justamente eso: que no haya vuelto al copiarla.
+    assert not re.findall(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b", guion)
+
+
+def test_la_lectura_se_distingue_del_flujo():
+    """`~>` no es cosmética: no cuenta para el orden, y por eso se dibuja
+    distinta. Si se viera igual, el lector no sabría que puede ignorarla al
+    seguir el camino principal."""
+    salida = _correr(cuerpo=ARQ, plantilla="arquitectura")
+    assert 'class="ar flojo"' in salida["vista"]
+    assert salida["vista"].count('class="ar"') == 2
+
+
+def test_un_nombre_largo_se_reparte_en_varias_lineas():
+    """🔴 Lo que la maqueta no tuvo delante. Allí las piezas se llamaban «λ
+    validar»; el primer lienzo de `pasos` de verdad traía nombres de setenta
+    caracteres, y cortarlos a veinte deja «1 - Respaldo del t…», que no es un
+    paso: es un número."""
+    salida = _correr(cuerpo=PASOS, plantilla="pasos")
+    assert salida["vista"].count("<tspan") > 6      # más de dos líneas por caja
+    assert "projects.yml" in salida["vista"]        # el final del nombre llega
+    assert "…" not in salida["vista"]
+
+
+def test_el_paso_mas_largo_del_lienzo_real_entra_entero():
+    """🔴 La medida, no el cálculo (regla 20). Con 22 caracteres por línea y
+    cuatro líneas —lo que parecía de sobra— tres de los diez pasos del lienzo
+    del 23 de septiembre salían cortados en el navegador. Éste es el más largo
+    de aquéllos, con sus 90 caracteres; si alguien vuelve a estrechar la caja,
+    esto es lo que se entera."""
+    largo = ("3 - 10-13 sep - Las tres puertas: hosts configurables, "
+             "alta por QR, interruptor de terminal")
+    cuerpo = f'plantilla: pasos\npiezas:\n  - {{id: p3, tipo: computo, nombre: "{largo}"}}\n'
+    salida = _correr(cuerpo=cuerpo, plantilla="pasos")
+    assert "…" not in salida["vista"]
+    assert "terminal" in salida["vista"]
+
+
+def test_una_pieza_de_lectura_junto_a_su_lector_se_enlaza_en_recto():
+    """🔴 Se vio en el navegador, no leyendo el código. Una lectura se coloca
+    JUNTO a su lector a propósito, y ese caso caía en el rodeo de las flechas
+    que vuelven: la línea pasaba por encima de la caja de destino y la punta
+    quedaba fuera, a su derecha. Es el enlace más común de este motor, así que
+    el fallo salía en casi todos los diagramas."""
+    salida = _correr(cuerpo="orientacion: vertical\n" + ARQ, plantilla="arquitectura")
+    import re
+    flojo = re.search(r'class="ar flojo" d="([^"]+)"', salida["vista"]).group(1)
+    # Un solo tramo recto: el rodeo daba tres, y el último entraba por detrás.
+    assert flojo.count("L") == 1, f"la lectura da un rodeo: {flojo}"
+
+
+def test_los_pasos_van_en_vertical():
+    """Una cadena larga en horizontal se escala hasta que no se lee (regla 20),
+    y una lista de pasos se lee hacia abajo. En vertical las tres cajas
+    comparten la x y bajan; en horizontal sería al revés."""
+    salida = _correr(cuerpo=PASOS, plantilla="pasos")
+    import re
+    xs = [m for m in re.findall(r'<rect x="([-\d.]+)" y="([-\d.]+)"', salida["vista"])]
+    assert len({x for x, _ in xs}) == 1, "los pasos no están en una sola columna"
+    assert len({y for _, y in xs}) == 3, "los pasos no bajan"
+
+
+def test_un_flujo_que_apunta_a_una_pieza_que_no_existe_lo_dice_y_no_borra_nada():
+    """🔴 El cuerpo se enseña igual. Un lienzo mal escrito sigue siendo trabajo
+    de alguien, y un panel en blanco le quitaría lo único que puede corregir."""
+    roto = ARQ.replace("- l1 -> q1", "- l1 -> fantasma")
+    salida = _correr(cuerpo=roto, plantilla="arquitectura")
+    assert "fantasma" in salida["vista"]
+    assert "No se pudo dibujar" in salida["vista"]
+    assert "lienzo-crudo" in salida["vista"]
+    assert "<svg" not in salida["vista"]
+
+
+def test_el_nombre_de_una_pieza_va_escapado():
+    """Mismo motivo que en `decisiones`: esto se pinta con innerHTML dentro de
+    la página que tiene el WebSocket de la terminal (regla dura 8)."""
+    malo = ('plantilla: arquitectura\npiezas:\n'
+            '  - {id: a, tipo: entrada, nombre: "<img src=x onerror=alert(1)>"}\nflujo:\n')
+    salida = _correr(cuerpo=malo, plantilla="arquitectura")
+    assert "<img" not in salida["vista"]
+    assert "&lt;img" in salida["vista"]
+
+
+def test_ampliar_abre_el_diagrama_a_pantalla_completa():
+    """El panel mide ~330 px y una arquitectura de cinco niveles mide mil:
+    dentro se escala hasta que las etiquetas no se leen, que es la única forma
+    en que este motor falla sin que nada parezca roto."""
+    salida = _correr("nodos['lienzo-ampliar'].disparar('click');",
+                     cuerpo=ARQ, plantilla="arquitectura")
+    assert salida["capa"] is not None
+    assert "<svg" in salida["capa"]
+
+
+def test_los_dos_diagramas_a_la_vez_no_comparten_el_id_de_la_flecha():
+    """Los dos SVG conviven en el documento mientras la lupa está abierta, y
+    dos `id` iguales hacen que el segundo apunte al marcador del primero."""
+    salida = _correr("nodos['lienzo-ampliar'].disparar('click');",
+                     cuerpo=ARQ, plantilla="arquitectura")
+    assert 'id="flu-lupa"' in salida["capa"]
+    assert 'id="flu-lupa"' not in salida["vista"]
+
+
+def test_cerrar_la_lupa_suelta_el_oyente_de_teclado():
+    """Un oyente global que sobrevive a su capa se acumula con cada apertura y
+    acaba respondiendo Escape en nombre de un diagrama que ya no está."""
+    salida = _correr(
+        "nodos['lienzo-ampliar'].disparar('click');"
+        "REG.globales.keydown({ key: 'Escape' });",
+        cuerpo=ARQ, plantilla="arquitectura")
+    assert salida["cerrada"] is True
+    assert salida["sueltos"] is True
+
+
+def test_una_comparativa_tambien_se_puede_ampliar():
+    """Sus columnas se cortan en un panel de ~330 px —medido: el tercer
+    criterio quedaba fuera—, y lo que decide en una comparativa es ver los
+    valores del mismo criterio uno al lado de otro."""
+    salida = _correr("nodos['lienzo-ampliar'].disparar('click');",
+                     cuerpo=COMP, plantilla="comparativa")
+    assert salida["capa"] is not None
+    assert "<table>" in salida["capa"]
+
+
+def test_las_decisiones_NO_se_amplian():
+    """Sus botones escriben en el archivo del lienzo: una copia dentro de la
+    capa sería un segundo sitio desde donde guardar lo mismo."""
+    salida = _correr()
+    assert "lienzo-ampliar" not in salida["vista"]
+
+
+def test_una_comparativa_se_ve_como_tabla():
+    """Lo que decide es DÓNDE difieren las opciones, y eso sólo se ve con los
+    valores del mismo criterio uno encima de otro."""
+    salida = _correr(cuerpo=COMP, plantilla="comparativa")
+    assert "<table>" in salida["vista"]
+    assert "Drawflow" in salida["vista"] and "Cytoscape" in salida["vista"]
+    assert "sin build" in salida["vista"]
+    assert "vanilla, nodos HTML" in salida["vista"]
+
+
+def test_un_valor_que_falta_sale_como_raya_y_no_en_blanco():
+    """🔴 La plantilla lo pide por escrito: un hueco silencioso se lee como «no
+    aplica» cuando casi siempre significa «no lo he mirado» — y eso decide
+    mal. A Cytoscape le falta el tercer criterio."""
+    salida = _correr(cuerpo=COMP, plantilla="comparativa")
+    assert "—" in salida["vista"]
+
+
+def test_la_opcion_propuesta_se_distingue_y_dice_por_que():
+    salida = _correr(cuerpo=COMP, plantilla="comparativa")
+    assert 'class="elegida"' in salida["vista"]
+    assert "seis veces mas ligero" in salida["vista"]
+
+
+def test_los_criterios_tambien_valen_escritos_en_bloque():
+    """Las dos formas son YAML válido y el modelo escribe la que le sale."""
+    bloque = COMP.replace('criterios: [peso, licencia, "sin build"]',
+                          "criterios:\n  - peso\n  - licencia\n  - sin build")
+    salida = _correr(cuerpo=bloque, plantilla="comparativa")
+    assert "<table>" in salida["vista"]
+    assert "sin build" in salida["vista"]
+
+
+def test_una_plantilla_que_el_hub_no_conoce_se_sigue_viendo_cruda():
+    """Es como estuvieron estas tres hasta hoy: feo, pero recuperable. La que
+    venga después seguirá igual, y eso es lo que se prueba."""
+    salida = _correr(cuerpo="loquesea:\n  - a\n", plantilla="mapamundi")
+    assert "lienzo-crudo" in salida["vista"]
+    assert "loquesea" in salida["vista"]

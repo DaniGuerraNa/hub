@@ -146,3 +146,63 @@ def test_un_barrido_fallido_no_tumba_el_ciclo(con, atribuidor, monkeypatch):
     _falsear(monkeypatch, 100, _paneles(2))
 
     assert snapshotter.un_ciclo(con) is not None
+
+
+def test_tras_un_corte_las_ventanas_vuelven_a_su_slot(con, atribuidor, monkeypatch):
+    """El caso real del 2026-09-04: tmux reinicia y todo queda «desacomodado».
+
+    `resurrect` devuelve la sesión con su nombre y sus ventanas, pero con otros
+    `pane_id`. Sin reconciliación, TODOS los slots se quedan vacíos y todas las
+    terminales caen a la bandeja.
+    """
+    from hub import slots
+
+    _falsear(monkeypatch, 100, _paneles(2))
+    snapshotter.capturar(con, atribuidor)
+    slot_id = slots.crear(con, "demo", "back", ruta="/tmp/demo")
+    slots.vincular(con, "%0", slot_id)
+    snapshotter.capturar(con, atribuidor)
+
+    # Muere el servidor y resurrect restaura lo mismo con otros ids de panel.
+    _falsear(monkeypatch, 200, _paneles(2, base="%n"))
+    snapshotter.capturar(con, atribuidor)
+
+    panel = next(p for p in api.paneles_abiertos(con) if p["pane_id"] == "%n0")
+    assert panel["slot_id"] == slot_id, "el slot tiene que seguir ocupado tras el corte"
+    assert panel["slot_nombre"] == "back"
+
+
+def test_la_reconciliacion_no_revive_un_slot_archivado(con, atribuidor, monkeypatch):
+    """Archivar es una decisión humana: un corte no puede deshacerla (principio 9)."""
+    from hub import slots
+
+    _falsear(monkeypatch, 100, _paneles(1))
+    snapshotter.capturar(con, atribuidor)
+    slot_id = slots.crear(con, "demo", "back", ruta="/tmp/demo")
+    slots.vincular(con, "%0", slot_id)
+    snapshotter.capturar(con, atribuidor)
+    slots.archivar(con, slot_id)
+
+    _falsear(monkeypatch, 200, _paneles(1, base="%n"))
+    snapshotter.capturar(con, atribuidor)
+
+    assert api.paneles_abiertos(con)[0]["slot_id"] is None
+
+
+def test_la_reconciliacion_no_ata_una_ventana_que_no_estaba(con, atribuidor, monkeypatch):
+    """Sólo se restaura lo que alguien ató; no se inventan vínculos nuevos."""
+    from hub import slots
+
+    _falsear(monkeypatch, 100, _paneles(1))
+    snapshotter.capturar(con, atribuidor)
+    slot_id = slots.crear(con, "demo", "back", ruta="/tmp/demo")
+    slots.vincular(con, "%0", slot_id)
+    snapshotter.capturar(con, atribuidor)
+
+    # Tras el corte hay una ventana MÁS, que nunca tuvo slot.
+    _falsear(monkeypatch, 200, _paneles(2, base="%n"))
+    snapshotter.capturar(con, atribuidor)
+
+    por_id = {p["pane_id"]: p for p in api.paneles_abiertos(con)}
+    assert por_id["%n0"]["slot_id"] == slot_id
+    assert por_id["%n1"]["slot_id"] is None

@@ -142,6 +142,12 @@ def asegurar_sesion(proyectos: list[Proyecto]) -> dict[str, Any]:
     if not Path(proyecto.asiento).is_dir():
         raise AsistenteNoDisponible(f"el asiento del asistente no existe: {proyecto.asiento}")
 
+    # La carpeta es del hub —la sembró él—, así que se acepta de antemano. Sin
+    # esto, la primera vez Claude Code pregunta si confía en ella y el chat se
+    # queda delante de un menú que desde la web no se puede contestar (265).
+    from . import agentes
+    agentes._confiar(Path(proyecto.asiento))
+
     try:
         if not tmux.existe_sesion(SESION):
             # El comando va en el propio `new-session`, no en un `send-keys`
@@ -204,9 +210,34 @@ _GUION_CAJA = "─"
 _ANCHO_MINIMO_REGLA = 10
 
 
+# Lo que pinta Claude Code al pie de sus MENÚS. Medido en el diálogo de
+# «¿confías en esta carpeta?» de una instalación limpia (13-oct):
+#
+#     ❯ No, exit
+#       Yes, I trust this folder
+#     Enter to confirm · Esc to cancel
+#
+# Ahí el `❯` es el cursor del menú, no el del cuadro de entrada.
+_MARCAS_MENU = ("Enter to confirm", "Esc to cancel", "Yes, I trust this folder")
+
+
+def menu_abierto(pantalla: str) -> bool:
+    """Si Claude Code enseña un menú en vez del cuadro de entrada."""
+    return any(m in pantalla for m in _MARCAS_MENU)
+
+
 def listo(pane_id: str) -> bool:
-    """Si el cuadro de entrada de Claude Code ya está pintado y acepta texto."""
-    return MARCA_LISTO in tmux.capturar_panel(pane_id)
+    """Si el cuadro de entrada de Claude Code ya está pintado y acepta texto.
+
+    🔴 Con un menú en pantalla NO está listo, aunque haya un `❯`. Hasta el
+    13-oct bastaba con el glifo, y en una instalación limpia la primera vez que
+    se abría el asistente salía «¿confías en esta carpeta?» con «❯ No, exit»
+    marcado: el hub lo daba por listo, pegaba el mensaje, pulsaba Enter, Claude
+    Code se cerraba y tmux con él — en silencio. Aquí no pasaba nunca porque esa
+    carpeta llevaba meses aceptada (decisión 265).
+    """
+    pantalla = tmux.capturar_panel(pane_id)
+    return MARCA_LISTO in pantalla and not menu_abierto(pantalla)
 
 
 # Marcas del diálogo de permisos de Claude Code. Salió probando de verdad: el
@@ -347,7 +378,8 @@ def _cuadro(pane_id: str) -> str:
     return contenido.replace(MARCA_LISTO, "").strip()
 
 
-def despachar(pane_id: str, texto: str, intentos: int = 8, espera: float = 0.35) -> bool:
+def despachar(pane_id: str, texto: str, intentos: int = 8, espera: float = 0.35,
+              leer_cuadro=None, enter_a_ciegas: bool = True) -> bool:
     """Pulsa Enter hasta que el mensaje sale del cuadro de entrada.
 
     🔴 Existe por dos fallos medidos, no por precaución.
@@ -380,24 +412,35 @@ def despachar(pane_id: str, texto: str, intentos: int = 8, espera: float = 0.35)
     «Entró algo y luego el cuadro se vació» comprueba lo mismo —que el Enter no
     se lo tragó la TUI— y no depende de cómo decida pintar el texto.
     """
+    # `leer_cuadro` existe porque cada TUI pinta el suyo distinto y esto ya no
+    # sirve sólo a Claude Code (decisión 200). Por omisión, el de siempre.
+    mirar = leer_cuadro or _cuadro
+
     entro = False
     for _ in range(intentos):
-        if _cuadro(pane_id):
+        if mirar(pane_id):
             entro = True
             break
         time.sleep(espera)
 
     if not entro:
-        # El cuadro sigue vacío: o la TUI cambió de aspecto y `_cuadro` ya no la
-        # entiende, o el pegado no llegó. Se pulsa Enter una vez por si acaso y
-        # se dice que no se pudo confirmar, en vez de mentir con un `true`.
-        tmux.enter_en_panel(pane_id)
+        # El cuadro sigue vacío: o la TUI cambió de aspecto y ya no se entiende,
+        # o el pegado no llegó.
+        #
+        # 🔴 `enter_a_ciegas` decide qué hacer con eso, y no es un detalle. Aquí
+        # no se sabe qué hay en pantalla: si fuera un diálogo de permisos, ese
+        # Enter lo estaría respondiendo. Se permite sólo donde los diálogos
+        # están medidos y se comprueban antes (`_MARCAS_CONFIRMACION`, o sea
+        # Claude Code). Donde no, no se pulsa nada: quedarse corto es
+        # recuperable, aprobar algo a ciegas no.
+        if enter_a_ciegas:
+            tmux.enter_en_panel(pane_id)
         return False
 
     for _ in range(intentos):
         tmux.enter_en_panel(pane_id)
         time.sleep(espera)
-        if not _cuadro(pane_id):
+        if not mirar(pane_id):
             return True
     return False
 
@@ -445,7 +488,42 @@ def ocupado(pane_id: str | None = None) -> bool | None:
     # La lectura del glifo vive en `tmux` porque el punto de estado de la barra
     # de trabajo la necesita igual. Dos copias de este rango serían dos
     # definiciones de "está pensando" que pueden separarse sin que nada avise.
-    return tmux.es_spinner(titulo)
+    #
+    # 🔴 Y la pantalla, como segunda señal que sólo SUMA casos. Medido el
+    # 2026-09-22 con Claude Code 2.1.280: una sesión corriendo un `python3 -c
+    # 'time.sleep(100)'` tenía el título en `✳` —reposo— durante los cien
+    # segundos, con «✻ Boondoggling… (26s · ↓ 136 tokens)» en pantalla; y el
+    # orquestador recién abierto ni siquiera ponía título («DESKTOP»). Sólo con
+    # el glifo, el orquestador daba por acabada a los 45 s una orden larga y
+    # Detener no interrumpía nada porque «no estaba trabajando».
+    return tmux.es_spinner(titulo) or trabajando_en_pantalla(pane_id)
+
+
+# La línea de estado de Claude Code mientras trabaja, justo encima del cuadro:
+# «✻ Boondoggling… (26s · ↓ 136 tokens)», «· Brewing… (1m 3s)». El verbo cambia
+# y el glifo parpadea; lo estable es el «…» seguido del contador entre
+# paréntesis. Al acabar dice «✻ Worked for 5s · done», sin «…»: no casa.
+_LINEA_TRABAJANDO = re.compile(r"…\s*\((?:\d+h\s*)?(?:\d+m\s*)?\d+s\b")
+
+
+def trabajando_en_pantalla(pane_id: str) -> bool:
+    """Si la línea de estado de encima del cuadro dice que está trabajando.
+
+    Sólo se miran las pocas líneas justo encima del cuadro de entrada, nunca el
+    historial: un «…(3s» en la salida de una herramienta de hace una hora no es
+    trabajo de ahora.
+    """
+    lineas = tmux.capturar_panel(pane_id).splitlines()
+    reglas = [i for i, l in enumerate(lineas) if _es_regla(l)]
+    if not reglas:
+        return False
+    prompt = next((i for i in range(reglas[-1] - 1, -1, -1)
+                   if lineas[i].strip().startswith(MARCA_LISTO)), None)
+    if prompt is None:
+        return False
+    tope = max((i for i in reglas if i < prompt), default=prompt)
+    zona = [l for l in lineas[max(0, tope - 6):tope] if l.strip()][-4:]
+    return any(_LINEA_TRABAJANDO.search(l) or "esc to interrupt" in l for l in zona)
 
 
 def contexto(ruta_transcript: Path | None = None) -> dict[str, Any] | None:

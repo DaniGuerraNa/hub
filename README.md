@@ -62,8 +62,15 @@ la interfaz son `.js` que el navegador cachea.
 | **Servicios** | De quién es cada contenedor de Docker, **antes** de parar ninguno |
 | **Conexiones** | Dónde despliega cada cosa y **dónde vive** su credencial — nunca la credencial |
 | **Contexto** | Todo el estado en un texto, listo para pegar al principio de una sesión de Claude |
+| **Archivos** | Qué hay y dónde, por proyecto. Sólo nombres y rutas: el hub no abre archivos |
+| **Intercambio** | La carpeta por la que pasan archivos entre el teléfono y tus sesiones |
+| **Máquina** | Cómo está el equipo cuando no hay nadie delante: disco, memoria, GPU y, si hay un SAI por USB, si se fue la luz |
+| **Consumo** | Cuántos tokens ha costado cada proyecto, leído del registro de Claude Code |
+| **Orquestador** | Le das una tarea y él se la pide a la sesión de cada proyecto, paso a paso. Ver [`conocimiento/09`](conocimiento/09-orquestador-e-intercambio.md) antes de darle permisos |
+| **Canal** y **Encargos** | Preguntar y recibir encargos por Telegram. Opcionales: sus servicios se instalan parados |
+| **Acceso** | Por qué nombres se entra al hub, qué aparatos pueden, y si la terminal está abierta desde fuera |
 
-Y una octava que no sale en el raíl porque depende de dónde estés: **la del
+Y una más que no sale en el raíl porque depende de dónde estés: **la del
 proyecto** (`/proyecto/<id>`, pinchando cualquiera), donde se crean, editan,
 mueven, archivan y borran sus slots.
 

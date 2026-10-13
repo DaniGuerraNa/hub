@@ -53,7 +53,7 @@ def test_abre_el_websocket_a_la_sesion_y_ventana_correctas(ejecucion):
 
 
 def test_pide_las_ventanas_de_la_sesion_al_arrancar(ejecucion):
-    assert "/api/sesion/work/ventanas" in ejecucion["peticiones"]
+    assert any(u.startswith("/api/sesion/work/ventanas") for u in ejecucion["peticiones"])
 
 
 def test_registra_el_atajo_de_teclado_para_saltar_de_ventana(ejecucion):
@@ -353,3 +353,516 @@ def test_el_manejador_se_registra_para_la_secuencia_52(tmp_path_factory):
     guion = "globalThis.SELECCION = '';\n" + script_de("trabajo.html", CONTEXTO)
     r = ejecutar(guion, tmp_path_factory.mktemp("osc"), PULSO)
     assert 52 in r["osc"]
+
+
+# ── cerrar la última ventana de una sesión ────────────────────────────────────
+
+def test_la_equis_sale_tambien_con_una_sola_ventana():
+    """🔴 Se escondía con `ventanas.length > 1`, o sea justo en las sesiones de
+    una ventana — la forma de casi todo lo que se acumula en la bandeja. Desde
+    el hub no había ningún camino para cerrarlas."""
+    guion = script_de("trabajo.html", CONTEXTO)
+    assert "ventanas.length > 1 ?" not in guion
+    assert 'data-cerrar="${v.indice}"' in guion
+
+
+def test_al_cerrar_la_ultima_se_avisa_de_que_muere_la_sesion():
+    """tmux mata la sesión al morir su última ventana: decir sólo «la ventana»
+    prometería menos de lo que va a pasar."""
+    guion = script_de("trabajo.html", CONTEXTO)
+    assert "const ultima = ventanas.length === 1;" in guion
+    assert "Cerrar la sesión" in guion
+
+
+def test_tras_cerrar_la_ultima_no_se_queda_mirando_una_sesion_muerta():
+    """Recargar pestañas de algo que ya no existe deja el terminal colgado."""
+    guion = script_de("trabajo.html", CONTEXTO)
+    assert "if (ultima) { location.href = '/trabajo'; return; }" in guion
+
+
+# ── Las pestañas dicen de quién es cada ventana ──────────────────────────────
+#
+# 🔴 Esto es lo que él llevaba semanas reportando: «veo una en sin organizar que
+# también está en trabajo». La sesión `Personal` tiene tres ventanas, dos del
+# slot «Hub - Dev» y una suelta; las tres se pintaban IDÉNTICAS bajo ese rótulo,
+# y la suelta salía además abajo en la bandeja. La misma ventana en dos sitios
+# diciendo cosas contrarias.
+#
+# Los arreglos anteriores no la tocaron porque la franja se pintaba llamando a
+# `tmux.listar_ventanas` desde la ruta, saltándose `api.py` — y tmux no sabe de
+# slots. Se prueba ejecutando el script (regla dura 11), no leyendo el fuente:
+# la primera versión de este arreglo declaraba una función `marcaDe` que YA
+# existía cien líneas más abajo, y la colisión tumbaba el script entero. La
+# página se servía con 200, la franja salía vacía y el terminal en negro.
+
+VENTANAS_MEZCLADAS = [
+    {"indice": 0, "etiqueta": "Del slot", "activa": True, "paneles": 1,
+     "pertenece": "este", "slot": {"id": 7, "nombre": "back"}},
+    {"indice": 1, "etiqueta": "Suelta", "activa": False, "paneles": 1,
+     "pertenece": "ninguno", "slot": None},
+    {"indice": 2, "etiqueta": "De otro", "activa": False, "paneles": 1,
+     "pertenece": "otro", "slot": {"id": 9, "nombre": "Facturas - Main"}},
+    {"indice": 3, "etiqueta": "Recién creada", "activa": False, "paneles": 1,
+     "pertenece": "nueva", "slot": None},
+]
+
+
+def _franja(tmp_path_factory, ventanas=None):
+    from arnes_js import ejecutar
+    respuestas = {**PULSO, "/ventanas": ventanas if ventanas is not None
+                  else VENTANAS_MEZCLADAS}
+    return ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path_factory.mktemp("franja"),
+        respuestas, "registro.valores.push(nodo('ventanas').innerHTML);")
+
+
+def test_una_ventana_sin_slot_lo_dice_en_su_pestana(tmp_path_factory):
+    """El caso exacto que él reporta. Sin esto, la única forma de enterarse era
+    pulsar la pestaña y leer el panel derecho."""
+    html = "".join(_franja(tmp_path_factory)["valores"])
+    assert "sin slot" in html, "la pestaña suelta no se distingue de las del slot"
+    assert "huerfana" in html
+
+
+def test_las_ventanas_de_otro_slot_de_la_misma_sesion_no_salen(tmp_path_factory):
+    """🔴 Decisión 263: cuatro slots en una sesión y cada uno enseñaba las
+    ventanas de los otros tres — *«tengo ventanas repetidas»*. Cada una ya
+    sale en su slot; aquí sobran."""
+    html = "".join(_franja(tmp_path_factory)["valores"])
+    assert "De otro" not in html
+    assert "Del slot" in html and "Suelta" in html and "Recién creada" in html
+
+
+def test_si_se_esta_mirando_una_de_otro_slot_su_pestana_sigue_y_dice_de_cual(tmp_path_factory):
+    """Esconder la que ocupa el terminal sería mentir sobre qué se ve."""
+    from arnes_js import ejecutar
+    r = ejecutar(
+        script_de("trabajo.html", {**CONTEXTO, "ventana": 2}),
+        tmp_path_factory.mktemp("franja"),
+        {**PULSO, "/ventanas": VENTANAS_MEZCLADAS},
+        "registro.valores.push(nodo('ventanas').innerHTML);")
+    html = "".join(r["valores"])
+    assert "De otro" in html and "Facturas - Main" in html and "ajena" in html
+
+
+def test_la_lista_de_ventanas_se_pide_con_el_slot(tmp_path_factory):
+    """Sin `?slot=` el hub no sabe cuál es «éste» y da todas por suyas: por eso
+    las de los otros slots salían idénticas, sin marca, como repetidas."""
+    r = _franja(tmp_path_factory)
+    pedidas = [u for u in r["peticiones"] if u.endswith("/ventanas?slot=7")]
+    assert pedidas, r["peticiones"]
+
+
+def test_una_ventana_recien_creada_NO_se_marca_como_huerfana(tmp_path_factory):
+    """🔴 El snapshotter puede ir hasta un ciclo por detrás de tmux. Marcar «sin
+    slot» una ventana que aún no se ha muestreado sería cambiar una mentira por
+    otra, y encima durante los 20 s en que uno acaba de crearla y está mirando."""
+    html = "".join(_franja(tmp_path_factory)["valores"])
+    (trozo,) = [p for p in html.split('class="pestana') if "Recién creada" in p]
+    assert "sin slot" not in trozo
+
+
+def test_las_ventanas_del_slot_no_llevan_marca(tmp_path_factory):
+    """Marcarlas todas sería ruido: la marca sólo significa algo si es la
+    excepción."""
+    html = "".join(_franja(tmp_path_factory, [VENTANAS_MEZCLADAS[0]])["valores"])
+    assert "marca" not in html
+    assert "huerfana" not in html and "ajena" not in html
+
+
+def test_la_franja_le_pregunta_al_hub_y_no_a_tmux(tmp_path_factory):
+    """La causa raíz: se pedía la lista a `tmux.listar_ventanas` desde la ruta,
+    sin pasar por `api.py`. Con el slot en la URL, el hub puede contestar de
+    quién es cada ventana; sin él, seguiría sin poder."""
+    r = _franja(tmp_path_factory)
+    pedidas = [u for u in r["peticiones"] if "/ventanas" in u]
+    assert pedidas, "la franja no pidió las ventanas"
+    assert any("slot=" in u for u in pedidas), \
+        "no se le dice al hub qué slot anuncia la cabecera"
+
+
+# ── El botón de ventana nueva ───────────────────────────────────────────────
+
+CLIC_NUEVA = "nodo('ventanas').disparar('click', { target: { id: 'nueva-ventana' } })"
+
+
+def test_si_el_hub_no_puede_abrir_la_ventana_se_dice_en_pantalla(tmp_path):
+    """🔴 El botón ignoraba la respuesta: cuando el hub contestaba que no podía
+    —la sesión ya no existe— no pasaba nada y nada lo explicaba. Un botón mudo
+    se lee como «está roto», y así se reportó."""
+    r = ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path,
+        {"POST /api/sesion/work/ventanas":
+            {"ok": False, "error": "la sesión «work» ya no existe en tmux"}},
+        accion=CLIC_NUEVA,
+    )
+
+    assert r["errores"] == []
+    assert [a["titulo"] for a in r["avisos"]] == ["No se pudo abrir la ventana"]
+    assert "ya no existe en tmux" in r["avisos"][0]["mensaje"]
+
+
+def test_cuando_sale_bien_no_se_avisa_de_nada(tmp_path):
+    """El aviso tiene que costar algo: uno que salta siempre se aprende a cerrar
+    sin leerlo, y entonces el día que dice algo tampoco se lee."""
+    r = ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path,
+        {"POST /api/sesion/work/ventanas": {"ok": True}},
+        accion=CLIC_NUEVA,
+    )
+
+    assert r["errores"] == [] and r["avisos"] == []
+
+
+def test_la_ventana_nueva_se_pide_en_la_ruta_del_slot(tmp_path):
+    """Y no donde caiga: el slot dice dónde se trabaja, y esa ruta va en el
+    cuerpo. Comprobar sólo la URL no distinguiría pedirla bien de pedirla vacía,
+    que es exactamente el caso que acaba abriendo una shell en el hub."""
+    r = ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path,
+        {"POST /api/sesion/work/ventanas": {"ok": True}}, accion=CLIC_NUEVA,
+    )
+
+    creaciones = [e for e in r["enviados"] if e["url"].endswith("/ventanas")]
+    assert [e["cuerpo"] for e in creaciones] == [{"ruta": "/tmp/demo"}]
+
+
+# ───────────── por qué no conectó la terminal (decisión 207) ─────────────
+
+
+def _al_cerrarse_el_socket(respuesta, tmp_path):
+    """Dispara el `onclose` del WebSocket y devuelve lo que quedó en pantalla.
+
+    🔴 El arnés contesta lo que contestaría el hub, no lo que le convenga al
+    script: `/api/acceso/terminal` con los mismos dos campos que devuelve de
+    verdad. Es la lección de la decisión 202 — un arnés complaciente da verde
+    sobre el fallo.
+    """
+    return ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path,
+        {**PULSO, "/api/acceso/terminal": respuesta},
+        # Sin `await`: la acción se inyecta en un contexto síncrono. El arnés
+        # vuelca el registro a los ~40 ms, así que leer a los 10 deja de sobra
+        # para que se resuelva el `fetch`, que es una microtarea.
+        accion="""
+          __sockets[0].onclose();
+          setTimeout(() => {
+            const e = nodo('estado');
+            registro.valores.push(['estado', e.innerHTML || e.textContent]);
+          }, 10);
+        """,
+    )
+
+
+def _anotados(salida, clave):
+    """Lo que el guion anotó bajo esa clave.
+
+    `registro.valores` lo comparten varios scripts y no todas sus entradas son
+    pares: las hay que son cadenas sueltas, y un `v[0]` a ciegas revienta con
+    `IndexError` sobre una cadena vacía.
+    """
+    return [v[1] for v in salida["valores"]
+            if isinstance(v, list) and len(v) == 2 and v[0] == clave]
+
+
+def _texto_del_estado(salida):
+    return _anotados(salida, "estado")[-1]
+
+
+def test_desde_fuera_y_con_el_interruptor_apagado_lo_dice_y_dice_dónde(tmp_path):
+    """🔴 La mentira que se midió en su móvil el 16-sep.
+
+    El WebSocket se rechaza con 403 **antes del `accept()`**, que es lo que pide
+    la decisión 163 — pero del apretón de manos fallido al navegador sólo le
+    llega un cierre 1006, así que la pantalla decía «desconectado» ante algo
+    cerrado a propósito. Estando de viaje eso son horas buscando un fallo que no
+    existe.
+    """
+    texto = _texto_del_estado(
+        _al_cerrarse_el_socket({"de_casa": False, "remota_abierta": False}, tmp_path))
+    assert "cerrada" in texto
+    assert "/acceso" in texto
+
+
+def test_en_casa_un_corte_sigue_siendo_un_corte(tmp_path):
+    """No se puede arreglar la mentira mintiendo al revés."""
+    texto = _texto_del_estado(
+        _al_cerrarse_el_socket({"de_casa": True, "remota_abierta": False}, tmp_path))
+    assert "desconectado" in texto
+    assert "cerrada" not in texto
+
+
+def test_con_el_interruptor_abierto_un_corte_es_un_corte(tmp_path):
+    texto = _texto_del_estado(
+        _al_cerrarse_el_socket({"de_casa": False, "remota_abierta": True}, tmp_path))
+    assert "desconectado" in texto
+
+
+def test_se_sigue_reintentando_aunque_esté_cerrada(tmp_path):
+    """Si él abre el interruptor, la terminal tiene que engancharse sola.
+
+    Por eso la pregunta va DESPUÉS de programar el reintento y no en su lugar.
+    """
+    salida = _al_cerrarse_el_socket({"de_casa": False, "remota_abierta": False}, tmp_path)
+    # El primer reintento va a 1 s (500 · 2¹) y el arnés vuelca a los ~40 ms, así
+    # que lo que se comprueba es que quedó PROGRAMADO, no que ya ocurrió.
+    assert 1000 in salida["temporizadores"], salida["temporizadores"]
+
+
+# ───────────── el selector de móvil (decisión 208) ─────────────
+
+
+def test_el_selector_de_movil_navega_al_slot_elegido(tmp_path):
+    """En el móvil el raíl se cambia por un `select`; si no navega, no sirve."""
+    r = ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path, PULSO,
+        accion="""
+          const s = nodo('ir-a');
+          s.value = '/trabajo?slot=9';
+          s.disparar('change');
+          registro.valores.push(['href', location.href]);
+        """,
+    )
+    assert _anotados(r, "href") == ["/trabajo?slot=9"]
+
+
+def test_un_valor_vacío_no_lleva_a_ninguna_parte(tmp_path):
+    """Un `optgroup` sin opciones o un navegador raro no deben mandarte a `/`."""
+    r = ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path, PULSO,
+        accion="""
+          const s = nodo('ir-a');
+          s.value = '';
+          s.disparar('change');
+          registro.valores.push(['href', location.href]);
+        """,
+    )
+    assert _anotados(r, "href") == [""]
+
+
+# ───────────── el terminal a solas (decisión 210) ─────────────
+
+
+def _pulsar_pantalla(tmp_path, veces=1):
+    return ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path, PULSO,
+        accion=f"""
+          for (let i = 0; i < {veces}; i++) nodo('pantalla-completa').disparar('click');
+          registro.valores.push(['a-solas',
+            String(document.body.classList.contains('terminal-sola'))]);
+          registro.valores.push(['pulsado',
+            nodo('pantalla-completa').atributos
+              ? String(nodo('pantalla-completa').atributos['aria-pressed']) : '?']);
+        """,
+    )
+
+
+def test_el_boton_le_da_la_pantalla_al_terminal(tmp_path):
+    r = _pulsar_pantalla(tmp_path)
+    assert _anotados(r, "a-solas") == ["true"]
+    assert r["errores"] == []
+
+
+def test_pulsarlo_otra_vez_devuelve_el_rail(tmp_path):
+    assert _anotados(_pulsar_pantalla(tmp_path, veces=2), "a-solas") == ["false"]
+
+
+def test_la_pantalla_completa_se_le_pide_al_terminal_y_no_al_documento(tmp_path):
+    """🔴 Al documento es «la página entera»; al marco es «terminal completa».
+
+    Son cosas distintas y él pidió la segunda: con el documento, el terminal
+    seguía siendo una región con su barra, sus pestañas y la nota alrededor.
+
+    Se pide, no se exige — si el navegador la niega (iOS no la da para un
+    elemento cualquiera), la capa de CSS ya ha hecho su parte y no se avisa de
+    nada, porque no hay nada que el usuario pueda hacer.
+    """
+    r = _pulsar_pantalla(tmp_path)
+    assert r["pantalla"] == ["entrar:lienzo-terminal"], (
+        "la pantalla completa no se le pidió al envoltorio del terminal. Al "
+        "propio elemento a pantalla completa el navegador le fija el tamaño con "
+        "`!important` y no se le puede cambiar: medido en su móvil, seguía en 806"
+    )
+
+
+def test_reajusta_el_terminal_al_cambiar_de_tamaño(tmp_path):
+    """Cambiar el alto sin decírselo a xterm y a tmux deja dos tamaños distintos.
+
+    Es el fallo de las decisiones 90 y 93, y su síntoma son letras que no están.
+    `reajustar()` avisa al servidor con las filas y columnas nuevas.
+    """
+    base = ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path, PULSO)
+    r = _pulsar_pantalla(tmp_path)
+    assert r["errores"] == []
+    assert len(r["encajes"]) > len(base["encajes"]), (
+        "pulsar el botón no provocó ningún `fit()`: xterm y tmux se quedarían "
+        "creyendo tamaños distintos"
+    )
+
+
+# ───────────── el teclado del móvil (decisión 211) ─────────────
+
+
+def _con_teclado(tmp_path, alto):
+    """Abre el teclado a ese alto visible y devuelve lo que hizo la página."""
+    return ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path, PULSO,
+        accion=f"""
+          visualViewport.abrirTeclado({alto});
+          registro.valores.push(['teclado',
+            String(document.body.classList.contains('teclado-abierto'))]);
+        """,
+    )
+
+
+def test_al_salir_el_teclado_el_terminal_se_queda_con_lo_visible(tmp_path):
+    """🔴 El teclado no encoge la página: la tapa.
+
+    Sin esto, `100dvh` sigue valiendo la pantalla entera y el cursor queda
+    debajo del teclado — que es exactamente lo que se veía en su móvil.
+    """
+    r = _con_teclado(tmp_path, 340)
+    assert _anotados(r, "teclado") == ["true"]
+    assert ["html:--alto-util", "340px"] in r["variables"]
+
+
+def test_al_guardar_el_teclado_vuelve_todo(tmp_path):
+    r = ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path, PULSO,
+        accion="""
+          visualViewport.abrirTeclado(340);
+          visualViewport.abrirTeclado(844);
+          registro.valores.push(['teclado',
+            String(document.body.classList.contains('teclado-abierto'))]);
+        """,
+    )
+    assert _anotados(r, "teclado") == ["false"]
+
+
+def test_la_barra_de_direcciones_no_cuenta_como_teclado(tmp_path):
+    """También encoge el viewport visual, y mucho menos.
+
+    Sin el umbral, desplazarse por la página escondería el raíl a cada momento.
+    """
+    assert _anotados(_con_teclado(tmp_path, 800), "teclado") == ["false"]
+
+
+def test_reajusta_xterm_al_abrirse_el_teclado(tmp_path):
+    """Cambiar el alto sin reajustar deja el prompt fuera de la pantalla igual."""
+    base = ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path, PULSO)
+    r = _con_teclado(tmp_path, 340)
+    assert len(r["encajes"]) > len(base["encajes"])
+    assert r["errores"] == []
+
+
+def test_en_pantalla_completa_el_teclado_encoge_el_propio_marco(tmp_path):
+    """🔴 El caso que falló: en modo normal funcionaba y en pantalla completa no.
+
+    El navegador saca el elemento a pantalla completa del flujo y lo pinta con
+    `position:fixed; inset:0`, pegado a los cuatro bordes de la PANTALLA. Las
+    reglas de `body.teclado-abierto` no le llegan y el teclado le pasa por
+    encima, así que hay que fijarle el alto a mano — y soltarle el `bottom`, o
+    con `inset:0` el `height` no decide nada.
+    """
+    r = ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path, PULSO,
+        accion="""
+          document.fullscreenElement = nodo('lienzo-terminal');
+          visualViewport.abrirTeclado(340);
+        """,
+    )
+    assert ["marco:height", "340px"] in r["variables"]
+    assert ["marco:bottom", "auto"] in r["variables"]
+    # 🔴 Y el `top`: Chrome no sólo encoge el viewport visual, lo DESPLAZA.
+    # Medido en su teléfono: 257 px. Sin compensarlo, el marco se queda anclado
+    # arriba del todo y media terminal cae fuera de pantalla.
+    assert any(v[0] == "marco:top" for v in r["variables"]), (
+        "no se compensó el desplazamiento del viewport visual"
+    )
+
+
+def test_fuera_de_pantalla_completa_el_marco_se_queda_sin_alto_a_mano(tmp_path):
+    """Si no, al salir se quedaría clavado al alto que tenía con el teclado."""
+    r = ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path, PULSO,
+        accion="""
+          document.fullscreenElement = nodo('lienzo-terminal');
+          visualViewport.abrirTeclado(340);
+          document.fullscreenElement = null;
+          visualViewport.abrirTeclado(844);
+        """,
+    )
+    assert ["marco:height", None] in r["variables"]
+    assert ["marco:bottom", None] in r["variables"]
+    assert ["marco:top", None] in r["variables"]
+
+
+# ── la ventana que ya no está ────────────────────────────────────────────────
+#
+# 🔴 El fallo, de punta a punta: él tenía dos ventanas en `personal-test`, se
+# puso en la 1, y la 1 se cerró. `irA()` escribe el índice en la URL, así que
+# recargar volvía a pedir la ventana 1 — que ya no existe— y `mostrarPanelDe(1)`
+# no casaba con ningún bloque. Sin bloque marcado, el panel derecho no sabe de
+# qué slot es esta ventana, y el de programados se quedaba sin poder programar:
+# «no se ve qué ventana estás mirando», para siempre y aunque recargara.
+#
+# Medido en Chrome a 390 px contra el hub de verdad, con y sin el arreglo.
+
+VENTANA_MUERTA = {**CONTEXTO, "ventana": 1}
+SOLO_LA_CERO = {"/api/sesion/work/ventanas": [
+    {"indice": 0, "nombre": "Codex", "activa": True, "paneles": 1,
+     "etiqueta": "Codex", "pertenece": "este", "ancho": 157,
+     "slot": {"id": 7, "nombre": "Codex", "proyecto_nombre": "personal-test"}},
+]}
+
+
+def _alternadas(salida, clase):
+    return [v for v in salida["alternadas"]
+            if isinstance(v, list) and len(v) == 2 and v[0].endswith(":" + clase)]
+
+
+def test_si_la_ventana_pedida_ya_no_existe_se_cae_a_la_activa(tmp_path):
+    """Pedir una ventana muerta no puede dejar la pantalla sin saber dónde está.
+
+    El bloque que se marca tiene que ser el de la ventana 0 —la única que queda—
+    y no ninguno: «ninguno» es lo que dejaba el panel derecho mudo.
+    """
+    salida = ejecutar(
+        script_de("trabajo.html", VENTANA_MUERTA), tmp_path, {**PULSO, **SOLO_LA_CERO}
+    )
+    assert not salida["errores"], salida["errores"]
+    encendidas = [v[0] for v in _alternadas(salida, "viendo") if v[1]]
+    assert encendidas == ["a:viendo"], salida["alternadas"]
+
+
+def test_una_ventana_viva_se_respeta(tmp_path):
+    """La otra mitad: si la pedida existe, no se toca. Sin esto, el arreglo
+    mandaría siempre a la ventana activa de tmux y cambiar de pestaña en el hub
+    dejaría de funcionar."""
+    dos = {"/api/sesion/work/ventanas": [
+        {**SOLO_LA_CERO["/api/sesion/work/ventanas"][0]},
+        {"indice": 1, "nombre": "otra", "activa": False, "paneles": 1,
+         "etiqueta": "otra", "pertenece": "otro", "ancho": 157, "slot": None},
+    ]}
+    salida = ejecutar(script_de("trabajo.html", VENTANA_MUERTA), tmp_path, {**PULSO, **dos})
+    assert not salida["errores"], salida["errores"]
+    encendidas = [v[0] for v in _alternadas(salida, "viendo") if v[1]]
+    assert encendidas == ["b:viendo"], salida["alternadas"]
+
+
+def test_sin_ventanas_se_dice_por_que_no_hay_pestanas(tmp_path):
+    """Regla dura 21: las dos salidas mudas de `cargarVentanas` se saltaban la
+    línea que marca la ventana, y el síntoma salía tres capas más allá."""
+    salida = ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path,
+        {**PULSO, "/api/sesion/work/ventanas": []},
+        "registro.valores.push(['tira', document.getElementById('ventanas').innerHTML]);",
+    )
+    assert not salida["errores"], salida["errores"]
+    (tira,) = [v[1] for v in salida["valores"]
+               if isinstance(v, list) and len(v) == 2 and v[0] == "tira"]
+    # 🔴 El motivo EXACTO, no un «Sin pestañas» cualquiera. Sin la guarda, el
+    # código revienta un par de líneas más abajo y el `catch` acaba pintando
+    # «Sin pestañas: no se pudieron pedir…» — o sea que un test que sólo mirara
+    # el rótulo pasaría con el arreglo deshecho. Pasó al sabotearlo.
+    assert "no tiene ventanas en el último muestreo" in tira, tira[:200]

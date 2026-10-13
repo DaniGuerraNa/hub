@@ -74,6 +74,21 @@ def canal_yml() -> Path:
     return Path(declarado) if declarado else HUB_HOME / "canal.yml"
 
 
+def encargos_yml() -> Path:
+    """Los ajustes del canal de ENCARGOS: el puntero a su token y su transcriptor.
+
+    Archivo aparte del de `canal_yml()` y no una sección suya, por lo mismo que
+    aquél está aparte de `projects.yml`: lo lee otro servicio (`hub-encargos`),
+    y son dos bots con dos tokens que no deben verse el uno al otro (decisión
+    n11). Si un día un proceso leyera los dos, esa separación se habría perdido
+    sin que nada lo dijera.
+
+    🔴 Aquí va el PUNTERO, nunca el token (regla dura 5).
+    """
+    declarado = os.environ.get("HUB_ENCARGOS_YML")
+    return Path(declarado) if declarado else HUB_HOME / "encargos.yml"
+
+
 WEB_HOST = os.environ.get("HUB_HOST", "127.0.0.1")
 WEB_PORT = int(os.environ.get("HUB_PORT", "8787"))
 

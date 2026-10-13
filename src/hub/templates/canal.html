@@ -90,6 +90,47 @@
 </div>
 {% endif %}
 
+{# ── Los tres avisos (decisión 166) ───────────────────────────────────────
+   No es una sección del índice a propósito: no se gestiona nada aquí, se
+   comprueba. Y hay que poder comprobarlo ANTES de salir de viaje, porque es lo
+   único del hub que sólo se verifica no estando delante — si falla, el síntoma
+   es un mensaje que no llega, y eso se parece demasiado a «no había nada que
+   avisar». #}
+{% if canal_estado.configurado %}
+<div class="aviso" style="border-left-color:{{ 'var(--ok)' if avisos.activos and avisos.dueno else 'var(--espera)' }}">
+  {{ ui.placa('conversacion' if avisos.activos and avisos.dueno else 'aviso',
+              '' if avisos.activos and avisos.dueno else 'espera') }}
+  <div style="flex:1;min-width:0">
+    {% if not avisos.activos %}
+      <strong>Los avisos están apagados.</strong>
+      <div class="tenue">Quita <span class="mono">avisos.activos: false</span> de
+        <span class="mono">canal.yml</span> para volver a armarlos.</div>
+    {% elif not avisos.dueno %}
+      <strong>Los avisos no tienen adónde ir: nadie está marcado como dueño.</strong>
+      <div class="tenue">Márcate en Personas, aquí abajo. Sin eso el hub los
+        apunta en el registro y no los manda a ninguna parte.</div>
+    {% else %}
+      <strong>Los tres avisos van a {{ avisos.dueno.alias or avisos.dueno.username }},
+        y sólo a {{ avisos.dueno.alias or avisos.dueno.username }}.</strong>
+      <div class="tenue">
+        Una sesión esperando que le contestes, a los {{ avisos.umbrales.preguntando }} min ·
+        una sesión quieta, a los {{ avisos.umbrales.quieta }} min ·
+        el hub sin latir, a los {{ avisos.umbrales['sin-latido'] }} min.
+        Sale el aviso, nunca lo que pone en la pantalla.
+      </div>
+    {% endif %}
+    {% if avisos.ultimos %}
+    <div class="tenue" style="margin-top:6px">
+      Últimos:
+      {% for a in avisos.ultimos %}
+        <span class="mono">{{ a.avisado[:16] | replace('T', ' ') }}</span>{{ '' if loop.last else ' · ' }}
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 {# ── El índice ─────────────────────────────────────────────────────────────
    Tres cosas distintas viven en esta pantalla: a quién dejas entrar, qué se ha
    preguntado y todo lo que ha pasado. Una debajo de otra son cuatro pantallas
@@ -351,6 +392,29 @@
     <strong>No se reintenta</strong>: volver a escribirla la duplicaría. Míralo en
     el panel — puede estar enviada, o esperando un Enter.
   </div>
+  {% elif q.respuesta and not q.pane_id and q.estado != 'archivada' %}
+  {# 🔴 Ni «se reintenta» ni «no se pudo»: aquí no hay a dónde. La pregunta se
+     creó fuera de un slot, así que ninguna vuelta del relé la va a entregar por
+     mucho que espere. O la lees aquí, o eliges tú el panel. #}
+  <div class="tenue" style="margin-top:4px;color:var(--espera)">
+    Contestada, pero <strong>no hay panel al que volver</strong>: se preguntó desde
+    una ventana sin slot. Nadie la va a entregar solo — léela aquí arriba, o mándala
+    a una sesión abierta.
+  </div>
+  {% if paneles %}
+  <form method="post" action="/canal/pregunta/{{ q.id }}/entregar"
+        class="fila" style="margin-top:6px;gap:6px">
+    <select name="pane_id" aria-label="A qué sesión">
+      {% for p in paneles %}
+      <option value="{{ p.pane_id }}">
+        {{ p.proyecto_nombre or p.proyecto_id or 'sin proyecto' }} · {{ p.slot_nombre or ('slot ' ~ p.slot_id) }}
+        ({{ p.comando or 'shell' }})
+      </option>
+      {% endfor %}
+    </select>
+    <button class="boton">Entregar ahí</button>
+  </form>
+  {% endif %}
   {% elif q.detalle %}
   <div class="tenue" style="margin-top:4px;color:var(--espera)">
     No se pudo entregar: {{ q.detalle }} — no se tocó el panel, la respuesta sigue

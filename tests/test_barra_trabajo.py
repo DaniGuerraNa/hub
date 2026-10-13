@@ -62,7 +62,14 @@ def test_el_slot_trae_su_ruta_corta(con):
     assert s["ruta_corta"] != "tienda"
 
 
-# ── la bandeja: sólo lo que sigue sin organizar ───────────────────────────────
+# ── la bandeja: una fila por VENTANA suelta ───────────────────────────────────
+#
+# Antes la unidad era la SESIÓN y el criterio por ventana, y eso producía el
+# defecto que él vio: *«veo una ventana que me aparece sin vincular en organizar
+# pero que sí me aparece en trabajo»*. Una sesión medio organizada salía arriba
+# bajo su slot y abajo como pendiente, y al pulsar abajo se abría la ventana
+# ACTIVA —normalmente una de las ya vinculadas—, así que la ventana suelta que
+# justificaba la entrada no se veía por ningún lado.
 
 @pytest.fixture
 def escena(con, monkeypatch):
@@ -90,60 +97,136 @@ def escena(con, monkeypatch):
 SESIONES = [{"session": "work", "paneles": 2}, {"session": "suelta", "paneles": 1}]
 
 
-def test_sin_slots_todas_estan_pendientes(escena):
-    pendientes, organizadas = api.clasificar_sesiones(
-        SESIONES, api.paneles_abiertos(escena)
-    )
-    assert [s["session"] for s in pendientes] == ["work", "suelta"]
-    assert organizadas == []
+def _bandeja(con):
+    return api.bandeja_de_ventanas(con, SESIONES, api.paneles_abiertos(con))
 
 
-def test_vincular_una_ventana_no_organiza_la_sesion(escena):
-    """`work:0` en un slot deja `work:1` suelta: la sesión sigue en la bandeja.
+def test_sin_slots_salen_todas_las_ventanas(escena):
+    sueltas, ocultas = _bandeja(escena)
+    assert [(v["session"], v["ventana"]) for v in sueltas] == [
+        ("work", 0), ("work", 1), ("suelta", 0)
+    ]
+    assert ocultas == []
 
-    Ocultarla aquí dejaría a la ventana 1 sin ningún camino para llegar a ella.
+
+def test_la_ventana_vinculada_sale_de_la_bandeja_y_la_otra_se_queda(escena):
+    """🔴 El defecto que originó el cambio.
+
+    Antes esto dejaba la SESIÓN `work` en la bandeja, así que salía a la vez
+    aquí y arriba bajo su slot. Ahora sale lo que de verdad no tiene slot: la
+    ventana 1, y sólo ella.
     """
     slot_id = slots.crear(escena, "demo", "Trabajo")
     slots.vincular(escena, "%1", slot_id)
 
-    pendientes, organizadas = api.clasificar_sesiones(
-        SESIONES, api.paneles_abiertos(escena)
-    )
-    work = next(s for s in pendientes if s["session"] == "work")
-    assert work["sin_slot"] == 1 and work["ventanas"] == 2
-    assert organizadas == []
+    sueltas, _ = _bandeja(escena)
+    assert [(v["session"], v["ventana"]) for v in sueltas] == [("work", 1), ("suelta", 0)]
 
 
-def test_con_todas_las_ventanas_en_slots_sale_de_la_bandeja(escena):
+def test_cada_fila_lleva_a_su_propia_ventana(escena):
+    """Sin el índice, pulsar abría la ventana activa: otra distinta."""
+    slot_id = slots.crear(escena, "demo", "Trabajo")
+    slots.vincular(escena, "%1", slot_id)
+
+    sueltas, _ = _bandeja(escena)
+    work = next(v for v in sueltas if v["session"] == "work")
+    assert work["ventana"] == 1 and work["pane_id"] == "%2"
+    assert work["etiqueta"] == "Front"      # la ventana, no el nombre de la sesión
+
+
+def test_con_todas_las_ventanas_en_slots_la_sesion_desaparece(escena):
     slot_id = slots.crear(escena, "demo", "Trabajo")
     slots.vincular(escena, "%1", slot_id)
     slots.vincular(escena, "%2", slot_id)
 
-    pendientes, organizadas = api.clasificar_sesiones(
-        SESIONES, api.paneles_abiertos(escena)
-    )
-    assert [s["session"] for s in pendientes] == ["suelta"]
-    assert [s["session"] for s in organizadas] == ["work"]
-
-
-def test_la_sesion_que_se_mira_nunca_se_oculta(escena):
-    """Verla desaparecer en el momento de vincularla es desorientador."""
-    slot_id = slots.crear(escena, "demo", "Trabajo")
-    slots.vincular(escena, "%1", slot_id)
-    slots.vincular(escena, "%2", slot_id)
-
-    pendientes, organizadas = api.clasificar_sesiones(
-        SESIONES, api.paneles_abiertos(escena), session_actual="work"
-    )
-    assert [s["session"] for s in pendientes] == ["work", "suelta"]
-    assert organizadas == []
+    sueltas, _ = _bandeja(escena)
+    assert [v["session"] for v in sueltas] == ["suelta"]
 
 
 def test_una_sesion_que_el_snapshotter_no_ha_visto_sigue_visible(escena):
     """Sin paneles conocidos no se puede afirmar que esté organizada."""
     sesiones = [*SESIONES, {"session": "recien-creada", "paneles": 1}]
-    pendientes, _ = api.clasificar_sesiones(sesiones, api.paneles_abiertos(escena))
-    assert "recien-creada" in [s["session"] for s in pendientes]
+    sueltas, _ = api.bandeja_de_ventanas(escena, sesiones, api.paneles_abiertos(escena))
+    nueva = next(v for v in sueltas if v["session"] == "recien-creada")
+    assert nueva["desconocida"] is True and nueva["ventana"] is None
+
+
+def test_una_ventana_partida_con_un_panel_vinculado_no_sale(escena, monkeypatch):
+    """El mismo defecto por la otra puerta.
+
+    Con el criterio «alguno de sus paneles sin slot», una ventana partida en dos
+    con uno vinculado volvería a salir aquí *y* arriba bajo su slot.
+    """
+    monkeypatch.setattr(
+        tmux, "listar_paneles",
+        lambda *a, **k: [
+            {"session": "work", "window_idx": 0, "pane_idx": 0, "pane_id": "%1",
+             "cwd": "/tmp/demo", "titulo": "Back", "comando": "claude", "activo": True},
+            {"session": "work", "window_idx": 0, "pane_idx": 1, "pane_id": "%9",
+             "cwd": "/tmp/demo", "titulo": "Logs", "comando": "bash", "activo": False},
+        ],
+    )
+    snapshotter.capturar(
+        escena, Atribuidor([Proyecto(id="demo", nombre="Demo", asiento="/tmp/demo")])
+    )
+    slot_id = slots.crear(escena, "demo", "Trabajo")
+    slots.vincular(escena, "%1", slot_id)
+
+    sueltas, _ = api.bandeja_de_ventanas(
+        escena, [{"session": "work", "paneles": 2}], api.paneles_abiertos(escena)
+    )
+    assert sueltas == []
+
+
+# ── ocultar: que no estorbe sin que desaparezca ───────────────────────────────
+#
+# Pedido suyo: *«hay cosas que son servers de node o cosas así que no las
+# necesito tener tan a la vista»*. No cierra nada ni toca tmux.
+
+def test_ocultar_una_ventana_la_saca_de_la_bandeja(escena):
+    slots.ocultar(escena, "work", 1)
+    sueltas, ocultas = _bandeja(escena)
+    assert ("work", 1) not in [(v["session"], v["ventana"]) for v in sueltas]
+    assert ("work", 1) in [(v["session"], v["ventana"]) for v in ocultas]
+    # La 0 de la misma sesión no se toca.
+    assert ("work", 0) in [(v["session"], v["ventana"]) for v in sueltas]
+
+
+def test_ocultar_la_sesion_entera_tapa_todas_sus_ventanas(escena):
+    slots.ocultar(escena, "work")
+    sueltas, ocultas = _bandeja(escena)
+    assert [v["session"] for v in sueltas] == ["suelta"]
+    assert len(ocultas) == 2
+
+
+def test_lo_oculto_se_puede_volver_a_mostrar(escena):
+    slots.ocultar(escena, "work", 1)
+    slots.mostrar(escena, "work", 1)
+    sueltas, ocultas = _bandeja(escena)
+    assert ("work", 1) in [(v["session"], v["ventana"]) for v in sueltas]
+    assert ocultas == []
+
+
+def test_ocultar_no_se_cuenta_dos_veces(escena):
+    """`INSERT OR IGNORE` sobre NULL no dedupe sin el índice de `IFNULL`."""
+    slots.ocultar(escena, "work")
+    slots.ocultar(escena, "work")
+    assert len(api.ocultos(escena)) == 1
+
+
+def test_lo_oculto_sigue_listado_aunque_la_ventana_ya_no_exista(escena):
+    """Un servidor de node apagado hoy: sin esto no habría cómo destaparlo."""
+    slots.ocultar(escena, "un-servidor-apagado")
+    assert [v["session"] for v in api.ocultos(escena)] == ["un-servidor-apagado"]
+
+
+def test_ocultar_tambien_vale_para_la_portada(escena):
+    """El fallo que este cambio NO debe repetir: esconderlo en una pantalla y
+    dejarlo a la vista en la otra."""
+    antes = [p["pane_id"] for p in api.bandeja(escena)]
+    assert "%3" in antes
+    slots.ocultar(escena, "suelta", 0)
+    assert "%3" not in [p["pane_id"] for p in api.bandeja(escena)]
 
 
 # ── la jerarquía que ve el navegador ──────────────────────────────────────────
@@ -427,3 +510,106 @@ def test_el_desplegable_de_otro_proyecto_sale_en_el_html(escena_ajena):
     assert "opciones_de_slot([], v.slots_ajenos)" in html
     # Y el panel de lienzos mira el proyecto del trabajo, no el de la carpeta.
     assert 'data-proyecto="{{ v.proyecto_efectivo or \'\' }}"' in html
+
+
+# ── la franja de pestañas: de quién es cada ventana ───────────────────────────
+#
+# 🔴 Segunda mitad del mismo defecto, y la que quedaba abierta. Arreglar la
+# bandeja (decisión 179) quitó el duplicado de la LISTA, pero la franja de
+# pestañas seguía pintando las tres ventanas de una sesión idénticas bajo el
+# rótulo de un slot que sólo es dueño de dos. Él lo siguió reportando: «veo una
+# en sin organizar que también está en trabajo», y tenía razón.
+#
+# La causa no era la lógica: era que la franja se pedía a `tmux.listar_ventanas`
+# desde la ruta, saltándose `api.py`. tmux no sabe de slots, así que la franja
+# no podía saberlo por mucho que la bandeja estuviera bien. Es literalmente el
+# defecto que `CLAUDE.md` describe al exigir una sola costura de lectura.
+
+def _con_ventanas(monkeypatch, indices):
+    monkeypatch.setattr(
+        tmux, "listar_ventanas",
+        lambda s: [{"indice": i, "etiqueta": f"w{i}", "activa": i == 0,
+                    "paneles": 1, "nombre": f"w{i}", "comando": "claude",
+                    "renombrada": False, "ancho": None, "cwd": "/tmp/demo"}
+                   for i in indices])
+
+
+def test_la_pestana_de_otra_ventana_del_slot_no_lleva_marca(escena, monkeypatch):
+    slot_id = slots.crear(escena, "demo", "Trabajo")
+    slots.vincular(escena, "%1", slot_id)
+    slots.vincular(escena, "%2", slot_id)
+    _con_ventanas(monkeypatch, [0, 1])
+
+    v = api.ventanas_de_sesion(escena, "work", slot_id)
+    assert [x["pertenece"] for x in v] == ["este", "este"]
+
+
+def test_una_ventana_sin_slot_se_marca_aunque_su_sesion_tenga_uno(escena, monkeypatch):
+    """El caso real: `Personal` con dos ventanas del slot «Hub - Dev» y una
+    suelta. La suelta sale en la bandeja Y como pestaña bajo ese rótulo."""
+    slot_id = slots.crear(escena, "demo", "Trabajo")
+    slots.vincular(escena, "%1", slot_id)
+    _con_ventanas(monkeypatch, [0, 1])
+
+    v = api.ventanas_de_sesion(escena, "work", slot_id)
+    assert [x["pertenece"] for x in v] == ["este", "ninguno"]
+    # Y es exactamente la misma que la bandeja lista abajo: las dos mitades de
+    # la pantalla tienen que decir lo mismo de la misma ventana.
+    sueltas, _ = _bandeja(escena)
+    assert ("work", 1) in [(s["session"], s["ventana"]) for s in sueltas]
+
+
+def test_una_ventana_de_OTRO_slot_dice_de_cual(escena, monkeypatch):
+    """Una sesión puede tener ventanas de dos slots. «No es de éste» deja a
+    medias: la pregunta siguiente es de cuál sí."""
+    mio = slots.crear(escena, "demo", "Trabajo")
+    ajeno = slots.crear(escena, "demo", "Otra cosa")
+    slots.vincular(escena, "%1", mio)
+    slots.vincular(escena, "%2", ajeno)
+    _con_ventanas(monkeypatch, [0, 1])
+
+    v = api.ventanas_de_sesion(escena, "work", mio)
+    assert [x["pertenece"] for x in v] == ["este", "otro"]
+    assert v[1]["slot"]["nombre"] == "Otra cosa"
+
+
+def test_una_ventana_que_el_snapshotter_no_ha_visto_NO_es_huerfana(escena, monkeypatch):
+    """🔴 El muestreo va hasta un ciclo por detrás de tmux. Una ventana recién
+    creada no está en la última muestra, y marcarla «sin slot» durante 20 s
+    —justo mientras uno la acaba de crear y la está mirando— sería cambiar una
+    mentira por otra."""
+    slot_id = slots.crear(escena, "demo", "Trabajo")
+    slots.vincular(escena, "%1", slot_id)
+    _con_ventanas(monkeypatch, [0, 1, 9])   # la 9 no existe en la muestra
+
+    v = api.ventanas_de_sesion(escena, "work", slot_id)
+    assert v[2]["pertenece"] == "nueva"
+    assert v[2]["slot"] is None
+
+
+def test_sin_slot_en_la_cabecera_no_hay_nada_que_contradecir(escena, monkeypatch):
+    """Se entra por `?session=` desde la bandeja: la cabecera no anuncia ningún
+    slot, así que una ventana vinculada no tiene que justificarse."""
+    slot_id = slots.crear(escena, "demo", "Trabajo")
+    slots.vincular(escena, "%1", slot_id)
+    _con_ventanas(monkeypatch, [0, 1])
+
+    v = api.ventanas_de_sesion(escena, "work", None)
+    assert v[0]["pertenece"] == "este"
+    assert v[1]["pertenece"] == "ninguno"
+
+
+def test_una_ventana_partida_con_un_panel_vinculado_es_del_slot(escena, monkeypatch):
+    """Mismo criterio que la bandeja: basta con que UN panel tenga slot. Si aquí
+    se usara otro, la franja y la bandeja volverían a contradecirse — que es
+    exactamente el defecto, servido por otra puerta."""
+    slot_id = slots.crear(escena, "demo", "Trabajo")
+    escena.execute(
+        "UPDATE panel SET pane_idx=1 WHERE pane_id='%2'"
+    )
+    escena.execute("UPDATE panel SET window_idx=0 WHERE pane_id='%2'")
+    slots.vincular(escena, "%2", slot_id)
+    _con_ventanas(monkeypatch, [0])
+
+    v = api.ventanas_de_sesion(escena, "work", slot_id)
+    assert v[0]["pertenece"] == "este"

@@ -32,9 +32,11 @@ ARNES = r"""
 // `clases` y `valores` guardan lo que el script ESCRIBIÓ en el DOM. Sin ellos
 // sólo se podía comprobar que no reventaba y a quién le pedía datos, no qué
 // hacía con la respuesta — y lo que se ve en pantalla es justo eso.
+const _porSelector = {};
 const registro = { sockets: [], peticiones: [], errores: [], oyentes: [],
                    observados: [], clases: [], valores: [], portapapeles: [],
-                   osc: [] };
+                   osc: [], avisos: [], enviados: [], temporizadores: [],
+                   pantalla: [], encajes: [], variables: [], alternadas: [] };
 
 function elemento(id) {
   const el = {
@@ -42,14 +44,30 @@ function elemento(id) {
     children: [], scrollTop: 0, scrollHeight: 0,
     dataset: { slot: '7', slotPunto: '7', lado: 'rail', preset: 'comodo',
                contenedor: 'demo-db', accion: 'stop', proyecto: 'demo', prompt: 'x' },
-    style: { setProperty(){} },
+    // Las variables de CSS se ANOTAN: son un efecto visible —de ellas depende
+    // el alto del terminal cuando sale el teclado— y sin guardarlas un test no
+    // puede distinguir «la puso» de «no hizo nada».
+    style: { setProperty(k, v){ registro.variables.push([id + ':' + k, v]); },
+              removeProperty(k){ registro.variables.push([id + ':' + k, null]); } },
     append(){}, appendChild(){}, showModal(){ this.open = true; }, close(){ this.open = false; },
     scrollIntoView(){},
+    // 🔴 Quién pide la pantalla completa importa: al documento es «la página
+    // entera» y al marco del terminal es «terminal completa». Un arnés que sólo
+    // anotara «entrar» no distinguiría las dos — y eran exactamente las dos que
+    // hubo que distinguir para arreglar esto.
+    requestFullscreen(){ registro.pantalla.push('entrar:' + id); return Promise.resolve(); },
     classList: { _s: new Set(),
       add(c){this._s.add(c); registro.clases.push(c);}, remove(c){this._s.delete(c)},
       contains(c){return this._s.has(c)},
       toggle(c, f){ const v = f === undefined ? !this._s.has(c) : f;
-                    v ? this._s.add(c) : this._s.delete(c); return v; } },
+                    v ? this._s.add(c) : this._s.delete(c);
+                    // 🔴 Anotado con el ID delante: `viendo` sobre un bloque u
+                    // otro es la diferencia entre mirar una ventana y mirar
+                    // otra, y sin saber SOBRE CUÁL se alternó no se puede
+                    // probar nada de eso. Es el mismo fallo que ya tuvo
+                    // `requestFullscreen` aquí arriba.
+                    registro.alternadas.push([id + ':' + c, v]);
+                    return v; } },
     // Se guarda la FUNCIÓN, no sólo el nombre: sin ella no se puede disparar el
     // evento y sólo se podía comprobar que alguien escuchaba, no qué hace.
     _oyentes: {},
@@ -61,7 +79,12 @@ function elemento(id) {
     remove(){},
     setPointerCapture(){}, focus(){}, select(){},
     closest(){ return elemento('cercano'); },
-    querySelector(){ return elemento('x'); },
+    /* 🔴 Memorizado por selector, igual que el `querySelectorAll` del documento
+       y por el mismo motivo: devolviendo un nodo nuevo cada vez, el botón al
+       que el script le puso el `click` no volvía a aparecer nunca y era
+       **imposible de pulsar** desde un test. */
+    _hijos: {},
+    querySelector(sel){ return (this._hijos[sel] ||= elemento(sel)); },
     querySelectorAll(){ return []; },
     getBoundingClientRect(){ return { width: 800, height: 600 }; },
     // Lo que necesita un elemento para pasar por `<select>` y por nodo con
@@ -98,9 +121,30 @@ global.document = {
   // funciona perfectamente. Un arnés al que le falta una API estándar convierte
   // código correcto en un fallo, que es el peor tipo de test.
   querySelector: () => elemento('x'),
-  querySelectorAll: () => [elemento('a'), elemento('b'), elemento('c')],
+  /* 🔴 Memorizados por selector, no recién hechos en cada llamada.
+     Devolviendo elementos nuevos, un `querySelectorAll(sel).forEach(b => b.onclick = ...)`
+     ponía el manejador en objetos que nadie volvía a ver: esa forma de registrar
+     —que la página usa para los presets y para los botones de lado— era
+     **imposible de pulsar** desde un test, y por tanto imposible de probar. */
+  querySelectorAll: (sel) => (_porSelector[sel] ||= (() => {
+    const tres = [elemento('a'), elemento('b'), elemento('c')];
+    /* Los bloques del panel derecho llevan SU índice de ventana, que es de lo
+       único que depende cuál se enseña. Sin él, `mostrarPanelDe` no casaba con
+       ninguno y el arnés no distinguía «marcó el bloque bueno» de «no marcó
+       ninguno» — que era exactamente el fallo a cazar. */
+    if (sel === '.por-ventana') tres.forEach((el, i) => { el.dataset.ventana = String(i); });
+    return tres;
+  })()),
   createElement: () => elemento('nuevo'),
   body: elemento('body'),
+  // `documentElement` y la API de pantalla completa. Faltaban, y sin ellas un
+  // `elemento.requestFullscreen?.()` —código perfectamente válido— moría en el
+  // arnés y sólo en el arnés. Es la misma razón por la que se añadió
+  // `querySelector` aquí arriba: un arnés al que le falta una API estándar
+  // convierte código correcto en un fallo, que es el peor tipo de test.
+  documentElement: elemento('html'),
+  fullscreenElement: null,
+  exitFullscreen: () => { registro.pantalla.push('salir'); return Promise.resolve(); },
   addEventListener(ev){ registro.oyentes.push('document:' + ev); },
   execCommand(orden){ if (orden === 'copy') registro.portapapeles.push('(execCommand)');
                       return !global.EXECCOMMAND_FALLA; },
@@ -114,6 +158,26 @@ global.getComputedStyle = () => ({
 });
 global.location = { protocol: 'http:', host: 'localhost', href: '' };
 global.innerWidth = 1600;
+global.innerHeight = 844;
+// 🔴 El viewport VISUAL, que no es el de maquetación. Faltaba, y sin él todo el
+// manejo del teclado del móvil quedaba detrás de un `if (vista)` que nunca era
+// cierto: los tests pasaban sin ejecutar una sola línea de eso. Un arnés que no
+// trae una API no prueba que el código sobre ella funcione; prueba que no
+// revienta al saltársela.
+global.visualViewport = {
+  height: 844, width: 390, offsetTop: 0, _oyentes: {},
+  addEventListener(ev, fn){ (this._oyentes[ev] ||= []).push(fn); },
+  // Para que un test pueda ABRIR el teclado, que es el único suceso que importa.
+  // Abrir el teclado encoge Y DESPLAZA: medido en un teléfono real, 759 → 435
+  // con un desplazamiento de 257. Un arnés que sólo encogiera no reproduciría
+  // el fallo que hubo que arreglar.
+  abrirTeclado(alto, desplazado){
+    this.height = alto;
+    this.offsetTop = desplazado === undefined ? (alto < 700 ? 257 : 0) : desplazado;
+    (this._oyentes['resize'] || []).forEach(f => f({}));
+    (this._oyentes['scroll'] || []).forEach(f => f({}));
+  },
+};
 global.addEventListener = (ev) => registro.oyentes.push('window:' + ev);
 global.removeEventListener = () => {};
 // En el navegador `window` ES el objeto global. Sin esto, un script que use
@@ -123,15 +187,45 @@ global.window = global;
 // pero un test puede dar cuerpos por trozo de URL: sin eso sólo se comprobaba
 // a quién se le piden los datos, nunca qué se hace con ellos.
 const RESPUESTAS = __RESPUESTAS__;
-global.fetch = (url) => {
+global.fetch = (url, opciones) => {
   registro.peticiones.push(url);
-  const clave = Object.keys(RESPUESTAS).find(k => String(url).includes(k));
+  // Una misma URL sirve para dos cosas —`/ventanas` lista con GET y crea con
+  // POST—, así que una respuesta puede declararse como «POST /api/…» cuando el
+  // test necesita separarlas. Sin método, la clave vale para cualquiera.
+  const metodo = ((opciones && opciones.method) || 'GET').toUpperCase();
+  // El cuerpo, no sólo la URL: «a quién se le pide» no dice si se le pidió lo
+  // correcto, y aquí lo que importaba era justo el dato que va dentro.
+  if (opciones && opciones.body !== undefined) {
+    let cuerpo = opciones.body;
+    try { cuerpo = JSON.parse(cuerpo); } catch (e) {}
+    registro.enviados.push({ url: String(url), metodo, cuerpo });
+  }
+  const claves = Object.keys(RESPUESTAS);
+  const conMetodo = (k) => /^[A-Z]+ /.test(k);
+  const clave =
+    claves.find(k => conMetodo(k) && k.startsWith(metodo + ' ')
+                     && String(url).includes(k.slice(k.indexOf(' ') + 1)))
+    ?? claves.find(k => !conMetodo(k) && String(url).includes(k));
   const cuerpo = clave === undefined ? [] : RESPUESTAS[clave];
-  return Promise.resolve({ ok: true, json: () => Promise.resolve(cuerpo) });
+  return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(cuerpo) });
+};
+// Las INSTANCIAS, no sólo sus URLs. Sin poder disparar `onclose` sólo se podía
+// comprobar que alguien abrió un socket, que no dice nada sobre qué pasa cuando
+// se cierra — y ahí es donde vive el mensaje que el usuario lee.
+global.__sockets = [];
+// Los temporizadores programados, con su espera. El arnés vuelca el registro a
+// los ~40 ms, así que un reintento a 1 s no llega a ejecutarse nunca: sin esto,
+// «¿sigue reintentando?» no se puede comprobar sin dormir un segundo en cada
+// test. Se registra y se delega — no es un reloj falso.
+const _setTimeout = global.setTimeout;
+global.setTimeout = function (fn, ms, ...resto) {
+  registro.temporizadores.push(ms || 0);
+  return _setTimeout(fn, ms, ...resto);
 };
 global.WebSocket = class {
   static OPEN = 1;
-  constructor(url) { this.url = url; this.readyState = 0; registro.sockets.push(url); }
+  constructor(url) { this.url = url; this.readyState = 0;
+                     registro.sockets.push(url); global.__sockets.push(this); }
   send() {} close() {}
 };
 global.Terminal = class {
@@ -173,11 +267,19 @@ Object.defineProperty(globalThis, 'navigator', {
     },
   },
 });
-global.FitAddon = { FitAddon: class { activate(){} fit() {} dispose(){} } };
+// Los `fit()` se CUENTAN: reajustar el terminal es lo que mantiene de acuerdo a
+// xterm y a tmux sobre cuántas filas y columnas hay, y sin contarlos un test no
+// puede distinguir «reajustó» de «no hizo nada» — que es justo la diferencia
+// entre la pantalla correcta y letras que faltan (decisiones 90 y 93).
+global.FitAddon = { FitAddon: class {
+  activate(){} dispose(){} fit() { registro.encajes.push(1); }
+} };
 global.HubUI = {
   confirmar: () => Promise.resolve(false),
   preguntar: () => Promise.resolve(null),
-  avisar: () => Promise.resolve(),
+  // Se registra: un aviso que el script decide enseñar es un efecto visible, y
+  // sin guardarlo no se puede distinguir «avisó» de «no hizo nada».
+  avisar: (opciones) => { registro.avisos.push(opciones); return Promise.resolve(); },
 };
 // Sin temporizadores: un sondeo periódico mantendría vivo el proceso de node y
 // el arnés colgaría en lugar de reportar.
@@ -191,6 +293,12 @@ global.ResizeObserver = class {
   observe(el){ registro.observados.push(el && el.id); }
   unobserve(){} disconnect(){}
 };
+
+// Lo que el navegador ya trae ANTES de que la página arranque: lo guardado de
+// una visita anterior. Sin esto no se puede probar nada que se restaure —y el
+// tamaño de letra del terminal se perdía en cada carga sin que ningún test se
+// enterara, porque todos empezaban con el localStorage vacío.
+try { __PREVIO__ } catch (e) { registro.errores.push('previo: ' + String(e)); }
 
 try {
   __GUION__
@@ -229,13 +337,15 @@ def script_estatico(nombre: str) -> str:
 
 
 def ejecutar(
-    guion: str, tmp_path, respuestas: dict | None = None, accion: str = ""
+    guion: str, tmp_path, respuestas: dict | None = None, accion: str = "",
+    previo: str = "",
 ) -> dict:
     """Ejecuta el script.
 
     `respuestas` mapea trozo de URL → cuerpo JSON. `accion` es JavaScript que
     se ejecuta cuando la página ya arrancó — para provocar un clic, un
-    `mouseup` o lo que el test quiera comprobar.
+    `mouseup` o lo que el test quiera comprobar. `previo` es JavaScript que se
+    ejecuta ANTES, para dejar el navegador como lo dejó una visita anterior.
     """
     node = shutil.which("node")
     if not node:
@@ -243,6 +353,7 @@ def ejecutar(
     archivo = tmp_path / "arnes.js"
     archivo.write_text(
         ARNES.replace("__RESPUESTAS__", json.dumps(respuestas or {}))
+             .replace("__PREVIO__", previo or "")
              .replace("__ACCION__", accion or "")
              .replace("__GUION__", guion),
         encoding="utf-8",

@@ -202,3 +202,28 @@ def test_el_boton_se_envia_a_si_mismo():
         / "src" / "hub" / "templates" / "proyecto.html"
     ).read_text(encoding="utf-8")
     assert "requestSubmit(boton)" in plantilla
+
+
+# ── confirmación para formularios normales ────────────────────────────────────
+
+def test_un_formulario_con_data_confirmar_pregunta_antes_de_enviar():
+    """Las acciones destructivas estaban repartidas: las de JavaScript
+    preguntaban con `HubUI.confirmar` y los formularios normales no preguntaban
+    nada. Cerrar una ventana desde el raíl es un formulario, y mata lo que corra
+    dentro."""
+    guion = GUION.read_text("utf-8")
+    assert "form.dataset.confirmar" in guion
+    # Delegado en `document`: hay listas que se repintan y un enganche por nodo
+    # se pierde en el primer repintado.
+    assert "document.addEventListener('submit'" in guion
+    # Y la marca que evita volver a entrar con el envío de verdad.
+    assert "form.dataset.confirmado" in guion
+
+
+def test_la_confirmacion_de_formularios_no_cuelga_de_HubUI():
+    """`HubUI` es el contrato de «las tres formas de preguntar» y hay un test
+    que lo afirma entero. Esto es comportamiento, como los combos."""
+    guion = GUION.read_text("utf-8")
+    i = guion.index("document.addEventListener('submit'")
+    assert "HubUI.confirmar" in guion[i:i + 400]
+    assert "HubUI.confirmarFormulario" not in guion

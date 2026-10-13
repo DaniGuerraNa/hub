@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+
+{{ ui.cabecera_vista('Máquina',
+   'Cómo está el equipo de casa cuando no hay nadie delante. Se mide en el ciclo
+    lento, así que lo que ves es la última lectura, con su hora.') }}
+
+{% if not medidas %}
+<div class="aviso" style="border-left-color:var(--riesgo)">
+  <div>
+  <strong>Todavía no se ha medido nada.</strong>
+  La primera lectura llega con el próximo ciclo lento del muestreo (cada diez
+  minutos). Si no llega, mira que <code>hub-snapshotter</code> esté vivo.
+  </div>
+</div>
+{% else %}
+
+{# Con el componente `.cifra` que ya existe y no con una rejilla propia: dos
+   maneras parecidas de enseñar un número es exactamente lo que descose una
+   interfaz, y `urge` ya trae el rojo del sistema. #}
+<div class="cifras">
+  {% for d in tarjetas %}
+  <div class="cifra {{ 'urge' if d.urge }}">
+    {{ ui.placa(d.icono, 'riesgo' if d.urge else 'neutro') }}
+    <b>{{ d.valor }}</b><span>{{ d.nombre }}{% if d.unidad %} · {{ d.unidad }}{% endif %}
+      {%- if d.pie %} · {{ d.pie }}{% endif %}</span>
+  </div>
+  {% endfor %}
+</div>
+
+<p class="tenue" style="margin-top:10px">
+  Última lectura {{ medido_en[:19] | replace('T', ' ') }} UTC ·
+  la temperatura sale de <code>nvidia-smi</code>, que es del driver y existe
+  aunque no haya ninguna sesión de Windows abierta.
+</p>
+
+{# ── Lo que le ha pasado al equipo ───────────────────────────────────────── #}
+{{ ui.seccion('lineas', 'Encendido y apagones',
+   'De dónde viene la máquina. Un apagón que nadie pidió y un reinicio que sí se
+    pidió no son lo mismo, y piden cosas distintas.') }}
+
+<div class="tarjeta">
+  <div class="fila">
+    <span>Windows arrancó</span><div style="flex:1"></div>
+    <span class="mono tenue">{{ medidas.get('windows.arranque', {}).get('texto') or '—' }}</span>
+  </div>
+  <div class="fila" style="margin-top:6px">
+    <span>Último apagón <em class="tenue">no pedido</em></span><div style="flex:1"></div>
+    <span class="mono tenue">{{ medidas.get('windows.apagon', {}).get('texto') or 'ninguno registrado' }}</span>
+  </div>
+  <div class="fila" style="margin-top:6px">
+    <span>Último reinicio <em class="tenue">pedido</em></span><div style="flex:1"></div>
+    <span class="mono tenue">{{ medidas.get('windows.reinicio', {}).get('texto') or '—' }}</span>
+  </div>
+</div>
+
+{% endif %}
+
+{# ── Las alarmas ─────────────────────────────────────────────────────────── #}
+{{ ui.seccion('aviso', 'Alarmas',
+   'Lo único que el hub manda solo sobre la máquina, y sólo al dueño. Se ven aquí
+    para no tener que suponer que llegarían.') }}
+
+<div class="tarjeta">
+  <div class="fila">
+    <span>Temperatura de la GPU</span><div style="flex:1"></div>
+    <span class="tenue">avisa a partir de <strong>{{ limites.temperatura | round | int }} °C</strong></span>
+  </div>
+  <div class="fila" style="margin-top:6px">
+    <span>Disco libre</span><div style="flex:1"></div>
+    <span class="tenue">avisa por debajo de <strong>{{ limites.disco | round | int }} GB</strong></span>
+  </div>
+  {% if 'ups.estado' in medidas %}
+  <div class="fila" style="margin-top:6px">
+    <span>Se fue la luz</span><div style="flex:1"></div>
+    <span class="tenue">avisa <strong>en cuanto el equipo tira del SAI</strong></span>
+  </div>
+  {% endif %}
+  <div class="tenue" style="margin-top:8px">
+    {% if armadas %}
+      Van a <strong>{{ dueno_nombre }}</strong> por Telegram, una vez por episodio.
+      Una medida de hace más de una hora no dispara nada: de un muestreo muerto
+      avisa el latido, y dos avisos que se contradicen no sirven a nadie.
+    {% else %}
+      🔴 <strong>No hay a quién avisar</strong>: nadie está marcado como dueño en
+      <a href="/canal">el canal</a>. Las alarmas se calculan igual y no salen.
+    {% endif %}
+    Los límites se cambian en <code>canal.yml</code>, sección <code>avisos</code>
+    (<code>temperatura</code> y <code>disco</code>).
+  </div>
+</div>
+
+{# La temperatura que NO está, dicha en voz alta: un hueco sin explicación se lee
+   como un fallo, y aquí es una decisión. #}
+{% if 'ups.estado' in medidas %}
+<div class="aviso" style="margin-top:12px">
+  <div>
+  <strong>El botón de pánico.</strong>
+  Si desde fuera no consigues abrir el hub, escríbele <code>pánico</code> al bot de
+  Telegram: reinicia <code>hub-web</code> y <code>hub-snapshotter</code> y te contesta
+  si el hub volvió a contestar — no si la orden salió, que no es lo mismo. Sólo
+  funciona desde tu cuenta, y es lo único que se puede pedir por ahí.
+  </div>
+</div>
+{% endif %}
+
+<div class="aviso" style="margin-top:12px">
+  <div>
+  <strong>No hay temperatura de CPU, y es a propósito.</strong>
+  En Windows ese sensor pide un driver en el núcleo y una aplicación de escritorio
+  que arranca <em>al iniciar sesión</em> — justo lo que no va a pasar el mes que la
+  máquina esté sola. Sería el dato que más veces faltaría, y un hueco intermitente
+  se aprende a ignorar. La GPU sirve de termómetro de la caja.
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block titulo %}Acceso al chat{% endblock %}
+{% block contenido %}
+<section class="seccion">
+  {{ ui.seccion('agente', 'Acceso de ' ~ nombre) }}
+  <div class="tarjeta">
+    <p>Pásale esto tal cual. <strong>La contraseña sólo se ve aquí, una vez</strong>: el hub no la guarda.</p>
+    <pre class="mono" style="margin-top:10px;white-space:pre-wrap">{{ url }}
+usuario: {{ usuario }}
+contraseña: {{ clave }}</pre>
+    {% if aviso %}<p class="tenue" style="margin-top:8px">{{ aviso }}</p>{% endif %}
+    <p class="tenue" style="margin-top:8px">Su encargo y su entrevistador ya están abiertos: la primera pregunta la verá al entrar.</p>
+    <p style="margin-top:12px"><a class="sutil boton" href="/encargos">← Volver a encargos</a></p>
+  </div>
+</section>
+{% endblock %}

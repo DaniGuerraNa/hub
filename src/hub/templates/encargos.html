@@ -1,0 +1,658 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  /* Lo único propio de esta pantalla. El resto viene del sistema.
+
+     🔴 Todo lo que aquí es una rejilla de columnas fijas se apila por debajo de
+     620px. Esta pantalla se mira desde el móvil —quien manda los audios escribe
+     desde el suyo, y el aviso de que hay algo esperando llega ahí—, y una fila
+     de tres columnas de ancho fijo saca la página del viewport en horizontal. */
+  .linea-reg { display:grid; grid-template-columns:150px 64px 1fr; gap:10px;
+               padding:5px 0; border-bottom:1px solid var(--borde); font-size:12.5px; }
+  .linea-reg .cuerpo { color:var(--texto-3); white-space:pre-wrap; word-break:break-word; }
+  /* `falla` es la única línea del registro que se busca con prisa, así que es la
+     única que se tiñe. La clase se escribe también en /canal, pero allí no está
+     definida en ninguna parte y por eso no pinta nada: aquí se define, acotada a
+     esta pantalla para no cambiar la otra de rebote. */
+  .linea-reg .urge { color:var(--riesgo); font-weight:600; }
+
+  /* La barra de una sección: los mandos a la izquierda, la cuenta a la derecha.
+     Copiada de /canal a propósito: son la misma clase de sección y aprender dos
+     disposiciones para lo mismo es lo que hace que una interfaz se sienta
+     descosida. */
+  .barra-secc { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+                margin:10px 0 12px; }
+  .barra-secc .cuenta-secc { margin-left:auto; font-size:12px; color:var(--texto-3);
+                             font-variant-numeric:tabular-nums; }
+
+  /* Una fila de encargo. El nombre manda y lo demás son metadatos, así que el
+     nombre es lo único que crece y lo que se recorta cuando no cabe. */
+  .enc-fila { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .enc-nom { flex:1; min-width:0; font-weight:600; overflow-wrap:anywhere; }
+  .enc-met { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+             font-size:12.5px; color:var(--texto-3); }
+
+  /* La ficha: el nombre del dato encima del valor. «panadería de barrio» sin
+     sujeto no dice a qué pregunta contesta. */
+  .hueco-ficha { border-top:1px solid var(--borde); padding:11px 0; }
+  .hueco-ficha:first-child { border-top:0; padding-top:0; }
+  .hueco-ficha .que { font-size:11px; text-transform:uppercase; letter-spacing:.09em;
+                      color:var(--texto-4); }
+  .hueco-ficha .val { white-space:pre-wrap; overflow-wrap:anywhere; margin-top:3px; }
+  /* `pre-wrap` es para lo que contó ELLA, que trae sus propios saltos de línea.
+     Lo que falta lo escribe el hub, y ahí `pre-wrap` pintaba la sangría de la
+     plantilla como si fuera parte del texto: visto en el navegador, la pregunta
+     salía con un escalón de seis espacios en mitad de la frase. */
+  .hueco-ficha .val.falta { color:var(--espera); white-space:normal; }
+
+  /* La conversación, como un chat: lo de ella a la izquierda, lo del agente a
+     la derecha, y el lado ya dice quién habla, así que no hace falta rótulo.
+     Una burbuja por mensaje; la hora y el estado en una línea pequeña debajo,
+     y el estado sólo cuando NO es el normal — «enviado» en cada burbuja es
+     ruido, «en-cola» o «sin-confirmar» es lo que hay que ver. Las muestras van
+     como una tira dentro de la burbuja: seis fotos seguidas en una lista
+     vertical eran una pared que tapaba la pregunta que las acompaña. */
+  .chat { display:flex; flex-direction:column; gap:6px; max-width:720px; }
+  .msg { max-width:80%; padding:8px 12px; border-radius:16px;
+         background:var(--superficie2); align-self:flex-start;
+         border-bottom-left-radius:5px; }
+  .msg.sale { align-self:flex-end; border-bottom-left-radius:16px;
+              border-bottom-right-radius:5px;
+              background:color-mix(in srgb, var(--acento) 12%, var(--superficie)); }
+  .msg .txt { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.4; }
+  .msg .met { display:flex; gap:8px; flex-wrap:wrap; align-items:baseline;
+              justify-content:flex-end; font-size:11px; color:var(--texto-4);
+              margin-top:3px; }
+  .msg.entra .met { justify-content:flex-start; }
+  .msg .muestras { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:4px; }
+  .msg .muestra { font-size:12.5px; padding:3px 9px; border-radius:999px;
+                  background:var(--superficie); border:1px solid var(--borde); }
+  .chat .dia { align-self:center; font-size:11.5px; color:var(--texto-4);
+               margin:8px 0 2px; }
+
+  /* Un `<a>` que hace de botón: mismo aspecto, pero navega en vez de enviar. */
+  a.boton { display:inline-flex; align-items:center; text-decoration:none; }
+
+  /* 🔴 La cuenta que pide atención va con `urge` y NO con `aviso`. `.aviso` es
+     el bloque de aviso del sistema —borde izquierdo, relleno, fondo—, así que
+     colgárselo a un `<span>` de dos palabras le dibuja un recuadro alrededor y
+     lo parte en dos líneas dentro del índice. Medido en el navegador: el
+     «1 esperando» ocupaba tres veces su sitio. */
+  .indice .cuenta.urge { color:var(--alerta); font-weight:600; }
+
+  /* El `label` del sistema es el rótulo de un campo: bloque, 10px y versalitas.
+     Éste va DENTRO de la fila y pegado a su casilla, y en versalitas ocupaba el
+     doble de ancho — lo bastante para echar el botón «Guardar» a una línea
+     propia. Se le devuelven las minúsculas y su tamaño; el color sigue siendo
+     el del sistema. */
+  .marca-dueno { display:flex; align-items:center; gap:6px; margin:0; flex:none;
+                 font-size:13px; text-transform:none; letter-spacing:-.01em;
+                 color:var(--texto-3); }
+  .marca-dueno input { width:auto; }
+  /* El alias es lo único de la fila que puede encoger, así que es lo que se
+     reparte el sitio que sobra. Con un ancho fijo, «Guardar» se caía a una
+     línea propia en cuanto el resto crecía un poco. */
+  .campo-alias { flex:1 1 150px; min-width:120px; max-width:220px; }
+
+  /* En un aparato táctil no existe «pasar el ratón», así que el lápiz del
+     sistema —que vive en `opacity:0` hasta el hover— no aparece nunca. Aquí eso
+     deja sin mando la acción que convierte un `encargo-3` en algo que se puede
+     publicar, y esta pantalla se mira desde el móvil. */
+  @media (hover: none) {
+    .enc-nom .editable > .lapiz { opacity:1; }
+  }
+
+  @media (max-width: 620px) {
+    .linea-reg { grid-template-columns:1fr; gap:2px; padding:9px 0; }
+    .msg.sale { margin-left:0; }
+  }
+</style>
+
+{# ── Insignias de estado ────────────────────────────────────────────────────
+   Sin `ui.estado`: no hay dimensión de encargos en `insignias.py` y registrar
+   tres para quince valores sería más pieza que información. La escala de
+   atención sí se respeta — el color dice cuánta atención pide esto, nunca de
+   qué categoría es. #}
+{% macro tono_encargo(estado) -%}
+{{ {'publicado': 'ok', 'aprobado': 'ok', 'descartado': 'neutro'}.get(estado, 'espera') }}
+{%- endmacro %}
+
+{% macro tono_mensaje(estado) -%}
+{{ {'entregado': 'ok', 'enviado': 'ok',
+    'sin-confirmar': 'riesgo', 'fallido': 'riesgo',
+    'descartado': 'neutro'}.get(estado, 'espera') }}
+{%- endmacro %}
+
+{# ── Lo que le pasa al canal ────────────────────────────────────────────────
+   Va en las dos vistas: sin token no entra ni sale nada, y el síntoma a ciegas
+   —«el bot no contesta»— no lleva a ningún sitio. #}
+{% macro estado_del_canal(canal_estado) %}
+  {% if not canal_estado.configurado %}
+  <div class="aviso" style="border-left-color:var(--espera)">
+    {{ ui.placa('aviso', 'espera') }}
+    <div style="flex:1;min-width:0">
+      <strong>El canal de encargos no está configurado: no entra ni sale nada.</strong>
+      <div class="tenue">
+        {{ canal_estado.detalle }}. El token no se guarda aquí (regla dura 5): se
+        pone en un archivo con permisos propios y se apunta a él desde
+        <span class="mono">{{ '~/.local/share/hub/encargos.yml' }}</span>.
+      </div>
+    </div>
+  </div>
+  {% elif canal_estado.transcriptor %}
+  {# 🔴 Se dice aunque el canal esté bien. Sin transcriptor los audios se
+     aparcan enteros y nunca llegan al agente: el síntoma desde fuera es «no
+     contesta a los audios», que se parece demasiado a «no me hace caso». #}
+  <div class="aviso" style="border-left-color:var(--espera)">
+    {{ ui.placa('aviso', 'espera') }}
+    <div style="flex:1;min-width:0">
+      <strong>No hay transcriptor: los audios se quedan aparcados.</strong>
+      <div class="tenue">
+        {{ canal_estado.transcriptor }}. El texto sigue funcionando y los audios
+        no se pierden —quedan guardados—, pero no llegan al agente hasta que
+        haya con qué pasarlos a texto.
+      </div>
+    </div>
+  </div>
+  {% endif %}
+{% endmacro %}
+
+{% macro caja_error(error) %}
+  {% if error %}
+  <div class="aviso" style="border-left-color:var(--alerta)">
+    {{ ui.placa('aviso', 'riesgo') }}
+    <div style="flex:1;min-width:0"><strong>No se cambió nada.</strong>
+      <div class="tenue">{{ error }}</div></div>
+  </div>
+  {% endif %}
+{% endmacro %}
+
+
+{% if enc %}
+{# ═══════════════════════ La ficha de UN encargo ═══════════════════════════ #}
+
+{{ ui.cabecera_vista(enc.titulo or enc.id,
+    'Lo que se sabe de este negocio, y la conversación de la que salió.') }}
+
+{{ caja_error(error) }}
+{{ estado_del_canal(canal_estado) }}
+
+<div class="tarjeta">
+  <div class="enc-fila">
+    {# Renombrar se hace SOBRE el nombre. El lápiz se ve también cuando está
+       publicado: el «no» de `renombrar` tiene un motivo que hay que poder leer,
+       y un mando escondido no lo cuenta. #}
+    <span class="enc-nom">
+      {{ ui.nombre_editable(enc.id, '/encargos/' ~ enc.id ~ '/renombrar',
+                            etiqueta='Ponerle su nombre de verdad') }}
+    </span>
+    <span class="insignia {{ tono_encargo(enc.estado) }}">{{ enc.estado }}</span>
+  </div>
+
+  <div class="enc-met" style="margin-top:10px">
+    <span>de <strong style="color:var(--texto-2)">{{ quien }}</strong></span>
+    <span>ronda {{ enc.ronda }}</span>
+    <span>{{ 'sistema' if enc.etapa == 'sistema' else 'maqueta' }}</span>
+    {% if enc.slot_id %}<span>slot {{ enc.slot_id }}</span>{% endif %}
+    {% if enc.url %}<a href="{{ enc.url }}" rel="noreferrer">{{ enc.url }}</a>{% endif %}
+    {% if sin_entregar %}
+    <span class="insignia espera">{{ sin_entregar }}
+      sin entregar al agente</span>
+    {% endif %}
+  </div>
+
+  <div class="fila" style="margin-top:14px;justify-content:flex-start;gap:8px">
+    {# El degradado —aquí, el acento sólido— es exclusivo de lanzar agentes
+       (§6.6), y esto es exactamente eso: abre la ventana donde corre el
+       entrevistador. #}
+    <form method="post" action="/encargos/{{ enc.id }}/agente">
+      <button class="cta">{{ ui.icono('agente', 15) }} Abrir el entrevistador</button>
+    </form>
+    {% if enc.estado == 'publicado' and enc.etapa == 'maqueta' %}
+    {# La maqueta ya está como la quiere: el sistema de verdad, con base de
+       datos y acceso, lo abre esto (decisión 244). Es un gate humano más. #}
+    <form method="post" action="/encargos/{{ enc.id }}/implementar">
+      <button class="cta">{{ ui.icono('agente', 15) }} Implementar el sistema</button>
+    </form>
+    {% endif %}
+    <a class="sutil boton" href="/encargos">← Todos los encargos</a>
+  </div>
+  <p class="tenue" style="margin:8px 0 0;font-size:12.5px">
+    El hub no ejecuta el agente: abre una ventana de tmux donde corre, y lo
+    aparcado entra ahí en cuanto el panel puede recibirlo.
+  </p>
+</div>
+
+<div class="con-indice" id="taller-encargo" data-secciones="encargo">
+<div class="columna-indice">
+  <nav class="indice" id="indice-encargo" data-indice-secciones>
+    <a data-sec="ficha" href="#ficha">
+      <span class="nom">Ficha</span>
+      <span class="cuenta {{ 'urge' if huecos }}">
+        {{ (huecos | length ~ ' sin saber') if huecos else 'completa' }}</span>
+    </a>
+    <a data-sec="conversacion" href="#conversacion">
+      <span class="nom">Conversación</span>
+      <span class="cuenta {{ 'urge' if sin_entregar }}">{{ conversacion | length }}</span>
+    </a>
+    <a data-sec="registro" href="#registro">
+      <span class="nom">Registro</span><span class="cuenta">{{ registro | length }}</span>
+    </a>
+  </nav>
+</div>
+
+<div>
+<section class="seccion" id="sec-ficha">
+
+{{ ui.seccion('documento', 'Ficha',
+   'Lo que se sabe. La ficha es el estado; la conversación, no.') }}
+
+<div class="aviso" style="border-left-color:{{ 'var(--ok)' if suficiente else 'var(--espera)' }}">
+  {{ ui.placa('ok' if suficiente else 'aviso', 'ok' if suficiente else 'espera') }}
+  <div style="flex:1;min-width:0">
+    {% if suficiente %}
+      <strong>Hay bastante para construir la primera pantalla.</strong>
+      <div class="tenue">
+        «Suficiente» es eso y no «se sabe todo»: el ciclo es iterativo y ella
+        pedirá otra ronda con algo delante.
+        {% if huecos %}
+          Quedan {{ huecos | length }} hueco{{ 's' if huecos | length != 1 }}
+          declarado{{ 's' if huecos | length != 1 }} —{{ huecos | join(', ') }}—:
+          no impiden construir, impiden construir bien, y por eso se ven.
+        {% endif %}
+      </div>
+    {% else %}
+      <strong>Todavía queda algo que preguntar: {{ siguiente }}.</strong>
+      <div class="tenue">
+        Las fases son el orden del agente, no el de quien habla: lo que llegue
+        cae en la casilla que le toque, venga cuando venga.
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="tarjeta">
+  {% for f in fases %}
+  <div class="hueco-ficha">
+    <div class="fila" style="gap:10px">
+      <span class="que">{{ f.titulo }}{% if not f.minimo %} · opcional{% endif %}</span>
+      <span class="tenue" style="font-size:12px">
+        {% if f.contestada %}contestada
+        {% elif f.agotada %}se preguntó {{ f.veces }} de {{ f.tope }} veces y se siguió
+        {% else %}preguntada {{ f.veces }} de {{ f.tope }} veces
+        {% endif %}
+      </span>
+    </div>
+    {% if f.valor and f.valor != 'no-lo-sabe' %}
+      <div class="val">{{ f.valor }}</div>
+    {% elif f.valor == 'no-lo-sabe' %}
+      <div class="val falta">No lo sabe — hueco declarado, no olvidado.</div>
+    {% else %}
+      <div class="val falta">Sin contestar. Se le pregunta:
+        «{{ f.pregunta }}»{% if f.se_elige %} (se contesta eligiendo){% endif %}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+{% if dicho %}
+{# Lo que contó y no cabía en un campo. No se tira nada: lo que hoy es una
+   divagación puede ser el requisito de la ronda tres. Plegado porque crece con
+   cada audio y lo que se mira a diario son los campos. #}
+<details class="tarjeta">
+  <summary style="cursor:pointer;color:var(--texto-2);font-size:13px">
+    {{ dicho | length }} cosa{{ 's' if dicho | length != 1 }} más que contó y no
+    cabían en un campo
+  </summary>
+  {% for d in dicho %}
+  <div class="hueco-ficha" style="margin-top:8px">
+    <span class="que">{{ d.fase or 'sin fase' }} · {{ d.cuando[:16] | replace('T', ' ') }}</span>
+    <div class="val">{{ d.texto }}</div>
+  </div>
+  {% endfor %}
+</details>
+{% endif %}
+
+</section>
+
+{# ── Conversación ───────────────────────────────────────────────────────── #}
+<section class="seccion" id="sec-conversacion">
+
+{{ ui.seccion('conversacion', 'Conversación',
+   'Las dos direcciones, en orden. Lo escribió una persona en un móvil.') }}
+
+{% if conversacion %}
+<div class="chat">
+{% set ns = namespace(dia='', tira=[]) %}
+{% for m in conversacion %}
+  {% if m.recibido_en[:10] != ns.dia %}
+    {% set ns.dia = m.recibido_en[:10] %}
+    <div class="dia">{{ ns.dia }}</div>
+  {% endif %}
+  {# Las muestras consecutivas se juntan en una sola burbuja. #}
+  {% if m.clase == 'muestras' and m.direccion == 'sale' %}
+    {% set ns.tira = ns.tira + [m] %}
+  {% endif %}
+  {% set siguiente = loop.nextitem if not loop.last else none %}
+  {% if ns.tira and not (siguiente and siguiente.clase == 'muestras' and siguiente.direccion == 'sale') %}
+    <div class="msg sale">
+      <div class="muestras">
+        {% for f in ns.tira %}<span class="muestra">🖼 {{ f.texto }}</span>{% endfor %}
+      </div>
+      <div class="met">
+        <span class="mono">{{ ns.tira[-1].recibido_en[11:16] }}</span>
+        {% if ns.tira[-1].estado not in ('enviado', 'entregado') %}
+        <span class="insignia {{ tono_mensaje(ns.tira[-1].estado) }}">{{ ns.tira[-1].estado }}</span>
+        {% endif %}
+      </div>
+    </div>
+    {% set ns.tira = [] %}
+  {% endif %}
+  {% if not (m.clase == 'muestras' and m.direccion == 'sale') %}
+<div class="msg {{ m.direccion }}">
+  {% if m.texto %}
+  <div class="txt">{{ m.texto }}</div>
+  {% elif m.adjunto %}
+  <div class="txt tenue">{{ '🎤 un audio, todavía sin transcribir' if m.clase == 'audio' else 'Un adjunto sin texto todavía.' }}</div>
+  {% endif %}
+  <div class="met">
+    {% if m.clase == 'audio' and m.texto %}<span>🎤 transcrito</span>{% endif %}
+    <span class="mono">{{ m.recibido_en[11:16] }}</span>
+    {% if m.estado not in ('enviado', 'entregado') %}
+    <span class="insignia {{ tono_mensaje(m.estado) }}">{{ m.estado }}</span>
+    {% endif %}
+  </div>
+  {% if m.detalle %}
+  {# Por qué sigue en cola, o por qué no se pudo confirmar. Dos situaciones
+     distintas y confundirlas es lo que duplica un mensaje: en una no se tocó el
+     panel y se reintenta; en la otra el texto YA está escrito y no se reintenta. #}
+  <div class="tenue" style="font-size:12px;margin-top:3px;
+       color:{{ 'var(--alerta)' if m.estado == 'sin-confirmar' else 'var(--espera)' }}">
+    {{ m.detalle }}
+    {% if m.estado == 'sin-confirmar' %}
+      — <strong>no se reintenta</strong>: volver a escribirlo lo duplicaría.
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+  {% endif %}
+{% endfor %}
+</div>
+{% else %}
+<div class="vacio tenue">Todavía no ha escrito nada.</div>
+{% endif %}
+
+</section>
+
+{# ── Registro ───────────────────────────────────────────────────────────── #}
+<section class="seccion" id="sec-registro">
+
+{{ ui.seccion('lineas', 'Registro',
+   'Lo de este encargo. Lo que sale de aquí sale de la máquina.') }}
+
+{% for r in registro %}
+<div class="linea-reg">
+  <span class="tenue mono">{{ r.momento[:19] | replace('T', ' ') }}</span>
+  <span class="{{ 'urge' if r.direccion == 'falla' }}">{{ r.direccion }}</span>
+  <span class="cuerpo">{{ r.detalle }}{% if r.cuerpo %} — {{ r.cuerpo }}{% endif %}</span>
+</div>
+{% else %}
+<div class="vacio tenue">Nada todavía.</div>
+{% endfor %}
+
+</section>
+</div>
+</div>
+
+
+{% else %}
+{# ═══════════════════════ La lista ═════════════════════════════════════════ #}
+
+{{ ui.cabecera_vista('Encargos',
+    'Negocios que alguien cuenta por Telegram, y el MVP que sale de ahí.') }}
+
+<div class="aviso" style="border-left-color:var(--acento)">
+  {{ ui.placa('bandeja', '', 'lg') }}
+  <div style="flex:1;min-width:0">
+  <h2>Un canal aparte del de consulta, y a propósito</h2>
+  <p class="tenue" style="margin:0">
+    Por aquí entra gente que <strong style="color:var(--texto-2)">nunca ha
+    especificado software</strong> y cuenta su negocio hablando. El agente le
+    pregunta sólo de negocio; de la ficha sale un MVP.
+    <strong style="color:var(--texto-2)">Esta pantalla no manda nada</strong>:
+    el token del bot lo lee <span class="mono">hub-encargos</span>, que es un
+    servicio aparte, y el que sirve esta página no lo tiene ni debe tenerlo.
+  </p>
+  </div>
+</div>
+
+{{ caja_error(error) }}
+{{ estado_del_canal(canal_estado) }}
+
+{% set pendientes = personas | selectattr('estado', 'equalto', 'pendiente') | list %}
+{% set en_cola = encargos | selectattr('sin_entregar') | list %}
+
+<div class="con-indice" id="taller-encargos" data-secciones="encargos">
+<div class="columna-indice">
+  <nav class="indice" id="indice-encargos" data-indice-secciones>
+    <a data-sec="encargos" href="#encargos">
+      <span class="nom">Encargos</span>
+      <span class="cuenta {{ 'urge' if en_cola }}">
+        {{ (en_cola | length ~ ' esperando') if en_cola else encargos | length }}</span>
+    </a>
+    <a data-sec="personas" href="#personas">
+      <span class="nom">Personas</span>
+      {# Quien acaba de escribir al bot está esperando a que decidas: es lo
+         único de esta pantalla que pide una acción tuya. #}
+      <span class="cuenta {{ 'urge' if pendientes }}">
+        {{ (pendientes | length ~ ' nuevo') if pendientes else personas | length }}</span>
+    </a>
+    <a data-sec="registro" href="#registro">
+      <span class="nom">Registro</span><span class="cuenta">{{ registro | length }}</span>
+    </a>
+  </nav>
+</div>
+
+<div>
+<section class="seccion" id="sec-encargos">
+
+{{ ui.seccion('bandeja', 'Encargos') }}
+
+{% for e in encargos %}
+<div class="tarjeta" style="margin-top:10px">
+  <div class="enc-fila">
+    <a class="enc-nom" href="/encargos/{{ e.id }}">{{ e.titulo or e.id }}</a>
+    <span class="insignia {{ tono_encargo(e.estado) }}">{{ e.estado }}</span>
+  </div>
+  <div class="enc-met" style="margin-top:7px">
+    <span class="mono">{{ e.id }}</span>
+    <span>de {{ e.quien }}</span>
+    <span>ronda {{ e.ronda }}</span>
+    {% if e.url %}<a href="{{ e.url }}" rel="noreferrer">{{ e.url }}</a>{% endif %}
+    {% if e.sin_entregar %}
+    {# La cifra que pide una acción: hay mensajes aparcados que el agente aún no
+       ha recibido. Sin agente abierto se quedan ahí para siempre. #}
+    <span class="insignia espera">{{ e.sin_entregar }} sin entregar</span>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<div class="vacio tenue">
+  Ningún encargo todavía. Se abre uno a nombre de alguien que ya esté de alta.
+</div>
+{% endfor %}
+
+{# ── Abrir uno ──────────────────────────────────────────────────────────── #}
+<div class="tarjeta" style="margin-top:14px">
+  <h2 class="con-placa">{{ ui.placa('mas') }}<span>Abrir un encargo</span></h2>
+  {% if activas %}
+  <p class="tenue" style="margin:0 0 10px">
+    El id es también la carpeta y el subdominio. Nace provisional a propósito:
+    el nombre de verdad sale del negocio, y eso no se sabe hasta la primera
+    respuesta.
+  </p>
+  <form method="post" action="/encargos/crear" class="fila"
+        style="gap:8px;justify-content:flex-start">
+    <input type="text" name="encargo_id" value="{{ propuesto }}" autocomplete="off"
+           aria-label="Id del encargo" style="max-width:220px">
+    <select name="user_id" aria-label="De quién es el negocio" style="max-width:260px">
+      {% for p in activas %}
+      <option value="{{ p.user_id }}">
+        {{ p.alias or p.nombre or ('@' ~ p.username if p.username else p.user_id) }}
+      </option>
+      {% endfor %}
+    </select>
+    <button class="aceptar">Abrir</button>
+  </form>
+  {% else %}
+  <p class="tenue" style="margin:0">
+    No hay nadie de alta, así que no se le puede abrir un encargo a nadie. Un
+    encargo es de una persona concreta, y darle de alta es un acto tuyo: está en
+    <a href="#personas">Personas</a>.
+  </p>
+  {% endif %}
+</div>
+
+</section>
+
+{# ── Personas ───────────────────────────────────────────────────────────── #}
+<section class="seccion" id="sec-personas">
+
+{{ ui.seccion('agente', 'Personas') }}
+
+<p class="tenue">
+  Por Telegram no se puede añadir a nadie desde aquí, y no es una carencia: un bot
+  sólo puede escribir a quien le haya escrito primero. Quien quiera entrar manda
+  un mensaje al bot, aparece abajo <em>sin nada concedido</em>, y tú decides.
+</p>
+
+{# Quien no tiene Telegram entra por la página del chat (decisión 246): aquí
+   se le da de alta con nombre, y el hub enseña una vez su usuario y contraseña. #}
+<form method="post" action="/encargos/persona-web" class="fila" style="margin-top:10px;gap:6px;justify-content:flex-start">
+  <input type="text" name="nombre" class="campo-alias" placeholder="Nombre (entra por el chat web, sin Telegram)" required>
+  <input type="text" name="usuario" class="campo-alias" placeholder="usuario (opcional)" autocomplete="off">
+  <button class="principal">Dar de alta por el chat web</button>
+</form>
+
+{% for p in personas %}
+<div class="tarjeta" style="margin-top:10px">
+  <div class="fila">
+    <div style="flex:1;min-width:0">
+      <strong>{{ p.alias or p.nombre or ('@' ~ p.username if p.username else p.user_id) }}</strong>
+      <span class="tenue mono">
+        {{ p.user_id }}{% if p.canal == 'web' %} · chat web{% endif %}{% if p.username %} · @{{ p.username }}{% endif %}
+        {%- if p.nombre %} · {{ p.nombre }}{% endif %}
+      </span>
+    </div>
+    <span class="insignia {{ 'ok' if p.estado == 'activo'
+                             else ('riesgo' if p.estado == 'bloqueado' else 'espera') }}">
+      {{ p.estado }}</span>
+  </div>
+
+  {# El alias no es cosmético: el @username lo cambia su dueño cuando quiere, y
+     este nombre acaba dentro del marco con el que lo que ella escribe entra al
+     contexto del agente. #}
+  <form method="post" action="/encargos/persona" style="margin-top:8px">
+    <input type="hidden" name="user_id" value="{{ p.user_id }}">
+    <div class="fila" style="gap:6px;justify-content:flex-start">
+      <input type="text" name="alias" value="{{ p.alias }}" class="campo-alias"
+             placeholder="Cómo le llamas tú">
+      <select name="estado" aria-label="Estado" style="max-width:150px">
+        {% for e in ['pendiente', 'activo', 'bloqueado'] %}
+        <option value="{{ e }}" {{ 'selected' if p.estado == e }}>{{ e }}</option>
+        {% endfor %}
+      </select>
+      {# El dueño es quien aprueba los planes respondiendo al mensaje que se le
+         manda. Sin nadie marcado, un plan se queda esperando una aprobación que
+         nadie puede dar. #}
+      <label class="marca-dueno">
+        <input type="checkbox" name="es_dueno" value="1" {{ 'checked' if p.es_dueno }}>
+        aprueba los planes
+      </label>
+      {# De confianza: sus planes se construyen sin esperar tu aprobación (236).
+         Para gente con criterio técnico a la que no hace falta revisar. #}
+      <label class="marca-dueno" title="Sus planes se construyen sin esperar tu aprobación">
+        <input type="checkbox" name="de_confianza" value="1" {{ 'checked' if p.de_confianza }}>
+        de confianza
+      </label>
+      <button class="principal">Guardar</button>
+    </div>
+    <input type="text" name="nota" value="{{ p.nota }}" autocomplete="off"
+           style="margin-top:6px" aria-label="Nota"
+           placeholder="Nota: de qué va su negocio, qué pidió…">
+  </form>
+</div>
+{% else %}
+<div class="vacio tenue">
+  Todavía no ha escrito nadie al bot. Cuando alguien lo haga aparecerá aquí,
+  en «pendiente» y sin poder mandar nada.
+</div>
+{% endfor %}
+
+</section>
+
+{# ── Registro ───────────────────────────────────────────────────────────── #}
+<section class="seccion" id="sec-registro">
+
+{{ ui.seccion('lineas', 'Registro',
+   'Todo lo que entra y sale. Lo que sale de aquí sale de la máquina.') }}
+
+{# El filtro va por la URL y no por JavaScript: una vista filtrada se puede
+   guardar, compartir y recargar, y la página sigue siendo HTML servido
+   (decisión 23). #}
+<div class="barra-secc">
+  {% call ui.menu_filtro(activos=1 if reg_filtro else 0, alineado='izq') %}
+    <form method="get" action="/encargos">
+      <label for="fr-enc">Encargo</label>
+      <select name="enc" id="fr-enc">
+        <option value="">todos</option>
+        {% for e in encargos %}
+        <option value="{{ e.id }}" {{ 'selected' if reg_filtro == e.id }}>{{ e.id }}</option>
+        {% endfor %}
+      </select>
+      <div class="pie">
+        <button class="principal">Aplicar</button>
+        {% if reg_filtro %}<a class="sutil boton" href="/encargos">Quitar</a>{% endif %}
+      </div>
+    </form>
+  {% endcall %}
+
+  {# Lo puesto, fuera del desplegable: un filtro que sólo se ve al abrirlo se
+     olvida, y entonces una lista recortada se lee como la entera. #}
+  <div class="chips-filtro">
+    {% if reg_filtro %}<a class="chip-filtro" href="/encargos"
+       title="Quitar este filtro">{{ reg_filtro }} <span class="quita">×</span></a>{% endif %}
+  </div>
+
+  <span class="cuenta-secc">
+    últimas {{ registro | length }}{% if reg_filtro %} (filtrado){% endif %}
+  </span>
+</div>
+
+{% for r in registro %}
+<div class="linea-reg">
+  <span class="tenue mono">{{ r.momento[:19] | replace('T', ' ') }}</span>
+  <span class="{{ 'urge' if r.direccion == 'falla' }}">{{ r.direccion }}</span>
+  <span class="cuerpo">
+    {%- if r.encargo_id %}<span class="mono">{{ r.encargo_id }}</span> {% endif -%}
+    {{ r.detalle }}{% if r.cuerpo %} — {{ r.cuerpo }}{% endif %}</span>
+</div>
+{% else %}
+<div class="vacio tenue">
+  {% if reg_filtro %}Nada de ese encargo todavía.{% else %}Nada todavía.{% endif %}
+</div>
+{% endfor %}
+
+</section>
+</div>
+</div>
+
+{% endif %}
+
+{# La navegación por secciones vive en `/static/secciones.js`: la usan ésta, la
+   ficha de proyecto y /canal, y una copia por vista se desvía al tocarla. #}
+<script src="/static/secciones.js"></script>
+
+{% endblock %}

@@ -37,14 +37,19 @@
    * está mirando, no de la que abrió la página. Cambiar de pestaña de tmux
    * cambia de trabajo, y sin esto verías las consultas de otro. */
   function proyectoActual() {
-    const bloque = document.querySelector('.por-ventana:not([hidden])');
+    const bloque = document.querySelector('.por-ventana.viendo');
     if (bloque && bloque.dataset.proyecto) return bloque.dataset.proyecto;
     const taller = document.getElementById('taller');
     return (taller && taller.dataset.proyecto) || '';
   }
 
+  /* `.viendo` y no `:not([hidden])`: los bloques conservan el atributo `hidden`
+   * y se revelan por clase, así que aquel selector no casaba con ninguno. Aquí
+   * el fallo era MUDO —el proyecto caía al respaldo del taller y lo del slot
+   * sólo servía para atenuar— y por eso duró: lo destapó el panel de
+   * programados, que sí depende de esto para saber si hay destino. */
   function slotActual() {
-    const nota = document.querySelector('.por-ventana:not([hidden]) .nota-texto');
+    const nota = document.querySelector('.por-ventana.viendo .nota-texto');
     return nota ? nota.dataset.slot : '';
   }
 

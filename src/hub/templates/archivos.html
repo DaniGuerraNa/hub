@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  /* Filas de altura cómoda para el pulgar: esta pantalla se usa sobre todo
+     desde el móvil, que es el caso para el que existe. */
+  .fila-arch { display:flex; align-items:center; gap:11px; padding:11px 13px;
+               border-bottom:1px solid var(--borde); text-decoration:none; color:inherit; }
+  .fila-arch:last-child { border-bottom:0 }
+  /* 🔴 Sin esto el filtro no esconde nada. `[hidden]` del navegador y
+     `.fila-arch` tienen la MISMA especificidad, así que gana la última escrita —
+     la de aquí arriba— y `el.hidden = true` queda sin efecto visible. Es el
+     mismo fallo de la decisión 202, que costó dos causas y tres archivos. */
+  .fila-arch[hidden] { display:none }
+  .fila-arch:hover { background:var(--superficie-2) }
+  .fila-arch .nom { flex:1 1 40%; min-width:0; overflow:hidden; text-overflow:ellipsis;
+                    white-space:nowrap; font-size:14px }
+  /* Encoge y se dobla: con `flex:none`, rama + «46 sin commitear» + proyecto
+     empujaban la fila a 472 px en un teléfono (medido con datos reales). */
+  .fila-arch .met { flex:0 1 auto; min-width:0; display:flex; flex-wrap:wrap;
+                    justify-content:flex-end; align-items:center; gap:4px 7px }
+  .fila-arch.es-archivo { color:var(--texto-3) }
+  /* Un symlink que apunta fuera del confín: se ve que está, y se ve que no se
+     puede entrar. Ocultarlo sería mentir sobre el contenido de la carpeta. */
+  .fila-arch.fuera { opacity:.5; cursor:not-allowed }
+  .migas { display:flex; flex-wrap:wrap; align-items:center; gap:4px; font-size:13px }
+  .migas a { color:var(--texto-3); text-decoration:none }
+  .migas a:hover { color:var(--acento) }
+  .migas .sep { color:var(--texto-4) }
+  .migas .hoy { color:var(--texto-1); font-weight:550 }
+  .abrir-aqui { display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+                margin-top:10px; padding-top:10px; border-top:1px solid var(--borde) }
+  .abrir-aqui select { width:auto; flex:none; max-width:260px }
+  #filtro-arch { margin:0 }
+</style>
+
+{{ ui.cabecera_vista('Archivos',
+    'Qué hay y dónde. Sólo nombres y rutas: el hub no abre archivos ni toca nada.') }}
+
+{% if error %}
+<div class="aviso" style="border-left-color:var(--alerta)">
+  {{ ui.placa('aviso', 'riesgo') }}
+  <div style="flex:1"><strong>No se pudo mirar ahí.</strong>
+    <div class="tenue">{{ error }}</div></div>
+</div>
+{% endif %}
+
+<div class="tarjeta">
+  <div class="barra" style="gap:12px;flex-wrap:wrap">
+    {% if d.migas %}
+    <div class="migas" style="flex:1;min-width:0">
+      <a href="/archivos">Raíces</a>
+      {% for m in d.migas %}
+        <span class="sep">/</span>
+        {% if loop.last %}<span class="hoy">{{ m.nombre }}</span>
+        {% else %}<a href="/archivos?ruta={{ m.ruta | urlencode }}">{{ m.nombre }}</a>{% endif %}
+      {% endfor %}
+    </div>
+    {% else %}
+    <div style="flex:1;min-width:0">
+      <strong style="font-weight:550">Por dónde empezar</strong>
+      <p class="tenue" style="margin:3px 0 0;font-size:12.5px">
+        Las rutas que declara <code>projects.yml</code>. El navegador no sale de
+        aquí: lo que no esté bajo una de ellas, el hub no lo enseña.
+      </p>
+    </div>
+    {% endif %}
+    <input type="text" id="filtro-arch" placeholder="Filtrar…" autocomplete="off"
+           style="width:auto;flex:none;max-width:190px">
+  </div>
+
+  {# Abrir una terminal AQUÍ, que es lo que faltaba: ver que el repo no está y
+     no poder hacer nada desde el móvil. La ventana se abre en esta carpeta y el
+     comando se deja **escrito y sin Enter** — el hub no ejecuta (decisión 203),
+     lo lanzas tú desde la vista de trabajo. #}
+  {% if d.ruta %}
+  <form method="post" action="/archivos/terminal" class="abrir-aqui">
+    <input type="hidden" name="ruta" value="{{ d.ruta }}">
+    {% if comandos %}
+    <select name="comando" id="comando-preparado" aria-label="Comando preparado">
+      <option value="">Sólo abrir la terminal aquí</option>
+      {% for c in comandos %}
+      <option value="{{ c.id }}" data-huecos="{{ c.huecos | join(',') }}">{{ c.nombre or c.id }}</option>
+      {% endfor %}
+    </select>
+    {# Un hueco por cada cosa que la plantilla pide, y `{ruta}` no sale: lo
+       rellena la carpeta en la que estás, que es el dato que no se teclea desde
+       un móvil. #}
+    {% for h in comandos | map(attribute='huecos') | sum(start=[]) | unique %}
+      {% if h != 'ruta' %}
+      <input type="text" name="hueco_{{ h }}" placeholder="{{ h }}" autocomplete="off"
+             data-hueco="{{ h }}" hidden style="width:auto;flex:none;max-width:210px">
+      {% endif %}
+    {% endfor %}
+    {% endif %}
+    <button class="boton">Abrir terminal aquí</button>
+  </form>
+  {% endif %}
+
+  {% if d.arriba is not none %}
+  <a class="fila-arch" href="/archivos?ruta={{ d.arriba | urlencode }}" data-fijo="1">
+    {{ ui.placa('carpeta', '', 'sm') }}<span class="nom tenue">.. subir</span>
+  </a>
+  {% endif %}
+
+  {% for e in d.entradas %}
+    {% if e.fuera %}
+    <div class="fila-arch fuera" title="Es un enlace que apunta fuera de lo que el hub indexa">
+      {{ ui.placa('enlace', 'riesgo', 'sm') }}
+      <span class="nom">{{ e.nombre }}</span>
+      <span class="met"><span class="insignia riesgo">fuera</span></span>
+    </div>
+    {% elif e.carpeta %}
+    <a class="fila-arch" href="/archivos?ruta={{ e.ruta | urlencode }}">
+      {{ ui.placa('carpeta' if not e.repo else 'script', 'ok' if e.repo else '', 'sm') }}
+      <span class="nom">{{ e.nombre }}</span>
+      <span class="met">
+        {% if e.rama %}<span class="insignia mono">{{ e.rama }}</span>{% endif %}
+        {% if e.sucios %}<span class="insignia riesgo">{{ e.sucios }} sin commitear</span>{% endif %}
+        {% if e.proyecto and not d.migas %}<span class="tenue" style="font-size:12px">{{ e.proyecto }}</span>{% endif %}
+      </span>
+    </a>
+    {% else %}
+    <div class="fila-arch es-archivo">
+      {{ ui.placa('documento', '', 'sm') }}
+      <span class="nom">{{ e.nombre }}</span>
+      <span class="met tenue" style="font-size:12px">{{ tamano(e.tamano) }}</span>
+    </div>
+    {% endif %}
+  {% endfor %}
+
+  {% if not d.entradas %}
+  <p class="tenue" style="padding:14px 13px;margin:0">Esta carpeta está vacía.</p>
+  {% endif %}
+
+  <p class="tenue" id="pie-arch" style="padding:11px 13px 0;margin:0;font-size:12.5px">
+    {% if d.truncado %}
+      Se enseñan {{ d.entradas | length }} y quedan <strong>{{ d.truncado }}</strong> sin
+      listar. Una carpeta con tantas entradas no se recorre desde aquí: búscala por nombre.
+    {% endif %}
+    {% if d.ocultos %}
+      {{ d.ocultos }} entrada{{ 's' if d.ocultos != 1 }} oculta{{ 's' if d.ocultos != 1 }}
+      (empiezan por punto) — se cuentan pero no se listan.
+    {% endif %}
+  </p>
+</div>
+
+{% if d.ruta %}
+<p class="tenue mono" style="margin-top:12px;font-size:12.5px;word-break:break-all">{{ d.ruta }}</p>
+{% endif %}
+
+<script src="/static/archivos.js"></script>
+<script src="/static/comandos.js"></script>
+{% endblock %}

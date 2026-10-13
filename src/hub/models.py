@@ -7,7 +7,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Dominio = Literal["personal", "laboral"]
+# `encargos` es el tercero desde el 2026-09-18, y no es un proyecto suyo: son
+# los MVP que otras personas encargan por Telegram. Va como dominio —un atributo
+# con filtro, decisión 20— y no como `tipo`, porque lo que cambia es de QUIÉN es
+# el trabajo, no qué clase de cosa es. Así se filtra aparte en las vistas sin que
+# nada tenga que tratarlo distinto.
+Dominio = Literal["personal", "laboral", "encargos"]
 Guardrail = Literal["auto", "ask", "never"]
 EstadoProyecto = Literal["activo", "pausado", "archivado"]
 EstadoSlot = Literal["activo", "archivado"]

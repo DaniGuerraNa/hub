@@ -151,3 +151,21 @@ def test_sin_el_campo_de_ancho_no_se_inventa_un_numero(monkeypatch):
         "0\tclaude\t1\t1\tclaude\t✳ Algo\t/tmp\t1",
     ])
     assert tmux.listar_ventanas("work")[0]["ancho"] is None
+
+
+def test_una_ventana_sin_ruta_se_abre_donde_esta_la_sesion(registro):
+    """🔴 Sin `-c`, tmux hereda el cwd de quien creó la SESIÓN, y todo lo que
+    abre el hub lo crea `hub-web` —bajo systemd, desde el directorio del hub—.
+    El botón «nueva ventana» daba una shell en el código del hub en vez de en el
+    proyecto, y en la pantalla no había nada que lo explicara.
+
+    `#{pane_current_path}` es el idioma de tmux para «aquí mismo»: lo resuelve
+    él contra el destino, sin una consulta extra que pueda quedarse vieja.
+    """
+    tmux.nueva_ventana("work")
+    assert registro[-1][-2:] == ["-c", "#{pane_current_path}"]
+
+
+def test_con_ruta_manda_la_ruta_y_no_el_formato(registro):
+    tmux.nueva_ventana("work", "/tmp/demo")
+    assert registro[-1][-2:] == ["-c", "/tmp/demo"]

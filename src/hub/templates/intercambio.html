@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+{{ ui.cabecera_vista('Intercambio',
+   'La carpeta por la que pasan los archivos entre el teléfono y las sesiones.
+    Nada cruza solo: lo que subes aterriza aquí, y lo que quieres bajarte lo
+    copia aquí la sesión.') }}
+
+{% if aviso %}
+<div class="aviso" style="margin-bottom:14px">{{ ui.placa('aviso') }}
+  <div style="flex:1">{{ aviso }}</div>
+</div>
+{% endif %}
+
+<div class="tarjeta">
+  <form method="post" action="/intercambio/subir" enctype="multipart/form-data"
+        class="barra" style="gap:10px;flex-wrap:wrap">
+    <input type="file" name="archivo" required
+           style="width:auto;flex:1;min-width:180px">
+    <button class="boton principal">Subir</button>
+  </form>
+  <p class="tenue" style="margin:8px 0 0;font-size:12.5px">
+    Hasta {{ limite }} por archivo. Van a <code>{{ carpeta }}</code>, que es del
+    hub: no se escribe nunca dentro de tus proyectos.
+  </p>
+</div>
+
+<style>
+  .inter-herr { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:10px 0 4px; }
+  .inter-herr form { display:flex; gap:6px; flex:1; min-width:200px; }
+  .inter-por { display:flex; gap:6px; flex-wrap:wrap; }
+  .inter-por a { font-size:12px; padding:3px 10px; border-radius:9999px; text-decoration:none;
+    color:var(--texto-2); background:var(--superficie); }
+  .inter-por a.aqui { color:var(--texto); background:color-mix(in srgb, var(--acento) 22%, transparent); }
+  .inter-grupo { margin-top:10px; }
+  .inter-grupo > summary { cursor:pointer; list-style:none; display:flex; gap:8px;
+    align-items:baseline; padding:10px 14px; }
+  .inter-grupo > summary::-webkit-details-marker { display:none; }
+  .inter-grupo > summary::before { content:"▸"; color:var(--texto-4); }
+  .inter-grupo[open] > summary::before { content:"▾"; }
+  .inter-grupo .titulo { font-weight:600; flex:1; min-width:0; overflow-wrap:anywhere; }
+  .inter-grupo .inter-cifra { color:var(--texto-4); font-size:12px; font-variant-numeric:tabular-nums; }
+  .inter-fila { padding:8px 14px; border-top:1px solid color-mix(in srgb, var(--texto) 8%, transparent); }
+  .inter-fila .nombre { overflow-wrap:anywhere; }
+  .inter-fila .sub { color:var(--texto-4); }
+  .inter-tipo { font-size:11px; padding:1px 7px; border-radius:9999px; color:var(--texto-3);
+    background:color-mix(in srgb, var(--texto) 7%, transparent); white-space:nowrap; }
+  .inter-tanda { padding:8px 14px 4px; font-size:11.5px; letter-spacing:.03em; color:var(--texto-3);
+    border-top:1px solid color-mix(in srgb, var(--texto) 12%, transparent);
+    background:color-mix(in srgb, var(--texto) 3%, transparent); }
+  .inter-nuevo { color:var(--texto); background:color-mix(in srgb, var(--acento) 26%, transparent); }
+  .inter-mas > summary { cursor:pointer; font-size:12px; color:var(--texto-3); margin-top:4px; }
+</style>
+
+{{ ui.seccion('carpeta', 'Lo que hay ahora',
+   'Nada se borra solo: aquí no hay poda automática.') }}
+
+<div class="inter-herr">
+  <nav class="inter-por" aria-label="Agrupar por">
+    {% for clave, etiqueta in i.agrupaciones.items() %}
+    <a href="/intercambio?por={{ clave }}{% if i.q %}&q={{ i.q | urlencode }}{% endif %}"
+       class="{{ 'aqui' if i.por == clave }}">{{ etiqueta }}</a>
+    {% endfor %}
+  </nav>
+  <form method="get" action="/intercambio" role="search">
+    <input type="hidden" name="por" value="{{ i.por }}">
+    <input type="text" name="q" value="{{ i.q }}" placeholder="Buscar por nombre"
+           aria-label="Buscar por nombre" style="flex:1">
+    <button class="boton">Buscar</button>
+    {% if i.q %}<a class="boton" href="/intercambio?por={{ i.por }}">Quitar</a>{% endif %}
+  </form>
+</div>
+{% if i.q %}
+<p class="tenue" style="font-size:12.5px;margin:4px 0">{{ i.encontrados }} de {{ i.total }} con «{{ i.q }}».</p>
+{% endif %}
+
+{# El grupo con lo más nuevo se abre solo: se viene aquí a por lo último. Los
+   demás, plegados, para que la lista no crezca sin fin. Buscando, abiertos
+   todos: si lo filtraste es que quieres verlo. #}
+{% for g in i.grupos %}
+<details class="tarjeta inter-grupo" style="padding:0" {{ 'open' if loop.first or i.q or i.grupos | length == 1 }}>
+  <summary>
+    <span style="color:var(--texto-3);align-self:center">{{ ui.icono('carpeta', 16) }}</span>
+    <span class="titulo">{{ g.titulo }}</span>
+    <span class="inter-cifra">{{ g.cuantos }} · {{ g.tamano }}</span>
+  </summary>
+  {# Una carpeta puede traer varias tandas de la misma sesión: cada una con su
+     hora, la última arriba, para ver qué acaba de llegar. #}
+  {% set varias = (g.tandas or []) | length > 1 %}
+  {% for t in (g.tandas or [{'archivos': g.archivos}]) %}
+  {% if varias %}
+  <div class="inter-tanda">Subido {{ t.etiqueta }} · {{ t.archivos | length }}</div>
+  {% endif %}
+  {% for a in t.archivos %}
+  <div class="inter-fila">
+    <div class="fila" style="gap:10px;align-items:flex-start">
+      <div class="pila" style="flex:1;min-width:0;gap:2px">
+        <span class="nombre">{% if a.subcarpeta %}<span class="sub">{{ a.subcarpeta }}/</span>{% endif %}{{ a.archivo }}</span>
+        <span class="tenue" style="font-size:12px">
+          {% if a.nuevo %}<span class="inter-tipo inter-nuevo">nuevo</span>{% endif %}
+          {% if i.por != 'tipo' %}<span class="inter-tipo">{{ a.tipo }}</span>{% endif %}
+          {{ a.tamano }} · {{ a.cuando_local }}
+        </span>
+      </div>
+      <a class="boton principal" href="/intercambio/bajar/{{ a.nombre | urlencode }}">Bajar</a>
+    </div>
+
+    <details class="inter-mas">
+      <summary>Más</summary>
+      {# Pasarle la RUTA a una sesión es lo que convierte «lo subí» en «Claude
+         puede usarlo»: lee archivos por su ruta, y esa ruta no se teclea en un
+         móvil. Se escribe sin Enter, para que añadas a mano qué quieres que
+         haga con él. #}
+      {% if paneles %}
+      <form method="post" action="/intercambio/a-la-sesion" class="barra"
+            style="margin-top:8px;gap:6px;flex-wrap:wrap">
+        <input type="hidden" name="nombre" value="{{ a.nombre }}">
+        <select name="pane_id" aria-label="A qué sesión" style="width:auto;flex:1;min-width:170px">
+          {% for p in paneles %}
+          <option value="{{ p.pane_id }}">
+            {{ p.proyecto_nombre or p.proyecto_id or 'sin proyecto' }} · {{ p.slot_nombre or ('slot ' ~ p.slot_id) }}
+          </option>
+          {% endfor %}
+        </select>
+        <button class="boton">Escribir la ruta ahí</button>
+      </form>
+      {% endif %}
+      <div class="barra" style="margin-top:8px;gap:8px;align-items:flex-start">
+        <p class="tenue mono" style="margin:0;font-size:12px;word-break:break-all;flex:1">{{ a.ruta }}</p>
+        <form method="post" action="/intercambio/borrar" class="enlinea"
+              data-confirmar-titulo="Borrar «{{ a.archivo }}»"
+              data-confirmar-ok="Borrarlo"
+              data-confirmar="Se borra del disco de casa y no se puede recuperar.">
+          <input type="hidden" name="nombre" value="{{ a.nombre }}">
+          <button class="declinar peligro-sutil">Borrar</button>
+        </form>
+      </div>
+    </details>
+  </div>
+  {% endfor %}
+  {% endfor %}
+</details>
+{% else %}
+<div class="vacio tenue">
+  {% if i.q %}
+  Nada con «{{ i.q }}».
+  {% else %}
+  Nada todavía. Para bajarte algo de una sesión, cópialo aquí desde ella:
+  <code>cp informe.pdf {{ carpeta }}/</code>
+  {% endif %}
+</div>
+{% endfor %}
+
+<div class="aviso" style="margin-top:14px">
+  <div>
+  <strong>Por qué hay una carpeta en medio y no un botón en cada sitio.</strong>
+  El hub no escribe dentro de tus proyectos —es la regla que justifica que exista—
+  y el navegador de archivos no lee contenido, que fue una decisión tuya y es lo
+  que lo mantiene fuera del interruptor de la terminal. Con esta carpeta las dos
+  siguen en pie: en cada dirección hay un gesto humano, y el hub nunca decide qué
+  archivo cruza.
+  </div>
+</div>
+
+{% endblock %}

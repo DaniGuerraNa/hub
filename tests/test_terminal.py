@@ -248,6 +248,7 @@ def _pty_que_guarda(destino, esperados):
     os.set_blocking(adjunto.fd, False)
     adjunto._pendiente = bytearray()
     adjunto._esperando = False
+    adjunto._leyendo = False
     return adjunto
 
 
@@ -310,3 +311,51 @@ def test_dentro_del_bucle_de_eventos_tampoco_se_pierde_nada(tmp_path):
     asyncio.run(escribir_y_dejar_al_bucle())
     assert adjunto._esperando is False
     assert _recoger(adjunto, destino) == PEGADO
+
+
+# ── La sesión que ya no está ────────────────────────────────────────────────
+
+
+def _sesiones_vivas() -> set[str]:
+    try:
+        return {l.split(":")[0] for l in
+                tmux._correr(["list-sessions", "-F", "#{session_name}"]).splitlines() if l}
+    except (RuntimeError, tmux.TmuxNoDisponible):
+        return set()
+
+
+def test_sobre_una_sesion_que_ya_no_existe_no_se_inventa_otra():
+    """🔴 Con tmux de verdad, porque el fallo era de tmux y no del código.
+
+    `new-session -t X` **no falla** cuando `X` no existe: tmux lee `-t` como el
+    nombre de un GRUPO y, si no hay ninguno, lo crea — con una sesión vacía
+    dentro y una shell en el cwd de quien llama, que aquí es `hub-web`, o sea el
+    directorio del propio hub. El usuario cerró la última ventana de un slot,
+    volvió a la terminal del hub y se encontró un prompt en el código del hub,
+    sin un solo mensaje que dijera que su sesión había muerto.
+
+    Un doble de tmux no habría cazado esto: habría repetido la suposición.
+    """
+    difunta = f"difunta-{os.getpid()}"
+    antes = _sesiones_vivas()
+
+    with pytest.raises(RuntimeError, match="ya no existe"):
+        terminal.crear_espejo(difunta)
+
+    assert _sesiones_vivas() == antes, "no se crea nada al fallar"
+
+
+def test_sobre_una_sesion_viva_el_espejo_se_crea_igual_que_siempre():
+    """La otra mitad: la comprobación nueva no puede estorbar al caso normal."""
+    viva = f"viva-{os.getpid()}"
+    tmux.nueva_sesion(viva, "/tmp")
+    try:
+        espejo = terminal.crear_espejo(viva)
+        assert espejo.startswith(f"{terminal.PREFIJO_ESPEJO}{viva}-")
+        assert espejo in _sesiones_vivas()
+    finally:
+        for s in (viva, *(s for s in _sesiones_vivas() if s.startswith(f"{terminal.PREFIJO_ESPEJO}{viva}-"))):
+            try:
+                tmux._correr(["kill-session", "-t", f"={s}"])
+            except (RuntimeError, tmux.TmuxNoDisponible):
+                pass

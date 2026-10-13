@@ -118,3 +118,101 @@ proyectos:
 """, encoding="utf-8")
     with pytest.raises(registry.YamlInvalido, match="asiento"):
         registry.cargar(yml)
+
+
+# ── La sección escrita en línea (`conexiones: []`) ────────────────────────────
+#
+# 🔴 Este bloque cubre el fallo que dejó el hub entero sin registro, y era de
+# PRIMER USO: la plantilla que se publica trae `conexiones: []` —vacía a
+# propósito— y `_insertar_bajo_cerrojo` buscaba una línea **exactamente igual**
+# a `conexiones:`. Como no casaba, se caía a «no existe la sección» y añadía
+# otra al final: clave duplicada. A partir de ahí `projects.yml` no carga, y con
+# él se caen el snapshotter, el asistente y todo lo que pida el registro.
+#
+# Lo que lo dejó pasar fue la comprobación previa: usaba `yaml.safe_load`, que
+# admite claves duplicadas en silencio y se queda con la última. Un validador
+# más laxo que el lector no valida nada.
+
+PLANTILLA_CON_SECCION_EN_LINEA = """proyectos:
+  - id: demo
+    nombre: Demo
+    asiento: /tmp/demo
+
+# Vacío a propósito: las conexiones reales las declara quien usa el hub.
+conexiones: []
+"""
+
+
+def _yml(tmp_path, texto):
+    ruta = tmp_path / "projects.yml"
+    ruta.write_text(texto, encoding="utf-8")
+    return ruta
+
+
+def test_la_primera_conexion_sobre_la_plantilla_no_rompe_el_registro(tmp_path):
+    """El caso exacto que lo rompió, y le pasaría a cualquiera recién instalado:
+    dar de alta la PRIMERA conexión desde la UI."""
+    ruta = _yml(tmp_path, PLANTILLA_CON_SECCION_EN_LINEA)
+    registry.añadir_conexion({"alias": "VPS", "host": "h", "usuario": "u"}, ruta=ruta)
+
+    assert [c.alias for c in registry.cargar_conexiones(ruta)] == ["VPS"]
+    assert [p.id for p in registry.cargar(ruta)] == ["demo"]
+    assert ruta.read_text(encoding="utf-8").count("\nconexiones:") == 1, \
+        "se escribió una segunda clave `conexiones`"
+
+
+def test_la_seccion_en_linea_se_abre_conservando_el_comentario(tmp_path):
+    """`projects.yml` se edita a mano (decisión 7): su formato es parte de lo que
+    lo hace editable, así que abrir la sección no puede llevarse el comentario
+    que explica para qué es."""
+    ruta = _yml(tmp_path, PLANTILLA_CON_SECCION_EN_LINEA)
+    registry.añadir_conexion({"alias": "VPS"}, ruta=ruta)
+    texto = ruta.read_text(encoding="utf-8")
+    assert "# Vacío a propósito" in texto
+    assert "conexiones: []" not in texto
+
+
+def test_la_segunda_conexion_se_añade_a_la_misma_seccion(tmp_path):
+    ruta = _yml(tmp_path, PLANTILLA_CON_SECCION_EN_LINEA)
+    registry.añadir_conexion({"alias": "uno"}, ruta=ruta)
+    registry.añadir_conexion({"alias": "dos"}, ruta=ruta)
+    assert [c.alias for c in registry.cargar_conexiones(ruta)] == ["uno", "dos"]
+
+
+def test_una_seccion_en_linea_CON_contenido_no_se_reescribe_a_ciegas(tmp_path):
+    """Ahí no se puede insertar un bloque sin reescribir el valor, y reescribir
+    a ciegas un archivo que alguien edita a mano es peor que decir que no."""
+    ruta = _yml(tmp_path, "proyectos: []\nconexiones: [{alias: ya-estaba}]\n")
+    with pytest.raises(registry.YamlInvalido) as exc:
+        registry.añadir_conexion({"alias": "nueva"}, ruta=ruta)
+    assert "una sola línea" in str(exc.value)
+    assert "ya-estaba" in ruta.read_text(encoding="utf-8"), "se tocó el archivo"
+
+
+def test_sobre_un_registro_ya_roto_el_alta_se_niega_en_vez_de_empeorarlo(tmp_path):
+    """Con la clave ya duplicada —el estado en que quedó la máquina— añadir otra
+    conexión tiene que fallar limpio y no tocar el archivo.
+
+    🔴 Y una nota honesta sobre lo que este test NO prueba: la comprobación
+    previa a escribir pasó de `yaml.safe_load` al lector estricto, y quitarla no
+    pone ningún test en rojo. Es correcto que sea así —con `_abrir_seccion`
+    arreglado ya no hay forma de generar la clave duplicada, así que esa
+    comprobación es un segundo cinturón para el próximo que llame a `_insertar`—
+    pero no se puede afirmar que esté cubierta: un validador más laxo que el
+    lector no valida nada, y eso hoy sólo lo sostiene la lectura del código.
+    """
+    ruta = _yml(tmp_path, "proyectos: []\nconexiones:\n  - alias: a\n"
+                          "conexiones:\n  - alias: b\n")
+    antes = ruta.read_text(encoding="utf-8")
+    with pytest.raises(registry.YamlInvalido):
+        registry.añadir_conexion({"alias": "nueva"}, ruta=ruta)
+    assert ruta.read_text(encoding="utf-8") == antes
+
+
+def test_dar_de_alta_un_proyecto_sobre_una_seccion_en_linea_tampoco_rompe(tmp_path):
+    """El mismo `_insertar` sirve a proyectos y a conexiones: si sólo se
+    arreglara para una, la otra seguiría rompiendo el registro."""
+    ruta = _yml(tmp_path, "proyectos: []\nconexiones: []\n")
+    registry.añadir_proyecto({"id": "nuevo", "nombre": "Nuevo",
+                              "asiento": "/tmp/nuevo"}, ruta=ruta)
+    assert [p.id for p in registry.cargar(ruta)] == ["nuevo"]

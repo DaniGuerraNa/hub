@@ -64,6 +64,8 @@
   'filtro': '<path d="M2.5 3.5h13l-5 5.6v5.4l-3 1.5V9.1z"/>',
   'mas': '<path d="M9 3.5v11M3.5 9h11"/>',
   'lupa': '<circle cx="8" cy="8" r="5"/><path d="M11.8 11.8l3.7 3.7"/>',
+  'equipo': '<rect x="2.5" y="3" width="13" height="9" rx="1.5"/><path d="M6.5 15.5h5M9 12v3.5"/>',
+  'intercambio': '<path d="M5 13.5V4.5M5 4.5L2.5 7M5 4.5L7.5 7"/><path d="M13 4.5v9M13 13.5l2.5-2.5M13 13.5L10.5 11"/>',
 } -%}
 {%- set d = trazos.get(nombre) -%}
 {%- if d -%}
@@ -212,4 +214,28 @@
       {%- if dimension %}{{ estado(dimension, valor) }}{% else %}{{ valor }}{% endif -%}
     </span>
   </span>
+{% endmacro %}
+
+
+{# Las barras apiladas. Es un macro porque la ficha de un proyecto pinta la
+   misma gráfica con sus propios datos: dos copias del mismo SVG se separan al
+   primer retoque y entonces las dos pantallas dejan de decir lo mismo. #}
+{% macro grafica_apilada(g, alto="") %}
+<svg class="grafica {{ alto }}" viewBox="0 0 {{ g.ancho }} {{ g.alto }}"
+     preserveAspectRatio="none" role="img"
+     aria-label="Consumo por día, {{ g.dias }} días.">
+  {% for col in g.columnas %}
+    {% for t in col.trozos %}
+      {% if t.alto > 0 %}
+      <rect x="{{ col.x }}" y="{{ t.y }}" width="{{ col.ancho }}" height="{{ t.alto }}"
+            fill="var(--serie-{{ t.tono if t.tono else 'otros' }})">
+        <title>{{ col.dia }} — {{ millones(col.total) }}</title>
+      </rect>
+      {% endif %}
+    {% endfor %}
+  {% endfor %}
+</svg>
+<div class="eje">
+  <span>{{ g.columnas[0].dia }}</span><span>{{ g.columnas[-1].dia }}</span>
+</div>
 {% endmacro %}

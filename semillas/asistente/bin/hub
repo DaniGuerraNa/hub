@@ -11,6 +11,9 @@ el asistente nunca lee la base ni escanea el disco por su cuenta.
   hub sesiones [proyecto] [días]  qué sesiones de Claude hubo y de qué iban
   hub sesion <id> [--crudo]       el contenido de una: texto sí, ruido no
              [--desde U] [--hasta U]   sólo un tramo, por uuid de mensaje
+  hub conexiones                  a qué servidores puede entrar ESTE proyecto
+                                  y dónde vive su llave — el puntero, nunca
+                                  la credencial
   hub nota "<texto>" [--slot N]   deja una nota; sin --slot, donde estés
   hub slot <proyecto> "<nombre>" [--ruta R]
   hub nuevo-proyecto --id x --nombre "X" --ruta /abs/x
@@ -176,6 +179,77 @@ def cmd_sesion(args):
             print(m["texto"])
         for u in m.get("herramientas", []):
             print(f"  {u}")
+
+
+def cmd_conexiones(args):
+    """A qué servidores tiene acceso concedido el proyecto desde el que preguntas.
+
+    🔴 El proyecto sale del directorio en el que estás, NO de un argumento. Es
+    la diferencia entre un permiso y una etiqueta: si se pudiera pedir por
+    nombre, cualquier sesión obtendría la conexión de cualquier proyecto con
+    sólo saber su id, y la lista `proyectos:` no concedería nada.
+
+    Lo que llega es un PUNTERO a dónde vive la credencial, nunca la credencial.
+    Si el puntero es una entrada de `~/.ssh/config`, el comando para entrar sale
+    solo: la llave la resuelve ssh, tú no la lees ni la copias a ningún sitio.
+    """
+    datos = pedir("/api/conexiones/aqui?"
+                  + urllib.parse.urlencode({"ruta": os.getcwd()}))
+    proyecto = datos.get("proyecto_id")
+    if not proyecto:
+        print(f"{os.getcwd()} no está dentro de ningún proyecto del registro,\n"
+              "así que no hay nada concedido. Si debería estarlo, la ruta va en\n"
+              "`projects.yml` (en `asiento` o en `rutas`).")
+        return
+
+    cs = datos.get("conexiones") or []
+    if not cs:
+        print(f"«{proyecto}» no tiene ninguna conexión concedida.\n"
+              "Se conceden en `projects.yml`, añadiendo el proyecto a la lista\n"
+              "`proyectos:` de la conexión. Eso lo decide el usuario, no tú.")
+        return
+
+    plural = "conexión concedida" if len(cs) == 1 else "conexiones concedidas"
+    print(f"{proyecto} — {len(cs)} {plural}\n")
+    for c in cs:
+        destino = "@".join(x for x in (c.get("usuario"), c.get("host")) if x)
+        print(f"  {c['alias']}{'  ' + destino if destino else ''}")
+        if c.get("proposito"):
+            print(f"    para     {c['proposito']}")
+        ref = c.get("referencia_secreto")
+        if ref:
+            print(f"    llave    {ref}   {_estado_puntero(c.get('puntero_ok'))}")
+        entrar = _como_entrar(ref)
+        if entrar:
+            print(f"    entrar   {entrar}")
+        if c.get("nota"):
+            print(f"    nota     {c['nota']}")
+        print()
+
+    print("La credencial no está aquí ni en el hub: sólo la dirección de dónde\n"
+          "vive. No la leas ni la copies a ningún archivo del proyecto.")
+
+
+def _estado_puntero(ok) -> str:
+    """Si el sitio al que apunta existe. El hub lo comprueba sin abrirlo."""
+    if ok is None:
+        return "(no se puede comprobar)"
+    return "✓ existe" if ok else "🔴 NO existe — dilo, no lo rodees"
+
+
+def _como_entrar(referencia: str | None) -> str | None:
+    """`~/.ssh/config#vps-x` significa que el comando es `ssh vps-x`.
+
+    Se deduce sólo de ese formato. Inventar un comando a partir de un puntero
+    que no es un alias de ssh sería adivinar, y aquí adivinar acaba en un
+    intento de conexión contra algo que no es.
+    """
+    if not referencia or "#" not in referencia:
+        return None
+    archivo, ancla = referencia.split("#", 1)
+    if not archivo.rstrip("/").endswith("ssh/config") or not ancla.strip():
+        return None
+    return f"ssh {ancla.strip()}"
 
 
 def cmd_nota(args):
@@ -437,6 +511,7 @@ def cmd_preguntar(args):
 
 COMANDOS = {
     "estado": cmd_estado, "sesiones": cmd_sesiones, "sesion": cmd_sesion,
+    "conexiones": cmd_conexiones,
     "nota": cmd_nota, "slot": cmd_slot, "nuevo-proyecto": cmd_nuevo_proyecto,
     "lienzo": cmd_lienzo, "preguntar": cmd_preguntar,
 }

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from urllib.parse import quote
 
 from . import db
 
@@ -25,6 +26,9 @@ _DESTINOS = {
     "servicio": lambda ref, pid: "/servicios",
     "conexion": lambda ref, pid: "/conexiones",
     "sesion": lambda ref, pid: f"/trabajo?session={ref}",
+    # La ruta va entera y codificada: es absoluta y trae barras, dos puntos en
+    # `/mnt/c` y espacios en los árboles que vienen de OneDrive.
+    "repo": lambda ref, pid: f"/archivos?ruta={quote(ref)}",
 }
 
 
@@ -57,6 +61,17 @@ def reindexar(con: sqlite3.Connection) -> int:
             ("servicio", f["contenedor"], f["contenedor"],
              f"{f['imagen']} {f['estado']} docker contenedor", f["proyecto_id"])
         )
+    # Los repos entran aquí y no en el navegador porque la pregunta que se hace
+    # estando fuera —«¿tengo el repo tal?»— se contesta escribiendo su nombre, no
+    # recorriendo 24 raíces con el pulgar. Son 86 hoy, y el grueso son los del
+    # trabajo, que es justo lo que se pregunta.
+    for f in con.execute(
+        "SELECT ruta, rama, proyecto_id FROM repo"
+    ):
+        filas.append(
+            ("repo", f["ruta"], f["ruta"].rstrip("/").rsplit("/", 1)[-1],
+             f"{f['ruta']} {f['rama'] or ''} repositorio git", f["proyecto_id"])
+        )
     for f in con.execute("SELECT alias, host, proposito FROM conexion"):
         filas.append(
             ("conexion", f["alias"], f["alias"], f"{f['host'] or ''} {f['proposito']}", None)
@@ -72,7 +87,8 @@ def reindexar(con: sqlite3.Connection) -> int:
 # Qué clase de resultado quieres ver primero cuando todo empata. Un proyecto es
 # un sitio al que ir; un contenedor casi nunca lo es. Sin esto, buscar
 # el nombre de un proyecto devolvía catorce contenedores suyos y el proyecto no.
-_PRIORIDAD = {"proyecto": 0, "slot": 1, "capacidad": 2, "conexion": 3, "servicio": 4}
+_PRIORIDAD = {"proyecto": 0, "slot": 1, "repo": 2, "capacidad": 3, "conexion": 4,
+              "servicio": 5}
 
 
 def _orden(fila, texto: str) -> tuple:
@@ -155,4 +171,21 @@ def _buscar_like(con: sqlite3.Connection, texto: str, limite: int) -> list[sqlit
            FROM capacidad WHERE nombre LIKE ? OR descripcion LIKE ? LIMIT ?""",
         (patron, patron, limite),
     ).fetchall()
+    # 🔴 Los repos también aquí. Un respaldo que encuentra menos clases que el
+    # camino bueno convierte «no hay FTS5» en «ese repo no existe», y el que
+    # pregunta está lejos de la máquina y no puede comprobarlo.
+    #
+    # Se arman como diccionarios y no con SQL porque el título es el último
+    # tramo de la ruta y SQLite no sabe partir una cadena por la derecha sin
+    # tres funciones anidadas. El resto del módulo indexa por clave, así que un
+    # diccionario le vale igual que una fila.
+    salida += [
+        {"clase": "repo", "ref": f["ruta"],
+         "titulo": f["ruta"].rstrip("/").rsplit("/", 1)[-1],
+         "cuerpo": f"{f['ruta']} {f['rama'] or ''}", "proyecto_id": f["proyecto_id"]}
+        for f in con.execute(
+            "SELECT ruta, rama, proyecto_id FROM repo WHERE ruta LIKE ? LIMIT ?",
+            (patron, limite),
+        )
+    ]
     return salida[:limite]

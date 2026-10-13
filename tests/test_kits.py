@@ -1030,3 +1030,55 @@ def test_sin_cabecera_la_comparacion_sigue_siendo_EXACTA(tmp_path):
     destino.parent.mkdir(parents=True)
     destino.write_text(contenido + "\n\n", encoding="utf-8")
     assert _estado_de(proyecto, kit) == "difiere"
+
+
+# ── el filtro de proyecto del inventario ──────────────────────────────────────
+#
+# Sale de un informe real: en el inventario no se veían los kits que consume un
+# proyecto, aunque sus skills sí salieran.
+#
+# El filtro comparaba el id del KIT con el del proyecto elegido, así que sólo
+# casaba cuando el proyecto ERA un kit. Para un consumidor —el caso normal— la
+# lista salía vacía: se veían sus skills y **cero kits**, teniendo tres
+# declarados y dieciséis archivos propagados. El dato estaba; la pregunta estaba
+# mal escrita.
+
+from hub import api as _api
+
+CARTA = [
+    {"id": "orquestacion", "consumidores": [
+        {"id": "tienda", "nombre": "Tienda"},
+        {"id": "taller", "nombre": "Taller"},
+    ]},
+    {"id": "lienzos", "consumidores": [{"id": "tienda", "nombre": "Tienda"}]},
+    {"id": "sin-usar", "consumidores": []},
+]
+
+
+def test_un_consumidor_ve_los_kits_que_usa():
+    """🔴 El defecto: esto devolvía [] para cualquier proyecto que no fuera kit."""
+    assert [k["id"] for k in _api.kits_de(CARTA, "tienda")] == ["orquestacion", "lienzos"]
+
+
+def test_un_consumidor_solo_se_ve_a_si_mismo_en_la_tarjeta():
+    """Al filtrar por un proyecto la pregunta es «qué usa ese proyecto», no
+    «quién más usa esto»: los otros tres consumidores son otra pregunta."""
+    (orq, _) = _api.kits_de(CARTA, "tienda")
+    assert [c["id"] for c in orq["consumidores"]] == ["tienda"]
+
+
+def test_el_kit_mirandose_conserva_a_todos_sus_consumidores():
+    """Ahí la pregunta sí es la contraria, y era el único caso que funcionaba."""
+    (k,) = _api.kits_de(CARTA, "orquestacion")
+    assert [c["id"] for c in k["consumidores"]] == ["tienda", "taller"]
+
+
+def test_no_se_toca_la_lista_original():
+    """La tarjeta estrechada es una copia: mutar la de origen contaminaría
+    cualquier otra vista que use la misma llamada."""
+    _api.kits_de(CARTA, "tienda")
+    assert len(CARTA[0]["consumidores"]) == 2
+
+
+def test_un_proyecto_sin_kits_no_arrastra_ninguno():
+    assert _api.kits_de(CARTA, "un-proyecto-cualquiera") == []

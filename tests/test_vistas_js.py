@@ -32,6 +32,12 @@ CONTEXTO_PROYECTO = {
              "tiene_capabilities": False, "al_dia": False, "prompt_sembrar": "Crea la capa base"},
     "repos": [], "servicios": {"contenedores": [], "total": 0, "vivos": 0,
                                "sin_atribuir": [], "medido_en": None},
+    # 🔴 El contexto del arnés tiene que traer lo MISMO que pasa la ruta. Faltó
+    # `consumo` al añadir su sección y los dos tests de JS de esta plantilla
+    # murieron con `UndefinedError` antes de llegar al script — que es el arnés
+    # haciendo su trabajo: en Jinja, leer un atributo de algo indefinido no
+    # devuelve vacío, revienta la plantilla entera.
+    "consumo": {"hay_datos": False},
     "titulo": "Demo", "seccion": "panorama",
 }
 

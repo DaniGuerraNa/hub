@@ -12,12 +12,18 @@ Convención de `snapshot.preservado`:
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from . import base
+from . import consumo as _consumo
+from . import navegador
+from . import restauracion as _restauracion
+from . import registry
 from . import repos as _repos
 from . import tmux
 from .models import Proyecto, Ruta
@@ -326,9 +332,9 @@ def contexto_trabajo(
 def rail(con: sqlite3.Connection) -> dict:
     """Lo que necesita el raíl global, que sale en TODAS las pantallas.
 
-    Los proyectos van con su estado y sus commits en riesgo porque el raíl deja
-    de ser sólo navegación: es la respuesta a «¿hay algo parado o sin respaldar?»
-    sin entrar en ninguna pantalla.
+    Sólo vistas y sus cifras. Los proyectos salieron de aquí (decisión 253):
+    en el móvil llenaban el menú, y los commits en riesgo siguen a la vista en el
+    contador de Respaldo.
 
     Se piden pocos datos y baratos a propósito. Esto corre en cada petición,
     incluida `/trabajo`, donde una consulta lenta se nota al abrir el terminal.
@@ -338,31 +344,7 @@ def rail(con: sqlite3.Connection) -> dict:
         if r.get("sin_push"):
             sin_push[r["proyecto_id"]] = sin_push.get(r["proyecto_id"], 0) + int(r["sin_push"])
 
-    abiertos: dict[str, int] = {}
     paneles = paneles_abiertos(con)
-    for panel in paneles:
-        if panel["proyecto_id"]:
-            abiertos[panel["proyecto_id"]] = abiertos.get(panel["proyecto_id"], 0) + 1
-
-    # El raíl lista lo que está PASANDO, no el catálogo entero. Con los once
-    # proyectos registrados dejaba de ser navegación y pasaba a ser otra lista
-    # que recorrer — y la mitad no tenían nada abierto. Entra un proyecto si
-    # tiene paneles abiertos, commits en riesgo, o es el que estás mirando.
-    # Para el resto están el panorama y la paleta (Ctrl+K).
-    proyectos = []
-    ocultos = 0
-    for p in listar_proyectos(con):
-        activo = abiertos.get(p["id"], 0)
-        riesgo = sin_push.get(p["id"], 0)
-        if not activo and not riesgo:
-            ocultos += 1
-            continue
-        proyectos.append({
-            "id": p["id"], "nombre": p["nombre"], "status": p["status"],
-            "sin_push": riesgo, "paneles": activo,
-        })
-    # Lo que pide atención, arriba.
-    proyectos.sort(key=lambda x: (-x["sin_push"], -x["paneles"], x["nombre"].lower()))
 
     corriendo = con.execute(
         "SELECT COUNT(*) FROM servicio WHERE estado = 'running'"
@@ -379,10 +361,6 @@ def rail(con: sqlite3.Connection) -> dict:
         "SELECT COUNT(*) FROM proyecto WHERE tipo != 'asistente'"
     ).fetchone()[0]
     return {
-        "proyectos": proyectos,
-        # Se dice cuántos no salen: una lista que esconde en silencio se lee
-        # como la lista completa.
-        "ocultos": ocultos,
         "sin_respaldo": sum(sin_push.values()),
         "servicios": corriendo,
         "paneles": len(paneles),
@@ -391,48 +369,165 @@ def rail(con: sqlite3.Connection) -> dict:
     }
 
 
-def clasificar_sesiones(
-    sesiones: list[dict], paneles: list[dict], session_actual: str | None = None
-) -> tuple[list[dict], list[dict]]:
-    """Separa las sesiones de tmux en pendientes de organizar y ya organizadas.
+def ocultos(con: sqlite3.Connection) -> list[dict]:
+    """Lo que se ha sacado de la bandeja a mano, para contarlo y devolverlo.
 
-    La lista de la barra es una **bandeja**: enseña lo que todavía no está
-    atado a un slot. Sin esto, una sesión ya vinculada seguía apareciendo junto
-    a su propio slot y se leía como un duplicado.
-
-    El criterio es por VENTANA, no por sesión, y eso importa: `work` tiene la
-    ventana 0 en un slot y la 1 suelta. Ocultar la sesión entera al vincular la
-    primera ventana dejaría a la 1 sin ningún camino para llegar a ella.
-    Pendiente = le queda al menos una ventana sin slot.
-
-    La sesión que se está mirando nunca se oculta: verla desaparecer de la barra
-    en el momento de vincularla es desorientador, y además es la única entrada
-    a sus otras ventanas.
+    Se lee siempre, aunque la ventana ya no exista: una sesión de node que hoy
+    está apagada sigue oculta mañana, y si no se listara aquí no habría forma de
+    destaparla — sólo se podría desde una ventana que no está abierta.
     """
-    sueltas: dict[str, int] = {}
-    todas: dict[str, set] = {}
-    for p in paneles:
-        todas.setdefault(p["session"], set()).add(p["window_idx"])
-        if not p["slot_id"]:
-            sueltas.setdefault(p["session"], set()).add(p["window_idx"])
+    return [
+        _fila_a_dict(f)
+        for f in con.execute(
+            "SELECT session, window_idx, creado_en FROM oculto"
+            " ORDER BY session, IFNULL(window_idx, -1)"
+        )
+    ]
 
-    pendientes, organizadas = [], []
+
+def _oculta(reglas: set, session: str, ventana: int | None) -> bool:
+    """¿Tapa alguna regla a esta ventana? La de la sesión entera vale para todas."""
+    return (session, None) in reglas or (session, ventana) in reglas
+
+
+def bandeja_de_ventanas(
+    con: sqlite3.Connection, sesiones: list[dict], paneles: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """Las ventanas sin slot, **una fila por ventana**, y las que están ocultas.
+
+    Sustituye a la lista por sesión de la barra. El defecto que arregla lo vio
+    él: *«veo una ventana que me aparece sin vincular en organizar pero que sí
+    me aparece en trabajo»*. Con la unidad puesta en la sesión, `Personal` salía
+    arriba bajo su slot «Hub - Dev» —dos de sus tres ventanas están ahí— y
+    abajo en «Sin organizar» por la tercera. La misma cosa en dos sitios
+    diciendo lo contrario, y al pulsar abajo se abría la ventana ACTIVA, que era
+    una de las ya vinculadas.
+
+    Con una fila por ventana no hay ambigüedad posible: lo que sale abajo es
+    exactamente lo que no tiene slot, y pulsarlo lleva a esa ventana y no a otra.
+
+    🔴 Una ventana cuenta como suelta cuando NINGUNO de sus paneles tiene slot.
+    Con «alguno» —el criterio anterior— una ventana partida en dos, con un panel
+    vinculado, volvería a salir en los dos sitios a la vez: es el mismo defecto
+    por otra puerta.
+    """
+    reglas = {(f["session"], f["window_idx"]) for f in ocultos(con)}
+
+    # Panel representante de cada ventana y si alguno de ellos tiene slot.
+    primero: dict[tuple[str, int], dict] = {}
+    con_slot: set[tuple[str, int]] = set()
+    for p in paneles:
+        clave = (p["session"], p["window_idx"])
+        primero.setdefault(clave, p)
+        if p["slot_id"]:
+            con_slot.add(clave)
+
+    visibles, tapadas = [], []
     for s in sesiones:
         nombre = s["session"]
-        sin_slot = len(sueltas.get(nombre, set()))
-        anotada = {
-            **s,
-            "ventanas": len(todas.get(nombre, set())),
-            "sin_slot": sin_slot,
-        }
-        # Una sesión que el snapshotter aún no ha visto no tiene paneles
-        # conocidos: tratarla como organizada la escondería sin haberla mirado.
-        desconocida = nombre not in todas
-        if sin_slot or desconocida or nombre == session_actual:
-            pendientes.append(anotada)
+        suyas = sorted(v for (ses, v) in primero if ses == nombre)
+        # Si es la única ventana de su sesión, cerrarla se lleva la sesión
+        # entera: tmux la mata al morir su última ventana. Lo tiene que saber
+        # quien pinte el botón, o el aviso diría menos de lo que va a pasar.
+        unica = len(suyas) == 1
+
+        # Una sesión que el snapshotter aún no ha visto no tiene ventanas
+        # conocidas. Tratarla como organizada la escondería sin haberla mirado,
+        # así que entra con una fila propia y sin número de ventana.
+        if not suyas:
+            fila = {
+                "session": nombre, "ventana": None, "etiqueta": nombre,
+                "pane_id": None, "cwd": "", "ruta_corta": "",
+                "proyecto_nombre": None, "desconocida": True, "ultima": False,
+            }
+            (tapadas if _oculta(reglas, nombre, None) else visibles).append(fila)
+            continue
+
+        for v in suyas:
+            if (nombre, v) in con_slot:
+                continue          # ya sale arriba, bajo su slot
+            p = primero[(nombre, v)]
+            fila = {
+                "session": nombre, "ventana": v,
+                "etiqueta": p["etiqueta"] or f"{nombre}:{v}",
+                "pane_id": p["pane_id"], "cwd": p["cwd"],
+                "ruta_corta": ruta_corta(p["cwd"]),
+                "proyecto_nombre": p["proyecto_nombre"], "desconocida": False,
+                "ultima": unica,
+            }
+            (tapadas if _oculta(reglas, nombre, v) else visibles).append(fila)
+
+    return visibles, tapadas
+
+
+def ventanas_de_sesion(
+    con: sqlite3.Connection, session: str, slot_id: int | None = None
+) -> list[dict]:
+    """Las ventanas vivas de una sesión, diciendo **de quién es cada una**.
+
+    🔴 Esto existe porque la franja de pestañas se pintaba llamando a
+    `tmux.listar_ventanas` **directamente desde la ruta**, sin pasar por aquí. Y
+    tmux no sabe nada de slots, así que las pestañas no podían saberlo: las tres
+    ventanas de `Personal` se pintaban idénticas bajo el rótulo «Hub - Dev»
+    cuando sólo dos son de ese slot. La tercera salía además abajo, en «Sin
+    organizar», y ésa es la contradicción que él lleva reportando desde hace
+    semanas: la misma ventana en dos sitios diciendo cosas distintas.
+
+    Los arreglos anteriores —la bandeja por ventanas (179), el slot sin ventana
+    (180)— no la tocaron porque los tres iban por la costura de lectura y ésta
+    era un camino paralelo. Es literalmente el defecto que `CLAUDE.md` describe
+    al exigir una sola costura: «si una plantilla o una ruta consulta por su
+    cuenta, es un defecto».
+
+    `pertenece` tiene CUATRO valores, y el cuarto es el que evita cambiar una
+    mentira por otra:
+
+    - `este`   — es del slot que se está mirando.
+    - `otro`   — es de otro slot, y se dice de cuál.
+    - `ninguno`— no tiene slot: es lo mismo que sale en «Sin organizar».
+    - `nueva`  — 🔴 el snapshotter todavía no la ha visto. NO es «sin slot»:
+      una ventana recién creada tarda hasta un ciclo en aparecer, y marcarla
+      como huérfana durante 20 s sería inventarse un dato que no se tiene.
+    """
+    ventanas = tmux.listar_ventanas(session)
+    if not ventanas:
+        return []
+
+    # El último muestreo, que es lo que sabe de slots. Puede ir hasta un ciclo
+    # por detrás de tmux, y de ahí el estado `nueva`.
+    muestreadas: dict[int, int | None] = {}
+    for p in paneles_abiertos(con):
+        if p["session"] != session:
+            continue
+        # Basta con que UN panel de la ventana tenga slot, igual que en la
+        # bandeja: una ventana partida en dos con un panel vinculado es de ese
+        # slot, no media.
+        if p["window_idx"] not in muestreadas or p["slot_id"]:
+            muestreadas[p["window_idx"]] = p["slot_id"]
+
+    nombres = {s["id"]: s for s in (
+        _fila_a_dict(f) for f in con.execute(
+            """SELECT s.id, s.nombre, p.nombre AS proyecto_nombre
+               FROM slot s LEFT JOIN proyecto p ON p.id = s.proyecto_id"""))}
+
+    for v in ventanas:
+        indice = v["indice"]
+        if indice not in muestreadas:
+            v["pertenece"], v["slot"] = "nueva", None
+            continue
+        suyo = muestreadas[indice]
+        v["slot"] = nombres.get(suyo) if suyo else None
+        if not suyo:
+            v["pertenece"] = "ninguno"
+        elif slot_id and suyo == slot_id:
+            v["pertenece"] = "este"
+        elif slot_id:
+            v["pertenece"] = "otro"
         else:
-            organizadas.append(anotada)
-    return pendientes, organizadas
+            # Sin slot en la cabecera no hay nada que contradecir: se entró por
+            # `?session=`, así que la pestaña no tiene que justificarse.
+            v["pertenece"] = "este"
+    return ventanas
 
 
 def _estado_por_ventana(
@@ -591,10 +686,17 @@ def bandeja(con: sqlite3.Connection) -> list[dict]:
             "SELECT pane_id FROM descartado WHERE server_pid = ?", (actual["server_pid"],)
         )
     }
+    # 🔴 Lo oculto se respeta AQUÍ también. Antes «ocultar» sólo valía para la
+    # barra de /trabajo, así que lo mismo salía escondido en una pantalla y a la
+    # vista en la otra — que es el defecto que este cambio venía a quitar, no a
+    # mover de sitio.
+    reglas = {(f["session"], f["window_idx"]) for f in ocultos(con)}
     return [
         p
         for p in paneles_de(con, actual["id"])
-        if p["slot_id"] is None and p["pane_id"] not in descartados
+        if p["slot_id"] is None
+        and p["pane_id"] not in descartados
+        and not _oculta(reglas, p["session"], p["window_idx"])
     ]
 
 
@@ -742,6 +844,33 @@ def prompt_mantenedor(
         "Repórtame qué encontraste y qué propones antes de aplicar cambios.",
     ]
     return "\n".join(partes)
+
+
+def kits_de(kits_: list[dict], proyecto_id: str) -> list[dict]:
+    """Los kits que le tocan a un proyecto: el suyo si ÉL es un kit, y los que consume.
+
+    🔴 El filtro de `/inventario` comparaba el id del KIT con el del proyecto
+    elegido (`k["id"] == proyecto`), así que sólo casaba cuando el proyecto ERA
+    un kit. Para cualquier consumidor —o sea, para el caso normal— la lista
+    salía **vacía**: se veían sus skills y cero kits, aunque la base tuviera sus
+    tres kits declarados y dieciséis archivos propagados. No faltaba el dato:
+    estaba mal escrita la pregunta, y por eso el hueco no se veía como un error
+    sino como un proyecto que no usa kits.
+
+    Y un consumidor se lleva su tarjeta con **sólo su fila**, no con la de todos
+    los consumidores del kit: al filtrar por un proyecto la pregunta es «qué usa
+    éste», no «quién más usa esto». El kit mirándose a sí mismo sí los conserva a
+    todos, porque ahí la pregunta es justo la otra.
+    """
+    salida = []
+    for k in kits_:
+        if k["id"] == proyecto_id:
+            salida.append(k)
+            continue
+        suyos = [c for c in k["consumidores"] if c["id"] == proyecto_id]
+        if suyos:
+            salida.append({**k, "consumidores": suyos})
+    return salida
 
 
 def kits(con: sqlite3.Connection) -> list[dict]:
@@ -935,6 +1064,231 @@ def respaldo(con: sqlite3.Connection, proyecto_id: str | None = None) -> dict:
     }
 
 
+# ───────────────────────────── consumo de tokens ──────────────────────────────
+
+
+# Los cuatro recuentos, en el orden en que se enseñan y con lo que significan.
+# El rótulo importa tanto como la cifra: «tokens» a secas junta cosas que no
+# cuestan lo mismo ni quieren decir lo mismo.
+TIPOS_DE_TOKEN = (
+    ("salida", "salida", "Lo que Claude escribió: respuestas, código y llamadas a herramientas."),
+    ("escritura", "caché escrita", "Contexto nuevo que hubo que guardar. Sube al abrir archivos grandes."),
+    ("lectura", "caché leída", "Contexto releído en cada turno. Es casi todo el volumen, y el más barato."),
+    ("entrada", "entrada", "Lo que se manda sin cachear. Aquí es residual."),
+)
+
+
+# Cómo se agrupa el consumo además de por proyecto. La clave es el campo del
+# proyecto; el rótulo es lo que se lee en la pantalla.
+#
+# 🔴 Son categorías del HUB, no del registro de Claude Code: salen de
+# `projects.yml`, así que cambiar el dominio de un proyecto reordena la vista sin
+# volver a medir nada. El modelo es la excepción y viene del registro, porque un
+# token de Opus y uno de Haiku no son la misma cosa y eso no lo sabe el hub.
+CATEGORIAS = (
+    ("dominio", "Dominio", "En qué se está yendo: lo laboral o lo personal."),
+    ("tipo", "Tipo", "Proyectos, kits y el asistente."),
+    ("status", "Estado", "🔴 Lo pausado y lo archivado que sigue consumiendo."),
+    ("modelo", "Modelo", "Del registro, no del hub: no todos pesan igual."),
+)
+
+# La gráfica, en coordenadas de su `viewBox`. Se calcula en Python y no en la
+# plantilla ni en JavaScript: es aritmética, se puede probar, y así la pantalla
+# no depende de que un script arranque (regla dura 11 esquivada por no tener
+# script que probar).
+_ANCHO, _ALTO, _HUECO = 620.0, 150.0, 2.0
+
+# Cuántas series se dibujan con tono propio. Más de seis y la rampa deja de
+# distinguirse; lo que sobra se junta en «otros», que no tiene rango.
+SERIES_CON_TONO = 6
+
+
+def consumo(con: sqlite3.Connection, proyecto_id: str | None = None) -> dict:
+    """Cuánto se ha gastado, por proyecto y por categoría.
+
+    🔴 Devuelve la **ventana** además de las cifras, y no es decoración: los
+    transcripts se podan a los 30 días, así que esto es «lo último que queda en
+    el registro» y jamás un histórico. Una pantalla que enseñe el número sin las
+    fechas está invitando a leerlo como total (regla dura 13).
+
+    Con `proyecto_id` se recorta todo a ese proyecto **menos `parte`**, que sigue
+    siendo su tajada del total global: en la ficha de un proyecto la pregunta es
+    «cuánto de lo mío es esto», y un 100 % no contesta nada.
+
+    `razonado` va aparte de la suma a propósito: está DENTRO de `salida`, así que
+    sumarlo lo contaría dos veces.
+    """
+    todas = [_fila_a_dict(f) for f in con.execute("SELECT * FROM consumo")]
+    filas = [f for f in todas if f["proyecto_id"] == proyecto_id] if proyecto_id else todas
+
+    proyectos = {p["id"]: p for p in listar_proyectos(con)}
+    campos = [c for c, _, _ in TIPOS_DE_TOKEN]
+
+    def vacio(clave, etiqueta):
+        return {"proyecto_id": clave, "nombre": etiqueta, "peticiones": 0,
+                "razonado": 0, "razonadas": 0, "modelos": {}, "rutas": {},
+                **{c: 0 for c in campos}}
+
+    por_proyecto: dict = {}
+    por_dia: dict = {}
+    por_categoria: dict = {c: {} for c, _, _ in CATEGORIAS}
+    dia_proyecto: dict = {}
+    for f in filas:
+        clave = f["proyecto_id"]
+        # Sin proyecto NO se descarta ni se reparte: se enseña aparte. Es lo que
+        # dice «esta carpeta no está dada de alta en el hub», que es información
+        # y no un hueco — 5 261 peticiones vivían en rutas sin registrar.
+        #
+        # 🔴 Tres casos, no dos. Un `proyecto_id` que ya no está declarado no es
+        # «sin proyecto»: se sabe de quién era, y decirlo es la diferencia entre
+        # «no la has dado de alta» y «esto lo gastó algo que borraste».
+        if not clave:
+            etiqueta = "Sin proyecto"
+        elif clave in proyectos:
+            etiqueta = proyectos[clave]["nombre"]
+        else:
+            etiqueta = f"{clave} — ya no está en projects.yml"
+        entrada = por_proyecto.setdefault(clave, vacio(clave, etiqueta))
+        entrada["peticiones"] += f["peticiones"]
+        entrada["razonado"] += f["razonado"]
+        entrada["razonadas"] += f["razonadas"]
+        for c in campos:
+            entrada[c] += f[c]
+        entrada["modelos"][f["modelo"]] = entrada["modelos"].get(f["modelo"], 0) + f["peticiones"]
+        suma = sum(f[c] for c in campos)
+        entrada["rutas"][f["ruta"]] = entrada["rutas"].get(f["ruta"], 0) + suma
+        por_dia[f["dia"]] = por_dia.get(f["dia"], 0) + suma
+        dia_proyecto[(f["dia"], clave)] = dia_proyecto.get((f["dia"], clave), 0) + suma
+
+        # Las categorías, sobre el mismo recorrido.
+        ficha = proyectos.get(clave)
+        for campo, _, _ in CATEGORIAS:
+            if campo == "modelo":
+                valor = f["modelo"]
+            elif ficha:
+                valor = ficha.get(campo) or "—"
+            else:
+                # Un proyecto sin ficha no tiene dominio ni tipo ni estado, y
+                # meterlo en «personal» por omisión falsearía justo la cifra que
+                # se está mirando: sale con nombre propio.
+                valor = "sin proyecto"
+            por_categoria[campo][valor] = por_categoria[campo].get(valor, 0) + suma
+
+    for e in por_proyecto.values():
+        e["total"] = sum(e[c] for c in campos)
+        e["modelos"] = sorted(e["modelos"].items(), key=lambda kv: -kv[1])
+        e["rutas"] = sorted(e["rutas"].items(), key=lambda kv: -kv[1])
+
+    lista = sorted(por_proyecto.values(), key=lambda e: -e["total"])
+    total = sum(e["total"] for e in lista)
+    # Sobre el total GLOBAL, no sobre el filtrado: es lo que deja decir «este
+    # proyecto es el 1,3 % de todo» en su propia ficha.
+    global_ = sum(sum(f[c] for c in campos) for f in todas)
+    for e in lista:
+        e["parte"] = (100 * e["total"] / global_) if global_ else 0
+
+    dias = sorted(por_dia.items())
+    return {
+        "proyectos": lista,
+        "totales": {c: sum(e[c] for e in lista) for c in campos}
+                   | {"total": total, "total_global": global_,
+                      "parte": (100 * total / global_) if global_ else 0,
+                      "peticiones": sum(e["peticiones"] for e in lista),
+                      "razonado": sum(e["razonado"] for e in lista),
+                      "razonadas": sum(e["razonadas"] for e in lista)},
+        "tipos": TIPOS_DE_TOKEN,
+        "categorias": _categorias(por_categoria, total),
+        "grafica": _grafica(dias, dia_proyecto, lista),
+        "por_dia": [{"dia": d, "total": v} for d, v in dias],
+        "modelos": sorted(por_categoria["modelo"].items(), key=lambda kv: -kv[1]),
+        # La ventana sale del propio registro, no de un ajuste: si Claude Code
+        # cambia su poda, esto lo dice solo.
+        "desde": min((f["desde"] for f in filas if f["desde"]), default=None),
+        "hasta": max((f["hasta"] for f in filas if f["hasta"]), default=None),
+        "medido_en": max((f["medido_en"] for f in todas), default=None),
+        "hay_registro": bool(todas),
+        "hay_datos": bool(filas),
+        "carpeta": str(_consumo.carpeta()),
+        # El selector se arma sobre TODAS las filas, no sobre las filtradas: con
+        # las filtradas, elegir un proyecto dejaba un desplegable de una sola
+        # opción y sin forma de volver a otro.
+        "proyectos_del_filtro": [
+            p for p in listar_proyectos(con)
+            if p["id"] in {f["proyecto_id"] for f in todas}
+        ],
+    }
+
+
+def _categorias(por_categoria: dict, total: int) -> list[dict]:
+    """Cada agrupación con sus tajadas, ya ordenadas y con su parte."""
+    fuera = []
+    for campo, etiqueta, que_es in CATEGORIAS:
+        valores = sorted(por_categoria[campo].items(), key=lambda kv: -kv[1])
+        fuera.append({
+            "campo": campo, "etiqueta": etiqueta, "que_es": que_es,
+            "tajadas": [
+                {"valor": v, "total": n, "parte": (100 * n / total) if total else 0,
+                 # El tono va por RANGO, no por identidad: la mayor se lleva el
+                 # más saturado. Ver el porqué en los tokens `--serie-*`.
+                 "tono": min(i + 1, SERIES_CON_TONO)}
+                for i, (v, n) in enumerate(valores)
+            ],
+        })
+    return fuera
+
+
+def _grafica(dias: list, dia_proyecto: dict, lista: list[dict]) -> dict:
+    """Barras apiladas por día, en coordenadas del `viewBox`.
+
+    Se calcula aquí y no en la plantilla porque es aritmética con casos de
+    borde —un día sin datos, un solo día, el tope a cero— y en Jinja eso no se
+    puede probar. Tampoco en JavaScript: una gráfica que sólo existe si arranca
+    un script es una pantalla que se puede quedar en blanco sin decirlo.
+    """
+    if not dias:
+        return {"columnas": [], "series": [], "ancho": _ANCHO, "alto": _ALTO,
+                "tope": 0, "dias": 0}
+
+    # Las seis mayores llevan tono propio; el resto se junta en «otros», que no
+    # tiene rango porque no es una serie: es un resto.
+    con_tono = {e["proyecto_id"]: i + 1
+                for i, e in enumerate(lista[:SERIES_CON_TONO])}
+    series = [{"nombre": e["nombre"], "tono": i + 1, "total": e["total"]}
+              for i, e in enumerate(lista[:SERIES_CON_TONO])]
+    resto = sum(e["total"] for e in lista[SERIES_CON_TONO:])
+    if resto:
+        series.append({"nombre": f"otros ({len(lista) - SERIES_CON_TONO})",
+                       "tono": 0, "total": resto})
+
+    tope = max(v for _, v in dias)
+    ancho_col = _ANCHO / len(dias)
+    columnas = []
+    for i, (dia, total_dia) in enumerate(dias):
+        x = i * ancho_col
+        alto_total = (_ALTO * total_dia / tope) if tope else 0
+        trozos, y = [], _ALTO - alto_total
+        # 🔴 El orden es de arriba abajo, porque se dibuja desde el techo de la
+        # columna. La serie mayor —tono 1— va la ÚLTIMA para quedar apoyada en
+        # la base: sobre una línea recta su altura se compara entre días de un
+        # vistazo, y flotando sobre las pequeñas no. «Otros» va arriba del todo,
+        # que es donde estorba menos porque no es una serie sino un resto.
+        reparto = sorted(
+            ((con_tono.get(pid, 0), n) for (d, pid), n in dia_proyecto.items() if d == dia),
+            key=lambda par: (par[0] != 0, -par[0]),
+        )
+        for tono, n in reparto:
+            alto = (_ALTO * n / tope) if tope else 0
+            trozos.append({"tono": tono, "y": round(y, 2), "alto": round(alto, 2)})
+            y += alto
+        columnas.append({
+            "dia": dia, "total": total_dia,
+            "x": round(x, 2), "ancho": round(max(ancho_col - _HUECO, 0.5), 2),
+            "trozos": trozos,
+        })
+    return {"columnas": columnas, "series": series, "ancho": _ANCHO,
+            "alto": _ALTO, "tope": tope, "dias": len(dias)}
+
+
 # ───────────────────────── servicios y conexiones ─────────────────────────
 
 
@@ -981,6 +1335,193 @@ def conexiones(con: sqlite3.Connection) -> list[dict]:
         ]
         salida.append(datos)
     return salida
+
+
+def _atribuidor(con: sqlite3.Connection) -> registry.Atribuidor:
+    """El mismo repartidor que usa el snapshotter, armado desde el índice.
+
+    Reutilizarlo en vez de reescribir el criterio es lo que evita que un mismo
+    directorio sea de dos proyectos distintos según quién pregunte: el panel lo
+    vería de uno y el comando de otro, y sólo se notaría el día que importe.
+    """
+    rutas: dict[str, list[Ruta]] = {}
+    for f in con.execute("SELECT proyecto_id, ruta, tipo FROM proyecto_ruta"):
+        rutas.setdefault(f["proyecto_id"], []).append(
+            Ruta(ruta=f["ruta"], tipo=f["tipo"])
+        )
+    # `nombre` no lo mira el repartidor; se rellena porque el modelo lo exige.
+    return registry.Atribuidor(
+        [Proyecto(id=pid, nombre=pid, rutas=rs) for pid, rs in rutas.items()]
+    )
+
+
+def conexiones_concedidas(con: sqlite3.Connection, ruta: str) -> dict:
+    """Las conexiones concedidas al proyecto que contiene `ruta`.
+
+    La concesión es la lista `proyectos:` de la conexión en `projects.yml`
+    (decisión 197). Quitar un proyecto de ahí retira el puntero sin tocar el
+    servidor; añadirlo tampoco da acceso —el acceso lo da la llave—, así que
+    esto reparte DIRECCIONES de dónde vive una credencial, nunca la credencial.
+
+    🔴 El proyecto se deduce de dónde se pregunta y no se acepta por nombre. Si
+    se aceptara, la lista dejaría de conceder nada: sería una etiqueta, y
+    cualquier sesión podría pedir la conexión de otro proyecto sabiendo su id.
+
+    Lo que esto NO es: una frontera contra un proceso hostil de la máquina. La
+    ruta la manda quien llama y podría mentir. Contra eso no defiende nada que
+    escuche en `127.0.0.1` —el endpoint de terminal da una shell entera (regla
+    dura 8)—; lo que evita es el error honesto de una sesión que pide el
+    servidor equivocado porque conoce su nombre.
+    """
+    proyecto_id = _atribuidor(con).atribuir(ruta) if ruta else None
+    if not proyecto_id:
+        return {"proyecto_id": None, "conexiones": []}
+    return {
+        "proyecto_id": proyecto_id,
+        "conexiones": [c for c in conexiones(con) if proyecto_id in c["proyectos"]],
+    }
+
+
+def plan_de_restauracion(con: sqlite3.Connection, muestra_id: int | None = None) -> dict:
+    """Qué haría el botón de restaurar, ANTES de pulsarlo.
+
+    🔴 Se enseña el plan en vez de ejecutarlo a ciegas porque la elección de
+    muestra no se puede automatizar: el 16-sep quedaron dos marcadas «antes de un
+    corte» con los mismos slots y el mismo número de paneles, y sólo una era el
+    escritorio de trabajo. Enseñarlas convierte una elección equivocada en algo
+    que se ve, en vez de en trece ventanas abiertas donde no tocaba.
+    """
+    if not con.execute(
+        "SELECT 1 FROM slot WHERE status='activo' AND restaurar=1 LIMIT 1"
+    ).fetchone():
+        return {"candidatos": [], "muestra": None, "ventanas": []}
+    candidatos = _restauracion.candidatos_de_restauracion(con)
+    elegida = muestra_id or (candidatos[0]["id"] if candidatos else None)
+    return {
+        "candidatos": candidatos,
+        "muestra": next((c for c in candidatos if c["id"] == elegida), None),
+        "ventanas": _restauracion.plan_de_restauracion(con, muestra_id=elegida),
+    }
+
+
+# ───────────────────────── navegador de archivos ─────────────────────────
+
+
+def _confin(con: sqlite3.Connection) -> list[Path]:
+    """Las raíces que el navegador puede servir: exactamente las que el hub indexa.
+
+    Sale de `proyecto_ruta` y no de `projects.yml` a pelo porque es la misma
+    tabla de la que come `_atribuidor`. Dos listas de raíces distintas darían un
+    navegador que enseña una carpeta y un hub que dice que no es de nadie, y la
+    discrepancia sólo se vería el día que importe.
+    """
+    return navegador.raices(
+        f["ruta"] for f in con.execute("SELECT ruta FROM proyecto_ruta")
+    )
+
+
+def _repos_medidos(con: sqlite3.Connection) -> dict[str, dict]:
+    """Lo que ya se sabe de cada repo, por ruta resuelta.
+
+    El navegador no ejecuta `git`: sería lento sobre `/mnt/c` y además caro en el
+    sitio equivocado (regla 14). Lo que enseña es lo que el escaneo ya midió, así
+    que puede estar viejo — y por eso la pantalla dice cuándo se midió en vez de
+    dar la rama como si fuera de ahora mismo.
+    """
+    medidos = {}
+    for f in con.execute(
+        "SELECT ruta, rama, sucios, sin_push, medido_en FROM repo"
+    ):
+        medidos[str(navegador.normalizar(f["ruta"]))] = {
+            "rama": f["rama"] or "",
+            "sucios": f["sucios"],
+            "sin_push": f["sin_push"],
+            "medido_en": f["medido_en"],
+        }
+    return medidos
+
+
+def explorar(con: sqlite3.Connection, ruta: str = "") -> dict:
+    """Qué hay en esa carpeta, o los sitios por los que empezar si no se da ninguna.
+
+    Las dos respuestas tienen la MISMA forma —`entradas` con su nombre y su
+    ruta—, para que la pantalla tenga un solo pintor. Un caso especial para la
+    portada es una segunda plantilla que se olvida de arreglar.
+
+    🔴 Ni contenido ni acciones: ver `navegador.py`. Esta función es la costura
+    de lectura (`CLAUDE.md`, primera regla) y no hay otra.
+    """
+    confin = _confin(con)
+    atribuidor = _atribuidor(con)
+    medidos = _repos_medidos(con)
+    nombres = {
+        f["id"]: f["nombre"] for f in con.execute("SELECT id, nombre FROM proyecto")
+    }
+
+    def _adornar(entrada: dict) -> dict:
+        proyecto_id = atribuidor.atribuir(entrada["ruta"])
+        entrada["proyecto_id"] = proyecto_id
+        entrada["proyecto"] = nombres.get(proyecto_id or "", "")
+        entrada.update(medidos.get(entrada["ruta"], {}))
+        return entrada
+
+    if not ruta:
+        raices = sorted(navegador.minimas(confin), key=lambda r: str(r).lower())
+        return {
+            "ruta": "",
+            "migas": [],
+            "arriba": None,
+            "entradas": [
+                _adornar({
+                    "nombre": r.name or str(r),
+                    "ruta": str(r),
+                    "carpeta": True,
+                    "repo": (r / ".git").exists(),
+                    "tamano": None,
+                    "fuera": False,
+                })
+                for r in raices
+            ],
+            "ocultos": 0,
+            "truncado": 0,
+            "proyecto_id": None,
+        }
+
+    datos = navegador.listar(ruta, confin)
+    datos["entradas"] = [_adornar(e) for e in datos["entradas"]]
+    datos["proyecto_id"] = atribuidor.atribuir(datos["ruta"])
+    datos["proyecto"] = nombres.get(datos["proyecto_id"] or "", "")
+    datos["ruta_corta"] = ruta_corta(datos["ruta"])
+    return datos
+
+
+# ───────────────────────── mensajes programados ─────────────────────────
+
+
+def programados(con: sqlite3.Connection, slot_id: int | None = None) -> list[dict]:
+    """Los mensajes programados, con el nombre de su slot.
+
+    🔴 La consulta vive aquí y no en `programados.py` para no invertir la
+    dirección de las dependencias: los módulos de acción —`slots`, `canal`,
+    `programados`— importan `api`, y `api` no importa a ninguno. Delegar habría
+    cerrado un ciclo de imports que hoy funciona por el orden en que se cargan
+    los módulos, que es la clase de cosa que se rompe seis meses después.
+
+    El nombre del slot se añade porque la lista se enseña también fuera del
+    slot, y un `slot_id` a secas no le dice nada a nadie.
+    """
+    sql = """SELECT m.*, s.nombre AS slot_nombre
+             FROM mensaje_programado m LEFT JOIN slot s ON s.id = m.slot_id"""
+    args: tuple = ()
+    if slot_id is not None:
+        sql += " WHERE m.slot_id = ?"
+        args = (slot_id,)
+    # Los pendientes arriba: son los únicos sobre los que se puede hacer algo.
+    # Los cerrados siguen saliendo —saber que uno CADUCÓ sin entregarse es justo
+    # lo que hay que ver—, y esconderlos dejaría la pantalla idéntica tanto si
+    # salió como si no.
+    sql += " ORDER BY (m.estado != 'pendiente'), m.cuando DESC"
+    return [_fila_a_dict(f) for f in con.execute(sql, args)]
 
 
 # ───────────────────────── estado y capa base ─────────────────────────
@@ -1145,8 +1686,12 @@ def contexto_markdown(con: sqlite3.Connection) -> str:
     return "\n".join(lineas).strip() + "\n"
 
 
-def resumen(con: sqlite3.Connection) -> dict:
-    """Lo que necesita la pantalla principal, en una sola llamada."""
+def resumen(con: sqlite3.Connection, muestra_id: int | None = None) -> dict:
+    """Lo que necesita la pantalla principal, en una sola llamada.
+
+    `muestra_id` sólo lo usa el panel de restaurar, para poder mirar el plan de
+    otra muestra sin salir del panorama.
+    """
     actual = snapshot_actual(con)
     paneles = paneles_de(con, actual["id"]) if actual else []
     por_proyecto: dict[str, int] = {}
@@ -1182,7 +1727,151 @@ def resumen(con: sqlite3.Connection) -> dict:
         "paneles_totales": len(paneles),
         "sin_atribuir": sum(1 for p in paneles if not p["proyecto_id"]),
         "bandeja": bandeja(con),
+        # Lo oculto viaja al lado de la bandeja, no en vez de ella: la portada
+        # tiene que poder decir cuántas esconde y dejar destaparlas.
+        "ocultas": ocultos(con),
         "recuperacion": recuperacion_pendiente(con),
         "respaldo": respaldo(con),
         "servicios": servicios(con),
+        # Los slots marcados a mano para volver tras un apagón. Van por aquí y
+        # no leyendo SQL desde la plantilla porque la costura de lectura es
+        # única (principio 8) y el MCP se montará encima.
+        "para_restaurar": [
+            {"id": f["id"], "nombre": f["nombre"], "proyecto_id": f["proyecto_id"]}
+            for f in con.execute(
+                "SELECT id, nombre, proyecto_id FROM slot "
+                "WHERE status='activo' AND restaurar=1 ORDER BY proyecto_id, id"
+            )
+        ],
+        "restauracion": plan_de_restauracion(con, muestra_id),
+    }
+
+
+# ─────────────────────────────── el orquestador ─────────────────────────────
+
+
+def orquestador(con: sqlite3.Connection, tarea_id: str = "", proyecto: str = "") -> dict[str, Any]:
+    """Lo que pinta /orquestador: la bandeja, la tarea que se mira y la lista.
+
+    Todo sale de disco —las carpetas de las tareas y el YAML de permisos—; aquí
+    no se decide nada, se reúne. `proyecto` filtra la lista: con semanas de
+    tareas encima, lo que se busca es «qué ha pasado en tal proyecto», no todo.
+    """
+    from . import orquestador as orq
+
+    tareas = orq.listar()
+    for t in tareas:
+        t["creada_local"] = _hora_local(t.get("creada"))
+        # Las tareas de antes de los puntos no tienen `pasos`: se cuentan del
+        # plan, que es de donde salen igual.
+        if not t.get("pasos"):
+            t["pasos"] = orq.contar_pasos(orq.plan(t["id"]))
+        t["puntos"] = orq.puntos(t)
+        t["etiqueta"] = orq.ETIQUETA.get(t["estado"], t["estado"])
+    viva = next((t for t in tareas if t["estado"] in orq.VIVAS), None)
+    elegida = None
+    if tarea_id:
+        elegida = next((t for t in tareas if t["id"] == tarea_id), None)
+    elegida = elegida or viva
+
+    detalle = None
+    if elegida:
+        detalle = {
+            **elegida,
+            "plan": orq.plan(elegida["id"]),
+            "bitacora": [{**b, "hora": _hora_local(b.get("cuando"))}
+                         for b in reversed(orq.bitacora(elegida["id"]))][:80],
+            "esperando": [e for e in elegida["esperas"] if e["estado"] == "esperando"],
+            "viva": elegida["estado"] in orq.VIVAS,
+        }
+
+    cuenta: dict[str, int] = {}
+    for t in tareas:
+        for p in t.get("proyectos") or []:
+            cuenta[p] = cuenta.get(p, 0) + 1
+    nombres = {p["id"]: p["nombre"] for p in listar_proyectos(con)}
+    lista = [t for t in reversed(tareas)
+             if t["estado"] not in orq.VIVAS
+             and (not proyecto or proyecto in (t.get("proyectos") or []))]
+    return {
+        "viva": viva,
+        "detalle": detalle,
+        "cola": [t for t in tareas if t["estado"] == orq.EN_COLA],
+        "lista": lista[:30],
+        "mas": max(0, len(lista) - 30),
+        "filtro": proyecto,
+        "por_proyecto": sorted(
+            ({"id": p, "nombre": nombres.get(p, p), "tareas": n} for p, n in cuenta.items()),
+            key=lambda x: -x["tareas"]),
+        "con_alcance": sum(1 for n in orq.leer_permisos().values() if n != "nada"),
+        "etiquetas": orq.ETIQUETA,
+    }
+
+
+def orquestador_permisos(con: sqlite3.Connection) -> dict[str, Any]:
+    """La pantalla de permisos, aparte: se toca una vez y se revisa de tarde en tarde."""
+    from . import orquestador as orq
+
+    permisos = orq.leer_permisos()
+    proyectos = [
+        {"id": p["id"], "nombre": p["nombre"], "guardrail": p["guardrail"],
+         "nivel": "nada" if p["guardrail"] == "never" else permisos.get(p["id"], "nada")}
+        for p in listar_proyectos(con) if p.get("tipo") == "proyecto"
+    ]
+    return {
+        "proyectos": sorted(proyectos, key=lambda p: (p["nivel"] == "nada", p["nombre"].lower())),
+        "niveles": orq.NIVELES,
+        "descripcion": orq.DESCRIPCION,
+        "siempre_del_dueno": orq.SIEMPRE_DEL_DUENO,
+    }
+
+
+def _hora_local(iso: str | None) -> str:
+    """«22/09 14:41» en la hora de la casa. En UTC, leído en el móvil, engaña."""
+    if not iso:
+        return ""
+    try:
+        return datetime.fromisoformat(iso).astimezone().strftime("%d/%m %H:%M")
+    except ValueError:
+        return iso
+
+
+def intercambio(por: str = "tema", q: str = "") -> dict[str, Any]:
+    """La carpeta de intercambio, agrupada para que se sepa qué es cada cosa.
+
+    `q` filtra por nombre (también la subcarpeta): es lo que se usa cuando uno
+    ya sabe qué busca y no quiere abrir grupos.
+    """
+    from . import intercambio as _intercambio
+
+    por = por if por in _intercambio.AGRUPACIONES else "tema"
+    archivos = _intercambio.listar()
+    total = len(archivos)
+    q = (q or "").strip()
+    if q:
+        archivos = [a for a in archivos if q.lower() in a["nombre"].lower()]
+    # «Nuevo» es la última tanda que llegó, no «la última hora»: en una hora
+    # una sesión puede dejar dos tandas, y lo que se quiere ver es la última.
+    ahora = datetime.now().timestamp()
+    ultima = _intercambio.tandas(archivos)[0] if archivos else []
+    recien = {a["nombre"] for a in ultima
+              if ahora - a["mtime"] < _intercambio.NUEVO_SEGUNDOS}
+    for a in archivos:
+        a["cuando_local"] = _hora_local(a["cuando"])
+        a["nuevo"] = a["nombre"] in recien
+    grupos = _intercambio.agrupar(archivos, por)
+    for g in grupos:
+        for t in g["tandas"]:
+            desde = datetime.fromtimestamp(t["desde"])
+            hasta = datetime.fromtimestamp(t["hasta"])
+            t["etiqueta"] = desde.strftime("%d/%m %H:%M") + (
+                "" if hasta.strftime("%H:%M") == desde.strftime("%H:%M")
+                else "–" + hasta.strftime("%H:%M"))
+    return {
+        "grupos": grupos,
+        "por": por,
+        "agrupaciones": _intercambio.AGRUPACIONES,
+        "q": q,
+        "total": total,
+        "encontrados": len(archivos),
     }

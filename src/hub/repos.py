@@ -19,6 +19,7 @@ import shutil
 import sqlite3
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturoAgotado
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -34,6 +35,14 @@ TIEMPO_LIMITE = 10
 # del bucle del snapshotter y un escaneo eterno lo dejaría sin muestrear justo
 # cuando el sistema va peor.
 PRESUPUESTO_SEGUNDOS = 45
+
+# Cuántos repos se miden a la vez. Medido el 2026-09-07 sobre los 66 del
+# workspace laboral, que viven en `/mnt/c`: 61 s de uno en uno, 20 s con 4
+# hilos, 14,5 s con 8 y 12,6 s con 16. El codo está en 8 — pasar a 16 gana un
+# 13 % y duplica los subprocesos simultáneos contra un montaje 9p, que es justo
+# lo que `TIEMPO_LIMITE` existe para contener. Cada repo son ~11 llamadas a git
+# que se pasan la vida esperando al disco, así que el GIL no estorba.
+HILOS_DE_ESCANEO = 8
 
 
 @lru_cache(maxsize=1)
@@ -120,6 +129,44 @@ def _sin_push(ruta: str) -> tuple[int | None, str]:
     return (int(cuenta) if cuenta is not None else None), regimen
 
 
+def _sucios(ruta: str) -> int:
+    """Archivos con trabajo de verdad sin guardar. **No** los que sólo cambiaron
+    de fin de línea.
+
+    `git status --porcelain` a secas daba 3006 archivos en el workspace laboral
+    y los de verdad son 79: 44 de sus 66 repos no tenían absolutamente nada
+    aparte del retorno de carro. Es lo normal en un árbol clonado desde Windows
+    y leído desde WSL, o sea en casi todo lo que este hub vigila —vive bajo
+    `/mnt/c`—, así que no es una rareza del trabajo sino el caso general.
+
+    Un 38× de inflación es justo lo que la regla dura 13 prohíbe: la pantalla
+    diría «66 repos con cambios sin commitear» siempre, todos los días, y se
+    aprendería a ignorarla. Entonces el día que uno de esos avisos sea real
+    tampoco se mirará.
+
+    `--numstat` con `--ignore-cr-at-eol` **omite** el archivo cuyo diff se queda
+    vacío al ignorar el CR; se filtra igual por `0 0` por si otra versión de git
+    prefiere listarlo. Un borrado da `0 n` y una modificación binaria `- -`:
+    los dos son cambios reales y los dos cuentan.
+    """
+    numstat = _git(ruta, "diff", "--ignore-cr-at-eol", "--numstat", "HEAD") or ""
+    con_contenido = 0
+    for linea in numstat.splitlines():
+        partes = linea.split("\t")
+        if len(partes) == 3 and (partes[0], partes[1]) != ("0", "0"):
+            con_contenido += 1
+    # Los no seguidos no salen en ningún `diff`, y son la mitad de lo que de
+    # verdad se pierde si el disco muere: un archivo nuevo sin añadir.
+    #
+    # `ls-files --others` y no `status --porcelain`: da lo mismo y cuesta 0,06 s
+    # en vez de 1,52 s en un repo de `/mnt/c` —`status` compara el contenido de
+    # todo lo seguido, que aquí ya lo hace el `diff` de arriba—. Y cuenta los
+    # archivos uno a uno donde `status` colapsa una carpeta entera sin seguir en
+    # una sola línea: si el disco muere se pierden los cinco, no «uno».
+    sin_seguir = _git(ruta, "ls-files", "--others", "--exclude-standard") or ""
+    return con_contenido + len([x for x in sin_seguir.splitlines() if x.strip()])
+
+
 def estado_de(ruta: str) -> dict | None:
     """Fotografía de respaldo de un repo. None si la ruta no es un repo git."""
     if not Path(ruta).is_dir() or not es_repo(ruta):
@@ -127,7 +174,6 @@ def estado_de(ruta: str) -> dict | None:
 
     rama = _git(ruta, "symbolic-ref", "--short", "HEAD")  # None si está en detached
     sin_push, regimen = _sin_push(ruta)
-    porcelain = _git(ruta, "status", "--porcelain") or ""
     detras = _git(ruta, "rev-list", "--count", "HEAD..@{u}")
 
     return {
@@ -136,7 +182,7 @@ def estado_de(ruta: str) -> dict | None:
         "sin_push": sin_push,
         "regimen": regimen,
         "detras": int(detras) if detras is not None else None,
-        "sucios": len([x for x in porcelain.splitlines() if x.strip()]),
+        "sucios": _sucios(ruta),
         "ultimo_commit": _git(ruta, "log", "-1", "--format=%cI"),
         "worktrees": _contar_worktrees(ruta),
         # Identidad del repositorio compartido y del commit. Dos worktrees del
@@ -221,25 +267,59 @@ def escanear(con: sqlite3.Connection, proyectos: list[Proyecto]) -> int:
         )
     medido_en = datetime.now(timezone.utc).isoformat()
     limite = time.monotonic() + PRESUPUESTO_SEGUNDOS
+    pares = [(p.id, ruta) for p in proyectos for ruta in p.todas_las_rutas()]
     filas = []
     agotado = False
-    for p in proyectos:
-        for ruta in p.todas_las_rutas():
-            if time.monotonic() > limite:
+
+    # En paralelo porque de uno en uno ya no cabe en el presupuesto (decisión
+    # 170): los 66 repos del workspace laboral tardan 61 s ellos solos, y con el
+    # recorrido secuencial se agotaba a los 45 s dejando fuera no sólo los diez
+    # últimos suyos, sino TODOS los proyectos que vienen después en el YAML.
+    ejecutor = ThreadPoolExecutor(max_workers=HILOS_DE_ESCANEO)
+    try:
+        lanzados = [(pid, ejecutor.submit(estado_de, ruta)) for pid, ruta in pares]
+        restantes: list[tuple[str, object]] = []
+        for indice, (pid, futuro) in enumerate(lanzados):
+            try:
+                estado = futuro.result(timeout=max(0.0, limite - time.monotonic()))
+            except FuturoAgotado:
                 agotado = True
+                restantes = lanzados[indice + 1:]
                 break
-            estado = estado_de(ruta)
+            except Exception:
+                continue  # un repo roto no puede tumbar la medición de los demás
             if estado:
-                filas.append((p.id, medido_en, estado))
-        if agotado:
-            break
+                filas.append((pid, medido_en, estado))
+
+        # Al agotarse el presupuesto se recoge lo que los otros hilos YA tenían
+        # terminado. Descartarlo volvería la truncadura dependiente del orden de
+        # `projects.yml` —los mismos proyectos del final sin medir en cada
+        # ciclo, siempre— y esa es la peor forma de estar incompleto: no es que
+        # falten datos, es que faltan siempre los mismos y nadie lo nota.
+        for pid, futuro in restantes:
+            if not futuro.done():
+                continue
+            try:
+                estado = futuro.result(timeout=0)
+            except Exception:
+                continue
+            if estado:
+                filas.append((pid, medido_en, estado))
+    finally:
+        # 🔴 `wait=False`: agotado el presupuesto NO se espera a los hilos que
+        # siguen corriendo. Esperarlos aquí devolvería el escaneo eterno que el
+        # presupuesto existe para evitar —un `/mnt/c` colgado son 10 s por cada
+        # una de las ~11 llamadas de git—, y el snapshotter se quedaría sin
+        # muestrear justo el día que el sistema va peor (regla dura 14).
+        ejecutor.shutdown(wait=False, cancel_futures=True)
 
     if agotado:
         # En voz alta: un escaneo truncado en silencio se lee como «no hay nada
         # sin respaldar», que es la mentira más cara que este módulo puede decir.
         print(
             f"[repos] escaneo truncado a los {PRESUPUESTO_SEGUNDOS}s: "
-            f"{len(filas)} repos medidos. La cifra de respaldo está incompleta.",
+            f"{len(filas)} de {len(pares)} rutas medidas. La cifra de respaldo "
+            "está incompleta.",
             flush=True,
         )
 
@@ -247,7 +327,7 @@ def escanear(con: sqlite3.Connection, proyectos: list[Proyecto]) -> int:
     # funciona aquí. Es indistinguible de «no tienes repos» mirando el
     # resultado, y la diferencia es justo lo que este módulo no puede
     # equivocarse. No se borra nada y se dice.
-    candidatas = [r for p in proyectos for r in p.todas_las_rutas()]
+    candidatas = [ruta for _, ruta in pares]
     if candidatas and not filas:
         raise RespaldoNoMedido(
             f"git no pudo leer ninguno de los {len(candidatas)} repos declarados "

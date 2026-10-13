@@ -63,8 +63,8 @@ const REG = { peticiones: [] };
 global.document = {
   getElementById: (id) => nodos[id] || null,
   querySelector: (sel) => {
-    if (sel === '.por-ventana:not([hidden])') return ventana;
-    if (sel === '.por-ventana:not([hidden]) .nota-texto') return nota;
+    if (sel === '.por-ventana.viendo') return ventana;
+    if (sel === '.por-ventana.viendo .nota-texto') return nota;
     return null;
   },
   querySelectorAll: (sel) => {
