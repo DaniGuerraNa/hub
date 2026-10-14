@@ -106,7 +106,21 @@ else
 fi
 
 systemctl --user daemon-reload
-systemctl --user enable --now hub-web hub-snapshotter >/dev/null 2>&1
+# 🔴 El puerto se mira con el hub de antes ya parado (si es una reinstalación),
+# para no confundirlo con «otro programa». Sin esto, con el puerto ocupado
+# `hub-web` moría al arrancar —Errno 98— y el instalador decía «Listo»: lo que
+# contestaba en la comprobación era el otro programa (visto el 14-oct).
+systemctl --user stop hub-web >/dev/null 2>&1 || true
+if (exec 3<>"/dev/tcp/$HUB_HOST/$HUB_PORT") 2>/dev/null; then
+  mal "el puerto $HUB_PORT ya lo usa otro programa: el hub no podría arrancar"
+  printf '    usa otro:  HUB_PORT=8788 bash scripts/instalar.sh
+' >&2
+  exit 1
+fi
+systemctl --user enable hub-web hub-snapshotter >/dev/null 2>&1
+# `restart` y no `enable --now`: `--now` no toca un servicio que ya corre, así
+# que reinstalar tras un `git pull` dejaba en marcha el código viejo.
+systemctl --user restart hub-web hub-snapshotter
 bien "arrancados y habilitados para el próximo inicio"
 # 🔴 `hub-canal` se instala pero NO se arranca. Sin `canal.yml` no tiene token, y
 # un servicio que sólo sabe escribir fallos en el registro cada 30 segundos es
@@ -133,12 +147,25 @@ if [ "${codigo:-}" != "200" ]; then
   exit 1
 fi
 
+# Que conteste 200 no basta: tiene que ser EL HUB quien contesta. Con el
+# puerto ocupado por otro servidor, la portada daba 200 y el resto 404.
+if ! curl -s "$url/" | grep -q 'apple-mobile-web-app-title" content="Hub"'; then
+  mal "en $url contesta algo, pero no es el hub"
+  printf '    journalctl --user -u hub-web -n 40 --no-pager
+' >&2
+  exit 1
+fi
 fallos=0
-for r in / /trabajo /inventario /respaldo /servicios /conexiones /contexto; do
+for r in / /trabajo /inventario /respaldo /servicios /conexiones /contexto /orquestador /intercambio; do
   c=$(curl -s -o /dev/null -w '%{http_code}' "$url$r" || true)
   [ "$c" = "200" ] || { mal "$r → $c"; fallos=1; }
 done
-[ "$fallos" -eq 0 ] && bien "las pantallas responden"
+if [ "$fallos" -ne 0 ]; then
+  printf '    alguna pantalla falla: journalctl --user -u hub-web -n 40 --no-pager
+' >&2
+  exit 1
+fi
+bien "las pantallas responden"
 
 cat <<FIN
 
@@ -150,4 +177,7 @@ Listo. El hub está en $url
 
 Lo siguiente: abre Claude Code en esta carpeta y di «anexa mi proyecto», o edita
 el registro a mano. La pantalla de inicio te guía si aún no tienes ninguno.
+
+El asistente (el chat de abajo a la derecha) es opcional y va aparte:
+  bash scripts/sembrar-asistente.sh     y declara el bloque que imprime.
 FIN

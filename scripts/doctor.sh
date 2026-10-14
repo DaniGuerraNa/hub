@@ -55,21 +55,19 @@ imprescindible uv     "es lo que corre el hub y resuelve sus dependencias" \
 imprescindible claude "sin Claude Code no hay asistente, ni medición de uso, ni agentes" \
                       "https://claude.com/claude-code"
 
-# Python: no basta con que exista, tiene que ser 3.12 o más.
-if tiene python3; then
-  version=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "?")
-  mayor=${version%%.*}; menor=${version##*.}
-  if [ "${mayor:-0}" -gt 3 ] || { [ "${mayor:-0}" -eq 3 ] && [ "${menor:-0}" -ge 12 ]; }; then
-    linea "$ok" "python3" "$version"
+# Python 3.12+, pero el que importa es el que usa `uv`, no el del sistema: el
+# hub corre siempre con `uv run`, y uv descarga su propio Python si hace falta.
+# 🔴 Mirar `python3` bloqueaba Ubuntu 22.04 (trae 3.10) en un callejón sin
+# salida: el consejo era `uv python install 3.12`, que no cambia `python3`, así
+# que el diagnóstico seguía diciendo «falta» después de hacerle caso (visto
+# instalando en limpio el 14-oct).
+if tiene uv; then
+  py=$(uv python find '>=3.12' 2>/dev/null || true)
+  if [ -n "$py" ]; then
+    linea "$ok" "python" "$("$py" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null) (el que usa uv)"
   else
-    linea "$mal" "python3" "hace falta 3.12 o superior; tienes $version"
-    printf '        → uv se encarga: `uv python install 3.12`\n'
-    falta=1
+    linea "$ojo" "python" "no hay 3.12 todavía: uv lo descarga solo al instalar"
   fi
-else
-  linea "$mal" "python3" "no está"
-  printf '        → sudo apt install python3\n'
-  falta=1
 fi
 
 # systemd de usuario: es lo que arranca los dos servicios solos al abrir sesión.
@@ -120,11 +118,13 @@ case ":$PATH:" in
 esac
 
 puerto=${HUB_PORT:-8787}
-# Sin `ss` ni `lsof` no se puede afirmar nada, y afirmar que está libre sin
-# haberlo mirado es peor que no decirlo.
+# Con `ss` o `lsof` se lista; sin ellos, bash intenta conectar. Afirmar que está
+# libre sin haberlo mirado sería peor que no decirlo.
 if tiene ss; then ocupado=$(ss -ltn 2>/dev/null | grep -c ":$puerto ")
 elif tiene lsof; then ocupado=$(lsof -iTCP:"$puerto" -sTCP:LISTEN -t 2>/dev/null | wc -l)
-else ocupado=""
+# Sin ninguno de los dos, bash sabe intentar la conexión él solo.
+elif (exec 3<>"/dev/tcp/127.0.0.1/$puerto") 2>/dev/null; then ocupado=1
+else ocupado=0
 fi
 if [ -z "$ocupado" ]; then
   linea "$ojo" "puerto $puerto" "no se pudo comprobar (falta ss y lsof)"

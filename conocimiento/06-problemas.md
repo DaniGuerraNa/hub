@@ -81,16 +81,29 @@ Comprueba también que `claude` está en el PATH y con sesión iniciada.
 
 ## Empezar de cero sin perder el registro
 
-La base de datos es un índice: se reconstruye escaneando.
+Casi todo lo que hay en la base de datos se reconstruye escaneando: proyectos,
+repos, mediciones, sesiones de tmux. **Pero no todo.** Hay cosas que creas tú
+desde el hub y que hoy sólo viven en la base:
+
+- los **slots** y sus **notas**,
+- las ventanas ocultas o descartadas,
+- las personas, permisos e historial del **canal**,
+- los **mensajes programados**,
+- los **encargos** y sus conversaciones.
+
+Por eso, si algo va mal, **aparta** la base en vez de borrarla: así se puede
+volver atrás.
 
 ```bash
 systemctl --user stop hub-web hub-snapshotter
-rm ~/.local/share/hub/hub.db*
+mkdir -p ~/.local/share/hub/apartada
+mv ~/.local/share/hub/hub.db* ~/.local/share/hub/apartada/
 systemctl --user start hub-web hub-snapshotter
 ```
 
-⚠️ Esto **sí borra las notas de tus slots**, que es lo único que vive sólo ahí.
-Cópialas antes si te importan.
+Para volver a la de antes, el mismo `stop`, mueve de vuelta los archivos de
+`apartada/` y `start`. `projects.yml`, el intercambio, las tareas del orquestador
+y sus permisos viven en archivos aparte y no se tocan.
 
 ## Desinstalar
 

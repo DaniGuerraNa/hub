@@ -61,7 +61,7 @@ proyectos:
   # Lo único distinto es cómo se pinta. `tipo: asistente` es lo que hace que el
   # hub sepa cuál es SIN cablear una ruta en el código (decisión 75).
   #
-  # Descoméntalo cuando lo hayas sembrado (`scripts/instalar.sh` lo ofrece). Sin
+  # Descoméntalo cuando lo hayas sembrado (`bash scripts/sembrar-asistente.sh`). Sin
   # ningún proyecto de este tipo, la pestaña del asistente no se pinta.
   #
   # - id: asistente

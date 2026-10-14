@@ -252,3 +252,64 @@ def test_la_sala_limpia_esta_completa_y_sin_rastros_personales():
     # En el repo de desarrollo el índice está en producto/; en el publicado, en conocimiento/.
     indice = next(r for r in (RAIZ / "producto/conocimiento/INDICE.md", RAIZ / "conocimiento/INDICE.md") if r.is_file())
     assert "08-sala-limpia.md" in indice.read_text(encoding="utf-8")
+
+
+# ── lo que salió en la segunda ronda de pruebas en limpio (14-oct) ───────────
+
+def test_un_python3_viejo_en_el_sistema_no_bloquea_si_uv_tiene_el_suyo(tmp_path):
+    """🔴 Ubuntu 22.04 trae 3.10. El doctor miraba `python3`, decía FALTA y
+    aconsejaba `uv python install 3.12` — que no cambia `python3`, así que
+    seguía en FALTA después de hacerle caso. El hub corre con `uv run`."""
+    falso = tmp_path / "bin"
+    falso.mkdir()
+    (falso / "python3").write_text("#!/bin/sh\necho 3.10\n")
+    (falso / "python3").chmod(0o755)
+    r = _correr(DOCTOR, {"PATH": f"{falso}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "3.10" not in r.stdout
+    assert "(el que usa uv)" in r.stdout
+
+
+def test_el_repo_fija_python_3_12_para_que_uv_no_baje_el_mas_nuevo():
+    """🔴 Sin `.python-version`, en una máquina sin 3.12 uv bajó 3.15 y no había
+    ruedas de `httptools` para él: intentó compilar, no había `cc`, y la
+    instalación falló en una WSL recién estrenada."""
+    assert (RAIZ / ".python-version").read_text().strip() == "3.12"
+
+
+def _puerto_ocupado():
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    s.listen(1)
+    return s, s.getsockname()[1]
+
+
+def test_con_el_puerto_ocupado_arrancar_lo_dice_y_no_finge(tmp_path):
+    """El 14-oct: puerto ocupado, `hub-web` moría con Errno 98, y la
+    comprobación hablaba con el otro programa y daba el visto bueno."""
+    s, puerto = _puerto_ocupado()
+    try:
+        r = _correr(RAIZ / "scripts" / "arrancar.sh",
+                    {"HUB_PORT": str(puerto), "HUB_HOME": str(tmp_path)})
+    finally:
+        s.close()
+    assert r.returncode == 1
+    assert "ya lo usa otro programa" in r.stderr
+
+
+def test_el_doctor_ve_el_puerto_ocupado():
+    s, puerto = _puerto_ocupado()
+    try:
+        r = _correr(DOCTOR, {"HUB_PORT": str(puerto)})
+    finally:
+        s.close()
+    assert "ya hay algo escuchando" in r.stdout
+
+
+def test_el_instalador_no_da_por_buena_una_pantalla_que_falla():
+    """Decía «Listo» y salía con 0 con pantallas en 404."""
+    texto = INSTALAR.read_text(encoding="utf-8")
+    comprobacion = texto.split('paso "5/5')[1]
+    assert 'apple-mobile-web-app-title" content="Hub"' in comprobacion   # es el hub quien contesta
+    assert comprobacion.index("exit 1", comprobacion.index("fallos")) < comprobacion.index("Listo.")

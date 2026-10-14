@@ -95,5 +95,20 @@ slots.
 
 Es lo que te deja retomar sin reconstruirlo de memoria.
 
+### Volver a abrir las ventanas
+
+En la portada aparece **«Abrir N ventanas»**, pero sólo para los slots que
+tengan marcada la casilla **«devolverlo tras un apagón»** (al editar el slot, en
+la pantalla del proyecto). **Viene desmarcada**: márcala en los slots que
+quieras recuperar, o tras un corte la portada sólo te dirá que se perdió una
+sesión.
+
+Restaurar abre cada ventana **en su carpeta** y deja escrito el comando —`claude`
+para las que tenían Claude Code— **sin pulsar Enter**: lo lanzas tú cuando lo
+veas. No relanza nada por su cuenta.
+
+Si trabajas con otro comando (por ejemplo `claude --model …`), ponlo en
+`HUB_COMANDO_CLAUDE` (ver `INSTALAR.md`).
+
 > 🔴 La terminal da acceso de shell a quien alcance el puerto. Escucha sólo en
 > `127.0.0.1`. No la expongas sin autenticación.

@@ -20,7 +20,7 @@ import shutil
 
 import pytest
 
-from hub import slots, tmux
+from hub import restauracion, slots, tmux
 
 
 @pytest.fixture
@@ -86,7 +86,7 @@ def test_el_comando_que_se_deja_escrito_es_uno_que_existe(con, slot_marcado, tmu
     """Decisión 165: dejar escrito un flag que no existe sería peor que no dejar
     ninguno — hay que borrarlo a mano justo cuando se vuelve de un apagón."""
     slots.restaurar(con)
-    assert tmux_falso["pegados"][0]["texto"] == "claude --dangerously-skip-permissions"
+    assert tmux_falso["pegados"][0]["texto"] == restauracion.COMANDO_SUGERIDO
 
 
 def test_un_comando_que_se_pega_y_no_aparece_en_pantalla_cuenta_como_fallo(
@@ -195,3 +195,17 @@ def test_una_sesion_recien_creada_dice_cual_es_su_panel(tmp_path):
     finally:
         with contextlib.suppress(Exception):
             tmux._correr(["kill-session", "-t", f"={sesion}"])
+
+
+def test_por_omision_deja_escrito_un_claude_que_pide_permisos(monkeypatch):
+    """Decisión 266: en la instalación de otra persona no puede quedar, a un
+    Enter, un Claude sin permisos que ella no eligió."""
+    import importlib
+    monkeypatch.delenv("HUB_COMANDO_CLAUDE", raising=False)
+    assert importlib.reload(restauracion).COMANDO_SUGERIDO == "claude"
+
+    monkeypatch.setenv("HUB_COMANDO_CLAUDE", "claude --dangerously-skip-permissions")
+    assert importlib.reload(restauracion).COMANDO_SUGERIDO == "claude --dangerously-skip-permissions"
+
+    monkeypatch.delenv("HUB_COMANDO_CLAUDE")
+    importlib.reload(restauracion)

@@ -21,7 +21,13 @@ from pathlib import Path
 
 # Es una ventana de trabajo suya, no un agente del hub, así que le toca el
 # modelo: hereda el que él tenga puesto en su propia configuración.
-COMANDO_SUGERIDO = "claude --dangerously-skip-permissions"
+#
+# 🔴 Un `claude` a secas por omisión, y configurable con `HUB_COMANDO_CLAUDE`.
+# Hasta el 14-oct era `claude --dangerously-skip-permissions`, cableado porque
+# es como trabaja el autor; en la instalación de otra persona eso dejaba escrito,
+# a un Enter de distancia, un Claude que no pide ningún permiso, sin que ella lo
+# hubiera elegido. Quien trabaje así lo pone en el entorno de `hub-web` (266).
+COMANDO_SUGERIDO = os.environ.get("HUB_COMANDO_CLAUDE", "").strip() or "claude"  # modelo: hereda
 
 
 # 🔴 Lista blanca, y no el valor de la muestra tal cual. `panel.comando` es lo

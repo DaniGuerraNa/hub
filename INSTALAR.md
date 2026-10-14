@@ -58,7 +58,7 @@ tmux, y sin él el hub parece instalado sin estarlo.
 | | |
 |---|---|
 | `~/.local/share/hub/projects.yml` | **Tu registro.** Aquí declaras tus proyectos. Es un archivo de texto a propósito: si algo se rompe, se arregla con un editor |
-| `~/.local/share/hub/hub.db` | El índice. Se reconstruye escaneando; no guardes nada aquí que no esté en otro sitio |
+| `~/.local/share/hub/hub.db` | El índice, y también tus slots, notas, canal, programados y encargos. No lo borres: si algo falla, apártalo (ver `conocimiento/06-problemas.md`) |
 | `~/.config/systemd/user/hub-*.service` | Los dos servicios, generados con las rutas de tu clon |
 
 Tus datos **no viven dentro del repo**: así puedes actualizar el hub con un
@@ -149,6 +149,7 @@ funciona. Están aquí porque la que no se documenta no existe.
 | `HUB_TMUX_SOCKET` | *(ninguno)* | Servidor de tmux aparte (`tmux -L`). Los tests lo usan para no tocar tus sesiones |
 | `HUB_CONTEXTO_FICHERO` | `$HUB_HOME/asistente-contexto.json` | Dónde escribe el statusline del asistente |
 | `HUB_STATUSLINE_SIGUIENTE` | *(ninguno)* | Ver abajo |
+| `HUB_COMANDO_CLAUDE` | `claude` | Lo que «Restaurar» deja escrito (sin Enter) en las ventanas que tenían Claude Code. Va en el entorno de `hub-web` |
 
 🔴 **`HUB_STATUSLINE_SIGUIENTE`, si ya tienes una statusline.** Sembrar el
 asistente le pone la suya, y en Claude Code una statusline de proyecto

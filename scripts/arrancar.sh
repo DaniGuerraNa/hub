@@ -29,6 +29,14 @@ parar() {
 if [ "${1:-}" = "--parar" ]; then parar; exit 0; fi
 
 parar >/dev/null 2>&1 || true
+# Con el nuestro ya parado, si algo sigue escuchando es de otro programa: el hub
+# no podría arrancar y la comprobación de abajo hablaría con el otro (14-oct).
+if (exec 3<>"/dev/tcp/$HUB_HOST/$HUB_PORT") 2>/dev/null; then
+  printf '  ✗ el puerto %s ya lo usa otro programa. Usa otro: HUB_PORT=8788 bash %s
+' \
+         "$HUB_PORT" "$0" >&2
+  exit 1
+fi
 cd "$RAIZ"
 HUB_HOME="$HUB_HOME" nohup uv run uvicorn hub.web:app --host "$HUB_HOST" --port "$HUB_PORT" \
   > "$LOGS/web.log" 2>&1 & echo $! > "$LOGS/web.pid"
@@ -38,7 +46,8 @@ HUB_HOME="$HUB_HOME" nohup uv run python -m hub.snapshotter \
 # Arrancar no es funcionar: se espera a que la web conteste de verdad.
 url="http://$HUB_HOST:$HUB_PORT"
 for _ in $(seq 1 30); do
-  codigo=$(curl -s -o /dev/null -w '%{http_code}' "$url/" || true)
+  # Que sea EL HUB quien contesta, no sólo que algo dé 200.
+  codigo=$(curl -s "$url/" | grep -q 'apple-mobile-web-app-title" content="Hub"' && echo 200 || echo no)
   [ "$codigo" = "200" ] && break
   sleep 0.5
 done

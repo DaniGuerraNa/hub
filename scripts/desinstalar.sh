@@ -4,9 +4,9 @@
 #   bash scripts/desinstalar.sh           servicios fuera, datos intactos
 #   bash scripts/desinstalar.sh --datos   además borra HUB_HOME
 #
-# Los datos no se van por defecto porque en HUB_HOME viven las notas de los
-# slots, que son lo único del hub que no está en ningún otro sitio: no se
-# reconstruyen escaneando, a diferencia del resto de la base.
+# Los datos no se van por defecto porque en HUB_HOME viven cosas que no están
+# en ningún otro sitio y no se reconstruyen escaneando: los slots y sus notas,
+# el canal, los programados y los encargos (ver conocimiento/06-problemas.md).
 set -euo pipefail
 
 HUB_HOME=${HUB_HOME:-$HOME/.local/share/hub}

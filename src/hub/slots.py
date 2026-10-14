@@ -275,10 +275,8 @@ def comando_manual(con: sqlite3.Connection, slot_id: int) -> str | None:
 
 # ── Restaurar tras un apagón ─────────────────────────────────────────────────
 
-# Lo que se deja escrito en la ventana. `--dangerously-skip-permissions` porque
-# es como se trabaja aquí de verdad: dejar escrito un comando que luego hay que
-# corregir a mano no ahorra nada, y dejar escrito un flag que no existe sería
-# peor que no dejar ninguno (decisión 165).
+# Lo que se deja escrito en la ventana: `restauracion.COMANDO_SUGERIDO`, que es
+# `claude` salvo que `HUB_COMANDO_CLAUDE` diga otra cosa (decisiones 165 y 266).
 #
 # modelo: hereda — y aquí con más motivo que en `abrir()`. Esto no arranca nada:
 # deja el texto en el prompt para que lo lance una persona, que puede editarlo

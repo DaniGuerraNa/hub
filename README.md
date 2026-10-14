@@ -152,7 +152,7 @@ bash scripts/doctor.sh
 | | |
 |---|---|
 | `~/.local/share/hub/projects.yml` | **Tu registro.** El único archivo que editas a mano |
-| `~/.local/share/hub/hub.db` | El índice. Se reconstruye solo |
+| `~/.local/share/hub/hub.db` | El índice, y también tus slots, notas, canal, programados y encargos: no lo borres (ver `conocimiento/06`) |
 | `~/.local/share/hub/kits/` | Los kits instalados, por `id` y versión |
 
 Nada de eso vive dentro del repo, así que puedes actualizar el hub con un
