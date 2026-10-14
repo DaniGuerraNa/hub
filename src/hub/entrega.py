@@ -91,11 +91,12 @@ def panel_apto(pane_id: str) -> tuple[bool, str]:
     if agente is None:
         return False, motivo
     if not tui.listo(agente, pane_id):
-        if agente is tui.CLAUDE and asistente.menu_abierto(tmux.capturar_panel(pane_id)):
+        pantalla = tmux.capturar_panel(pane_id) if agente is tui.CLAUDE else ""
+        if pantalla and asistente.menu_abierto(pantalla):
             # Distinto de «arrancando»: eso se arregla esperando, y esto no se
-            # arregla nunca solo (decisión 265).
-            return False, (f"{agente.nombre} está esperando que contestes algo en su "
-                           "pantalla (por ejemplo, si confías en la carpeta)")
+            # arregla nunca solo (decisión 265). Se dice CUÁL, porque quien lo
+            # lee desde el teléfono tiene que saber qué va a aceptar.
+            return False, f"{agente.nombre} {asistente.que_pregunta(pantalla)}"
         return False, f"{agente.nombre} está arrancando y todavía no acepta entrada"
     if tui.ocupado(agente, pane_id):
         # No se encola: el agente ya tiene su propia cola y duplicarla haría que

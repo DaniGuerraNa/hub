@@ -407,4 +407,23 @@ def test_un_menu_en_pantalla_se_dice_y_no_se_confunde_con_arrancar(monkeypatch):
 
     apto, motivo = entrega.panel_apto("%4")
 
-    assert not apto and "contestes" in motivo
+    assert not apto and "confías en la carpeta" in motivo
+
+
+def test_el_aviso_del_modo_sin_permisos_se_nombra_y_no_se_acepta_solo(monkeypatch):
+    """Capturado en limpio el 14-oct: la primera sesión que abrió el orquestador
+    en una máquina nueva. Sale una vez por máquina; aceptarlo es de la persona."""
+    from hub import entrega, tmux, tui
+    pantalla = """  WARNING: Claude Code running in Bypass Permissions mode
+  In Bypass Permissions mode, Claude Code will not ask for your approval
+  before running potentially dangerous commands.
+  ❯ No, exit
+    Yes, I accept
+  Enter to confirm · Esc to cancel"""
+    monkeypatch.setattr(entrega, "quien_hay", lambda p: (tui.CLAUDE, ""))
+    monkeypatch.setattr(tmux, "capturar_panel", lambda p: pantalla)
+    monkeypatch.setattr(tmux, "pegar_en_panel", lambda *a, **k: pytest.fail("no debía escribir"))
+
+    apto, motivo = entrega.panel_apto("%4")
+
+    assert not apto and "modo sin permisos" in motivo

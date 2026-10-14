@@ -226,6 +226,22 @@ def menu_abierto(pantalla: str) -> bool:
     return any(m in pantalla for m in _MARCAS_MENU)
 
 
+def que_pregunta(pantalla: str) -> str:
+    """Qué menú es, dicho para quien tiene que contestarlo.
+
+    Los dos que salen la primera vez en una máquina nueva, medidos en limpio el
+    13 y el 14-oct. El del modo sin permisos sale UNA vez por máquina, en la
+    primera sesión que lo pide —en la del autor se aceptó hace meses y nunca se
+    vio—, y aceptarlo es una decisión de la persona: el hub no lo contesta.
+    """
+    if "Bypass Permissions mode" in pantalla:
+        return ("pide aceptar el modo sin permisos (sale una sola vez por máquina): "
+                "acéptalo en su terminal si estás de acuerdo")
+    if "trust this folder" in pantalla:
+        return "pregunta si confías en la carpeta: contéstalo en su terminal"
+    return "está esperando que contestes algo en su pantalla"
+
+
 def listo(pane_id: str) -> bool:
     """Si el cuadro de entrada de Claude Code ya está pintado y acepta texto.
 

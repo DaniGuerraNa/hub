@@ -42,6 +42,18 @@ de verdad son las reglas `deny` del `.claude/settings.json` de cada proyecto.
 **Antes de darle nivel a un proyecto delicado, pon ahí lo que no debe pasar
 nunca** —por ejemplo, el comando de despliegue a producción—.
 
+### La primera vez en una máquina nueva
+
+La primera sesión que abra el orquestador hará que Claude Code pregunte **si
+aceptas el modo sin permisos**. Sale una sola vez por máquina, y el hub **no la
+contesta por ti**: la tarea se queda esperando y te avisa de qué hay que
+aceptar. Contéstalo en la terminal de esa sesión (en Trabajo, la ventana
+`orq-…`) y la tarea sigue sola.
+
+Si prefieres quitártelo de en medio antes de la primera tarea, abre una terminal
+y ejecuta una vez `claude --dangerously-skip-permissions`, acepta y sal con
+`/exit`.
+
 ### Lo que cuesta
 
 El orquestador y las sesiones que abre usan **Opus**, porque coordinar trabajo
