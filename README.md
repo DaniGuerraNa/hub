@@ -69,6 +69,7 @@ la interfaz son `.js` que el navegador cachea.
 | **Orquestador** | Le das una tarea y él se la pide a la sesión de cada proyecto, paso a paso. Ver [`conocimiento/09`](conocimiento/09-orquestador-e-intercambio.md) antes de darle permisos |
 | **Canal** y **Encargos** | Preguntar y recibir encargos por Telegram. Opcionales: sus servicios se instalan parados |
 | **Acceso** | Por qué nombres se entra al hub, qué aparatos pueden, y si la terminal está abierta desde fuera |
+| **Guía** | Por dónde empezar: los primeros pasos, que se marcan solos al hacerlos, y qué hay en cada pantalla. Con «Guíame», el asistente te acompaña |
 
 Y una más que no sale en el raíl porque depende de dónde estés: **la del
 proyecto** (`/proyecto/<id>`, pinchando cualquiera), donde se crean, editan,
@@ -101,8 +102,10 @@ carpeta tuya:
 | **Lanzar mantenedor** | Inventario, sobre un kit | El repo de ese kit |
 
 Los dos primeros pueden ser botones justamente porque la carpeta está vacía: no
-hay nada de nadie que sobrescribir. Registrar un proyecto que **ya existe** o
-aplicarle un kit no tienen botón por eso mismo, y se piden a Claude Code.
+hay nada de nadie que sobrescribir. Aplicar un kit a un proyecto que **ya
+existe** no tiene botón por eso mismo, y se pide a Claude Code. Registrar uno
+que ya existe se le pide al asistente: mira la carpeta, te pregunta lo que
+necesita y sólo da el alta en el registro, sin escribir nada dentro.
 
 Ninguna escribe por su cuenta: el hub prepara el encargo y lo ejecuta un agente
 en su ventana, que tú ves. Y `guardrail: never` en el registro de un proyecto

@@ -275,7 +275,16 @@ _OPCION = "opcion"
 # se deja fuera **a propósito**: amplía los permisos del asistente de forma
 # permanente, y eso se decide editando su `.claude/settings.json` a conciencia,
 # no pulsando un botón en un chat.
-RESPUESTAS = {"si": "1", "no": "3"}
+#
+# 🔴 «No» es Escape y NUNCA un número (decisión 272). Era «3», porque el cuadro
+# tenía tres opciones y la tercera era «No». En 2.1.280, al leer fuera de su
+# carpeta, el cuadro trae CUATRO: «1. Yes · 2. Yes, allow reading from… ·
+# 3. Yes, and switch to auto mode · 4. No». Pulsar «No» en el chat habría
+# autorizado el comando Y quitado los permisos para el resto de la sesión.
+# Visto en la sala limpia del 16-oct. «Yes» sigue siendo la primera en todas
+# las variantes medidas; «No» cambia de número, y Escape cancela en todas
+# («Esc to cancel»).
+RESPUESTAS = {"si": "1", "no": "Escape"}
 
 
 def confirmacion_pendiente(pane_id: str | None = None) -> dict[str, Any] | None:
@@ -308,6 +317,12 @@ def confirmacion_pendiente(pane_id: str | None = None) -> dict[str, Any] | None:
     # Lo que pide va entre la última regla anterior a la pregunta y la pregunta.
     inicio = max((i for i, l in enumerate(lineas[:corte]) if _es_regla(l)), default=-1)
     peticion = [l.strip() for l in lineas[inicio + 1:corte] if l.strip()]
+    # El consejo de Claude Code («Tip: auto mode handles these prompts… choose
+    # "switch to auto mode" below») no es parte de lo que pide, y a quien
+    # empieza le invita a quitarse los permisos. Puede ocupar varias líneas.
+    texto = re.sub(r"^Tip:.*?\bbelow\b\.?$", "", "\n".join(peticion),
+                   flags=re.MULTILINE | re.DOTALL)
+    peticion = [l for l in texto.splitlines() if l.strip()]
 
     return {"pane_id": pane_id, "peticion": peticion, "respuestas": sorted(RESPUESTAS)}
 
@@ -668,10 +683,38 @@ def _autorizar(pane_id: str | None) -> str:
     return real
 
 
-def enviar(texto: str, pane_id: str | None = None) -> dict[str, Any]:
+# La pantalla desde la que se pregunta, en la primera línea del mensaje. Sin
+# ella «¿qué es esto?» no tiene respuesta posible: el asistente no ve la web
+# (decisión 271). Va marcada como lo interno —el chat la quita al pintar— y no
+# como un archivo aparte, porque así viaja pegada a la pregunta que la necesita.
+PREFIJO_PANTALLA = "[hub:pantalla "
+_RUTA_PANTALLA = re.compile(r"^/[\w\-./?=&%#+]{0,200}$")
+
+
+def con_pantalla(texto: str, ruta: str = "", titulo: str = "") -> str:
+    """El mensaje con la pantalla delante, si la ruta es una ruta del hub.
+
+    Se valida: viene del navegador, y lo que se pega en el panel tiene que ser
+    una línea corta y predecible, no lo que alguien quiera meter ahí.
+    """
+    if not ruta or not _RUTA_PANTALLA.match(ruta):
+        return texto
+    titulo = " ".join((titulo or "").replace("]", "").split())[:80]
+    return f"{PREFIJO_PANTALLA}{ruta}{' · ' + titulo if titulo else ''}]\n{texto}"
+
+
+def sin_pantalla(texto: str) -> str:
+    if (texto or "").startswith(PREFIJO_PANTALLA):
+        return texto.split("\n", 1)[1] if "\n" in texto else ""
+    return texto
+
+
+def enviar(texto: str, pane_id: str | None = None, ruta: str = "",
+           titulo: str = "") -> dict[str, Any]:
     """Manda un mensaje al asistente. Multilínea llega como UN solo mensaje."""
     if not texto.strip():
         raise ValueError("un mensaje vacío no se envía")
+    texto = con_pantalla(texto, ruta, titulo)
 
     destino = _autorizar(pane_id)
     if not listo(destino):
@@ -776,6 +819,8 @@ def ocultar_internos(mensajes: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 saltar_respuesta = True
                 continue
             saltar_respuesta = False
+            if texto.startswith(PREFIJO_PANTALLA):
+                mensaje = {**mensaje, "texto": sin_pantalla(texto)}
         elif saltar_respuesta:
             saltar_respuesta = False
             continue

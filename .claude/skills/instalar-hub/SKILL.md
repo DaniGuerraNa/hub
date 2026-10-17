@@ -82,8 +82,12 @@ Pregunta si lo quiere. Si dice que sí:
 bash scripts/sembrar-asistente.sh
 ```
 
-y **añade al registro** el bloque `tipo: asistente` que el script imprime. Si
-dice que no, no hagas nada: sin un proyecto de ese tipo la pestaña ni se pinta.
+El script **lo declara solo** en el registro, dentro de `proyectos:`. Si dice
+que no pudo, añade a mano el bloque que imprime, DENTRO de la lista
+`proyectos:` —nunca al final del archivo, que termina con `conexiones: []`—.
+Si el usuario no lo quiere, no lo siembres: sin ese proyecto la pestaña ni se pinta.
+
+Cuando termines, dile que empiece por la **Guía** (`/guia`).
 
 ### 5. Verifica y cuenta
 

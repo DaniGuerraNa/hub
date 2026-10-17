@@ -789,7 +789,7 @@ def test_una_espera_libre_acaba_solo_cuando_se_le_puede_escribir(mirando, monkey
     assert "ya está libre" in t["despertar"][0]
 
 
-def test_una_tarea_parada_sin_nada_pendiente_se_despierta_una_vez(monkeypatch):
+def test_una_tarea_parada_sin_nada_pendiente_se_despierta_sin_repetir_en_el_mismo_latido(monkeypatch):
     """La red: ningún descuido suyo deja una tarea muerta en silencio."""
     tarea_id = _activa()
     viejo = _hace(orq.MINUTOS_SIN_NADA * 60 + 30)
@@ -803,7 +803,7 @@ def test_una_tarea_parada_sin_nada_pendiente_se_despierta_una_vez(monkeypatch):
         orq._vigilar_quieta(t)
 
     t = orq.cargar(tarea_id)
-    assert len(t["despertar"]) == 1 and "parado" in t["despertar"][0]
+    assert len(t["despertar"]) == 1 and "sin avanzar" in t["despertar"][0]
 
 
 def test_si_esta_trabajando_la_red_no_lo_molesta(monkeypatch):
@@ -866,3 +866,317 @@ def test_si_la_sesion_solo_trabaja_no_se_molesta_al_dueno(escena, sesion_libre, 
 
     assert r["necesita_al_dueno"] is False
     assert orq.timbres_pendientes() == []
+
+
+# ─────────────────────────────── reanudar ───────────────────────────────────
+
+
+def _detenida(pedido="haz algo en alfa"):
+    tarea_id = _activa(pedido)
+    with orq.editar(tarea_id) as t:
+        t["empezada"] = orq.ahora()
+    orq.detener(tarea_id)
+    return tarea_id
+
+
+def test_una_tarea_detenida_se_reanuda_desde_donde_estaba_con_la_nota_del_dueno(monkeypatch):
+    """Detener era de un solo sentido: había que dictarla otra vez (269)."""
+    monkeypatch.setattr(orq, "localizar", lambda: None)
+    tarea_id = _detenida()
+    with orq.editar(tarea_id) as t:
+        t["paso"], t["pasos"] = 4, 6
+
+    r = orq.reanudar(tarea_id, "usa opus en la sesión de alfa")
+
+    t = orq.cargar(tarea_id)
+    assert r == {"ok": True, "en_cola": False}
+    assert t["estado"] == orq.ACTIVA and t["paso"] == 4 and t["cerrada"] is None
+    assert t["despertar"][0].startswith("El dueño REANUDA la tarea " + tarea_id)
+    assert "«usa opus en la sesión de alfa»" in t["despertar"][0]
+    assert orq.bitacora(tarea_id)[-1]["tipo"] == "reanudada"
+    orq.avance("sigo")   # sus manos vuelven a funcionar
+
+
+def test_reanudada_se_le_dice_a_su_mismo_orquestador_sin_cerrarlo(monkeypatch):
+    """Su ventana aún tiene el contexto de esta tarea: tirarlo sería perderlo."""
+    entregados: list[str] = []
+    monkeypatch.setattr(orq, "localizar", lambda: "%1")
+    monkeypatch.setattr(orq, "cerrar_panel", lambda: pytest.fail("no debía cerrar su ventana"))
+    monkeypatch.setattr(orq.entrega, "panel_apto", lambda pane: (True, ""))
+    monkeypatch.setattr(orq.entrega, "entregar", lambda pane, texto: entregados.append(texto))
+    monkeypatch.setattr(orq, "_interrumpir", lambda pane: False)
+    tarea_id = _detenida()
+
+    orq.reanudar(tarea_id)
+    orq._despertar(tarea_id)
+
+    assert len(entregados) == 1 and "REANUDA" in entregados[0]
+
+
+def test_con_otra_en_curso_la_reanudada_vuelve_a_la_cola_y_arranca_con_contexto_limpio(
+        escena, monkeypatch):
+    abiertos: list[str] = []
+    cerrados: list[bool] = []
+    monkeypatch.setattr(orq, "localizar", lambda: None)
+    monkeypatch.setattr(orq, "cerrar_panel", lambda: cerrados.append(True))
+    monkeypatch.setattr(orq, "abrir_panel", lambda texto: abiertos.append(texto) or "%9")
+    vieja = _detenida()
+    otra = _activa("otra cosa")
+
+    assert orq.reanudar(vieja, "sigue")["en_cola"] is True
+    assert orq.cargar(vieja)["estado"] == orq.EN_COLA
+    orq.bombear(escena)
+    assert abiertos == []          # la otra sigue en curso
+
+    with orq.editar(otra) as t:
+        t["estado"] = orq.TERMINADA
+    orq.bombear(escena)
+
+    assert orq.cargar(vieja)["estado"] == orq.ACTIVA
+    assert cerrados and "REANUDA" in abiertos[0] and "«sigue»" in abiertos[0]
+
+
+def test_solo_se_reanuda_lo_detenido():
+    tarea_id = _activa()
+
+    with pytest.raises(ValueError, match="no está detenida"):
+        orq.reanudar(tarea_id)
+
+
+def test_reanudar_desde_la_pantalla(cliente, escena, monkeypatch):
+    monkeypatch.setattr(orq, "localizar", lambda: None)
+    tarea_id = _detenida()
+
+    pagina = cliente.get(f"/orquestador?tarea={tarea_id}").text
+    assert 'action="/orquestador/reanudar"' in pagina
+
+    r = cliente.post("/orquestador/reanudar", data={"tarea_id": tarea_id, "nota": "ya vi lo que hacía"},
+                     follow_redirects=False)
+
+    assert r.status_code == 303
+    assert orq.cargar(tarea_id)["estado"] == orq.ACTIVA
+
+
+# ─────────────────── modelo, esfuerzo y contexto de las sesiones ────────────
+
+
+def test_el_orquestador_y_sus_sesiones_compactan_al_70():
+    """Una sesión llegó al 96 % sin compactar en siete horas (267)."""
+    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70" in orq.comando_de_arranque("Tarea nueva: t-1")
+    assert modelos.entorno_de_sesion() == {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70"}
+
+
+@pytest.fixture
+def abriendo(escena, monkeypatch):
+    from hub import agentes, entrevistador, slots
+    creados: list[str] = []
+    monkeypatch.setattr(orq, "sesiones", lambda con, p: [])
+    monkeypatch.setattr(agentes, "_confiar", lambda ruta: None)
+    monkeypatch.setattr(slots, "crear", lambda con, p, n, **kw: creados.append(kw["comando"]) or 1)
+    monkeypatch.setattr(slots, "abrir", lambda con, sid, **kw: "%7")
+    monkeypatch.setattr(entrevistador, "comprobar_arranque", lambda pane: None)
+    monkeypatch.setattr(orq.tui, "listo", lambda agente, pane: True)
+    orq.fijar_nivel("alfa", "alto")
+    _activa()
+    return creados
+
+
+def test_abrir_por_omision_es_opus_con_esfuerzo_alto_y_compactando_al_70(escena, abriendo):
+    orq.abrir_sesion(escena, "alfa")
+
+    assert abriendo[0].startswith("env CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70 claude ")
+    assert "--model claude-opus-5-5" in abriendo[0] and "--effort high" in abriendo[0]
+
+
+def test_abrir_acepta_el_alias_pero_lanza_el_id_exacto(escena, abriendo):
+    """Decisión 91: el alias nunca llega a `claude`."""
+    orq.abrir_sesion(escena, "alfa", modelo="sonnet", esfuerzo="low")
+
+    assert "--model claude-sonnet-5 " in abriendo[0] and "--effort low" in abriendo[0]
+
+
+def test_abrir_no_pasa_del_techo_de_modelos_ni_inventa_esfuerzos(escena, abriendo):
+    with pytest.raises(ValueError, match="fuera de la política"):
+        orq.abrir_sesion(escena, "alfa", modelo="fable")
+    with pytest.raises(ValueError, match="esfuerzo"):
+        orq.abrir_sesion(escena, "alfa", esfuerzo="ultra")
+    assert abriendo == []
+
+
+@pytest.fixture
+def ajustando(escena, sesion_libre, monkeypatch):
+    """`%5` con Claude como proceso raíz, en Sonnet y quieto."""
+    fichas = [{"pid": 100, "session_id": "s-1", "cwd": "/tmp/alfa", "estado": "idle",
+               "modelo": "claude-sonnet-5", "esfuerzo": None,
+               "permisos": "bypassPermissions", "compacta_al": None, "contexto": 900_000}]
+    relanzados: list[tuple] = []
+    monkeypatch.setattr(orq, "ficha", lambda pane: fichas[0] if len(relanzados) == 0
+                        else {**fichas[0], "pid": 200, "modelo": "x"})
+    monkeypatch.setattr(orq.tmux, "relanzar_panel",
+                        lambda pane, ruta, comando, entorno: relanzados.append((pane, ruta, comando, entorno)))
+    monkeypatch.setattr(orq.tui, "listo", lambda agente, pane: True)
+    orq.fijar_nivel("alfa", "alto")
+    _activa()
+    return fichas, relanzados
+
+
+def test_ajustar_relanza_la_misma_conversacion_en_el_mismo_panel(escena, sesion_libre, ajustando):
+    """🔴 Sin `/model` ni `/effort`: los dos guardan el valor como predeterminado
+    del dueño en su settings.json (medido el 16-oct, decisión 268)."""
+    _, relanzados = ajustando
+
+    r = orq.ajustar(escena, "alfa", "%5", modelo="opus", esfuerzo="xhigh")
+
+    pane, ruta, comando, entorno = relanzados[0]
+    assert (pane, ruta) == ("%5", "/tmp/alfa")
+    assert comando == ("claude --resume s-1 --model claude-opus-5-5 --effort xhigh "
+                       "--permission-mode bypassPermissions")
+    assert entorno["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "70" and "PATH" in entorno
+    assert sesion_libre == []      # no se escribió nada en su cuadro
+    assert "claude-opus-5-5/xhigh" in r["cambio"]
+    assert orq.bitacora(orq.viva()["id"])[-1]["tipo"] == "ajustada"
+
+
+def test_ajustar_no_relanza_si_hay_trabajo_en_segundo_plano_sin_forzar(escena, sesion_libre, ajustando, monkeypatch):
+    fichas, relanzados = ajustando
+    fichas[0]["estado"] = "shell"
+    monkeypatch.setattr(orq, "_procesos_hijos", lambda pid: ["bash -c entrenar.py"])
+
+    with pytest.raises(ValueError, match="entrenar.py"):
+        orq.ajustar(escena, "alfa", "%5", modelo="opus")
+    assert relanzados == []
+
+    orq.ajustar(escena, "alfa", "%5", modelo="opus", forzar=True)
+    assert len(relanzados) == 1
+
+
+def test_ajustar_no_toca_un_panel_que_no_arranco_claude_directamente(escena, sesion_libre, ajustando):
+    """Debajo podría haber una shell del dueño, y relanzar se la llevaría."""
+    fichas, relanzados = ajustando
+    fichas[0]["pid"] = None
+
+    with pytest.raises(ValueError, match="directamente"):
+        orq.ajustar(escena, "alfa", "%5", modelo="opus")
+    assert relanzados == []
+
+
+def test_ajustar_solo_en_sesiones_del_proyecto(escena, sesion_libre, ajustando):
+    with pytest.raises(ValueError, match="no es una sesión viva"):
+        orq.ajustar(escena, "alfa", "%99", modelo="opus")
+
+
+def test_compactar_escribe_compact_y_espera_a_que_quede_libre(escena, sesion_libre):
+    orq.fijar_nivel("alfa", "alto")
+    tarea_id = _activa()
+
+    orq.compactar(escena, "alfa", "%5", "lo de la etapa 2")
+
+    assert sesion_libre == [("%5", "/compact lo de la etapa 2")]
+    espera = orq.cargar(tarea_id)["esperas"][-1]
+    assert espera["tipo"] == "libre" and espera["pane_id"] == "%5"
+
+
+def test_el_contexto_se_mide_del_ultimo_turno_del_transcript(tmp_path, monkeypatch):
+    monkeypatch.setattr(transcripts, "TRANSCRIPTS", tmp_path)
+    d = tmp_path / transcripts.slug_de("/tmp/alfa")
+    d.mkdir()
+    lineas = [
+        {"type": "assistant", "message": {"usage": {"input_tokens": 5, "cache_read_input_tokens": 100}}},
+        {"type": "user", "message": {"content": "hola"}},
+        {"type": "assistant", "message": {"usage": {"input_tokens": 2, "cache_read_input_tokens": 900_000,
+                                                    "cache_creation_input_tokens": 56_000}}},
+        {"type": "system", "subtype": "x"},
+    ]
+    (d / "s-1.jsonl").write_text("\n".join(json.dumps(l) for l in lineas))
+
+    assert orq._contexto("/tmp/alfa", "s-1") == 956_002
+    assert orq._contexto("/tmp/alfa", "otra") is None
+
+
+def test_tras_compactar_el_contexto_es_lo_que_quedo_y_no_el_ultimo_turno(tmp_path, monkeypatch):
+    monkeypatch.setattr(transcripts, "TRANSCRIPTS", tmp_path)
+    d = tmp_path / transcripts.slug_de("/tmp/alfa")
+    d.mkdir()
+    lineas = [
+        {"type": "assistant", "message": {"usage": {"input_tokens": 2, "cache_read_input_tokens": 956_000}}},
+        {"type": "system", "subtype": "compact_boundary",
+         "compactMetadata": {"preTokens": 957_469, "postTokens": 18_897}},
+        {"type": "user", "isCompactSummary": True, "message": {"content": "resumen"}},
+    ]
+    (d / "s-1.jsonl").write_text("\n".join(json.dumps(l) for l in lineas))
+
+    assert orq._contexto("/tmp/alfa", "s-1") == 18_897
+
+
+# ─────────── lo que Claude Code dice de sí mismo (decisión 270) ─────────────
+
+
+def test_si_no_avanza_tras_el_aviso_se_le_vuelve_a_despertar_y_a_la_tercera_al_dueno(monkeypatch):
+    """16-oct: contestó al aviso «esta vez sí me avisará» sin nada abierto, y
+    como avisaba una vez por silencio, se quedó tres horas parada."""
+    tarea_id = _activa()
+    (orq.dir_de(tarea_id) / "bitacora.jsonl").write_text(
+        json.dumps({"cuando": _hace(3 * 3600), "tipo": "respuesta", "texto": "x"}) + "\n")
+    monkeypatch.setattr(orq, "localizar", lambda: "%1")
+    monkeypatch.setattr(orq, "_ocupada", lambda agente, pane: (False, False))
+    timbres: list[str] = []
+    monkeypatch.setattr(orq, "timbre", timbres.append)
+
+    for vez in range(3):
+        with orq.editar(tarea_id) as t:
+            orq._vigilar_quieta(t)
+            assert len(t["despertar"]) == 1, vez
+            t["despertar"] = []                    # se le entregó y no hizo nada
+            t["vigia_en"] = _hace(orq.MINUTOS_SIN_NADA * 60 + 5)
+
+    assert timbres == [f"La tarea {tarea_id} lleva 180 min sin avanzar."]
+
+
+def test_con_trabajo_de_fondo_la_respuesta_no_se_da_por_acabada(mirando, monkeypatch):
+    """Medido: el turno acabó, la pantalla dice libre y Claude dice `shell`
+    mientras su `sleep 40` sigue. Leerla ahí es leer una respuesta a medias."""
+    monkeypatch.setattr(orq, "estado_claude", lambda pane: "shell")
+    tarea_id = _con_espera(enviado_hace=600)
+
+    t = _revisar(tarea_id)
+
+    assert t["esperas"][0]["estado"] == "esperando" and t["despertar"] == []
+    monkeypatch.setattr(orq, "estado_claude", lambda pane: "idle")
+    assert _revisar(tarea_id)["esperas"][0]["estado"] == "terminada"
+
+
+def test_busy_cuenta_como_trabajando_aunque_aun_no_se_vea_el_spinner(mirando, monkeypatch):
+    monkeypatch.setattr(orq, "estado_claude", lambda pane: "busy")
+    tarea_id = _con_espera(enviado_hace=orq.QUIETA_TRAS + 5)
+
+    t = _revisar(tarea_id)
+
+    assert t["esperas"][0]["estado"] == "esperando" and t["esperas"][0]["visto_trabajando"]
+
+
+def test_mandar_no_pega_encima_de_una_sesion_que_sigue_con_lo_suyo(escena, sesion_libre, monkeypatch):
+    """Lo pegado quedaba «en cola» y salía cuando ella quisiera."""
+    monkeypatch.setattr(orq, "estado_claude", lambda pane: "shell")
+    monkeypatch.setattr(orq.tmux, "capturar_panel", lambda pane: "")
+    orq.fijar_nivel("alfa", "alto")
+    tarea_id = _activa()
+
+    r = orq.mandar(escena, "alfa", "%5", "sigue")
+
+    assert r["enviado"] is False and sesion_libre == []
+    assert orq.cargar(tarea_id)["esperas"][-1]["tipo"] == "libre"
+
+
+def test_el_estado_se_lee_del_archivo_de_su_panel_y_solo_si_esta_vivo(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setattr(orq, "_sesiones_de_claude", lambda: tmp_path)
+    monkeypatch.setattr(orq.tmux, "pid_del_panel", lambda pane: 1)   # una shell debajo
+    vivo, muerto = os.getpid(), 999_999_999
+    (tmp_path / f"{muerto}.json").write_text(json.dumps(
+        {"pid": muerto, "status": "busy", "tmux": "s:@1.%5"}))
+    assert orq.estado_claude("%5") is None          # de una sesión que ya murió
+
+    (tmp_path / f"{vivo}.json").write_text(json.dumps(
+        {"pid": vivo, "status": "shell", "tmux": "s:@1.%5"}))
+    assert orq.estado_claude("%5") == "shell"
+    assert orq.estado_claude("%55") is None         # no casa por prefijo

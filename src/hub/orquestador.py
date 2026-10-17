@@ -36,6 +36,7 @@ import re
 import shlex
 import shutil
 import sqlite3
+import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -408,6 +409,49 @@ def detener(tarea_id: str, motivo: str = "detenida por el dueño") -> dict[str, 
     return {"ok": True, "interrumpidas": interrumpidas}
 
 
+def reanudar(tarea_id: str, nota: str = "") -> dict[str, Any]:
+    """Vuelve a poner en marcha una tarea detenida, desde donde estaba.
+
+    Detener era un botón de un solo sentido: el dueño la paraba para mirar qué
+    hacía y no había forma de seguir sin dictarla otra vez (decisión 269). La
+    tarea conserva su plan, su paso y su bitácora; lo que se le dice al
+    orquestador es que **la paró el dueño**, con la nota que él quiera añadir,
+    y que compruebe cómo están las sesiones antes de mandar nada: entre medias
+    pudieron terminar, seguir o cambiar.
+
+    Si hay otra tarea en curso, ésta vuelve a la cola y arranca al acabar
+    aquélla: la cola de una en una es decisión suya.
+    """
+    nota = (nota or "").strip()
+    with _candado():
+        tarea = _leer(tarea_id)
+        if not tarea:
+            raise ValueError(f"no existe la tarea {tarea_id}")
+        if tarea["estado"] != DETENIDA:
+            raise ValueError(f"la tarea {tarea_id} no está detenida: está {ETIQUETA[tarea['estado']]}")
+        otra = viva()
+        tarea["cerrada"] = None
+        tarea["reanudada"] = ahora()
+        mensaje = REANUDAR.format(tarea=tarea_id) + (
+            f"\n\nLo que te dice el dueño al reanudarla:\n«{nota}»" if nota else "")
+        if otra:
+            tarea["estado"] = EN_COLA
+            tarea["al_reanudar"] = mensaje
+        else:
+            tarea["estado"] = ACTIVA
+            tarea["despertar"] = [mensaje]
+            # Si su orquestador ya no es el de esta tarea —después empezó
+            # otra—, contexto limpio: el de otra tarea sólo confundiría.
+            tarea["panel_limpio"] = any(
+                t["id"] != tarea_id and _momento(t.get("empezada") or t["creada"])
+                > _momento(tarea.get("empezada") or tarea["creada"])
+                for t in listar() if t.get("empezada"))
+        _escribir(tarea)
+    anotar(tarea_id, "reanudada", nota or "reanudada por el dueño",
+           en_cola=bool(otra))
+    return {"ok": True, "en_cola": bool(otra)}
+
+
 def _interrumpir(pane_id: str) -> bool:
     try:
         agente = tui.detectar(pane_id)
@@ -519,7 +563,8 @@ def _nombre_visible(slot: str, pestana: str) -> str:
     return slot or pestana
 
 
-def abrir_sesion(con: sqlite3.Connection, proyecto_id: str, nombre: str = "") -> dict[str, Any]:
+def abrir_sesion(con: sqlite3.Connection, proyecto_id: str, nombre: str = "",
+                 modelo: str = "", esfuerzo: str = "") -> dict[str, Any]:
     """Abre una sesión de Claude Code en el proyecto. Sólo si no hay ninguna.
 
     Si ya hay una, se usa ésa; si hay varias, se le pregunta al dueño cuál: es lo
@@ -550,8 +595,13 @@ def abrir_sesion(con: sqlite3.Connection, proyecto_id: str, nombre: str = "") ->
 
     nombre = (nombre or "").strip() or f"orq-{tarea['id'][2:]}"
     agentes._confiar(Path(proyecto["asiento"]))
-    comando = (f"claude {modelos.bandera(modelos.SESION_ORQUESTADA)} "
-               "--permission-mode bypassPermissions")
+    modelo = modelos.resolver(modelo or modelos.SESION_ORQUESTADA)
+    esfuerzo = esfuerzo or modelos.ESFUERZO_SESION_ORQUESTADA
+    # El umbral de compactar va en el comando y no en el entorno de tmux: el
+    # slot lo guarda, y una restauración lo vuelve a poner (decisión 267).
+    variables = " ".join(f"{k}={v}" for k, v in modelos.entorno_de_sesion().items())
+    comando = (f"env {variables} claude {modelos.bandera(modelo)} "
+               f"{modelos.bandera_esfuerzo(esfuerzo)} --permission-mode bypassPermissions")
     slot_id = slots.crear(con, proyecto_id, nombre, ruta=proyecto["asiento"],
                           nota=f"Abierta por el orquestador para la tarea {tarea['id']}.",
                           comando=comando)
@@ -567,8 +617,8 @@ def abrir_sesion(con: sqlite3.Connection, proyecto_id: str, nombre: str = "") ->
                               "nombre": nombre, "slot_id": slot_id, "cuando": ahora()})
         if proyecto_id not in t["proyectos"]:
             t["proyectos"].append(proyecto_id)
-    anotar(tarea["id"], "abierta", f"sesión nueva en {proyecto_id}",
-           proyecto=proyecto_id, pane_id=pane_id)
+    anotar(tarea["id"], "abierta", f"sesión nueva en {proyecto_id} ({modelo}, {esfuerzo})",
+           proyecto=proyecto_id, pane_id=pane_id, modelo=modelo, esfuerzo=esfuerzo)
     if not listo:
         _esperar_libre(tarea["id"], proyecto_id, pane_id, "todavía arrancando")
     return {"pane_id": pane_id, "slot_id": slot_id, "listo": listo}
@@ -641,6 +691,10 @@ def mandar(con: sqlite3.Connection, proyecto_id: str, pane_id: str, texto: str) 
         )
 
     apto, motivo = entrega.panel_apto(pane_id)
+    if apto and estado_claude(pane_id) in ("busy", "shell"):
+        # El cuadro está libre pero la sesión no: lo pegado se queda «en cola»
+        # y sale cuando ella quiera, mezclado con lo que estaba haciendo.
+        apto, motivo = False, "sigue trabajando (o con trabajo en segundo plano)"
     if not apto:
         # Hay un agente pero ahora no acepta —trabaja, arranca, pide permiso—:
         # se espera a que quede libre y el hub lo despierta. Antes sólo se
@@ -709,6 +763,246 @@ def _nueva_espera(tarea: dict, proyecto_id: str, pane_id: str, tipo: str,
     }
     tarea["esperas"].append(espera)
     return espera
+
+
+# ─────────────────── el modelo, el esfuerzo y el contexto ───────────────────
+
+
+def _sesiones_de_claude() -> Path:
+    from . import transcripts
+    return transcripts.TRANSCRIPTS.parent / "sessions"
+
+
+def estado_claude(pane_id: str) -> str | None:
+    """Lo que Claude Code dice de sí mismo: `busy`, `shell`, `idle` o `waiting`.
+
+    Lo escribe en `~/.claude/sessions/<pid>.json`, con el panel de tmux dentro.
+    Medido el 2026-10-16 en 2.1.280, lanzando un `sleep 40` en segundo plano:
+    `busy` mientras el turno corre —y ya antes de que se pinte el spinner—,
+    **`shell` los 38 s en que el turno había acabado pero el trabajo de fondo
+    seguía**, e `idle` sólo cuando de verdad terminó. En esos 38 s la pantalla
+    decía «libre», y es justo el hueco por el que el orquestador leía respuestas
+    a medias y una tarea se quedó colgada tres horas (decisión 270).
+
+    🔴 Sirve para **afirmar** que sigue trabajando, nunca para negarlo (regla
+    dura 15): si el archivo no está o no casa, `None`, y manda la pantalla.
+    """
+    tmux.validar_panel(pane_id)
+    try:
+        pid = tmux.pid_del_panel(pane_id)
+    except (tmux.TmuxNoDisponible, RuntimeError):
+        return None
+    candidatos = [_sesiones_de_claude() / f"{pid}.json"] if pid else []
+    candidatos += sorted(_sesiones_de_claude().glob("*.json"))
+    for ruta in candidatos:
+        try:
+            info = json.loads(ruta.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        # El de su panel —por si `claude` no es el proceso raíz— y vivo: los
+        # archivos de sesiones muertas se quedan ahí con su último estado.
+        if (info.get("pid") == pid or str(info.get("tmux", "")).endswith("." + pane_id)) \
+                and Path(f"/proc/{info.get('pid')}").exists():
+            return info.get("status")
+    return None
+
+
+def _ocupada(agente, pane_id: str) -> tuple[bool, bool]:
+    """(trabajando, con trabajo de fondo). La pantalla o lo que dice Claude."""
+    estado = estado_claude(pane_id) if agente is tui.CLAUDE else None
+    return tui.ocupado(agente, pane_id) or estado == "busy", estado == "shell"
+
+
+def ficha(pane_id: str) -> dict[str, Any]:
+    """Con qué corre la sesión de un panel: modelo, esfuerzo, contexto, umbral.
+
+    Todo **medido** y nada supuesto (regla dura 13): el modelo y el esfuerzo
+    salen de la línea de comandos del proceso; el umbral, de su entorno; el
+    contexto, del uso que apuntó el último turno en el transcript. Lo que no se
+    puede leer se queda en `None`, y `./orq sesiones` lo dice así.
+
+    `pid` sólo se rellena si `claude` es el proceso raíz del panel, que es la
+    condición para poder relanzarlo (`ajustar`).
+    """
+    datos: dict[str, Any] = {"pid": None, "session_id": None, "cwd": None, "estado": None,
+                             "modelo": None, "esfuerzo": None, "permisos": None,
+                             "compacta_al": None, "contexto": None}
+    pid = tmux.pid_del_panel(pane_id)
+    if not pid:
+        return datos
+    try:
+        info = json.loads((_sesiones_de_claude() / f"{pid}.json").read_text(encoding="utf-8"))
+        args = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+        entorno = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+    except (OSError, ValueError):
+        return datos
+    args = [a.decode(errors="replace") for a in args if a]
+    datos.update(pid=pid, session_id=info.get("sessionId"), cwd=info.get("cwd"),
+                 estado=info.get("status"))
+    for i, a in enumerate(args[:-1]):
+        if a == "--model":
+            datos["modelo"] = args[i + 1]
+        elif a == "--effort":
+            datos["esfuerzo"] = args[i + 1]
+        elif a == "--permission-mode":
+            datos["permisos"] = args[i + 1]
+    if "--dangerously-skip-permissions" in args:
+        datos["permisos"] = "bypassPermissions"
+    for v in entorno:
+        if v.startswith(b"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE="):
+            datos["compacta_al"] = v.split(b"=", 1)[1].decode(errors="replace")
+    datos["contexto"] = _contexto(datos["cwd"], datos["session_id"])
+    return datos
+
+
+def _contexto(cwd: str | None, session_id: str | None) -> int | None:
+    """Tokens que ocupó el último turno: entrada + caché leída + caché creada.
+
+    Es lo que Claude Code reenvía en cada turno, y por eso lo que mide cuánto
+    contexto lleva. En tokens y no en porcentaje: la ventana depende del modelo
+    y de la cuenta, y un porcentaje calculado contra una ventana supuesta sería
+    una cifra que no se puede defender (regla dura 13).
+    """
+    from . import transcripts
+
+    if not cwd or not session_id:
+        return None
+    ruta = transcripts.TRANSCRIPTS / transcripts.slug_de(cwd) / f"{session_id}.jsonl"
+    try:
+        with ruta.open("rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 4_000_000))
+            lineas = f.read().splitlines()
+    except OSError:
+        return None
+    for crudo in reversed(lineas):
+        if b'"compact_boundary"' in crudo:
+            # Compactó después de su último turno. Sin esto seguía diciendo
+            # 956k de una sesión que ya estaba en 19k (medido el 16-oct).
+            with contextlib.suppress(ValueError, KeyError, TypeError):
+                return int(json.loads(crudo)["compactMetadata"]["postTokens"])
+            return None
+        if b'"usage"' not in crudo:
+            continue
+        try:
+            uso = json.loads(crudo)["message"]["usage"]
+        except (ValueError, KeyError, TypeError):
+            continue
+        return int(uso.get("input_tokens", 0) + uso.get("cache_read_input_tokens", 0)
+                   + uso.get("cache_creation_input_tokens", 0))
+    return None
+
+
+def _de_su_proyecto(con: sqlite3.Connection, proyecto_id: str, pane_id: str) -> None:
+    tmux.validar_panel(pane_id)
+    if pane_id not in {s["pane_id"] for s in sesiones(con, proyecto_id)}:
+        raise ValueError(
+            f"{pane_id} no es una sesión viva de «{proyecto_id}». Mira `./orq sesiones {proyecto_id}`."
+        )
+
+
+def ajustar(con: sqlite3.Connection, proyecto_id: str, pane_id: str, modelo: str = "",
+            esfuerzo: str = "", forzar: bool = False) -> dict[str, Any]:
+    """Cambia el modelo o el esfuerzo de una sesión sin perder su conversación.
+
+    🔴 **No con `/model` ni `/effort`.** Medido el 2026-10-16 en 2.1.280: los
+    dos cambian la sesión, pero además **guardan el valor como el
+    predeterminado del dueño** en `~/.claude/settings.json` («*saved as your
+    default for new sessions*»). Cada ajuste del orquestador habría cambiado
+    con qué arrancan todas sus ventanas, sin que nada lo dijera —el mismo fallo
+    que la docstring de `modelos.py` cuenta con `fable`—.
+
+    Se relanza `claude --resume <id>` en el MISMO panel (`respawn-pane`): la
+    conversación sigue —medido: mismo `sessionId`—, el id del panel también, y
+    no se toca ningún ajuste de nadie (decisión 268).
+
+    Sólo si el panel lo arrancó `claude` directamente: si debajo hubiera una
+    shell, relanzar se la llevaría con lo que el dueño tuviera ahí. Y sólo con
+    la sesión quieta: si tiene procesos en segundo plano se dice cuáles, porque
+    relanzar los mata, y hace falta `forzar` para seguir.
+    """
+    tarea = exigir_viva()
+    exigir(con, proyecto_id)
+    _de_su_proyecto(con, proyecto_id, pane_id)
+    if not modelo and not esfuerzo:
+        raise ValueError("di qué cambiar: --modelo, --esfuerzo o los dos")
+    apto, motivo = entrega.panel_apto(pane_id)
+    if not apto:
+        raise ValueError(f"no se puede ajustar {pane_id} ahora: {motivo}. Espera a que quede libre.")
+    antes = ficha(pane_id)
+    if not antes["pid"] or not antes["session_id"]:
+        raise ValueError(
+            f"{pane_id} no lo arrancó `claude` directamente (o no se encuentra su sesión), "
+            "y relanzarlo podría llevarse lo que haya debajo. Si necesitas otro modelo, "
+            "pídeselo al dueño con `./orq preguntar`."
+        )
+    if antes["estado"] not in (None, "idle") and not forzar:
+        hijos = _procesos_hijos(antes["pid"])
+        raise ValueError(
+            f"{pane_id} tiene trabajo en segundo plano ({antes['estado']}) y relanzarla lo "
+            "mataría:\n" + ("\n".join(f"  - {h}" for h in hijos) or "  (no se ven los procesos)")
+            + "\nSi son esperas que ya no hacen falta, repite con --forzar. Si no lo "
+            "sabes, pregúntaselo a la sesión o al dueño."
+        )
+    modelo = modelos.resolver(modelo or antes["modelo"] or modelos.SESION_ORQUESTADA)
+    esfuerzo = esfuerzo or antes["esfuerzo"] or ""
+    partes = [f"claude --resume {shlex.quote(antes['session_id'])}", modelos.bandera(modelo)]
+    if esfuerzo:
+        partes.append(modelos.bandera_esfuerzo(esfuerzo))
+    if antes["permisos"]:
+        partes.append(f"--permission-mode {shlex.quote(antes['permisos'])}")
+    entorno = {"PATH": tmux.path_de_usuario(), **modelos.entorno_de_sesion()}
+    tmux.relanzar_panel(pane_id, antes["cwd"], " ".join(partes), entorno)
+    listo = _esperar(lambda: tui.listo(tui.CLAUDE, pane_id), 60)
+    despues = ficha(pane_id)
+    if despues["session_id"] != antes["session_id"]:
+        anotar(tarea["id"], "ajustada", f"{pane_id}: relanzada pero NO retomó su conversación",
+               proyecto=proyecto_id, pane_id=pane_id)
+        raise RuntimeError(
+            f"{pane_id} se relanzó pero no retomó su conversación "
+            f"({antes['session_id']} → {despues['session_id']}). Díselo al dueño."
+        )
+    cambio = (f"{antes['modelo'] or '?'}/{antes['esfuerzo'] or 'por omisión'} → "
+              f"{modelo}/{esfuerzo or 'por omisión'}")
+    anotar(tarea["id"], "ajustada", f"{proyecto_id} ({pane_id}): {cambio}",
+           proyecto=proyecto_id, pane_id=pane_id, modelo=modelo, esfuerzo=esfuerzo)
+    if not listo:
+        _esperar_libre(tarea["id"], proyecto_id, pane_id, "relanzada, todavía arrancando")
+    return {"cambio": cambio, "listo": listo}
+
+
+def _procesos_hijos(pid: int) -> list[str]:
+    try:
+        salida = subprocess.run(["ps", "-o", "args=", "--ppid", str(pid)],
+                                capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [_corto(l, 160) for l in salida.splitlines() if l.strip()]
+
+
+def compactar(con: sqlite3.Connection, proyecto_id: str, pane_id: str,
+              foco: str = "") -> dict[str, Any]:
+    """Le pide a la sesión que compacte su conversación, entre encargos.
+
+    `/compact` sí se escribe en el panel: al contrario que `/model`, no guarda
+    nada fuera de la sesión. Va con la misma comprobación que cualquier mensaje
+    (regla dura 15), y se apunta una espera «hasta que quede libre» para que el
+    hub despierte al orquestador cuando acabe.
+    """
+    tarea = exigir_viva()
+    exigir(con, proyecto_id)
+    _de_su_proyecto(con, proyecto_id, pane_id)
+    foco = " ".join((foco or "").split())
+    try:
+        entrega.entregar(pane_id, f"/compact {foco}".strip())
+    except entrega.EscritoSinConfirmar:
+        pass   # ya está escrito: repetirlo compactaría dos veces
+    except entrega.PanelNoApto as exc:
+        raise ValueError(f"no se puede compactar {pane_id} ahora: {exc}") from exc
+    anotar(tarea["id"], "compactada", f"{proyecto_id} ({pane_id})" + (f": {foco}" if foco else ""),
+           proyecto=proyecto_id, pane_id=pane_id)
+    _esperar_libre(tarea["id"], proyecto_id, pane_id, "compactando")
+    return {"compactando": True}
 
 
 def respuesta(pane_id: str, n: int | None = None) -> dict[str, Any]:
@@ -961,7 +1255,8 @@ def comando_de_arranque(primer_mensaje: str) -> str:
     la tarea se quedaría parada horas sin que nada lo dijera. En `dontAsk` el
     rechazo es inmediato y el agente sigue con lo que sí puede hacer.
     """
-    return (f"env PATH={shlex.quote(tmux.path_de_usuario())} "
+    variables = " ".join(f"{k}={v}" for k, v in modelos.entorno_de_sesion().items())
+    return (f"env PATH={shlex.quote(tmux.path_de_usuario())} {variables} "
             f"claude {modelos.bandera(modelos.ORQUESTADOR)} "
             f"--permission-mode dontAsk {shlex.quote(primer_mensaje)}")
 
@@ -1023,7 +1318,11 @@ def bombear(con: sqlite3.Connection) -> dict[str, Any]:
             tarea = siguiente
             tarea["estado"] = ACTIVA
             tarea["empezada"] = ahora()
-            tarea["despertar"] = [PRIMER_MENSAJE.format(tarea=tarea["id"])]
+            if tarea.get("al_reanudar"):
+                tarea["despertar"] = [tarea.pop("al_reanudar")]
+                tarea["panel_limpio"] = True
+            else:
+                tarea["despertar"] = [PRIMER_MENSAJE.format(tarea=tarea["id"])]
             tarea["nueva"] = True
             _escribir(tarea)
         else:
@@ -1047,8 +1346,8 @@ def _revisar_esperas(tarea: dict[str, Any]) -> None:
             e["estado"] = "perdida"
             tarea["despertar"].append(f"{quien} ya no está: {motivo}. Decide cómo seguir.")
             continue
-        trabajando = tui.ocupado(agente, e["pane_id"])
-        if trabajando:
+        trabajando, de_fondo = _ocupada(agente, e["pane_id"])
+        if trabajando or de_fondo:
             e["visto_trabajando"] = True
         elif agente is tui.CLAUDE and _pide_permiso(e["pane_id"]):
             if not e.get("avisado_permiso"):
@@ -1061,7 +1360,7 @@ def _revisar_esperas(tarea: dict[str, Any]) -> None:
         if e["tipo"] == "libre":
             # «Libre» es «se le puede escribir»: arrancando o con un permiso
             # abierto no trabaja, pero tampoco acepta.
-            if entrega.panel_apto(e["pane_id"])[0]:
+            if not de_fondo and entrega.panel_apto(e["pane_id"])[0]:
                 e["estado"] = "terminada"
                 tarea["despertar"].append(f"{quien} ya está libre: puedes mandarle.")
             elif edad >= TOPE_MINUTOS * 60 and not e["avisado_tope"]:
@@ -1070,7 +1369,7 @@ def _revisar_esperas(tarea: dict[str, Any]) -> None:
                     f"{quien} lleva más de {TOPE_MINUTOS} min sin quedar libre. "
                     "Decide si esperas o le preguntas al dueño.")
             continue
-        if not trabajando and (e["visto_trabajando"] or edad >= QUIETA_TRAS):
+        if not trabajando and not de_fondo and (e["visto_trabajando"] or edad >= QUIETA_TRAS):
             e["estado"] = "terminada"
             tarea["despertar"].append(
                 f"{quien} terminó lo que le mandaste (#{e['id']}). "
@@ -1079,7 +1378,10 @@ def _revisar_esperas(tarea: dict[str, Any]) -> None:
             e["avisado_tope"] = True
             tarea["despertar"].append(
                 f"{quien} lleva más de {TOPE_MINUTOS} min con lo tuyo (#{e['id']}). "
-                "Sigue trabajando; decide si esperas o le preguntas al dueño.")
+                + ("Acabó su turno pero sigue con trabajo en segundo plano: puede ser "
+                   "legítimo (un entrenamiento) o una espera atascada. Mira lo que "
+                   "lleva con `./orq respuesta` y " if de_fondo else "Sigue trabajando; ")
+                + "decide si esperas o le preguntas al dueño.")
     tarea["estado"] = _estado_de(tarea)
 
 
@@ -1091,23 +1393,39 @@ MINUTOS_SIN_NADA = 10
 
 
 def _vigilar_quieta(tarea: dict[str, Any]) -> None:
+    """Le despierta si lleva `MINUTOS_SIN_NADA` sin nada pendiente. Y repite.
+
+    🔴 Repite (decisión 270). Antes avisaba una sola vez por silencio, contado
+    desde la última línea de la bitácora; el 16-oct contestó al aviso «el hub
+    ya la marca como trabajando, esta vez sí me avisará» —sin ninguna espera
+    abierta—, terminó el turno sin anotar nada, y como la bitácora no se movió
+    nadie volvió a despertarle: tres horas parada. A la tercera seguida se avisa
+    también al dueño, porque algo le está haciendo creer que espera.
+    """
     if tarea["estado"] != ACTIVA or tarea["despertar"] or tarea.get("pregunta"):
         return
     if any(e["estado"] == "esperando" for e in tarea["esperas"]):
         return
     ultima = (bitacora(tarea["id"]) or [{}])[-1].get("cuando")
-    if not ultima or _segundos_desde(ultima) < MINUTOS_SIN_NADA * 60:
+    if not ultima:
         return
-    if tarea.get("vigia") == ultima:
-        return   # ya se le dijo por este mismo silencio
+    seguidas = tarea.get("vigias", 0) if tarea.get("vigia_desde") == ultima else 0
+    referencia = tarea.get("vigia_en") if seguidas else ultima
+    if _segundos_desde(referencia) < MINUTOS_SIN_NADA * 60:
+        return
     pane_id = localizar()
-    if pane_id and tui.ocupado(tui.CLAUDE, pane_id):
+    if pane_id and _ocupada(tui.CLAUDE, pane_id)[0]:
         return
-    tarea["vigia"] = ultima
+    tarea["vigia_desde"], tarea["vigia_en"], tarea["vigias"] = ultima, ahora(), seguidas + 1
+    minutos = int(_segundos_desde(ultima) // 60)
     tarea["despertar"].append(
-        f"Llevas {MINUTOS_SIN_NADA} minutos parado y no estás esperando nada que el hub "
+        f"Llevas {minutos} minutos sin avanzar y no estás esperando nada que el hub "
         "sepa (ni una sesión, ni una respuesta del dueño). Nadie te va a despertar "
-        "si no. Mira `./orq tarea` y sigue: manda, pregunta o termina.")
+        "si no: el hub sólo avisa de lo que mandaste con `./orq mandar` y sigue "
+        "abierto. Mira `./orq tarea` y `./orq sesiones`, y haz algo: manda, "
+        "pregunta o termina.")
+    if seguidas + 1 == 3:
+        timbre(f"La tarea {tarea['id']} lleva {minutos} min sin avanzar.")
 
 
 def _pide_permiso(pane_id: str) -> bool:
@@ -1134,8 +1452,9 @@ def _despertar(tarea_id: str) -> dict[str, Any]:
         return {}
     texto = "\n\n".join(tarea["despertar"])
     pane_id = localizar()
-    if tarea["despertar"][0].startswith(PRIMER_MENSAJE.split("{")[0]):
-        # Tarea nueva: orquestador nuevo, contexto limpio.
+    if tarea["despertar"][0].startswith(PRIMER_MENSAJE.split("{")[0]) or tarea.get("panel_limpio"):
+        # Tarea nueva —o reanudada después de otra—: orquestador nuevo,
+        # contexto limpio.
         cerrar_panel()
         pane_id = None
     if not pane_id:
@@ -1160,6 +1479,7 @@ def _despertar(tarea_id: str) -> dict[str, Any]:
     if entregado:
         with editar(tarea_id) as t:
             t["despertar"] = []
+            t.pop("panel_limpio", None)
             if t["estado"] in VIVAS:
                 t["estado"] = _estado_de(t)
     return {"despertado": tarea_id}
@@ -1189,6 +1509,13 @@ PRIMER_MENSAJE = (
     "empieza con `./orq tarea`."
 )
 
+REANUDAR = (
+    "El dueño REANUDA la tarea {tarea}, que había detenido él. Sigue desde donde "
+    "estabas: mira `./orq tarea` (plan, paso y bitácora). Antes de mandar nada, "
+    "comprueba con `./orq sesiones` y `./orq respuesta` cómo están las sesiones: "
+    "mientras estuvo parada pudieron terminar, seguir trabajando o cambiar."
+)
+
 RETOMAR = (
     "Retomas la tarea {tarea} (tu ventana anterior se cerró; todo lo que pasó "
     "está en la bitácora). Empieza con `./orq tarea`."
@@ -1214,7 +1541,12 @@ tú no programas, no editas y no despliegas. Coordinas.
     ./orq tarea                   la tarea: qué pidió, plan, bitácora, permisos
     ./orq proyectos               a qué proyectos llegas y con qué nivel
     ./orq sesiones <proyecto>     las sesiones de Claude abiertas ahí
-    ./orq abrir <proyecto>        abre una sesión (sólo si no hay ninguna)
+    ./orq abrir <proyecto> [--modelo M] [--esfuerzo E]
+                                  abre una sesión (sólo si no hay ninguna)
+    ./orq ajustar <proyecto> <pane> --modelo M --esfuerzo E
+                                  cambia modelo/esfuerzo sin perder la conversación
+    ./orq compactar <proyecto> <pane> ["en qué centrarse"]
+                                  le compacta la conversación, entre encargos
     ./orq mandar <proyecto> <pane> <<'FIN'
     …la instrucción…
     FIN                           le manda trabajo a esa sesión
@@ -1248,6 +1580,32 @@ es a propósito: el trabajo lo hace la sesión del proyecto, con sus reglas.
    `./orq avance`, y sigue.
 7. Al acabar: `./orq terminar` con un resumen que se entienda sin haber visto
    nada: qué se hizo, dónde está el resultado, qué queda y qué necesita al dueño.
+
+## El modelo, el esfuerzo y el contexto de cada sesión
+
+`./orq sesiones` te dice con qué corre cada una. **Lo eliges tú**, según el
+trabajo, y no hace falta pedir permiso para lo normal:
+
+- Modelos: `opus` (el más capaz, el de siempre para trabajo de proyecto),
+  `sonnet` (lo mecánico: aplicar algo ya decidido, mover archivos, docs),
+  `haiku` (trivial). Esfuerzo: `low`, `medium`, `high` (por omisión),
+  `xhigh`, `max`.
+- **Análisis difícil, investigación o diseño → `opus` con `high` o `xhigh`.**
+  Si una sesión está en `sonnet` y le vas a pedir eso, ajústala antes.
+- `max` es caro y lento: úsalo sólo si `xhigh` ya se quedó corto en lo mismo.
+- Si no tienes claro que el cambio compense —va a costar mucho más, o la
+  sesión es una que abrió el dueño para lo suyo—, pídele autorización con
+  `./orq preguntar` (le llega el aviso al teléfono) y espera.
+- Di siempre en `./orq avance` qué cambiaste y por qué.
+
+Las sesiones que abres tú **compactan solas al 70 %**. Las que no (las que
+abrió el dueño, o anteriores), no: si `./orq sesiones` dice que una lleva mucho
+contexto (cientos de miles de tokens), compáctala **entre dos encargos**, nunca
+a mitad de uno, con un foco que diga qué no puede olvidar. `ajustar` también se
+la deja compactando sola al 70 %.
+
+`ajustar` relanza la sesión: lo que tenga corriendo en segundo plano se muere.
+Si te lo avisa, decide si eso importa antes de usar `--forzar`.
 
 ## Lo que mandas a una sesión
 

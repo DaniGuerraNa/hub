@@ -65,10 +65,10 @@ def test_el_indicador_de_contexto_no_inventa_un_porcentaje(guion):
     assert "porcentaje != null" in guion and "c.tokens" in guion
 
 
-def test_el_texto_del_usuario_se_escapa_antes_de_pintarlo(guion):
-    """El transcript trae texto libre suyo y del modelo, con `<` y `&` a mansalva.
-    Interpolarlo crudo en innerHTML rompe el hilo al primer fragmento de HTML."""
-    assert "escapar(m.texto)" in guion
+# 🔴 Aquí vivía `test_el_texto_del_usuario_se_escapa_antes_de_pintarlo`, que
+# buscaba la cadena `escapar(m.texto)`. Lo que protege —que nada del
+# transcript llegue crudo al innerHTML— se comprueba ahora EJECUTANDO el
+# formateador en `test_formato_chat_js.py` (regla dura 11).
 
 
 # 🔴 Aquí vivía `test_lo_escrito_no_se_pierde_si_el_envio_falla`, que contaba

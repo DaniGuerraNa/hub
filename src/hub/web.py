@@ -1120,6 +1120,20 @@ async def orquestador_detener(request: Request):
     return _volver(f"/orquestador?tarea={quote(tarea_id)}", "Detenida." + extra, fugaz=True)
 
 
+@app.post("/orquestador/reanudar")
+async def orquestador_reanudar(request: Request):
+    formulario = await request.form()
+    tarea_id = str(formulario.get("tarea_id") or "")
+    try:
+        r = orquestador.reanudar(tarea_id, str(formulario.get("nota") or ""))
+    except ValueError as exc:
+        return _volver(f"/orquestador?tarea={quote(tarea_id)}", f"No se reanudó: {exc}")
+    if r["en_cola"]:
+        return _volver(f"/orquestador?tarea={quote(tarea_id)}",
+                       "Vuelve a la cola: sigue cuando acabe la que está en curso.", fugaz=True)
+    return _volver("/orquestador", "Reanudada: el orquestador sigue en el próximo latido.", fugaz=True)
+
+
 @app.post("/orquestador/permiso")
 async def orquestador_permiso(request: Request):
     """🔴 El único sitio donde se conceden permisos al orquestador (decisión 256).
@@ -1649,6 +1663,22 @@ async def api_proyecto_nuevo(request: Request):
         con.close()
 
 
+@app.post("/api/proyecto/anexar")
+async def api_proyecto_anexar(request: Request):
+    """Registra un proyecto que ya existe. Sólo el alta: no toca la carpeta."""
+    cuerpo = await request.json()
+    con = conexion()
+    try:
+        return {"ok": True, **agentes.anexar_proyecto(
+            con, cuerpo.get("id", ""), cuerpo.get("nombre", ""), cuerpo.get("ruta", ""),
+            cuerpo.get("dominio") or "personal", cuerpo.get("guardrail") or "ask",
+            cuerpo.get("estado_ref") or "")}
+    except (ValueError, OSError, registry.YamlInvalido) as exc:
+        return {"ok": False, "error": str(exc)}
+    finally:
+        con.close()
+
+
 @app.post("/api/kit/nuevo")
 async def api_kit_nuevo(request: Request):
     """Crea el repo de un kit desde la semilla y lanza al agente que lo diseña.
@@ -1834,6 +1864,27 @@ def _ventana_activa(session: str) -> int | None:
         return next(v["indice"] for v in tmux.listar_ventanas(session) if v["activa"])
     except (StopIteration, tmux.DestinoInvalido):
         return None
+
+
+@app.get("/guia")
+def guia_vista(request: Request):
+    """Por dónde empezar, y qué hay en cada pantalla."""
+    con = conexion()
+    try:
+        return _vista(request, "guia.html", {
+            "g": api.guia(con), "titulo": "Guía", "seccion": "guia",
+        })
+    finally:
+        con.close()
+
+
+@app.get("/api/guia")
+def api_guia():
+    con = conexion()
+    try:
+        return api.guia(con)
+    finally:
+        con.close()
 
 
 @app.get("/trabajo")
@@ -2816,7 +2867,9 @@ def api_asistente_abrir():
 async def api_asistente_enviar(request: Request):
     cuerpo = await request.json()
     try:
-        return {"ok": True, **asistente.enviar(cuerpo.get("texto", ""))}
+        return {"ok": True, **asistente.enviar(cuerpo.get("texto", ""),
+                                               ruta=str(cuerpo.get("pagina") or ""),
+                                               titulo=str(cuerpo.get("titulo") or ""))}
     except asistente.DestinoNoAutorizado as exc:
         return {"ok": False, "error": str(exc)}
     except (asistente.AsistenteNoDisponible, ValueError, tmux.DestinoInvalido) as exc:

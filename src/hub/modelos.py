@@ -56,6 +56,44 @@ PERMITIDOS = frozenset(
 )
 
 
+# Lo que el orquestador puede elegir para una sesión, y con qué esfuerzo. Lo
+# decide él (decisión 268): *«dale la facultad de cambiar el modelo y el effort
+# cuando lo vea necesario»*. El techo sigue siendo `PERMITIDOS`.
+ESFUERZOS = ("low", "medium", "high", "xhigh", "max")
+ESFUERZO_SESION_ORQUESTADA = "high"
+
+#: Los alias que acepta `./orq`, para que el orquestador no tenga que saberse
+#: el id. Se traducen aquí al id exacto (decisión 91): el alias nunca llega a
+#: `claude`.
+ALIAS = {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5", "haiku": "claude-haiku-4-5"}
+
+# 🔴 A qué porcentaje de la ventana compacta solo lo que arranca el orquestador
+# (decisión 267). Por omisión Claude Code espera casi al borde: la sesión de
+# la sesión de un proyecto llegó al 96 % sin compactar tras siete horas, y el
+# dueño la paró: *«a partir de un umbral de 70 el contexto ya es demasiado y
+# puede dar errores»*. Medido el 2026-10-16 en 2.1.280: con la variable a 4 el
+# auto-compact saltó al 5-6 %.
+COMPACTAR_AL = 70
+
+
+def entorno_de_sesion() -> dict[str, str]:
+    """Las variables con las que nace cada `claude` que arranca el orquestador."""
+    return {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": str(COMPACTAR_AL)}
+
+
+def resolver(modelo: str) -> str:
+    """Alias o id → id exacto, comprobado contra el techo."""
+    modelo = ALIAS.get((modelo or "").strip().lower(), (modelo or "").strip())
+    bandera(modelo)
+    return modelo
+
+
+def bandera_esfuerzo(esfuerzo: str) -> str:
+    if esfuerzo not in ESFUERZOS:
+        raise ValueError(f"esfuerzo «{esfuerzo}» no válido. Válidos: {', '.join(ESFUERZOS)}")
+    return f"--effort {esfuerzo}"
+
+
 def bandera(modelo: str) -> str:
     """`--model <id>`, listo para pegar en una línea de comandos.
 

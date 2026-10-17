@@ -109,8 +109,10 @@ global.clearInterval = () => {};
 
 let RESPUESTA = RESPUESTA_JSON;
 const peticiones = [];
-global.fetch = async (url) => {
+const cuerpos = [];
+global.fetch = async (url, opciones) => {
   peticiones.push(String(url));
+  cuerpos.push(opciones && opciones.body ? JSON.parse(opciones.body) : null);
   if (RESPUESTA === null) throw new Error('sin red');
   const r = {
     ok: RESPUESTA.ok !== false, status: RESPUESTA.status || 200,
@@ -131,7 +133,7 @@ setTimeout(() => {
     hilo: elemento('asistente-hilo').innerHTML,
     aviso: banda ? banda.textContent : null,
     caja: elemento('asistente-texto').value,
-    peticiones, avisos,
+    peticiones, avisos, cuerpos,
   }));
 }, 40);
 """
@@ -292,3 +294,22 @@ def test_si_el_asistente_esta_ocupado_tampoco_se_pierde_lo_escrito(tmp_path):
     r = _todo(tmp_path, OCUPADO,
               "elemento('asistente-texto').value = 'una pregunta larga';\n" + ENVIAR)
     assert r["caja"] == "una pregunta larga"
+
+
+def test_con_el_chat_vacio_propone_por_donde_empezar_y_al_pulsar_lo_pregunta(tmp_path):
+    """Quien acaba de instalar no sabe qué se le puede pedir (decisión 271). Y
+    la pregunta viaja con la pantalla desde la que se hizo: sin ella, «¿qué es
+    esta pantalla?» no tiene respuesta posible."""
+    accion = """
+      global.location = { pathname: '/trabajo', search: '?slot=3' };
+      document.title = 'Trabajo · Hub';
+      setTimeout(() => elemento('asistente-hilo').disparar('click', {
+        target: { closest: () => ({ dataset: { pregunta: '¿Qué hago primero?' } }) } }), 5);
+    """
+    todo = _todo(tmp_path, ABIERTO_VACIO, accion)
+
+    assert 'data-pregunta="¿Qué hago primero?"' in todo["hilo"]
+    enviado = next(c for u, c in zip(todo["peticiones"], todo["cuerpos"])
+                   if u == "/api/asistente/enviar")
+    assert enviado == {"texto": "¿Qué hago primero?", "pagina": "/trabajo?slot=3",
+                       "titulo": "Trabajo · Hub"}

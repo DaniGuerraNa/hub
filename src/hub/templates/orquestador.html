@@ -140,6 +140,22 @@
     {% endif %}
   </div>
 
+  {% if d.estado == 'detenida' %}
+  <form method="post" action="/orquestador/reanudar" class="reanudar" id="reanudar">
+    <input type="hidden" name="tarea_id" value="{{ d.id }}">
+    <label for="reanudar-nota">Reanudarla desde donde se quedó</label>
+    <textarea name="nota" id="reanudar-nota"
+              placeholder="Opcional: qué quieres que tenga en cuenta al seguir (lo que viste, qué cambiar)."></textarea>
+    <div class="acciones">
+      <button class="boton principal">Reanudar</button>
+      <button type="button" class="boton" data-grabar="reanudar-nota"
+              data-grabar-estado="reanudar-audio">Dictar</button>
+      <span class="estado-audio" id="reanudar-audio"></span>
+      {% if o.viva and o.viva.id != d.id %}<span class="tenue" style="font-size:12px">Hay otra en curso: ésta vuelve a la cola y sigue al acabar aquélla.</span>{% endif %}
+    </div>
+  </form>
+  {% endif %}
+
   <p class="pedido" style="margin-top:10px">{{ d.pedido }}</p>
 
   {% if d.resumen %}

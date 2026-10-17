@@ -17,6 +17,12 @@ el asistente nunca lee la base ni escanea el disco por su cuenta.
   hub nota "<texto>" [--slot N]   deja una nota; sin --slot, donde estés
   hub slot <proyecto> "<nombre>" [--ruta R]
   hub nuevo-proyecto --id x --nombre "X" --ruta /abs/x
+  hub guia                        los primeros pasos (medidos: qué está
+                                  hecho y cuál toca) y qué hay en cada
+                                  pantalla, con su ruta para enlazarla
+  hub anexar --id x --nombre "X" --ruta /abs/x [--estado ESTADO.md]
+                                  registra un proyecto que YA existe, sin
+                                  tocarlo: sólo el alta en el registro
                                   crea un proyecto vacío y lanza al agente que
                                   lo monta; pregunta antes lo que falte
   hub lienzo …                    publica algo para que se vea en la web —
@@ -321,6 +327,61 @@ def cmd_nuevo_proyecto(args):
     print("Se ve en /trabajo. Sólo puede escribir dentro de esa carpeta.")
 
 
+def cmd_guia(args):
+    """Los primeros pasos y el mapa de pantallas, para guiar a quien empieza.
+
+    Es la misma fuente que la pantalla /guia: lo que digas coincidirá con lo
+    que ve. «Hecho» lo mide el hub, no lo supongas.
+    """
+    g = pedir("/api/guia")
+    print(f"PRIMEROS PASOS — {g['hechos']} de {g['total']} hechos")
+    for i, p in enumerate(g["pasos"], 1):
+        marca = "x" if p["hecho"] else " "
+        extra = "  ← EL SIGUIENTE" if p["siguiente"] else ("  (opcional)" if p["opcional"] else "")
+        print(f"  [{marca}] {i}. {p['titulo']}{extra}")
+        if not p["hecho"]:
+            print(f"        {p['como']}")
+            if p.get("enlace"):
+                print(f"        enlace: [{p['enlace']['etiqueta']}]({p['enlace']['ruta']})")
+    print("\nPANTALLAS")
+    for grupo in g["mapa"]:
+        print(f"  {grupo['grupo']}")
+        for s in grupo["pantallas"]:
+            print(f"    {s['nombre']} — {s['ruta']}: {s['para_que']}")
+            for a in s["que_haces"]:
+                print(f"        · {a}")
+
+
+def cmd_anexar(args):
+    """Registra en el hub un proyecto que ya existe. No toca la carpeta.
+
+    Antes de llamarlo: mira la carpeta (`ls`, `git log`) y busca cuál es su
+    documento de estado vigente —un ESTADO.md, un checkpoint reciente, un
+    README que diga en qué punto está—. Si dudas entre dos, pregunta. Si no
+    hay ninguno, no pongas `--estado`: no tener puntero es información.
+    Pregunta también si es personal o laboral, y confirma el nombre.
+    """
+    ident = opcion(args, "--id")
+    nombre = opcion(args, "--nombre")
+    ruta = opcion(args, "--ruta")
+    estado = opcion(args, "--estado") or ""
+    dominio = opcion(args, "--dominio") or "personal"
+    guardrail = opcion(args, "--guardrail") or "ask"
+    if not (ident and nombre and ruta):
+        salir('hace falta: hub anexar --id x --nombre "X" --ruta /abs/x'
+              ' [--estado ESTADO.md] [--dominio personal|laboral] [--guardrail auto|ask|never]')
+    r = pedir("/api/proyecto/anexar", {
+        "id": ident, "nombre": nombre, "ruta": ruta, "estado_ref": estado,
+        "dominio": dominio, "guardrail": guardrail,
+    })
+    if not r.get("ok"):
+        salir(r.get("error", "no se pudo registrar"))
+    print(f"Proyecto «{ident}» registrado en {r['ruta']}.")
+    print(f"Estado: {r['estado_ref'] or 'sin documento de estado'}."
+          + ("" if r.get("git") else " No tiene git: el hub no podrá medir su respaldo."))
+    print(f"Se ve en /proyecto/{ident}, y en /trabajo se le pueden abrir slots.")
+
+
 def cmd_lienzo(args):
     """Publica algo para que se vea en la web, y vuelve a leerlo cuando lo corrijan.
 
@@ -513,6 +574,8 @@ COMANDOS = {
     "estado": cmd_estado, "sesiones": cmd_sesiones, "sesion": cmd_sesion,
     "conexiones": cmd_conexiones,
     "nota": cmd_nota, "slot": cmd_slot, "nuevo-proyecto": cmd_nuevo_proyecto,
+    "anexar": cmd_anexar,
+    "guia": cmd_guia,
     "lienzo": cmd_lienzo, "preguntar": cmd_preguntar,
 }
 

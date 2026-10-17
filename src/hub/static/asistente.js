@@ -49,7 +49,9 @@
       const utiles = (m.herramientas || [])
         .map(u => `<span class="util">⚙ ${escapar(u).replace(/^\[|\]$/g, '')}</span>`)
         .join('');
-      return `<div class="msj ${mio ? 'mio' : 'suyo'}">${escapar(m.texto)}${utiles}</div>`;
+      // Lo suyo con formato —enlaces del hub, negritas—; lo tuyo, tal cual.
+      const formato = !mio && window.formatearMensaje ? window.formatearMensaje : escapar;
+      return `<div class="msj ${mio ? 'mio' : 'suyo'}">${formato(m.texto)}${utiles}</div>`;
     }).join('');
 
     hilo.insertAdjacentHTML('beforeend', html);
@@ -184,9 +186,9 @@
       if (document.getElementById('asistente-vacio')) { hilo.innerHTML = ''; }
       pintar(mensajes, false);
       if (!hilo.innerHTML) {
-        hilo.innerHTML = `<p id="asistente-vacio">${datos.abierto
+        hilo.innerHTML = `<div id="asistente-vacio"><p>${datos.abierto
           ? 'Pregúntale algo. Es de consulta: no toca tus proyectos.'
-          : 'No está abierto. Escribe y se arranca solo.'}</p>`;
+          : 'No está abierto. Escribe y se arranca solo.'}</p>${sugerencias()}</div>`;
       }
     } catch (e) {
       // Un sondeo fallido no puede romper la página: el hub puede estar
@@ -230,12 +232,47 @@
 
   pestana.addEventListener('click', () => alternar());
 
+  // ── Por dónde empezar ────────────────────────────────────────────────────
+
+  // Con el chat vacío, quien acaba de instalar no sabe qué se le puede pedir.
+  // Tres preguntas que se contestan en cualquier pantalla (decisión 271).
+  const SUGERENCIAS = [
+    '¿Qué hago primero?',
+    '¿Qué es esta pantalla y qué puedo hacer aquí?',
+    'Quiero registrar un proyecto que ya tengo',
+  ];
+
+  function sugerencias() {
+    return '<div class="sugerencias">' + SUGERENCIAS.map(p =>
+      `<button type="button" class="sugerencia" data-pregunta="${escapar(p)}">${escapar(p)}</button>`
+    ).join('') + '</div>';
+  }
+
+  hilo.addEventListener('click', (e) => {
+    const boton = e.target && e.target.closest ? e.target.closest('[data-pregunta]') : null;
+    if (boton) preguntar(boton.dataset.pregunta);
+  });
+
+  function preguntar(texto) {
+    alternar(true);
+    caja.value = texto;
+    mandar();
+  }
+
+  // Para que otra pantalla —la guía— pueda abrir el chat con una pregunta hecha.
+  window.HubAsistente = { preguntar };
+
   // ── Enviar ───────────────────────────────────────────────────────────────
 
   async function mandar() {
     const texto = (caja.value || '').trim();
     if (!texto) return;
     caja.value = '';
+    // Desde qué pantalla se pregunta: sin esto «¿qué es esto?» no tiene
+    // respuesta, porque el asistente no ve la web. El hub la pone delante del
+    // mensaje y el chat la quita al pintarlo.
+    const pagina = typeof location !== 'undefined' ? location.pathname + location.search : '';
+    const titulo = typeof document !== 'undefined' ? (document.title || '') : '';
 
     // Se arranca solo si no estaba: preguntar es el gesto, abrir la sesión es
     // maquinaria y no debería ser un paso más.
@@ -243,7 +280,7 @@
     const r = await fetch('/api/asistente/enviar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texto }),
+      body: JSON.stringify({ texto, pagina, titulo }),
     });
     // 🔴 Un HTTP que no es `ok` se quedaba en `{}`, y entonces ninguna de las
     // dos ramas de abajo entraba: ni se decía nada ni se devolvía lo escrito.

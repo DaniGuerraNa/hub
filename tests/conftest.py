@@ -73,6 +73,12 @@ def _datos_aparte(tmp_path, monkeypatch):
     # distintas en cada máquina. Apuntando a una carpeta que no existe, el que se
     # olvide se lleva un `ConsumoNoMedido` y se entera.
     monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path / "registro-que-no-existe"))
+    # Y el estado que Claude Code escribe de cada sesión viva (decisión 270): el
+    # orquestador lo consulta en cada espera, y en la máquina de quien ejecuta
+    # la suite hay sesiones reales en paneles `%5` de verdad.
+    from hub import orquestador
+    monkeypatch.setattr(orquestador, "_sesiones_de_claude",
+                        lambda: tmp_path / "sesiones-que-no-existen")
 
 
 @pytest.fixture

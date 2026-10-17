@@ -357,9 +357,13 @@ def rail(con: sqlite3.Connection) -> dict:
     )
     # Un hub recién instalado no tiene nada que enseñar. Es dato del raíl porque
     # la guía de arranque sale en la portada y depende de lo mismo que él.
-    total_proyectos = con.execute(
-        "SELECT COUNT(*) FROM proyecto WHERE tipo != 'asistente'"
-    ).fetchone()[0]
+    # 🔴 Sólo los que tienen carpeta: el registro recién instalado trae dos de
+    # ejemplo con rutas inventadas, y contándolos la guía de arranque no salía
+    # NUNCA en una instalación nueva — justo donde existe (sala limpia, 16-oct).
+    total_proyectos = sum(
+        1 for (asiento,) in con.execute(
+            "SELECT asiento FROM proyecto WHERE tipo NOT IN ('asistente', 'kit')")
+        if asiento and _carpeta_existe(asiento))
     return {
         "sin_respaldo": sum(sin_push.values()),
         "servicios": corriendo,
@@ -1875,3 +1879,28 @@ def intercambio(por: str = "tema", q: str = "") -> dict[str, Any]:
         "total": total,
         "encontrados": len(archivos),
     }
+
+
+def guia(con: sqlite3.Connection) -> dict[str, Any]:
+    """Los primeros pasos —medidos— y el mapa de pantallas (decisión 271)."""
+    from . import guia as _guia, orquestador
+
+    try:
+        niveles = orquestador.leer_permisos()
+    except ValueError:
+        niveles = {}
+    pasos = _guia.pasos(con, paneles_abiertos(con), niveles, _carpeta_existe)
+    obligatorios = [p for p in pasos if not p["opcional"]]
+    return {
+        "pasos": pasos,
+        "hechos": sum(1 for p in obligatorios if p["hecho"]),
+        "total": len(obligatorios),
+        "mapa": _guia.mapa(),
+    }
+
+
+def _carpeta_existe(ruta: str) -> bool:
+    try:
+        return Path(ruta).expanduser().is_dir()
+    except OSError:
+        return False

@@ -510,7 +510,7 @@ def test_responder_el_permiso_manda_una_tecla_al_panel_del_asistente(tmux_falso,
 
     assert asistente.responder_confirmacion("si")["ok"] is True
     assert asistente.responder_confirmacion("no")["ok"] is True
-    assert teclas == [("%9", "1"), ("%9", "3")]
+    assert teclas == [("%9", "1"), ("%9", "Escape")]
     # Nunca se pega texto para contestar un menú, y nunca se manda Enter detrás.
     assert tmux_falso["pegado"] == []
 
@@ -740,3 +740,52 @@ def test_abrir_el_asistente_acepta_antes_su_carpeta(tmux_falso, proyectos, monke
         asistente.asegurar_sesion(proyectos)   # sin panel de mentira que aparezca
 
     assert confiadas == [proyectos[1].asiento]
+
+
+# ─────────────── desde qué pantalla se pregunta (decisión 271) ──────────────
+
+
+def test_la_pregunta_lleva_delante_la_pantalla_desde_la_que_se_hizo():
+    texto = asistente.con_pantalla("¿qué es esto?", "/trabajo?slot=3", "Trabajo · Hub")
+
+    assert texto == "[hub:pantalla /trabajo?slot=3 · Trabajo · Hub]\n¿qué es esto?"
+    assert asistente.sin_pantalla(texto) == "¿qué es esto?"
+
+
+def test_una_pantalla_que_no_es_una_ruta_del_hub_no_se_pega():
+    """Viene del navegador: lo que se pega en el panel tiene que ser predecible."""
+    for ruta in ("https://otro.example", "/x\nrm -rf /", "trabajo", "/" + "a" * 300):
+        assert asistente.con_pantalla("hola", ruta, "t") == "hola"
+    assert "]" not in asistente.con_pantalla("hola", "/", "a]b\nc").split("\n")[0][:-1]
+
+
+def test_el_chat_no_ensena_la_linea_de_la_pantalla():
+    mensajes = [{"rol": "user", "texto": "[hub:pantalla /guia · Guía]\n¿qué hago primero?"},
+                {"rol": "assistant", "texto": "Empieza por registrar un proyecto."}]
+
+    visibles = asistente.ocultar_internos(mensajes)
+
+    assert [m["texto"] for m in visibles] == ["¿qué hago primero?",
+                                              "Empieza por registrar un proyecto."]
+    assert mensajes[0]["texto"].startswith("[hub:pantalla")   # sin tocar el original
+
+
+
+def test_el_no_cancela_aunque_el_cuadro_traiga_cuatro_opciones(tmux_falso, monkeypatch):
+    """🔴 Sala limpia, 16-oct: leer fuera de su carpeta abre un cuadro de cuatro
+    opciones, y la 3 es «switch to auto mode». El «No» del chat pulsaba el 3."""
+    teclas = []
+    cuadro = ("─" * 40 + "\n Bash command\n Tip: auto mode handles these prompts for you — "
+              "choose \"switch to auto mode\"\n below\n   ls -la /home/persona/mi-tienda\n"
+              "   Lista la carpeta\n Do you want to proceed?\n ❯ 1. Yes\n"
+              "   2. Yes, allow reading from /home/persona/mi-tienda from this project\n"
+              "   3. Yes, and switch to auto mode · auto mode handles these prompts for you\n"
+              "   4. No\n Esc to cancel · Tab to amend\n")
+    monkeypatch.setattr(tmux, "capturar_panel", lambda p: cuadro)
+    monkeypatch.setattr(tmux, "tecla_en_panel", lambda p, t: teclas.append((p, t)))
+
+    pide = asistente.confirmacion_pendiente()
+    asistente.responder_confirmacion("no")
+
+    assert teclas == [("%9", "Escape")]
+    assert pide["peticion"] == ["Bash command", "ls -la /home/persona/mi-tienda", "Lista la carpeta"]

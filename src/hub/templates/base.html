@@ -809,6 +809,17 @@ dialog.paleta li .detalle {
                       padding: 0 10px 8px; }
 #asistente-acciones .tenue { font-size: 11px; flex: 1; }
 #asistente-vacio { color: var(--texto-3); font-size: 12px; margin: auto; text-align: center; }
+#asistente-vacio p { margin: 0 0 10px; }
+/* Por dónde empezar: lo que se le puede pedir, con el chat aún vacío. */
+#asistente-vacio .sugerencias { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+#asistente-vacio .sugerencia { font-size: 12px; padding: 6px 12px; text-align: left;
+                               white-space: normal; }
+/* Lo que el asistente enlaza es un sitio del hub al que llevarte. */
+.msj a.ir { color: var(--acento); font-weight: 500; text-decoration: underline;
+            text-underline-offset: 2px; }
+.msj strong { color: var(--texto); font-weight: 600; }
+.msj code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+            background: var(--elevado); padding: 0 4px; border-radius: 4px; }
 /* El cuadro de permisos de Claude Code, traído al chat. Sin esto la
    conversación se queda colgada sin decir por qué. */
 #asistente-permiso {
@@ -870,7 +881,8 @@ dialog.paleta li .detalle {
       ('/canal', 'canal', 'Canal', 'conversacion'),
       ('/encargos', 'encargos', 'Encargos', 'bandeja'),
       ('/acceso', 'acceso', 'Acceso', 'llave'),
-      ('/contexto', 'contexto', 'Contexto', 'documento')] %}
+      ('/contexto', 'contexto', 'Contexto', 'documento'),
+      ('/guia', 'guia', 'Guía', 'ok')] %}
   <a href="{{ ruta }}" class="enlace {{ 'aqui' if seccion == clave }}" title="{{ nombre }}">
     {{ ui.icono(icono) }}<span class="nom">{{ nombre }}</span>
     {% if clave == 'respaldo' and rail.sin_respaldo %}
@@ -966,6 +978,7 @@ dialog.paleta li .detalle {
 
 <script src="/static/hub-ui.js"></script>
 <script src="/static/paleta.js"></script>
-{% if rail.hay_asistente %}<script src="/static/asistente.js"></script>{% endif %}
+{% if rail.hay_asistente %}<script src="/static/formato-chat.js"></script>
+<script src="/static/asistente.js"></script>{% endif %}
 </body>
 </html>

@@ -48,13 +48,43 @@ sed -i -e "s|@HUB@/conocimiento|$CONOCIMIENTO/conocimiento|g" \
 
 printf '  ✓ asistente sembrado en %s\n' "$DESTINO"
 
+# 🔴 Se declara solo, con el escritor del registro del hub. Antes se imprimía
+# el bloque y un «Añade:», y pegarlo al final del archivo —lo natural— lo dejaba
+# debajo de `conexiones: []` y el registro entero dejaba de leerse: el hub se
+# quedaba sin ningún proyecto. Pasó en la sala limpia del 16-oct.
+# `añadir_proyecto` lo inserta dentro de `proyectos:` y no pisa nada: si ya hay
+# un asistente declarado, no hace nada y lo dice.
+if (cd "$RAIZ" && uv run --quiet python - "$DESTINO" <<'PY'
+import sys
+from hub import registry
+destino = sys.argv[1]
+if any(p.tipo == "asistente" for p in registry.cargar()):
+    print("  · ya había un asistente en tu registro: no se toca")
+else:
+    registry.añadir_proyecto({"id": "asistente", "nombre": "Asistente", "dominio": "personal",
+                              "tipo": "asistente", "asiento": destino,
+                              "estado_ref": "CLAUDE.md", "guardrail": "ask", "status": "activo"})
+    print("  ✓ declarado en tu registro")
+PY
+); then
+  cat <<FIN
+
+Listo. En menos de un minuto aparece el chat abajo a la derecha de cada
+pantalla. Empieza por la Guía (/guia): sus botones «Guíame» se lo preguntan.
+FIN
+  exit 0
+fi
+
+printf '  ✗ no se pudo declarar solo. Hazlo a mano, abajo.\n' >&2
+
 # 🔴 Este heredoc NO va entrecomillado porque necesita expandir $DESTINO — y por
 # eso mismo no puede llevar backticks dentro: bash las ejecutaría. Pasó, y se vio
 # en la primera instalación: «line 32: tipo:: command not found», con la frase
 # saliendo mutilada. Se usan comillas «» para citar, que no ejecutan nada.
 cat <<FIN
 
-Falta declararlo en tu registro (~/.local/share/hub/projects.yml). Añade:
+Falta declararlo en tu registro (~/.local/share/hub/projects.yml). Añade, DENTRO
+de la lista «proyectos:» (no al final del archivo):
 
   - id: asistente
     nombre: Asistente

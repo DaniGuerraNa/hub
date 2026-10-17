@@ -9,7 +9,7 @@ haga falta.
 | [`02-trabajo-y-slots.md`](02-trabajo-y-slots.md) | Qué son los slots, la bandeja y las notas, y cómo uso la terminal |
 | [`03-mediciones.md`](03-mediciones.md) | Qué mide el hub exactamente y cómo se leen sus cifras |
 | [`04-kits.md`](04-kits.md) | Qué es un kit, cómo se aplica, cómo se hace uno |
-| [`05-el-asistente.md`](05-el-asistente.md) | Qué es el chat, qué puede y qué no |
+| [`05-el-asistente.md`](05-el-asistente.md) | Qué es el chat, qué puede y qué no, y cómo te guía si empiezas |
 | [`06-problemas.md`](06-problemas.md) | Algo no funciona |
 | [`07-la-api.md`](07-la-api.md) | Leer lo que el hub mide desde un script |
 | [`08-sala-limpia.md`](08-sala-limpia.md) | Probar una instalación del hub o de un kit como la vería otra persona, y auditar un kit |
@@ -20,6 +20,9 @@ no hace falta abrir ningún documento para decirlo: la pantalla `/terminal` da
 acceso de shell y hoy lo único que la protege es que el hub escuche en
 `127.0.0.1`. El detalle está en [`02-trabajo-y-slots.md`](02-trabajo-y-slots.md)
 y en [`07-la-api.md`](07-la-api.md). Es la pregunta donde improvisar hace daño.
+
+**Por dónde empiezo / dónde está cada pantalla:** no hay un documento aparte:
+lo da `hub guia` (y la pantalla `/guia`), medido contra el estado real.
 
 ## Si eres Claude y te preguntan por el hub
 

@@ -15,6 +15,9 @@ aparece arriba, en la bandeja, y la contestas ahí mismo.
 - Si el proyecto no tiene ninguna sesión abierta, abre una (un slot nuevo con
   el nombre `orq-…`). Si tiene varias, te pregunta a cuál mandarlo.
 - **Detener** interrumpe la tarea y lo que estuvieran haciendo sus sesiones.
+  **Reanudar** la vuelve a poner en marcha desde donde estaba, con su plan y su
+  bitácora; puedes añadirle una nota (escrita o dictada) con lo que viste
+  mientras estaba parada. Si hay otra en curso, vuelve a la cola.
 - Necesita el muestreo en marcha (`hub-snapshotter`): es quien lo despierta
   cuando una sesión termina. Sin él, la tarea se queda encolada.
 
@@ -54,11 +57,22 @@ Si prefieres quitártelo de en medio antes de la primera tarea, abre una termina
 y ejecuta una vez `claude --dangerously-skip-permissions`, acepta y sal con
 `/exit`.
 
-### Lo que cuesta
+### Modelo, esfuerzo y contexto
 
-El orquestador y las sesiones que abre usan **Opus**, porque coordinar trabajo
-de varios pasos es justo donde un modelo menor se equivoca. Una tarea pequeña
-son unos pocos minutos de Opus; una grande, bastante más. Mira `/consumo`.
+El orquestador y las sesiones que abre usan **Opus** con esfuerzo alto, porque
+coordinar trabajo de varios pasos es justo donde un modelo menor se equivoca.
+**Él puede cambiarlo por sesión** —subir a `xhigh` para un análisis difícil,
+bajar a Sonnet para algo mecánico— y te lo cuenta en el avance; si no tiene
+claro que compense, te lo pregunta (te llega el aviso al teléfono). Cambiar el
+modelo **no cambia tus ajustes**: relanza esa sesión con su misma
+conversación.
+
+Las sesiones que abre **compactan solas al 70 %** del contexto, en vez de
+esperar al borde. Las que abriste tú no: si una va muy llena, él la compacta
+entre dos encargos.
+
+Una tarea pequeña son unos pocos minutos de Opus; una grande, bastante más.
+Mira `/consumo`.
 
 ### Dictar
 

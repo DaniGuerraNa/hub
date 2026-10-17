@@ -16,7 +16,7 @@ Es opcional. Si no lo instalas, la pestaña ni se pinta.
 bash scripts/sembrar-asistente.sh
 ```
 
-Después declara en tu registro el bloque `tipo: asistente` que el script imprime.
+El script lo declara solo en tu registro; en menos de un minuto sale el chat.
 
 ## Para qué sirve
 
@@ -56,3 +56,20 @@ Cada proyecto declara en el registro cuánto permiso tiene el asistente:
 | `never` | **Nunca**, aunque se lo pidas desde la interfaz |
 
 `never` significa nunca: primero se cambia el guardrail en el registro.
+
+## Para aprender el hub
+
+Si acabas de instalarlo, el asistente es la forma más rápida de aprenderlo:
+
+- **Sabe en qué pantalla estás.** Pregúntale «¿qué es esto?» y te lo explica
+  sin que tengas que decir dónde estás.
+- **Te lleva.** Cuando habla de una pantalla pone el enlace, y en el chat se
+  pulsa.
+- **Hace contigo lo básico:** registrar un proyecto que ya tienes, crear uno
+  nuevo, crear un slot o apuntar una nota. Te pregunta lo que necesita, te
+  propone hacerlo y lo hace cuando le dices que sí.
+- Con el chat vacío te propone por dónde empezar.
+
+La pantalla **[Guía](/guia)** tiene los primeros pasos. Cada uno se marca solo
+cuando el hub ve que está hecho, y su botón **Guíame** le hace al asistente la
+pregunta de ese paso.

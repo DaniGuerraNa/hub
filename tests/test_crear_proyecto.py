@@ -392,3 +392,76 @@ def test_el_encargo_manda_TERMINAR_diciendo_qué_kits_hay(con, escena, tmp_path)
 
     assert "kits disponibles" in prompt
     assert "No apliques ningún kit por tu cuenta" in prompt
+
+
+# ─────────── anexar: registrar lo que ya existe, sin tocarlo (271) ──────────
+
+
+def _existente(tmp_path, nombre="ya-existe"):
+    carpeta = tmp_path / nombre
+    carpeta.mkdir()
+    (carpeta / "README.md").write_text("hola\n", encoding="utf-8")
+    (carpeta / "ESTADO.md").write_text("en marcha\n", encoding="utf-8")
+    return carpeta
+
+
+def test_anexar_da_el_alta_y_no_toca_nada_de_la_carpeta(con, escena, tmp_path):
+    carpeta = _existente(tmp_path)
+    antes = sorted(p.name for p in carpeta.iterdir())
+
+    hecho = agentes.anexar_proyecto(con, "ya-existe", "Ya Existe", str(carpeta),
+                                    estado_ref="ESTADO.md")
+
+    assert sorted(p.name for p in carpeta.iterdir()) == antes   # ni .git ni .claude
+    assert hecho == {"id": "ya-existe", "ruta": str(carpeta), "estado_ref": "ESTADO.md",
+                     "git": False}
+    assert "id: ya-existe" in escena["registro"].read_text(encoding="utf-8")
+    assert api.obtener_proyecto(con, "ya-existe")
+    assert escena["lanzados"] == []                              # ningún agente
+
+
+def test_anexar_no_acepta_un_documento_de_estado_que_no_existe(con, escena, tmp_path):
+    """Un puntero inventado enseña como «estado actual» algo que no lo es."""
+    carpeta = _existente(tmp_path)
+
+    with pytest.raises(ValueError, match="no existe dentro"):
+        agentes.anexar_proyecto(con, "x", "X", str(carpeta), estado_ref="CHECKPOINT.md")
+    assert "id: x" not in escena["registro"].read_text(encoding="utf-8")
+
+
+def test_anexar_una_carpeta_vacia_o_que_no_existe_se_rechaza(con, escena, tmp_path):
+    vacia = tmp_path / "vacia"
+    vacia.mkdir()
+
+    with pytest.raises(ValueError, match="nuevo-proyecto"):
+        agentes.anexar_proyecto(con, "x", "X", str(vacia))
+    with pytest.raises(ValueError, match="no existe"):
+        agentes.anexar_proyecto(con, "x", "X", str(tmp_path / "nada"))
+
+
+def test_anexar_dos_veces_la_misma_carpeta_se_rechaza(con, escena, tmp_path):
+    carpeta = _existente(tmp_path)
+    agentes.anexar_proyecto(con, "uno", "Uno", str(carpeta))
+
+    with pytest.raises(ValueError, match="ya está registrada como «uno»"):
+        agentes.anexar_proyecto(con, "dos", "Dos", str(carpeta))
+
+
+def test_anexar_desde_la_api(con, escena, tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from hub import web
+    from hub import db
+    # La misma base que `con`, abierta de nuevo en cada petición: la ruta la cierra.
+    monkeypatch.setattr(web, "conexion", lambda: db.conectar(tmp_path / "hub.db"))
+    carpeta = _existente(tmp_path)
+    cliente = TestClient(web.app)
+
+    crudo = cliente.post("/api/proyecto/anexar", json={"id": "ya-existe", "nombre": "Ya",
+                                                       "ruta": str(carpeta)})
+    assert crudo.status_code == 200, crudo.text
+    r = crudo.json()
+    malo = cliente.post("/api/proyecto/anexar", json={"id": "Mal Id", "nombre": "Ya",
+                                                      "ruta": str(carpeta)}).json()
+
+    assert r["ok"] is True and r["estado_ref"] is None
+    assert malo["ok"] is False and "no sirve como id" in malo["error"]

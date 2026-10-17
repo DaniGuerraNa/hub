@@ -107,13 +107,19 @@ def cmd_sesiones(con, args) -> int:
     for s in vivas:
         estado = "trabajando" if s["trabajando"] else "libre"
         print(f"- {s['pane_id']}  {s['agente']}  {estado}  {s['nombre']}")
+        f = orquestador.ficha(s["pane_id"])
+        contexto = f"{f['contexto'] // 1000}k tokens" if f["contexto"] is not None else "no se pudo leer"
+        print(f"    modelo: {f['modelo'] or 'el predeterminado (no se ve cuál)'}"
+              f" · esfuerzo: {f['esfuerzo'] or 'por omisión'}"
+              f" · contexto: {contexto}"
+              f" · compacta sola al {f['compacta_al'] + ' %' if f['compacta_al'] else 'borde (por omisión)'}")
     if len(vivas) > 1:
         print("\nHay varias: si no sabes a cuál mandar, pregúntale al dueño.")
     return 0
 
 
 def cmd_abrir(con, args) -> int:
-    r = orquestador.abrir_sesion(con, args.proyecto, args.nombre)
+    r = orquestador.abrir_sesion(con, args.proyecto, args.nombre, args.modelo, args.esfuerzo)
     print(f"Abierta en {r['pane_id']}" + ("" if r["listo"] else
           " (todavía arrancando: si `mandar` dice que no está lista, espera un momento)"))
     return 0
@@ -135,6 +141,19 @@ def cmd_mandar(con, args) -> int:
         " (escrito, pero no se pudo confirmar que saliera: NO lo repitas;"
         " si no hay respuesta, pregúntale al dueño)")
     print(f"Mandado (#{r['espera']}){extra}. Termina tu turno: te despierto cuando acabe.")
+    return 0
+
+
+def cmd_ajustar(con, args) -> int:
+    r = orquestador.ajustar(con, args.proyecto, args.pane, args.modelo, args.esfuerzo, args.forzar)
+    print(f"Ajustada: {r['cambio']}. Conserva su conversación." + ("" if r["listo"] else
+          " Todavía arrancando: termina tu turno, te despierto cuando quede libre."))
+    return 0
+
+
+def cmd_compactar(con, args) -> int:
+    orquestador.compactar(con, args.proyecto, args.pane, args.foco)
+    print("Compactando. Termina tu turno: te despierto cuando quede libre.")
     return 0
 
 
@@ -185,6 +204,8 @@ ORDENES = {
     "sesiones": cmd_sesiones,
     "abrir": cmd_abrir,
     "mandar": cmd_mandar,
+    "ajustar": cmd_ajustar,
+    "compactar": cmd_compactar,
     "respuesta": cmd_respuesta,
     "plan": cmd_plan,
     "paso": cmd_paso,
@@ -207,6 +228,18 @@ def construir_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("abrir")
     p.add_argument("proyecto")
     p.add_argument("--nombre", default="")
+    p.add_argument("--modelo", default="")
+    p.add_argument("--esfuerzo", default="")
+    p = sub.add_parser("ajustar")
+    p.add_argument("proyecto")
+    p.add_argument("pane")
+    p.add_argument("--modelo", default="")
+    p.add_argument("--esfuerzo", default="")
+    p.add_argument("--forzar", action="store_true")
+    p = sub.add_parser("compactar")
+    p.add_argument("proyecto")
+    p.add_argument("pane")
+    p.add_argument("foco", nargs="?", default="")
     p = sub.add_parser("mandar")
     p.add_argument("proyecto")
     p.add_argument("pane")

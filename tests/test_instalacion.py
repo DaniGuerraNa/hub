@@ -188,14 +188,27 @@ def test_con_asistente_declarado_si_se_pinta(hub_vacio):
     assert 'id="asistente-pestana"' in cliente.get("/").text
 
 
-def test_la_guia_desaparece_en_cuanto_hay_un_proyecto(hub_vacio):
+def test_la_guia_desaparece_en_cuanto_hay_un_proyecto(hub_vacio, tmp_path):
     """Se va sola al quedar superada por los hechos, sin tener que descartarla."""
     cliente, conectar = hub_vacio
     con = conectar()
-    con.execute("INSERT INTO proyecto (id, nombre) VALUES ('mio','Mío')")
+    con.execute("INSERT INTO proyecto (id, nombre, asiento) VALUES ('mio','Mío',?)", (str(tmp_path),))
     con.commit()
     con.close()
     assert "primer-arranque" not in cliente.get("/").text
+
+
+def test_los_proyectos_de_ejemplo_no_esconden_la_guia(hub_vacio):
+    """🔴 El registro recién instalado trae dos de ejemplo con rutas inventadas.
+    Contándolos, la guía de la portada no salía nunca en una instalación nueva,
+    que es el único sitio donde existe (sala limpia, 16-oct)."""
+    cliente, conectar = hub_vacio
+    con = conectar()
+    con.execute("INSERT INTO proyecto (id, nombre, asiento) VALUES "
+                "('mi-proyecto','Mi proyecto','~/dev/no-existe-de-verdad')")
+    con.commit()
+    con.close()
+    assert "primer-arranque" in cliente.get("/").text
 
 
 def test_sin_systemd_el_doctor_no_bloquea_y_ofrece_arrancar_a_mano(tmp_path):
@@ -313,3 +326,31 @@ def test_el_instalador_no_da_por_buena_una_pantalla_que_falla():
     comprobacion = texto.split('paso "5/5')[1]
     assert 'apple-mobile-web-app-title" content="Hub"' in comprobacion   # es el hub quien contesta
     assert comprobacion.index("exit 1", comprobacion.index("fallos")) < comprobacion.index("Listo.")
+
+
+def test_sembrar_el_asistente_lo_declara_dentro_de_proyectos_y_el_registro_sigue_leyendose(tmp_path):
+    """🔴 Sala limpia, 16-oct: el script imprimía el bloque y un «Añade:», y
+    pegarlo al final del archivo lo dejaba debajo de `conexiones: []`. El
+    registro entero dejaba de leerse. Ahora se declara solo, en su sitio."""
+    casa = tmp_path / "otra-casa"
+    casa.mkdir()
+    shutil.copy(RAIZ / "projects.ejemplo.yml", casa / "projects.yml")
+    destino = tmp_path / "asistente"
+    entorno = {"HUB_HOME": str(casa), "HUB_PROJECTS_YML": str(casa / "projects.yml")}
+
+    r = _correr(RAIZ / "scripts" / "sembrar-asistente.sh", entorno, str(destino))
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "declarado en tu registro" in r.stdout
+    leer = subprocess.run(
+        ["uv", "run", "--quiet", "python", "-c",
+         "from hub import registry; ps = registry.cargar();"
+         "print(sorted(p.id for p in ps), [p.asiento for p in ps if p.tipo == 'asistente'])"],
+        cwd=RAIZ, capture_output=True, text=True, env={**os.environ, **entorno}, timeout=120)
+    assert leer.returncode == 0, leer.stderr
+    assert "'asistente'" in leer.stdout and str(destino) in leer.stdout
+    assert "conexiones: []" in (casa / "projects.yml").read_text(encoding="utf-8")
+
+    otro = tmp_path / "asistente2"
+    r2 = _correr(RAIZ / "scripts" / "sembrar-asistente.sh", entorno, str(otro))
+    assert "ya había un asistente" in r2.stdout     # no se duplica ni se pisa

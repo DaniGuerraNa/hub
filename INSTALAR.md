@@ -95,8 +95,9 @@ Es de **consulta**: lee tus proyectos y no escribe en ellos.
 bash scripts/sembrar-asistente.sh
 ```
 
-Luego declara en el registro el bloque `tipo: asistente` que el script imprime.
-Si no lo quieres, no hagas nada: sin ese proyecto la pestaña no se pinta.
+El script lo declara solo en el registro. Si no lo quieres, no lo siembres: sin
+ese proyecto la pestaña no se pinta. Después, empieza por la Guía (`/guia`):
+sus botones «Guíame» se lo preguntan al asistente.
 
 ## Comprobar y desinstalar
 

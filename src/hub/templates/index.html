@@ -28,9 +28,9 @@
         <li>
           <strong>Declara un proyecto.</strong>
           <div class="tenue">
-            Lo más fácil: abre Claude Code en la carpeta del hub y dile
-            <em>«anexa mi proyecto»</em> — la skill <code>anexar-proyecto</code>
-            lo registra y detecta cuál de tus documentos lleva su estado.
+            Lo más fácil: {% if rail.hay_asistente %}pídeselo al asistente, abajo a la
+            derecha — <em>«quiero registrar un proyecto que ya tengo»</em> —, o{% endif %}
+            abre Claude Code en la carpeta del hub y dile <em>«anexa mi proyecto»</em>.
             A mano también vale: edita
             <code>~/.local/share/hub/projects.yml</code>, que trae un ejemplo
             comentado dentro.
@@ -54,7 +54,8 @@
       </ol>
 
       <div class="barra" style="margin-top:16px">
-        <a class="boton principal" href="/inventario">Ver qué hay</a>
+        <a class="boton principal" href="/guia">Primeros pasos</a>
+        <a class="boton" href="/inventario">Ver qué hay</a>
         <button class="sutil" id="primer-arranque-cerrar">No volver a mostrar</button>
       </div>
     </div>

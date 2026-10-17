@@ -175,9 +175,13 @@ Listo. El hub está en $url
   Registro  $HUB_HOME/projects.yml   ← declara aquí tus proyectos
   Servicios systemctl --user status hub-web hub-snapshotter
 
-Lo siguiente: abre Claude Code en esta carpeta y di «anexa mi proyecto», o edita
-el registro a mano. La pantalla de inicio te guía si aún no tienes ninguno.
+Lo siguiente: abre $url/guia — los primeros pasos, uno a uno, y qué hay en
+cada pantalla.
 
-El asistente (el chat de abajo a la derecha) es opcional y va aparte:
-  bash scripts/sembrar-asistente.sh     y declara el bloque que imprime.
+El primero es el asistente, el chat de abajo a la derecha: te explica cada
+pantalla, te lleva a ella y registra contigo tus proyectos. Va aparte:
+  bash scripts/sembrar-asistente.sh     (se declara solo en tu registro)
+
+El registro trae dos proyectos de ejemplo (mi-proyecto, otro-proyecto): no
+cuentan, y puedes borrarlos de projects.yml cuando quieras.
 FIN

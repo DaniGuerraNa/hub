@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  /* Los pasos van en una columna y cada uno lleva su estado en la forma —una
+     placa verde con el visto, o el número— además de en el texto: se lee de un
+     vistazo en el teléfono. */
+  .guia-cabeza { display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap;
+                 margin-bottom:18px; }
+  .guia-cabeza .avance { font-size:13px; color:var(--texto-3);
+                         font-variant-numeric:tabular-nums; }
+  .guia-barra { height:6px; border-radius:3px; background:var(--superficie2);
+                overflow:hidden; margin:6px 0 0; max-width:320px; }
+  .guia-barra > i { display:block; height:100%; background:var(--ok); }
+  .pasos { list-style:none; margin:0 0 28px; padding:0; display:grid; gap:10px; }
+  .paso { display:grid; grid-template-columns:auto 1fr; gap:14px;
+          background:var(--superficie); border:1px solid var(--borde);
+          border-radius:var(--r-tarjeta); padding:16px 18px; }
+  .paso.siguiente { border-color:color-mix(in srgb, var(--acento) 55%, var(--borde)); }
+  .paso.hecho { background:var(--lienzo); }
+  .paso .num { width:28px; height:28px; border-radius:9px; display:grid;
+               place-items:center; font-size:13px; font-weight:600;
+               background:var(--elevado); color:var(--texto-2); }
+  .paso.hecho .num { background:color-mix(in srgb, var(--ok) 18%, transparent);
+                     color:var(--ok); }
+  .paso.siguiente .num { background:color-mix(in srgb, var(--acento) 22%, transparent);
+                         color:var(--acento); }
+  .paso h3 { margin:2px 0 4px; font-size:15px; font-weight:600; color:var(--texto);
+             display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .paso .estado { font-size:11px; font-weight:500; letter-spacing:.04em;
+                  padding:1px 8px; border-radius:999px; }
+  .paso.hecho .estado { color:var(--ok); background:color-mix(in srgb, var(--ok) 14%, transparent); }
+  .paso.siguiente .estado { color:var(--acento);
+                            background:color-mix(in srgb, var(--acento) 14%, transparent); }
+  .paso .opcional { color:var(--texto-3); background:var(--elevado); }
+  .paso p { margin:0 0 6px; color:var(--texto-2); font-size:14px; max-width:68ch; }
+  .paso p.como { color:var(--texto-3); font-size:13px; }
+  .paso .acciones { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .paso.hecho p { display:none; }
+  .paso.hecho .acciones { margin-top:0; }
+  .mapa { display:grid; gap:18px; }
+  .mapa h3 { font-size:11px; text-transform:uppercase; letter-spacing:.09em;
+             color:var(--texto-3); font-weight:500; margin:0 0 8px; }
+  .pantallas { list-style:none; margin:0; padding:0; display:grid; gap:8px;
+               grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); }
+  .pantalla { background:var(--superficie); border:1px solid var(--borde);
+              border-radius:var(--r-tarjeta); padding:14px 16px; }
+  .pantalla a.nombre { font-weight:600; color:var(--texto); }
+  .pantalla .ruta { font-family:ui-monospace, Menlo, Consolas, monospace; font-size:11.5px;
+                    color:var(--texto-3); margin-left:6px; }
+  .pantalla p { margin:4px 0 6px; font-size:13px; color:var(--texto-2); }
+  .pantalla ul { margin:0; padding-left:18px; font-size:12.5px; color:var(--texto-3); }
+  .pantalla li { margin:2px 0; }
+</style>
+
+<div class="guia-cabeza">
+  <div style="flex:1;min-width:240px">
+    <h1>Primeros pasos</h1>
+    <p class="tenue" style="margin:0;max-width:70ch">
+      Lo básico para que el hub empiece a servirte. Cada paso se marca solo en cuanto
+      el hub ve que está hecho{% if rail.hay_asistente %}, y en cualquiera puedes pulsar
+      <strong>Guíame</strong> para que el asistente te acompañe{% endif %}.
+    </p>
+  </div>
+  <div class="avance">
+    {{ g.hechos }} de {{ g.total }} hechos
+    <div class="guia-barra" role="progressbar" aria-valuemin="0" aria-valuemax="{{ g.total }}"
+         aria-valuenow="{{ g.hechos }}"><i style="width:{{ (100 * g.hechos / g.total) | round }}%"></i></div>
+  </div>
+</div>
+
+<ol class="pasos">
+  {% for p in g.pasos %}
+  <li class="paso {{ 'hecho' if p.hecho }} {{ 'siguiente' if p.siguiente }}" id="paso-{{ p.id }}">
+    <span class="num">{% if p.hecho %}✓{% else %}{{ loop.index }}{% endif %}</span>
+    <div>
+      <h3>{{ p.titulo }}
+        {% if p.hecho %}<span class="estado">hecho</span>
+        {% elif p.siguiente %}<span class="estado">el siguiente</span>
+        {% elif p.opcional %}<span class="estado opcional">opcional</span>{% endif %}
+      </h3>
+      <p>{{ p.por_que }}</p>
+      <p class="como">{{ p.como }}</p>
+      {% if p.enlace or p.pregunta %}
+      <div class="acciones">
+        {% if p.pregunta and not p.hecho %}
+        <button type="button" class="{{ 'principal' if p.siguiente }}" data-guiame="{{ p.pregunta }}">Guíame</button>
+        {% endif %}
+        {% if p.enlace %}<a class="boton {{ 'sutil' if p.hecho }}" href="{{ p.enlace.ruta }}">{{ p.enlace.etiqueta }}</a>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ol>
+
+{{ ui.seccion('rejilla', 'Qué hay en cada pantalla') }}
+<div class="mapa">
+  {% for grupo in g.mapa %}
+  <section>
+    <h3>{{ grupo.grupo }}</h3>
+    <ul class="pantallas">
+      {% for s in grupo.pantallas %}
+      <li class="pantalla">
+        {% if '<' in s.ruta %}<span class="nombre" style="font-weight:600">{{ s.nombre }}</span>
+        {% else %}<a class="nombre" href="{{ s.ruta }}">{{ s.nombre }}</a>{% endif %}
+        <span class="ruta">{{ s.ruta }}</span>
+        <p>{{ s.para_que }}</p>
+        <ul>{% for a in s.que_haces %}<li>{{ a }}</li>{% endfor %}</ul>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+</div>
+
+<script src="/static/guia.js"></script>
+{% endblock %}

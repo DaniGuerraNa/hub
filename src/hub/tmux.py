@@ -658,6 +658,29 @@ def matar_panel(pane_id: str) -> None:
     _correr(["kill-pane", "-t", pane_id])
 
 
+def pid_del_panel(pane_id: str) -> int | None:
+    """El proceso raíz del panel: el que tmux arrancó, no lo que corre encima."""
+    validar_panel(pane_id)
+    salida = _correr(["display-message", "-p", "-t", pane_id, "#{pane_pid}"]).strip()
+    return int(salida) if salida.isdigit() else None
+
+
+def relanzar_panel(pane_id: str, ruta: str, comando: str,
+                   entorno: dict[str, str] | None = None) -> None:
+    """Mata lo que corre en el panel y arranca `comando` en el MISMO panel.
+
+    El mismo y no uno nuevo porque el id del panel es lo que casa al slot, a
+    las esperas del orquestador y a la pestaña de /trabajo: con `respawn-pane`
+    ninguno se entera de que debajo cambió el proceso (decisión 268).
+    """
+    validar_panel(pane_id)
+    args = ["respawn-pane", "-k", "-t", pane_id, "-c", ruta]
+    for clave, valor in (entorno or {}).items():
+        args += ["-e", f"{clave}={valor}"]
+    args.append(comando)
+    _correr(args)
+
+
 def capturar_panel(pane_id: str, unir_lineas: bool = False,
                    con_historia: bool = False) -> str:
     """Lo que se ve en el panel ahora mismo. Cadena vacía si no se puede leer.

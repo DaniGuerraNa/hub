@@ -235,6 +235,71 @@ def _confiar(destino: Path) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def anexar_proyecto(
+    con: sqlite3.Connection,
+    id_proyecto: str,
+    nombre: str,
+    ruta: str,
+    dominio: str = "personal",
+    guardrail: str = "ask",
+    estado_ref: str = "",
+) -> dict:
+    """Da de alta en el registro un proyecto que YA existe. Sin tocarlo.
+
+    Es lo primero que hace quien estrena el hub, y hasta ahora sólo se podía
+    con la skill `anexar-proyecto` desde una sesión de Claude Code o editando
+    `projects.yml` a mano: desde el chat del asistente, no (decisión 271).
+
+    🔴 Ni `git init`, ni permisos, ni ningún agente dentro: anexar es declarar
+    lo que hay. Lo único que se escribe es el registro del hub, que es suyo.
+    Y el `estado_ref`, si se da, **tiene que existir**: un puntero inventado hace
+    que el hub enseñe como «estado actual» algo que no lo es.
+    """
+    id_proyecto = (id_proyecto or "").strip()
+    nombre = (nombre or "").strip()
+    estado_ref = (estado_ref or "").strip()
+    if not _ID_VALIDO.fullmatch(id_proyecto):
+        raise ValueError(
+            f"«{id_proyecto}» no sirve como id: minúsculas, números y guiones."
+            " El id no se puede cambiar después."
+        )
+    if not nombre:
+        raise ValueError("hace falta un nombre.")
+    if dominio not in ("personal", "laboral"):
+        raise ValueError("el dominio es `personal` o `laboral`.")
+    if guardrail not in ("auto", "ask", "never"):
+        raise ValueError("el guardrail es `auto`, `ask` o `never`.")
+    carpeta = Path(ruta or "").expanduser()
+    if not carpeta.is_absolute():
+        raise ValueError(f"la ruta tiene que ser absoluta: «{ruta}»")
+    if not carpeta.is_dir():
+        raise ValueError(f"«{carpeta}» no existe o no es una carpeta.")
+    if not any(carpeta.iterdir()):
+        raise ValueError(
+            f"«{carpeta}» está vacía: eso es un proyecto nuevo, no uno que anexar"
+            " (`hub nuevo-proyecto`)."
+        )
+    if estado_ref and not (carpeta / estado_ref).is_file():
+        raise ValueError(
+            f"«{estado_ref}» no existe dentro de {carpeta}. Si el proyecto no tiene"
+            " documento de estado, déjalo vacío: no tener puntero también es información."
+        )
+    if api.obtener_proyecto(con, id_proyecto):
+        raise ValueError(f"ya hay un proyecto con el id «{id_proyecto}».")
+    for otro in registry.cargar():
+        if otro.asiento and Path(otro.asiento).expanduser() == carpeta:
+            raise ValueError(f"esa carpeta ya está registrada como «{otro.id}».")
+
+    registry.añadir_proyecto({
+        "id": id_proyecto, "nombre": nombre, "dominio": dominio,
+        "asiento": str(carpeta), "estado_ref": estado_ref,
+        "guardrail": guardrail, "status": "activo",
+    })
+    registry.sincronizar(con, registry.cargar())
+    return {"id": id_proyecto, "ruta": str(carpeta), "estado_ref": estado_ref or None,
+            "git": (carpeta / ".git").exists()}
+
+
 def crear_proyecto(
     con: sqlite3.Connection,
     id_proyecto: str,
