@@ -1,6 +1,6 @@
 # Flujos — qué hacer y con qué
 
-Siete procedimientos, todos como **skills de Claude Code** en `.claude/skills/`.
+Ocho procedimientos, todos como **skills de Claude Code** en `.claude/skills/`.
 Abres Claude Code en la carpeta del hub y lo pides con tus palabras.
 
 | Quiero… | Skill | Se pide diciendo |
@@ -12,6 +12,7 @@ Abres Claude Code en la carpeta del hub y lo pides con tus palabras.
 | Fabricar una capacidad reutilizable | `nuevo-kit` | «quiero un kit para X» |
 | Cuidar un kit que ya usa gente | `mantener-kit` | «mantén el kit X» |
 | Entender qué es y qué hace el hub | `sobre-el-hub` | «explícame el hub» |
+| Enseñar algo denso en la web del hub en vez de en la terminal | `lienzos` | «ponlo en el hub», «hazme un diagrama» |
 
 ## Por qué casi todas son skills y no botones
 
@@ -45,7 +46,11 @@ Tres formas de pedir lo mismo, y las tres acaban en el mismo sitio:
 |---|---|
 | **La interfaz** | Portada → **«Proyecto nuevo»** |
 | **El asistente** | «crea un proyecto» — y él no escribe nada, lo pide |
-| **La terminal** | `hub nuevo-proyecto --id mi-app --nombre "Mi App" --ruta /ruta/absoluta/mi-app` |
+| **La terminal** | `hub nuevo-proyecto --id mi-app --nombre "Mi App" --ruta /ruta/absoluta/mi-app` (\*) |
+
+(\*) `hub` es el CLI del asistente (`bin/hub` de su carpeta). `sembrar-asistente.sh`
+lo enlaza en `~/.local/bin/hub` (decisión 278) si ahí no había ya otra cosa; sin
+asistente sembrado, el comando no existe.
 
 Lo que pasa cuando lo pides:
 
@@ -116,7 +121,12 @@ bash scripts/kit.sh ruta <id> [v]        # dónde está — lo que resuelve un a
 bash scripts/kit.sh estado [proyecto]    # qué está al día y qué ha derivado
 bash scripts/kit.sh arbol                # quién provee qué, y qué falta
 bash scripts/kit.sh verificar <ruta|id>  # ¿el manifiesto es válido?
+bash scripts/kit.sh aplicar <id> <proyecto>  # el plan y el encargo para aplicarlo
+bash scripts/kit.sh quitar <id> <proyecto>   # qué quedaría suelto si se quita
 ```
+
+`aplicar` y `quitar` **no escriben nada**: imprimen. Escribir dentro del repo de
+otro proyecto lo hace un agente que corre allí, contigo mirando el diff.
 
 ## Dar de alta un servidor, y guardar un secreto
 

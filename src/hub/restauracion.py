@@ -7,9 +7,10 @@ versión anterior no permitía, porque la decisión vivía mezclada con la ejecu
 dentro de `slots.restaurar`.
 
 Vive aparte de `slots` por la dirección de las dependencias: `slots` importa
-`api`, así que `api` no puede importar `slots` (decisión 197). La pantalla
+`api`, así que `api` no puede importar `slots`. La pantalla
 necesita enseñar el plan antes de ejecutarlo, o sea que `api` tiene que poder
-calcularlo. Los dos importan esto y nadie importa a nadie al revés.
+calcularlo. Los dos importan esto y nadie importa a nadie al revés (decisión
+206, que es la que mudó aquí lo puro).
 """
 
 from __future__ import annotations

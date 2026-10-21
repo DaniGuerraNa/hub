@@ -24,7 +24,7 @@ de cuánta voz haya dentro. El de arriba es el malo, que es el que hay que poder
 defender.
 
 🔴 Nada de esto sale de la máquina. Si algún día este script llama a una API,
-deja de ser cierta la decisión n4 y hay que decirlo en voz alta.
+deja de ser cierta la decisión 221 y hay que decirlo en voz alta.
 """
 
 from __future__ import annotations

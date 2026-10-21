@@ -7,15 +7,22 @@ description: Responde dudas sobre cómo funciona o cómo se usa el hub. Úsala c
 
 ## Cómo
 
-1. **Lee `conocimiento/INDICE.md`** — dice qué documento contesta qué.
+1. **Lee `conocimiento/INDICE.md`** — dice qué documento contesta qué. En el
+   repo publicado está en la raíz; en el repo de desarrollo del hub, en
+   `producto/conocimiento/INDICE.md`.
 2. **Abre sólo el que toque.** Cargarlos todos gasta contexto para nada.
 3. Si la pregunta es sobre una cifra concreta del usuario, **míralo en su
    instalación** en vez de explicar cómo se calcula en abstracto:
 
 ```bash
 curl -s "http://127.0.0.1:8787/api/contexto?formato=md"
+curl -s "http://127.0.0.1:8787/api/guia"     # primeros pasos y mapa de pantallas
 bash scripts/kit.sh estado
 ```
+
+   El comando `hub` (`hub guia`, `hub estado`…) es del asistente. Si ya se
+   sembró, también está en `~/.local/bin/hub` y puedes usarlo desde aquí; si
+   `which hub` no lo encuentra, usa la API.
 
 ## Qué no inventar
 

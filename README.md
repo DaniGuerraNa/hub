@@ -1,7 +1,9 @@
 # Hub
 
 Un índice de tus proyectos, tus sesiones de trabajo y lo que has construido.
-Corre en tu máquina, escucha sólo en `127.0.0.1` y no manda nada a ninguna parte.
+Corre en tu máquina y escucha sólo en `127.0.0.1`. No manda nada fuera salvo lo
+que actives tú: el canal de Telegram, los encargos y publicar maquetas en un
+servidor son opcionales y vienen apagados.
 
 Existe para dos cosas:
 
@@ -33,13 +35,21 @@ hasta declarar tu primer proyecto.
 ### Actualizar
 
 ```bash
-git pull && systemctl --user restart hub-web hub-snapshotter
+bash scripts/actualizar.sh
 ```
 
-El `pull` solo no basta: el código en marcha sigue siendo el viejo. Tus datos
-viven en `~/.local/share/hub/`, fuera del repo, así que actualizar no puede
-pisarte nada. Si algo se ve raro después, recarga con **Ctrl+Shift+R**: parte de
-la interfaz son `.js` que el navegador cachea.
+Baja la versión, regenera los servicios, pone al día el asistente, aplica los
+pasos propios de cada versión, reinicia lo que estaba en marcha y te enseña qué
+cambió ([`CHANGELOG.md`](CHANGELOG.md)). Tus datos viven en
+`~/.local/share/hub/`, fuera del repo, y no se tocan. Si algo se ve raro
+después, recarga con **Ctrl+Shift+R**.
+
+El hub te avisa arriba, en todas las pantallas, cuando hay una versión nueva
+publicada; nunca se actualiza solo. Y si hiciste sólo `git pull`, te avisa de
+que falta terminar.
+
+🔴 **Si lo instalaste antes de la 0.2.0**, esta vez: `git pull && bash
+scripts/actualizar.sh --sin-bajar`.
 
 ### Las ramas
 
@@ -49,14 +59,15 @@ la interfaz son `.js` que el navegador cachea.
 | `qa` | En pruebas, camino de `main` |
 | `dev` | Todo lo que se va haciendo. Se rompe |
 
-`git clone` te deja en `main` sin que hagas nada.
+`git clone` te deja en `main` sin que hagas nada. Cada versión que llega a
+`main` lleva su etiqueta (`v0.2.0`) y su entrada en `CHANGELOG.md`.
 
 ## Las pantallas
 
 | | |
 |---|---|
-| **Inicio** | Qué pide atención hoy: commits sin respaldo, sesiones perdidas tras un corte, proyectos parados |
-| **Trabajo** | Donde vas a pasar el día: slots a la izquierda, una **terminal de verdad** en medio, y la nota del slot a la derecha |
+| **Panorama** | Qué pide atención hoy: commits sin respaldo, sesiones perdidas tras un corte, proyectos parados |
+| **Trabajo** | Donde vas a pasar el día: slots a la izquierda, una **terminal de verdad** en medio y, a la derecha, la nota del slot, sus lienzos, sus consultas y sus mensajes programados |
 | **Inventario** | Todo lo que has construido, quién lo usa y qué lleva meses sin tocarse |
 | **Respaldo** | Cuánto trabajo tuyo no está en ningún otro sitio |
 | **Servicios** | De quién es cada contenedor de Docker, **antes** de parar ninguno |
@@ -65,10 +76,10 @@ la interfaz son `.js` que el navegador cachea.
 | **Archivos** | Qué hay y dónde, por proyecto. Sólo nombres y rutas: el hub no abre archivos |
 | **Intercambio** | La carpeta por la que pasan archivos entre el teléfono y tus sesiones |
 | **Máquina** | Cómo está el equipo cuando no hay nadie delante: disco, memoria, GPU y, si hay un SAI por USB, si se fue la luz |
-| **Consumo** | Cuántos tokens ha costado cada proyecto, leído del registro de Claude Code |
+| **Consumo** | Cuántos tokens ha costado cada proyecto en los últimos días, leído del registro de Claude Code (que borra lo de más de 30 días) |
 | **Orquestador** | Le das una tarea y él se la pide a la sesión de cada proyecto, paso a paso. Ver [`conocimiento/09`](conocimiento/09-orquestador-e-intercambio.md) antes de darle permisos |
 | **Canal** y **Encargos** | Preguntar y recibir encargos por Telegram. Opcionales: sus servicios se instalan parados |
-| **Acceso** | Por qué nombres se entra al hub, qué aparatos pueden, y si la terminal está abierta desde fuera |
+| **Acceso** | Usar el hub desde el móvil u otro aparato: por qué nombres se entra, qué aparatos pueden, y si la terminal está abierta desde fuera. Ver [`conocimiento/10`](conocimiento/10-mas-pantallas.md) |
 | **Guía** | Por dónde empezar: los primeros pasos, que se marcan solos al hacerlos, y qué hay en cada pantalla. Con «Guíame», el asistente te acompaña |
 
 Y una más que no sale en el raíl porque depende de dónde estés: **la del
@@ -90,16 +101,21 @@ proyectos leyendo lo que el hub ya midió.
 
 ### Los botones que lanzan un agente
 
-Casi todo el hub sólo mide y muestra. Cuatro acciones son la excepción y conviene
+Casi todo el hub sólo mide y muestra. Estas acciones son la excepción y conviene
 saber cuáles son, porque abren una ventana de tmux con `claude` dentro de una
-carpeta tuya:
+carpeta:
 
 | Botón | Dónde | Sobre qué |
 |---|---|---|
-| **Proyecto nuevo** | Portada | Una carpeta **vacía** que crea el hub |
+| **Proyecto nuevo** | Panorama | Una carpeta **vacía** que crea el hub |
 | **Kit nuevo** | Inventario → Kits | Una carpeta **vacía**, desde la plantilla |
 | **Crear capa base** | Pantalla del proyecto | Un repo tuyo que ya existe |
 | **Lanzar mantenedor** | Inventario, sobre un kit | El repo de ese kit |
+| **Una tarea** al orquestador | Orquestador | Las sesiones de los proyectos a los que le diste alcance en Orquestador → Permisos |
+| **Entrevistar** e **Implementar** | La ficha de un encargo | La carpeta de ese encargo, dentro de los datos del hub |
+
+Aparte, **Archivos → «Abrir terminal aquí»** y **Restaurar** abren ventanas y
+dejan un comando escrito, pero **sin pulsar Enter**: lo lanzas tú.
 
 Los dos primeros pueden ser botones justamente porque la carpeta está vacía: no
 hay nada de nadie que sobrescribir. Aplicar un kit a un proyecto que **ya
@@ -109,20 +125,26 @@ necesita y sólo da el alta en el registro, sin escribir nada dentro.
 
 Ninguna escribe por su cuenta: el hub prepara el encargo y lo ejecuta un agente
 en su ventana, que tú ves. Y `guardrail: never` en el registro de un proyecto
-las bloquea todas, aunque las pidas desde la interfaz.
+bloquea las que actúan sobre él, aunque las pidas desde la interfaz. Con
+`guardrail: ask`, el orquestador te pide confirmación antes de tocar ese
+proyecto en cada tarea.
 
 ## Cómo funciona, en tres frases
 
 **Tú declaras tus proyectos en un archivo de texto** —
 `~/.local/share/hub/projects.yml` — y todo lo demás sale de ahí. La base de datos
-sólo es un índice: se puede borrar y se reconstruye escaneando.
+es sobre todo un índice que se reconstruye escaneando, pero tus slots, sus
+notas, el canal, los programados y los encargos **sólo viven en ella**: no la
+borres; si da problemas, apártala (ver `conocimiento/06`).
 
 **El hub no toca tus proyectos.** Los lee, los mide y te dice lo que ve. Cuando
 algo hay que escribir dentro de uno, lo propone y lo escribe Claude contigo
 mirando.
 
-**No hay nada automático.** No archiva, no expira, no avisa y no hace push por
-ti. Mide y muestra; la acción es tuya.
+**No hay nada automático.** No archiva, no expira y no hace push por ti. Mide y
+muestra; la acción es tuya. La única excepción son unos pocos avisos por
+Telegram (una sesión que te espera, el hub sin latido, la salud del equipo), y
+sólo si activas el canal.
 
 ## Kits — darle capacidades a un proyecto
 
@@ -142,9 +164,11 @@ Lo que puedes hacer con ellos —crear uno, aplicarlo, mantenerlo— está en
 
 ## Qué necesitas
 
-WSL o Linux con `systemd --user`, `git`, `tmux`, `python` 3.12+,
-[`uv`](https://astral.sh/uv) y [Claude Code](https://claude.com/claude-code).
-Opcionalmente `docker` y `rg`. El diagnóstico te lo dice todo:
+WSL o Linux con `git`, `tmux`, [`uv`](https://astral.sh/uv) y
+[Claude Code](https://claude.com/claude-code). Python 3.12 no hace falta
+tenerlo: uv lo descarga solo. `systemd --user` es lo normal para que arranque
+solo, pero sin él también funciona (`--sin-servicios`). Opcionalmente `docker`
+y `rg`. El diagnóstico te lo dice todo:
 
 ```bash
 bash scripts/doctor.sh
@@ -173,5 +197,9 @@ Nada de eso vive dentro del repo, así que puedes actualizar el hub con un
 MIT — ver [`LICENSE`](LICENSE). Úsalo, cámbialo y redistribúyelo; sólo conserva
 el aviso de copyright.
 
-> 🔴 **La terminal del hub da acceso de shell**, y hoy sólo la protege el bind a
-> `127.0.0.1`. No expongas el puerto a la red sin ponerle antes autenticación.
+> 🔴 **La terminal del hub da acceso de shell.** Por eso el hub escucha sólo en
+> `127.0.0.1`: no lo pongas en `0.0.0.0` ni lo expongas a internet. Para usarlo
+> desde otro aparato está la pantalla **Acceso** —red privada, nombres exactos,
+> aparatos dados de alta con un QR y la terminal tras su propio interruptor,
+> apagado de fábrica y en cada reinicio—. Ver
+> [`conocimiento/10`](conocimiento/10-mas-pantallas.md).

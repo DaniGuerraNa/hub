@@ -74,6 +74,31 @@
   los últimos nueve días.
 </p>
 
+{# Los slots, las notas y el canal no están en ningún repo: sólo en la base del
+   hub, que se copia sola cada día (decisión 277). Se dice dónde, porque una
+   copia en el mismo disco no sobrevive a ese disco. #}
+{% set cb = r.copia_base %}
+<h2 class="con-placa">{{ ui.placa('escudo', 'riesgo' if cb.vieja else 'ok') }}<span>Los datos del hub</span></h2>
+<div class="panel" data-que="copia-base">
+  <div class="fila">
+    <span class="pila">
+      <span class="etiqueta">
+        {% if not cb.ultima %}Todavía no hay ninguna copia de la base
+        {% elif cb.vieja %}La última copia de la base es del {{ cb.ultima | replace('T', ' ') }}: tiene más de dos días
+        {% else %}Copia de la base del {{ cb.ultima | replace('T', ' ') }}{% endif %}
+      </span>
+      <span class="tenue">Slots, notas, canal, programados y encargos sólo viven ahí. Se copia
+        una vez al día y se guardan las {{ cb.conservar }} últimas. Para sobrevivir a un disco muerto,
+        lleva esa carpeta a otro sitio.</span>
+      <span class="mono dato">{{ cb.carpeta }}</span>
+    </span>
+    <span class="der">
+      <span class="col"><b>{{ cb.copias }}</b>copias</span>
+      {% if cb.tamano %}<span class="col"><b>{{ (cb.tamano / 1048576) | round(1) }}</b>MB la última</span>{% endif %}
+    </span>
+  </div>
+</div>
+
 {% if r.repos %}
 <h2 class="con-placa">{{ ui.placa('carpeta') }}<span>Repositorios</span>
   <span class="apunte">{{ r.repos | length }}</span></h2>

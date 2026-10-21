@@ -1,6 +1,6 @@
 """Pasar un audio a texto con un comando de fuera: qué se exige y cómo se falla.
 
-El hub no trae whisper (decisión n4 y la cabecera del módulo), así que aquí lo
+El hub no trae whisper (decisión 221 y la cabecera del módulo), así que aquí lo
 que se prueba de verdad es **el trato con un programa ajeno**: que el que falta
 se diga con la línea exacta que hay que escribir, que el mal configurado se
 rechace antes de gastar un audio, y que los dos modos de no tener texto queden

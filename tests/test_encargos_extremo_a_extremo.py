@@ -34,7 +34,7 @@ from hub import (agentes, api, asistente, buzon, config, db, encargos,
                  snapshotter, tmux, transcribir)
 
 # Quien encarga escribe desde un móvil y no tiene nada más que el bot. Quien
-# aprueba es otro: el gasto y el despliegue son suyos, no de ella (decisión n14).
+# aprueba es otro: el gasto y el despliegue son suyos, no de ella (decisión 281).
 ELLA = 77
 DUENO = 1
 
@@ -542,7 +542,7 @@ def test_aprobar_solo_funciona_respondiendo_a_ese_mensaje(canal):
 
     # «Ya no espera su visto bueno» y no un estado concreto: el «sí» ES el
     # permiso para gastar, así que detrás puede arrancar el constructor solo
-    # (decisión n7) y dejarlo en «construyendo» sin que nadie toque nada más.
+    # (decisión 223) y dejarlo en «construyendo» sin que nadie toque nada más.
     assert encargos.ver(canal.con, ENCARGO)["estado"] != "propuesta"
     assert any("APROBADO" in r["detalle"]
                for r in encargos.registro(canal.con, encargo_id=ENCARGO))

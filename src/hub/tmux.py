@@ -1,7 +1,8 @@
 """Adaptador de tmux.
 
 Modelo espejo: tmux sigue siendo la fuente de verdad de qué está abierto. El hub
-observa y lanza; no hospeda terminales (decisión 16).
+observa y lanza. La terminal embebida (decisión 34) se engancha a tmux con
+`attach`; no le quita a tmux el papel de quien hospeda los procesos.
 """
 
 from __future__ import annotations

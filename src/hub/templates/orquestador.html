@@ -113,6 +113,31 @@
 </div>
 {% endif %}
 
+{% for c in o.confirmar %}
+<div class="tarjeta bandeja" id="confirmar-{{ c.id }}">
+  <h2>Pide confirmar: {{ c.proyecto }}</h2>
+  <p class="tenue" style="margin:0 0 6px">Ese proyecto tiene el guardrail «ask»: el
+    orquestador no lo toca en esta tarea sin tu sí. Lo que confirmas vale para
+    toda la tarea; lo que haga dentro lo sigue marcando su nivel.</p>
+  <p class="pregunta">Quiere {{ c.accion }}:
+{{ c.detalle }}</p>
+  <div class="acciones">
+    <form method="post" action="/orquestador/confirmar" class="enlinea">
+      <input type="hidden" name="tarea_id" value="{{ o.viva.id }}">
+      <input type="hidden" name="conf_id" value="{{ c.id }}">
+      <input type="hidden" name="decision" value="si">
+      <button class="boton principal">Confirmar</button>
+    </form>
+    <form method="post" action="/orquestador/confirmar" class="enlinea">
+      <input type="hidden" name="tarea_id" value="{{ o.viva.id }}">
+      <input type="hidden" name="conf_id" value="{{ c.id }}">
+      <input type="hidden" name="decision" value="no">
+      <button class="boton">No, sin ese proyecto</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
+
 {# ── La tarea que se mira: la de ahora, o la que se eligió de la lista ────── #}
 {% if d %}
 <div class="tarjeta" id="tarea">

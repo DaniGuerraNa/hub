@@ -298,7 +298,7 @@ def primer_mensaje(encargo_id: str) -> str:
 # --------------------------------------------------------------------------- #
 
 # Todos los encargos cuelgan de UN proyecto y cada encargo es un slot suyo
-# (decisión n8). Un proyecto por encargo los metería en `projects.yml` «como uno
+# (decisión 222). Un proyecto por encargo los metería en `projects.yml` «como uno
 # más», y entonces todo lo que el hub hace sobre proyectos —medir respaldo,
 # escanear capacidades, contar consumo— actuaría sobre trabajo que es de otra
 # persona.
@@ -363,7 +363,7 @@ def asegurar_proyecto(con: sqlite3.Connection) -> str:
 def acotar(carpeta: Path) -> None:
     """Deja al entrevistador escribir en su carpeta y usar sus manos. Nada más.
 
-    🔴 Esto es la mitad técnica de la decisión f9 —*«el entrevistador no
+    🔴 Esto es la mitad técnica de la decisión 222 —*«el entrevistador no
     construye, y no puede aunque quiera»*—, y por eso la lista se escribe entera
     aquí, al lado de su contrato, en vez de reusar la de `agentes`: lo que un
     agente puede hacer es parte de lo que es, no un detalle de instalación.

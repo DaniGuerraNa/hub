@@ -1,4 +1,4 @@
-"""Los tres avisos de Telegram (decisión 166), y sólo tres.
+"""Los avisos de Telegram (decisiones 166, 248 y 249): una lista cerrada.
 
 El principio 9 dice que el hub informa y no gestiona, **sin avisos**, y esto es
 la excepción acotada que la decisión 166 abrió a propósito: *«una sesión está
@@ -10,7 +10,7 @@ por uso y nadie se entera del día en que dejó de valer.
 
 🔴 **Este módulo no manda nada.** Decide qué toca avisar; quien habla con
 Telegram es el relé, que es el único proceso que lee el token (regla dura 22).
-Separarlo no es orden: es lo que permite probar los tres avisos enteros sin red.
+Separarlo no es orden: es lo que permite probar los avisos enteros sin red.
 
 🔴 **El aviso es el aviso, nunca el contenido.** Ni la pantalla del panel, ni lo
 que el cuadro de permisos está pidiendo. Es la misma línea que ya sigue
@@ -229,7 +229,7 @@ def olvidar(con: sqlite3.Connection, claves: set[str]) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Los tres avisos
+# Los tres avisos de sesión y sistema (166); los de la casa van más abajo (248)
 # --------------------------------------------------------------------------- #
 
 
@@ -302,7 +302,8 @@ def _del_latido(
     respuesta que la decisión 159 le dio a este agujero — un latido que se echa
     en falta necesita a alguien FUERA que lo eche en falta.
 
-    Tampoco avisa de que volvió: son tres avisos y ninguno más (decisión 166).
+    Tampoco avisa de que volvió: la lista es cerrada y «volvió» no está en ella
+    (decisión 166).
     El episodio se cierra en silencio y el siguiente corte vuelve a avisar.
     """
     if _minutos(arranque, momento) < limite:
@@ -427,7 +428,7 @@ def revisar(
 
     `esperando` se inyecta —por defecto, mirar el cuadro de permisos en la
     pantalla del panel— porque es lo único de aquí que toca tmux: pasarlo como
-    argumento es lo que permite probar los tres avisos enteros sin un servidor.
+    argumento es lo que permite probar los avisos enteros sin un servidor.
     """
     if not activos(ajustes):
         return []

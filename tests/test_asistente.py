@@ -1,7 +1,8 @@
 """El asistente.
 
-🔴 Este archivo cubre la única excepción del hub a la decisión 22 —escribir en
-un panel de tmux—. Los tests de `_autorizar` no son de cortesía: si esa
+🔴 Este archivo cubre la primera excepción acotada del hub a la decisión 22
+—escribir en un panel de tmux—, la 70. Hay otras (164, 199, 254 y la regla
+dura 15), cada una con su condición verificada. Los tests de `_autorizar` no son de cortesía: si esa
 validación se rompe, el hub pega texto y un Enter en un panel de trabajo del usuario
 cuyo estado se desconoce, y eso ejecuta comandos reales.
 """
@@ -299,6 +300,27 @@ def test_el_asistente_arranca_con_su_bin_en_el_path(proyectos):
     assert f"{proyecto.asiento}/bin" in comando
     # `env` se sustituye por `claude`, así que `localizar()` lo sigue viendo.
     assert comando.endswith("claude --model claude-sonnet-5")
+
+
+def test_el_asistente_arranca_sabiendo_donde_escribir_su_contexto(proyectos, monkeypatch, tmp_path):
+    """El statusline del asistente escribía en `~/.local/share/hub` y el hub
+    leía en su `HUB_HOME`: con otro `HUB_HOME`, o con la variable cambiada, el
+    porcentaje del chat desaparecía sin aviso. Ahora se le dice al arrancar."""
+    archivo = tmp_path / "otro-sitio" / "contexto.json"
+    monkeypatch.setattr(asistente, "ARCHIVO_CONTEXTO", archivo)
+    comando = asistente.comando_de_arranque(asistente.proyecto_asistente(proyectos))
+    assert f"HUB_CONTEXTO_FICHERO={archivo}" in comando
+
+
+def test_la_variable_del_contexto_la_lee_tambien_el_hub(monkeypatch, tmp_path):
+    import importlib
+    monkeypatch.setenv("HUB_CONTEXTO_FICHERO", str(tmp_path / "aqui.json"))
+    recargado = importlib.reload(asistente)
+    try:
+        assert recargado.ARCHIVO_CONTEXTO == tmp_path / "aqui.json"
+    finally:
+        monkeypatch.delenv("HUB_CONTEXTO_FICHERO")
+        importlib.reload(asistente)
 
 
 def test_no_se_envia_mientras_la_terminal_arranca(tmux_falso):

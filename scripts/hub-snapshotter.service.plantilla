@@ -7,6 +7,10 @@ Type=simple
 WorkingDirectory=@RAIZ@
 Environment=HUB_HOME=@HUB_HOME@
 Environment=PATH=@PATH@
+# El puerto también aquí, no sólo en ExecStart: lo que comprueba si la web
+# contesta (pánico, avisos) lee `config.WEB_PORT`, y sin esto valía 8787 aunque
+# el hub se hubiera instalado en otro puerto.
+Environment=HUB_PORT=@PUERTO@
 ExecStart=@UV@ run python -m hub.snapshotter
 Restart=always
 RestartSec=10

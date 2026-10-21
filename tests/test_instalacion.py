@@ -97,7 +97,16 @@ def test_el_unit_generado_lleva_las_rutas_reales(tmp_path):
     assert "WorkingDirectory=/opt/hub-de-otro" in generado
     assert "/usr/local/bin/uv run uvicorn" in generado
     assert "--port 9999" in generado
+    assert "Environment=HUB_PORT=9999" in generado
     assert "@" not in re.sub(r"[\w.-]+@[\w.-]+", "", generado.replace("@RAIZ@", ""))
+
+
+@pytest.mark.parametrize("nombre", ["hub-web", "hub-snapshotter", "hub-canal", "hub-encargos"])
+def test_todos_los_servicios_saben_en_que_puerto_esta_la_web(nombre):
+    """El pánico corre en `hub-canal` y comprobaba 8787 aunque el hub se
+    hubiera instalado en otro puerto: `HUB_PORT` sólo llegaba al ExecStart."""
+    texto = (RAIZ / "scripts" / f"{nombre}.service.plantilla").read_text(encoding="utf-8")
+    assert "Environment=HUB_PORT=@PUERTO@" in texto
 
 
 # ── el registro ──────────────────────────────────────────────────────────────
@@ -336,7 +345,8 @@ def test_sembrar_el_asistente_lo_declara_dentro_de_proyectos_y_el_registro_sigue
     casa.mkdir()
     shutil.copy(RAIZ / "projects.ejemplo.yml", casa / "projects.yml")
     destino = tmp_path / "asistente"
-    entorno = {"HUB_HOME": str(casa), "HUB_PROJECTS_YML": str(casa / "projects.yml")}
+    entorno = {"HUB_HOME": str(casa), "HUB_PROJECTS_YML": str(casa / "projects.yml"),
+               "HUB_BIN": str(tmp_path / "bin")}
 
     r = _correr(RAIZ / "scripts" / "sembrar-asistente.sh", entorno, str(destino))
 
@@ -354,3 +364,41 @@ def test_sembrar_el_asistente_lo_declara_dentro_de_proyectos_y_el_registro_sigue
     otro = tmp_path / "asistente2"
     r2 = _correr(RAIZ / "scripts" / "sembrar-asistente.sh", entorno, str(otro))
     assert "ya había un asistente" in r2.stdout     # no se duplica ni se pisa
+
+
+def _sembrar_en(tmp_path, bin_):
+    casa = tmp_path / "casa"
+    casa.mkdir(exist_ok=True)
+    shutil.copy(RAIZ / "projects.ejemplo.yml", casa / "projects.yml")
+    entorno = {"HUB_HOME": str(casa), "HUB_PROJECTS_YML": str(casa / "projects.yml"),
+               "HUB_BIN": str(bin_)}
+    destino = tmp_path / "asistente"
+    return _correr(RAIZ / "scripts" / "sembrar-asistente.sh", entorno, str(destino)), destino
+
+
+def test_sembrar_el_asistente_deja_el_comando_hub_en_el_path_del_usuario(tmp_path):
+    """Decisión 278: las skills usan `hub` fuera del chat, y en una máquina
+    nueva sólo existía dentro del asistente."""
+    bin_ = tmp_path / "bin"
+    r, destino = _sembrar_en(tmp_path, bin_)
+    assert r.returncode == 0, r.stdout + r.stderr
+    enlace = bin_ / "hub"
+    assert enlace.is_symlink() and os.readlink(enlace) == str(destino / "bin" / "hub")
+    assert "comando hub en" in r.stdout
+
+
+def test_sembrar_no_pisa_un_hub_que_ya_existia_en_esa_ruta(tmp_path):
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    suyo = bin_ / "hub"
+    suyo.write_text("#!/bin/sh\necho otro\n")
+    r, _ = _sembrar_en(tmp_path, bin_)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not suyo.is_symlink() and "echo otro" in suyo.read_text()
+    assert "no se toca" in r.stdout
+
+
+def test_desinstalar_solo_quita_el_enlace_si_lleva_al_asistente():
+    texto = (RAIZ / "scripts" / "desinstalar.sh").read_text(encoding="utf-8")
+    bloque = texto.split("ENLACE=")[1].split("\nfi\n")[0]
+    assert "el asistente" in bloque and 'rm -f "$ENLACE"' in bloque

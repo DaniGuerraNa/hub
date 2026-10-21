@@ -148,7 +148,14 @@ hub slot <proyecto> "respaldo"  # crea un slot
 hub guia                        # primeros pasos (medidos) y mapa de pantallas
 hub anexar --id x --nombre "X" --ruta /abs/x [--estado ESTADO.md]
                                 # registra un proyecto que ya existe
+hub conexiones                  # servidores de ESTE proyecto y dónde vive su llave
+hub lienzo nuevo --proyecto X --titulo "T" [--plantilla P] --cuerpo -
+hub lienzo ver <proyecto> <id>  # publica algo visual en la web, y lo relee
+hub preguntar --proyecto X --a <alias> --texto -
+hub preguntar ver <id>          # pregunta a alguien por el canal, y mira la respuesta
 ```
+
+`hub lienzo --help` y `hub preguntar --help` dan el detalle de esos dos.
 
 **`hub sesion` ya viene filtrado por el hub**: se le quitan el `thinking`, la
 salida de las herramientas y los subagentes, y las llamadas quedan en una línea.
@@ -195,8 +202,12 @@ disco buscando otra cosa.
 
 🔴 **Si te preguntan si pueden abrir el puerto a la red, la respuesta es NO**, y
 está en `README.md` y en `INSTALAR.md`: la pantalla `/terminal` da acceso de
-shell y hoy lo único que la protege es que el hub escuche en `127.0.0.1`.
-Nunca improvises con esta pregunta.
+shell, y por eso el hub escucha sólo en `127.0.0.1` y no se abre nunca a la red.
+**Lo que sí existe para usarlo desde el móvil o desde otra PC es
+[Acceso](/acceso)**: se entra por una red privada (Tailscale), sólo por los
+nombres exactos de `acceso.yml` y desde aparatos dados de alta con un QR; la
+terminal además pide el interruptor «terminal remota», apagado de fábrica y en
+cada reinicio. Lleva ahí a quien pregunte, y no improvises con esta pregunta.
 
 Y si algo no lo sabes ni está escrito, **dilo**. Una respuesta inventada sobre
 la máquina de quien te pregunta es peor que no contestar.

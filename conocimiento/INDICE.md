@@ -14,15 +14,23 @@ haga falta.
 | [`07-la-api.md`](07-la-api.md) | Leer lo que el hub mide desde un script |
 | [`08-sala-limpia.md`](08-sala-limpia.md) | Probar una instalación del hub o de un kit como la vería otra persona, y auditar un kit |
 | [`09-orquestador-e-intercambio.md`](09-orquestador-e-intercambio.md) | Mandar trabajo a las sesiones sin estar delante, sus permisos, y pasar archivos desde el teléfono |
+| [`10-mas-pantallas.md`](10-mas-pantallas.md) | Entrar desde el móvil (Acceso), Telegram (Canal, avisos, pánico y Encargos), las pestañas Lienzos, Consultas y Programados de Trabajo, Archivos y comandos preparados, Máquina, Consumo y los atajos |
+| [`11-versiones.md`](11-versiones.md) | Qué versión tengo, cómo me entero de que hay otra, cómo actualizo y qué significa «falta terminar de actualizar» |
 
 🔴 **Si la pregunta es «¿puedo abrir el puerto a la red?», la respuesta es no**, y
 no hace falta abrir ningún documento para decirlo: la pantalla `/terminal` da
-acceso de shell y hoy lo único que la protege es que el hub escuche en
-`127.0.0.1`. El detalle está en [`02-trabajo-y-slots.md`](02-trabajo-y-slots.md)
-y en [`07-la-api.md`](07-la-api.md). Es la pregunta donde improvisar hace daño.
+acceso de shell, así que el hub escucha sólo en `127.0.0.1` y nunca se pone en
+`0.0.0.0` ni se expone a internet. Es la pregunta donde improvisar hace daño.
+
+Pero si la pregunta es **«¿puedo usarlo desde el móvil?»**, la respuesta es sí,
+por otro camino: [Acceso](/acceso) — una red privada, nombres exactos, cada
+aparato dado de alta con un QR y la terminal tras su propio interruptor. Está en
+[`10-mas-pantallas.md`](10-mas-pantallas.md).
 
 **Por dónde empiezo / dónde está cada pantalla:** no hay un documento aparte:
-lo da `hub guia` (y la pantalla `/guia`), medido contra el estado real.
+lo da la pantalla [`/guia`](/guia) (o `GET /api/guia`), medido contra el
+estado real. El asistente lo lee con `hub guia`. El comando `hub` existe en tu
+terminal desde que se siembra el asistente (queda en `~/.local/bin/hub`).
 
 ## Si eres Claude y te preguntan por el hub
 

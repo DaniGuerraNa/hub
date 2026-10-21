@@ -216,7 +216,7 @@ def test_el_prompt_invoca_la_skill_y_no_la_repite(con, escena, tmp_path):
 
 
 def test_el_prompt_va_citado(con, escena, tmp_path):
-    """Nunca se interpola en crudo en una línea de comandos (decisión 22)."""
+    """Nunca se interpola en crudo en una línea de comandos (regla dura 10)."""
     destino = tmp_path / "nuevo"
     agentes.crear_proyecto(con, "mi-app", "Mi App; rm -rf /", str(destino))
     comando = next(l["comando"] for l in escena["lanzados"] if "comando" in l)

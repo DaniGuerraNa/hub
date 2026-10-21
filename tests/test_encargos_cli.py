@@ -385,7 +385,7 @@ def catalogo_generado(monkeypatch, tmp_path, escena):
 
 
 def test_las_muestras_se_encolan_como_fotos_con_su_pregunta(escena, catalogo_generado):
-    """Quien no puede describir un estilo sí puede señalar uno (decisión f1)."""
+    """Quien no puede describir un estilo sí puede señalar uno (decisión 285)."""
     assert corre("muestras") == 0
 
     encoladas = buzon.salientes(escena)
@@ -715,7 +715,7 @@ def test_con_despliegue_configurado_el_aviso_dice_que_sale_solo(escena, monkeypa
 
 
 def test_el_enlace_publicado_le_llega_tambien_a_ella(escena):
-    """🔴 Decisión n6: quien puede decir «así no es» es quien describió el negocio.
+    """🔴 Decisión 283: quien puede decir «así no es» es quien describió el negocio.
 
     Sin esto el circuito se cierra entre el hub y quien paga, y nadie sabe si lo
     construido encaja con lo que se contó.
@@ -928,7 +928,7 @@ def test_la_ficha_guia_el_visto_bueno_como_una_pregunta_suya(escena, capsys):
 
 
 def test_de_confianza_el_plan_se_aprueba_solo_y_el_dueno_lo_recibe_como_aviso(escena, tmp_path):
-    """El gate de n7 lo pone él por persona desde el hub; puesto, no se pregunta."""
+    """El gate de la 223 lo pone él por persona desde el hub; puesto, no se pregunta."""
     encargos.editar_persona(escena, 77, de_confianza="1")
     escena.commit()
     _ficha_completa(escena)

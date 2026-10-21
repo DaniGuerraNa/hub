@@ -13,7 +13,8 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 
-from . import (busqueda, conexiones, config, consumo, db, maquina, orquestador, programados,
+from . import version as _version
+from . import (busqueda, conexiones, config, consumo, copia_base, db, maquina, orquestador, programados,
                registry, repos, servicios, terminal, tmux)
 from .registry import Atribuidor
 
@@ -226,6 +227,12 @@ def ciclo_lento(con: sqlite3.Connection) -> dict:
         # el latido de 20 s y barato aquí. Importa sobre todo cuando no hay
         # nadie delante, que es cuando nadie oye el ventilador.
         ("maquina", lambda: maquina.escanear(con)),
+        # La copia diaria de la base (decisión 277): una por día, así que
+        # aquí casi siempre es mirar que la de hoy existe y seguir.
+        ("copia_base", lambda: copia_base.hacer(con)),
+        # ¿Hay versión publicada más nueva? Un `git ls-remote` al día como
+        # mucho (decisión 286); el resto de ciclos es leer un archivo.
+        ("version", lambda: (_version.buscar_remota() or {}).get("ultima")),
     ):
         try:
             resultado[clave] = funcion()

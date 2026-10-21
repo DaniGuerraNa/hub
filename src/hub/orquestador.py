@@ -165,6 +165,94 @@ def exigir(con: sqlite3.Connection, proyecto_id: str) -> str:
     return nivel
 
 
+def guardrail_de(con: sqlite3.Connection, proyecto_id: str) -> str:
+    fila = con.execute(
+        "SELECT guardrail FROM proyecto WHERE id = ?", (proyecto_id,)
+    ).fetchone()
+    return fila["guardrail"] if fila else "never"
+
+
+class PendienteDeConfirmar(RuntimeError):
+    """La acción no se hizo: espera a que el dueño confirme. Lleva el id."""
+
+    def __init__(self, conf_id: int, proyecto_id: str, nueva: bool) -> None:
+        self.conf_id = conf_id
+        self.proyecto_id = proyecto_id
+        self.nueva = nueva
+        super().__init__(f"pendiente de confirmar (#{conf_id})")
+
+
+def pendientes_de_confirmar(tarea: dict[str, Any]) -> list[dict[str, Any]]:
+    return [c for c in tarea.get("confirmaciones") or [] if c["estado"] == "pendiente"]
+
+
+def _confirmar_alcance(con: sqlite3.Connection, tarea_id: str, proyecto_id: str,
+                       accion: str, detalle: str) -> None:
+    """🔴 `guardrail: ask` = el dueño confirma antes de que se toque el proyecto (279).
+
+    Se confirma **una vez por tarea y proyecto**, no cada mensaje: en una tarea
+    de horas, aprobar cada paso convertiría al dueño en el que pulsa Enter, y lo
+    que decide de verdad es si el orquestador entra en ese proyecto para esta
+    tarea. Lo que puede hacer dentro lo sigue marcando el nivel (256).
+
+    Lo aprueba él en /orquestador y en ningún otro sitio: `./orq` no tiene
+    orden de aprobar, y su `settings.json` le niega `curl` (decisión 256: el
+    alcance no se concede por una orden que venga del propio orquestador).
+    `auto` no pregunta; `never` ni llega aquí, porque su nivel es «nada».
+    """
+    if guardrail_de(con, proyecto_id) != "ask":
+        return
+    nueva = False
+    with editar(tarea_id) as t:
+        confs = t.setdefault("confirmaciones", [])
+        previa = next((c for c in confs if c["proyecto"] == proyecto_id), None)
+        if previa and previa["estado"] == "aprobada":
+            return
+        if previa and previa["estado"] == "negada":
+            raise SinPermiso(
+                f"el dueño NO confirmó que trabajes en «{proyecto_id}» en esta tarea. "
+                "No lo intentes por otro camino: sigue sin ese proyecto o díselo en "
+                "tu resumen."
+            )
+        if not previa:
+            previa = {"id": len(confs) + 1, "proyecto": proyecto_id, "accion": accion,
+                      "detalle": _corto(detalle, 600), "pedida": ahora(),
+                      "estado": "pendiente", "decidida": None}
+            confs.append(previa)
+            nueva = True
+        t["estado"] = _estado_de(t)
+    if nueva:
+        anotar(tarea_id, "confirmacion", f"{proyecto_id}: {accion}",
+               proyecto=proyecto_id, conf=previa["id"])
+        # Sólo el id, como todo timbre (regla dura 22).
+        timbre(f"El orquestador pide confirmar un proyecto (tarea {tarea_id}).")
+    raise PendienteDeConfirmar(previa["id"], proyecto_id, nueva)
+
+
+def confirmar(tarea_id: str, conf_id: int, aprobar: bool) -> dict[str, Any]:
+    """El dueño confirma o niega. Sólo lo llama la web (decisión 279)."""
+    with editar(tarea_id) as tarea:
+        if tarea["estado"] not in VIVAS:
+            raise ValueError("esa tarea ya no está en curso")
+        conf = next((c for c in tarea.get("confirmaciones") or []
+                     if c["id"] == conf_id and c["estado"] == "pendiente"), None)
+        if not conf:
+            raise ValueError("no hay ninguna confirmación pendiente con ese número")
+        conf["estado"] = "aprobada" if aprobar else "negada"
+        conf["decidida"] = ahora()
+        tarea["despertar"].append(
+            f"El dueño CONFIRMÓ que trabajes en «{conf['proyecto']}» en esta tarea. "
+            f"Repite lo que ibas a hacer ({conf['accion']}): ahora sí se hará."
+            if aprobar else
+            f"El dueño NO quiere que toques «{conf['proyecto']}» en esta tarea. "
+            "Sigue sin ese proyecto o, si sin él no se puede, ciérrala explicándolo."
+        )
+        tarea["estado"] = _estado_de(tarea)
+    anotar(tarea_id, "confirmada" if aprobar else "negada",
+           f"{conf['proyecto']}: {conf['accion']}", proyecto=conf["proyecto"], conf=conf_id)
+    return conf
+
+
 # ─────────────────────────────── las tareas ─────────────────────────────────
 
 EN_COLA = "en-cola"
@@ -241,7 +329,7 @@ def _estado_de(tarea: dict[str, Any]) -> str:
     del dueño se rechazaba por estar en el estado equivocado. Una pregunta
     abierta manda sobre todo lo demás, porque es lo único que pide a una persona.
     """
-    if tarea.get("pregunta"):
+    if tarea.get("pregunta") or pendientes_de_confirmar(tarea):
         return ESPERANDO_DUENO
     if tarea.get("despertar"):
         return ACTIVA
@@ -390,6 +478,8 @@ def detener(tarea_id: str, motivo: str = "detenida por el dueño") -> dict[str, 
         tarea["cerrada"] = ahora()
         tarea["despertar"] = []
         tarea["pregunta"] = None
+        for c in pendientes_de_confirmar(tarea):
+            c["estado"] = "cancelada"
         # Todas las sesiones a las que esta tarea mandó algo, no sólo las que
         # aún esperaba: en el ensayo, una espera se había dado por acabada
         # mientras la sesión seguía trabajando y Detener no la tocó. Sólo se
@@ -592,6 +682,8 @@ def abrir_sesion(con: sqlite3.Connection, proyecto_id: str, nombre: str = "",
     proyecto = api.obtener_proyecto(con, proyecto_id)
     if not proyecto or not proyecto.get("asiento"):
         raise ValueError(f"«{proyecto_id}» no tiene asiento donde abrir una sesión")
+    _confirmar_alcance(con, tarea["id"], proyecto_id, "abrir una sesión",
+                       f"abrir una sesión nueva{(' «' + nombre + '»') if nombre else ''}")
 
     nombre = (nombre or "").strip() or f"orq-{tarea['id'][2:]}"
     agentes._confiar(Path(proyecto["asiento"]))
@@ -689,6 +781,9 @@ def mandar(con: sqlite3.Connection, proyecto_id: str, pane_id: str, texto: str) 
         raise ValueError(
             f"{pane_id} no es una sesión viva de «{proyecto_id}». Mira `./orq sesiones {proyecto_id}`."
         )
+    # Antes de mirar si el panel acepta: confirmar no depende de eso, y una
+    # sesión ocupada no debe retrasar la pregunta al dueño.
+    _confirmar_alcance(con, tarea["id"], proyecto_id, "mandarle trabajo a una sesión", texto)
 
     apto, motivo = entrega.panel_apto(pane_id)
     if apto and estado_claude(pane_id) in ("busy", "shell"):
@@ -926,6 +1021,8 @@ def ajustar(con: sqlite3.Connection, proyecto_id: str, pane_id: str, modelo: str
     _de_su_proyecto(con, proyecto_id, pane_id)
     if not modelo and not esfuerzo:
         raise ValueError("di qué cambiar: --modelo, --esfuerzo o los dos")
+    _confirmar_alcance(con, tarea["id"], proyecto_id, "cambiar el modelo de una sesión",
+                       f"{pane_id}: modelo {modelo or '(igual)'}, esfuerzo {esfuerzo or '(igual)'}")
     apto, motivo = entrega.panel_apto(pane_id)
     if not apto:
         raise ValueError(f"no se puede ajustar {pane_id} ahora: {motivo}. Espera a que quede libre.")
@@ -993,6 +1090,7 @@ def compactar(con: sqlite3.Connection, proyecto_id: str, pane_id: str,
     exigir(con, proyecto_id)
     _de_su_proyecto(con, proyecto_id, pane_id)
     foco = " ".join((foco or "").split())
+    _confirmar_alcance(con, tarea["id"], proyecto_id, "compactar una sesión", f"{pane_id} {foco}")
     try:
         entrega.entregar(pane_id, f"/compact {foco}".strip())
     except entrega.EscritoSinConfirmar:
@@ -1630,6 +1728,14 @@ Cada proyecto tiene uno, y lo pone el dueño:
 
 Si un paso lo necesita, no lo mandes: `./orq preguntar`.
 
+## Proyectos que piden confirmar
+
+En un proyecto con guardrail `ask`, lo primero que intentes ahí (abrir,
+mandar, ajustar, compactar) **no se hace**: `./orq` le pide al dueño que lo
+confirme y te lo dice. Vale una vez por tarea y proyecto. No lo repitas ni
+busques otro camino: sigue con otros proyectos si puedes, o termina tu turno;
+te despierto con lo que decida. Si dice que no, sigue sin ese proyecto.
+
 ## 🔴 Cuándo te paras y preguntas
 
 - La orden **choca con una decisión registrada** del proyecto o del hub
@@ -1662,7 +1768,7 @@ def transcribir_audio(datos: bytes, nombre: str) -> str:
     """El texto de un audio grabado en la web. En casa, con el transcriptor de encargos.
 
     🔴 En casa y no en un servicio de fuera, por lo mismo que los encargos
-    (decisión n4): es su voz hablando de sus proyectos. El texto vuelve al
+    (decisión 221): es su voz hablando de sus proyectos. El texto vuelve al
     formulario y **no se manda solo**: una transcripción equivocada en una orden
     que se ejecuta sin nadie delante es exactamente el error que no se ve hasta
     que ya pasó. Lo lee él y pulsa.

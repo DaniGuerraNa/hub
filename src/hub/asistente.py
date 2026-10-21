@@ -15,7 +15,9 @@ construir. El historial ya existe —es el transcript JSONL, que se lee y se pin
 sin almacenar ni un mensaje—. Compactar y limpiar ya existen: son `/compact` y
 `/clear`. Y la sesión está viva de verdad, sin gestionar session-ids.
 
-🔴 **Aquí vive la única excepción a la decisión 22.** Escribir en un panel de
+🔴 **Aquí vive la primera excepción acotada a la decisión 22** (la 70; después
+vinieron la 164, la 199, la 254 y la ampliación de la regla dura 15, cada una
+con su condición verificada). Escribir en un panel de
 tmux está prohibido porque su estado se desconoce y unas teclas sueltas ejecutan
 comandos reales. Este panel es distinto: lo crea el hub, sabe que dentro corre
 `claude` y nada más, y cada escritura se valida contra su id (regla dura 15). La
@@ -25,6 +27,7 @@ excepción es **acotada a este panel**; nunca se extiende a uno de trabajo.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import time
@@ -81,8 +84,13 @@ PREFIJO_INTERNO = "[hub:interno]"
 # por el spinner braille (⠂⠐⠠…), que es todo el bloque U+2800–U+28FF.
 GLIFO_LIBRE = "✳"
 
-# Dónde deja el statusline del proyecto asistente su JSON de contexto.
-ARCHIVO_CONTEXTO = config.HUB_HOME / "asistente-contexto.json"
+# Dónde deja el statusline del proyecto asistente su JSON de contexto. La
+# variable la leen los dos lados —esto y `bin/contexto-statusline.sh`— y además
+# se le pasa al asistente al arrancarlo (`comando_de_arranque`): antes sólo la
+# leía el script, y con otro `HUB_HOME` cada lado miraba un archivo distinto y
+# el porcentaje del chat desaparecía sin aviso.
+ARCHIVO_CONTEXTO = Path(os.environ.get("HUB_CONTEXTO_FICHERO")
+                        or config.HUB_HOME / "asistente-contexto.json")
 
 # Pasado este tiempo el dato del statusline es de una sesión que ya no está
 # viva. Mejor calcularlo del transcript que enseñar un número de ayer.
@@ -194,7 +202,8 @@ def comando_de_arranque(proyecto: Proyecto | None = None) -> str:
     if not proyecto or not proyecto.asiento:
         return base
     ruta = tmux.path_de_usuario(str(Path(proyecto.asiento) / "bin"))
-    return f"env PATH={shlex.quote(ruta)} {base}"
+    return (f"env PATH={shlex.quote(ruta)} "
+            f"HUB_CONTEXTO_FICHERO={shlex.quote(str(ARCHIVO_CONTEXTO))} {base}")
 
 
 # El chevron del cuadro de entrada de Claude Code. Es la señal de que la TUI ya

@@ -401,7 +401,7 @@ CREATE TABLE IF NOT EXISTS maquina (
 -- puede mirar. El planteamiento y sus 24 decisiones están en dos lienzos del
 -- proyecto `hub`; lo que hay que saber para leer estas tablas es esto:
 --
--- 🔴 **Canal aparte del de consulta** (decisión n1). Bot propio, servicio propio
+-- 🔴 **Canal aparte del de consulta** (decisión 221). Bot propio, servicio propio
 -- (`hub-encargos`), registro de personas propio y permisos propios. No se toca
 -- nada de `canal_*`: lo que un encargo necesita es provocar trabajo, y ése es
 -- justo el poder que el canal de consulta se negó a tener. Mezclarlos habría
@@ -429,7 +429,7 @@ CREATE TABLE IF NOT EXISTS encargo (
     slot_id        INTEGER,
     url            TEXT,
     -- El mensaje del plan que se le mandó al dueño. Se aprueba RESPONDIÉNDOLO
-    -- (decisión n14): un «sí» suelto en otra conversación no puede lanzar una
+    -- (decisión 281): un «sí» suelto en otra conversación no puede lanzar una
     -- construcción, que es la acción más privilegiada del sistema.
     plan_msg       INTEGER,
     -- Cuándo se le dijo a la persona que esperase. Se pone cuando el agente

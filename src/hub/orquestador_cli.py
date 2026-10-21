@@ -11,6 +11,9 @@ prompt (decisión 256). Lo que no hay, a propósito:
 - **Nada que mande a Telegram.** Deja el timbre y el relé —el único con el
   token, regla dura 22— lo toca.
 - **Nada que borre.** Principio 9.
+- **Nada que confirme.** En un proyecto con `guardrail: ask`, lo primero que
+  intente ahí queda pendiente hasta que el dueño lo confirme en /orquestador
+  (decisión 279); aquí no hay orden para hacerlo, y no debe haberla.
 
     orq tarea                     la tarea en curso, entera
     orq proyectos                 a qué proyectos llega y con qué nivel
@@ -54,6 +57,11 @@ def cmd_tarea(con, args) -> int:
         print(f"## Último avance\n\n{t['avance']}\n")
     if t.get("pregunta"):
         print(f"## Pregunta abierta al dueño\n\n{t['pregunta']['texto']}\n")
+    for c in t.get("confirmaciones") or []:
+        if c["estado"] == "pendiente":
+            print(f"## Pendiente de que el dueño confirme (#{c['id']})\n\n"
+                  f"Trabajar en {c['proyecto']}: {c['accion']}. No insistas: te despierto "
+                  "con lo que decida.\n")
     abiertas = [e for e in t["esperas"] if e["estado"] == "esperando"]
     if abiertas:
         print("## Esperando a\n")
@@ -267,6 +275,15 @@ def main(argv: list[str] | None = None) -> int:
         codigo = ORDENES[args.orden](con, args)
         con.commit()
         return codigo
+    except orquestador.PendienteDeConfirmar as exc:
+        # No es un error: es la regla. Código 0 para que no lo reintente.
+        print(f"No se hizo todavía: «{exc.proyecto_id}» pide que el dueño confirme "
+              f"antes de que lo toques (#{exc.conf_id}"
+              + (", ya avisado" if exc.nueva else ", ya lo pediste") + "). No lo repitas "
+              "ni lo intentes por otro camino; sigue con otros proyectos si puedes, o "
+              "termina tu turno: te despierto con lo que decida.")
+        con.commit()
+        return 0
     except (orquestador.TareaCerrada, orquestador.SinPermiso, ValueError, RuntimeError) as exc:
         # Al stderr y con código de error, pero legible: quien lo lee es un
         # modelo que tiene que entender qué no pudo hacer y por qué.

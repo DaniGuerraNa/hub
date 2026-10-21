@@ -169,7 +169,7 @@ def anunciar_publicacion(con: sqlite3.Connection, encargo_id: str, url: str,
                          clave: str | None = None) -> None:
     """La URL a los DOS: a quien lo encargó y a quien aprobó.
 
-    🔴 Que le llegue a ella es la decisión n6, y es la que salva el diseño: quien
+    🔴 Que le llegue a ella es la decisión 283, y es la que salva el diseño: quien
     puede decir «así no es» es la persona que describió el negocio. Sin esto, el
     circuito se cerraría entre el hub y quien paga, y nadie sabría si lo
     construido encaja. Vive aquí y no en la CLI porque lo llaman dos caminos

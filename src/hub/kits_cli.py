@@ -223,6 +223,23 @@ def ruta(id_kit: str, version: str | None) -> int:
         return 0
     encontrada = kits.resolver(id_kit, version)
     if not encontrada:
+        # Un kit que se está escribiendo se resuelve desde el registro, como en
+        # `instalar` y `estado`. Sin esto la skill de un apuntador mandaba a
+        # instalar un kit que no tiene nada que instalar.
+        en_desarrollo = _en_desarrollo(id_kit)
+        if en_desarrollo:
+            try:
+                suya = kits.leer_manifiesto(en_desarrollo).version
+            except Exception:
+                suya = ""
+            if version and suya and version != suya:
+                print(
+                    f"{id_kit} {version} no existe: el kit en desarrollo va por la {suya}.",
+                    file=sys.stderr,
+                )
+                return 1
+            print(en_desarrollo)
+            return 0
         print(f"{id_kit} no está instalado. `instalar {id_kit}` lo trae.", file=sys.stderr)
         return 1
     print(encontrada)

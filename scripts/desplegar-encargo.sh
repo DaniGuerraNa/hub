@@ -4,7 +4,7 @@
 #   bash scripts/desplegar-encargo.sh <id> <carpeta> [alias-ssh]   # ensayo
 #   bash scripts/desplegar-encargo.sh <id> <carpeta> [alias] --va   # de verdad
 #
-# 🔴 **La casa construye; la casa NO sirve** (decisión n2, regla dura 8). Esto
+# 🔴 **La casa construye; la casa NO sirve** (decisión 282, regla dura 8). Esto
 # empuja archivos a un servidor por SSH. Tu máquina no abre ningún puerto más.
 #
 # 🔴 **Un encargo se despliega ESTÁTICO, y no es una limitación: es la decisión.**

@@ -135,7 +135,7 @@
     <div style="flex:1;min-width:0">
       <strong>El canal de encargos no está configurado: no entra ni sale nada.</strong>
       <div class="tenue">
-        {{ canal_estado.detalle }}. El token no se guarda aquí (regla dura 5): se
+        {{ canal_estado.detalle }}. {# Regla dura 5; el número no se enseña: ARQUITECTURA no se publica. #}El token no se guarda aquí, nunca: se
         pone en un archivo con permisos propios y se apunta a él desde
         <span class="mono">{{ '~/.local/share/hub/encargos.yml' }}</span>.
       </div>

@@ -17,14 +17,14 @@ el asistente nunca lee la base ni escanea el disco por su cuenta.
   hub nota "<texto>" [--slot N]   deja una nota; sin --slot, donde estés
   hub slot <proyecto> "<nombre>" [--ruta R]
   hub nuevo-proyecto --id x --nombre "X" --ruta /abs/x
+                                  crea un proyecto vacío y lanza al agente que
+                                  lo monta; pregunta antes lo que falte
   hub guia                        los primeros pasos (medidos: qué está
                                   hecho y cuál toca) y qué hay en cada
                                   pantalla, con su ruta para enlazarla
   hub anexar --id x --nombre "X" --ruta /abs/x [--estado ESTADO.md]
                                   registra un proyecto que YA existe, sin
                                   tocarlo: sólo el alta en el registro
-                                  crea un proyecto vacío y lanza al agente que
-                                  lo monta; pregunta antes lo que falte
   hub lienzo …                    publica algo para que se vea en la web —
                                   un diagrama, unos puntos que decidir— y
                                   vuelve a leerlo cuando lo corrijan
@@ -35,6 +35,10 @@ el asistente nunca lee la base ni escanea el disco por su cuenta.
 ningún proyecto del usuario. Sobre ellos es sólo lectura. Lo único que escribe es
 dentro del hub —notas y slots—, que es un trato explícito y no una limitación
 técnica que haya que rodear.
+
+Dentro de la sesión del asistente está en el PATH (lo pone `asistente.py`), y
+`sembrar-asistente.sh` lo enlaza además en `~/.local/bin/hub` para cualquier
+otra terminal, sin pisar lo que ya hubiera ahí.
 """
 
 from __future__ import annotations

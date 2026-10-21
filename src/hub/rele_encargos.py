@@ -1,7 +1,7 @@
 """El relé de encargos: el único proceso que habla con el bot de encargos.
 
 Servicio propio (`hub-encargos.service`) y bot propio, separados del canal de
-consulta (decisión n11). No es orden: **son dos tokens y no deben verse el uno
+consulta (decisión 221). No es orden: **son dos tokens y no deben verse el uno
 al otro**, y un fallo en lo nuevo no puede llevarse por delante el canal que ya
 se usa a diario. `hub-web`, que expone el puerto y con él una shell (regla dura
 8), no ve ninguno de los dos.
@@ -60,7 +60,7 @@ SIN_ENCARGO = (
 )
 
 # Qué se admite como aprobación de un plan. Corta y cerrada a propósito
-# (decisión n14): es la acción más privilegiada del sistema —autoriza gasto y un
+# (decisión 281): es la acción más privilegiada del sistema —autoriza gasto y un
 # despliegue público— y lo que la dispara tiene que ser inequívoco. Todo lo demás
 # que llegue por ese hilo se trata como un comentario, no como un sí.
 APRUEBAN = {"aprobado", "apruebo", "aprobar", "adelante", "dale", "ok", "vale"}
@@ -166,7 +166,7 @@ def procesar_mensaje(con: sqlite3.Connection, msg: dict) -> str:
         return "sin-alta"
 
     # ¿Está contestando al plan que se le mandó? Sólo el dueño, y sólo sobre el
-    # mensaje que enseña ese plan (decisión n14).
+    # mensaje que enseña ese plan (decisión 281).
     responde_a = msg.get("responde_a")
     if persona["es_dueno"] and responde_a:
         encargo = encargos.por_plan_msg(con, int(responde_a))
@@ -185,7 +185,7 @@ def procesar_mensaje(con: sqlite3.Connection, msg: dict) -> str:
             user_id=msg["user_id"], cuerpo=msg.get("texto", ""),
         )
         # El dueño que escribe «aprobado» SUELTO, con un plan esperando: no
-        # aprueba nada —y eso no cambia (n14)— pero se le dice, porque la
+        # aprueba nada —y eso no cambia (decisión 281)— pero se le dice, porque la
         # primera vez lo hizo y se quedó veinte minutos creyendo que sí.
         if persona["es_dueno"] and _palabra(msg) in APRUEBAN | DESCARTAN:
             for pendiente in encargos.listar(con, "propuesta"):
@@ -545,7 +545,7 @@ def empezar_a_construir(con: sqlite3.Connection, encargo_id: str) -> str:
     """Lo que pasa justo después de un «aprobado». Devuelve qué se hizo.
 
     🔴 Empieza **solo**, y es su diseño, no una comodidad mía: *«el gate va antes
-    de gastar, no antes de publicar»* (decisión n7). La aprobación que acaba de
+    de gastar, no antes de publicar»* (decisión 228). La aprobación que acaba de
     llegar es el permiso, y pedir un segundo clic en el hub lo convertiría en
     dos permisos para la misma decisión — que es cómo se acaba aprobando sin
     mirar.
@@ -646,7 +646,7 @@ def desplegar_construidos(con: sqlite3.Connection,
     """Publica lo que el constructor dio por hecho. Devuelve cuántos salieron.
 
     🔴 Sin pedir otro permiso, y es su decisión, no una comodidad: *«el gate va
-    antes de gastar, no antes de publicar»* (n7). El «aprobado» autorizó el
+    antes de gastar, no antes de publicar»* (decisión 228). El «aprobado» autorizó el
     plan entero, y la URL llega detrás «sin preguntar otra vez». La primera
     versión de esto ponía a una persona entre «construido» y «publicado» por
     prudencia mía, y era contradecir una decisión cerrada (228).
@@ -871,7 +871,7 @@ def mandar_salientes(con: sqlite3.Connection, bot_: telegram.BotDeEncargos) -> i
             (message_id, ahora(), mensaje["id"]),
         )
         # 🔴 El plan se recuerda por su `message_id`: aprobarlo es responder a
-        # ESE mensaje (decisión n14). Sin esto, la aprobación no tendría a qué
+        # ESE mensaje (decisión 281). Sin esto, la aprobación no tendría a qué
         # atarse y un «sí» escrito en cualquier otro momento la dispararía.
         if mensaje["clase"] == "plan" and message_id:
             encargos.tocar(con, mensaje["encargo_id"], plan_msg=int(message_id))

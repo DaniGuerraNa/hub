@@ -22,7 +22,9 @@
 
 set -uo pipefail   # -e queda FUERA a propósito
 
-DESTINO="${HUB_CONTEXTO_FICHERO:-$HOME/.local/share/hub/asistente-contexto.json}"
+# El hub se la pasa al arrancar el asistente; el valor por omisión es el
+# mismo que calcula `asistente.ARCHIVO_CONTEXTO`, también con otro HUB_HOME.
+DESTINO="${HUB_CONTEXTO_FICHERO:-${HUB_HOME:-$HOME/.local/share/hub}/asistente-contexto.json}"
 # Si ya tenías una statusline propia, declárala aquí y el payload sigue hacia ella
 # intacto. Vacío = el HUD no encadena con nada.
 SIGUIENTE="${HUB_STATUSLINE_SIGUIENTE:-}"

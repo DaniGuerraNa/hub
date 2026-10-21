@@ -121,7 +121,7 @@ def test_el_canal_de_consulta_sigue_teniendo_solo_preguntar_y_recibir():
 
 
 def test_lo_que_hace_falta_para_los_encargos_vive_en_la_subclase():
-    """Las cuatro de la decisión n11, ni una más: si aparece una quinta, que se
+    """Las cuatro de la decisión 221, ni una más: si aparece una quinta, que se
     escriba aquí con su motivo en vez de colarse."""
     anadidos = {
         nombre for nombre, valor in vars(telegram.BotDeEncargos).items()
@@ -278,7 +278,7 @@ def test_pero_no_se_traga_cualquier_cosa(monkeypatch):
 
 
 def test_la_respuesta_va_colgada_del_mensaje_al_que_contesta(monkeypatch):
-    """🔴 Es lo que ata una aprobación a un plan (decisión n14).
+    """🔴 Es lo que ata una aprobación a un plan (decisión 281).
 
     Sin `reply_to_message_id` el «sí» de vuelta es un «sí» suelto, y si mientras
     tanto se mandó otra cosa hay que adivinar qué se aprobó. Adivinar aquí es

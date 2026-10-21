@@ -38,6 +38,12 @@ principal, borra datos, gasta dinero ni manda nada a un tercero: eso lo para y
 te lo pregunta. Y un proyecto con `guardrail: never` en `projects.yml` queda
 fuera aunque intentes darle nivel.
 
+Si el proyecto tiene `guardrail: ask`, además, **la primera vez que una tarea
+quiere tocarlo te pide confirmación**: arriba de [Orquestador](/orquestador)
+sale «Pide confirmar: …» con lo que quería hacer, y dos botones. Si confirmas,
+trabaja ahí el resto de esa tarea con su nivel; si no, sigue sin ese proyecto.
+El orquestador no puede confirmarlo por ti. Con `guardrail: auto` no pregunta.
+
 🔴 **Las sesiones que abre trabajan sin pedir permiso** (`bypassPermissions`):
 es lo único que funciona sin nadie delante, porque una sesión que pregunta un
 permiso a las tres de la mañana se queda parada hasta que vuelvas. La cerradura

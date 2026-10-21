@@ -3,7 +3,7 @@ name: lienzos
 description: "Publica un lienzo (diagrama, lista de decisiones, pasos o comparativa) para que se vea en la web del hub en vez de soltarlo como texto. Úsala cuando vayas a entregar algo denso, por ejemplo una arquitectura con varios servicios, un informe con muchos puntos que él tiene que decidir, una secuencia de pasos o una comparación entre opciones. También cuando él diga «hazme un diagrama», «enséñamelo» o «ponlo en el hub»."
 ---
 
-<!-- Del kit `lienzos` v0.1 — no editar aquí; el original está en el kit. -->
+<!-- Del kit `lienzos` v0.2 — no editar aquí; el original está en el kit. -->
 # Publicar un lienzo
 
 Un lienzo es contenido que se **ve** en el hub en vez de leerse en la terminal.
@@ -65,8 +65,16 @@ buscador del panel para encontrarlo.
 
 ## Las plantillas
 
-Están en `.claude/hub/lienzos/`. **Lee sólo la que vayas a usar**: cargarlas
-todas gasta contexto en formatos que no vas a escribir.
+🔴 **No están en tu proyecto.** Son apuntadores: viven una sola vez, dentro
+del kit, y el proyecto no las copia. Para encontrar la carpeta del kit:
+
+1. El bloque «Kits aplicados» del `CLAUDE.md` de tu proyecto dice dónde está.
+2. Si no lo dice, pregúntaselo al gestor de kits del hub, desde el repo del hub:
+   `bash scripts/kit.sh ruta lienzos`. Si contesta «no está instalado»,
+   `bash scripts/kit.sh instalar lienzos` lo trae y vuelve a preguntar.
+
+Las plantillas están en `<kit>/plantillas/`. **Lee sólo la que vayas a usar**:
+cargarlas todas gasta contexto en formatos que no vas a escribir.
 
 | Plantilla | Para qué |
 |---|---|
@@ -76,7 +84,7 @@ todas gasta contexto en formatos que no vas a escribir.
 | `comparativa` | Opciones contra criterios |
 
 ```bash
-cat .claude/hub/lienzos/decisiones.md      # el formato y un ejemplo
+cat <kit>/plantillas/decisiones.md      # el formato y un ejemplo
 ```
 
 ## 🔴 Si ya existe y él lo ha editado

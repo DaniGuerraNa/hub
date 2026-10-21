@@ -22,6 +22,17 @@ for servicio in $SERVICIOS; do rm -f "$UNIDADES/$servicio.service"; done
 systemctl --user daemon-reload
 printf '  ✓ servicios detenidos y eliminados\n'
 
+# El enlace de `hub` que puso `sembrar-asistente.sh` (decisión 278), sólo si es
+# el suyo: un `hub` que apunte a otro sitio no lo creó el hub y no se toca.
+ENLACE=${HUB_BIN:-$HOME/.local/bin}/hub
+if [ -L "$ENLACE" ]; then
+  ASISTENTE=$(dirname "$(dirname "$(readlink "$ENLACE")")")
+  if head -1 "$ASISTENTE/CLAUDE.md" 2>/dev/null | grep -q '^# CLAUDE.md — el asistente'; then
+    rm -f "$ENLACE"
+    printf '  ✓ comando hub quitado de %s\n' "$ENLACE"
+  fi
+fi
+
 if [ "${1:-}" = "--datos" ]; then
   printf '\n  Esto borra %s, con tus notas de slots dentro.\n' "$HUB_HOME"
   read -r -p '  Escribe «borrar» para confirmar: ' respuesta

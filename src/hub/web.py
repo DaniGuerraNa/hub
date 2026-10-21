@@ -221,8 +221,10 @@ def _puerta_de_dispositivo(request: Request):
     Lo que esto NO cubre, dicho en voz alta para que nadie lo dé por cubierto:
     un dispositivo que ya esté aprobado en la red privada puede pedir con `curl`
     y `Host: localhost` y pasar. La defensa ahí es el `tailnet lock` y la
-    aprobación manual (decisión 158), no esta puerta. **La terminal no depende
-    de eso**: ésa exige dispositivo siempre, venga por donde venga (regla dura 8).
+    aprobación manual (decisión 158), no esta puerta. **La terminal tampoco se
+    libra**: exige aparato e interruptor sólo cuando el `Host` es de fuera
+    (decisión 178, que corrigió a la 173), así que un `Host: localhost` forjado
+    también llega a ella. Ver `terminal_socket`.
     """
     if _es_de_casa(request.headers.get("host")):
         return None
@@ -1104,6 +1106,26 @@ async def orquestador_responder(request: Request):
     except ValueError as exc:
         return _volver(f"/orquestador?tarea={quote(tarea_id)}", f"No se mandó: {exc}")
     return _volver(f"/orquestador?tarea={quote(tarea_id)}", "Respuesta entregada: sigue trabajando.", fugaz=True)
+
+
+@app.post("/orquestador/confirmar")
+async def orquestador_confirmar(request: Request):
+    """🔴 Sólo el dueño confirma que el orquestador toque un proyecto `ask` (279).
+
+    No hay otro camino: `./orq` no tiene la orden, y el orquestador tiene `curl`
+    denegado. El `Origin` lo comprueba el middleware como en todo POST.
+    """
+    formulario = await request.form()
+    tarea_id = str(formulario.get("tarea_id") or "")
+    try:
+        conf_id = int(str(formulario.get("conf_id") or ""))
+        aprobar = str(formulario.get("decision") or "") == "si"
+        conf = orquestador.confirmar(tarea_id, conf_id, aprobar)
+    except ValueError as exc:
+        return _volver(f"/orquestador?tarea={quote(tarea_id)}", f"No se registró: {exc}")
+    return _volver(f"/orquestador?tarea={quote(tarea_id)}",
+                   (f"Confirmado: puede trabajar en «{conf['proyecto']}»." if aprobar
+                    else f"Negado: no tocará «{conf['proyecto']}» en esta tarea."), fugaz=True)
 
 
 @app.post("/orquestador/detener")
@@ -2118,7 +2140,7 @@ async def terminal_socket(ws: WebSocket, session: str, ventana: int | None = Non
 
 # ───────────────────────── canal de encargos ─────────────────────────
 #
-# El otro canal, aparte del de consulta (decisión n1). Por aquí entra gente que
+# El otro canal, aparte del de consulta (decisión 221). Por aquí entra gente que
 # no ha especificado software en su vida y cuenta su negocio hablando; de ahí
 # sale un MVP. Esta pantalla es donde él lo gobierna: a quién deja escribir, qué
 # encargos hay, qué se sabe de cada uno y qué se le ha dicho al bot.

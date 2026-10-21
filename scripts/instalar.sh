@@ -67,6 +67,7 @@ if [ "$CON_SERVICIOS" -eq 0 ]; then
   printf '    Arráncalo a mano (web + snapshotter) cuando quieras:\n'
   printf '      cd %s && HUB_HOME=%s HUB_PORT=%s bash scripts/arrancar.sh\n' \
          "$RAIZ" "$HUB_HOME" "$HUB_PORT"
+  (cd "$RAIZ" && HUB_HOME="$HUB_HOME" uv run --quiet python -m hub.version registrar)
   printf '\nListo. Datos en %s\n' "$HUB_HOME"
   exit 0
 fi
@@ -74,18 +75,9 @@ fi
 # Las rutas se resuelven AHORA y se escriben dentro del unit. Cablearlas en el
 # repo era lo que impedía instalar el hub en cualquier carpeta que no fuera
 # ~/projects/hub, y no se veía hasta que fallaba en otra máquina.
-UV=$(command -v uv)
-mkdir -p "$UNIDADES"
-for servicio in hub-web hub-snapshotter hub-canal hub-encargos; do
-  sed -e "s|@RAIZ@|$RAIZ|g" \
-      -e "s|@HUB_HOME@|$HUB_HOME|g" \
-      -e "s|@UV@|$UV|g" \
-      -e "s|@PATH@|$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin|g" \
-      -e "s|@HOST@|$HUB_HOST|g" \
-      -e "s|@PUERTO@|$HUB_PORT|g" \
-      "$RAIZ/scripts/$servicio.service.plantilla" > "$UNIDADES/$servicio.service"
-  bien "$UNIDADES/$servicio.service"
-done
+# shellcheck source=lib/unidades.sh
+. "$RAIZ/scripts/lib/unidades.sh"
+generar_unidades
 
 # 🔴 Sin linger, `systemd --user` entero se apaga al cerrar la última sesión de
 # login y vuelve con la siguiente (decisión 155). Medido el 2026-09-04 tras
@@ -166,6 +158,9 @@ if [ "$fallos" -ne 0 ]; then
   exit 1
 fi
 bien "las pantallas responden"
+# La versión instalada, apuntada al TERMINAR (decisión 286): es lo que
+# `actualizar.sh` usa para saber qué pasos de versión le tocan a esta máquina.
+(cd "$RAIZ" && HUB_HOME="$HUB_HOME" uv run --quiet python -m hub.version registrar)
 
 cat <<FIN
 

@@ -4,7 +4,7 @@ Antes de nada:
 
 ```bash
 bash scripts/doctor.sh
-systemctl --user status hub-web hub-snapshotter
+systemctl --user status hub-web hub-snapshotter hub-canal hub-encargos
 journalctl --user -u hub-web -n 40 --no-pager
 ```
 
@@ -76,7 +76,8 @@ persiste, recarga la pestaña.
 tmux ls | grep asistente
 ```
 
-Desde el chat, **Terminal** abre su sesión cruda para ver qué está pasando.
+Desde el chat, la rueda → **Si algo falla → Terminal** abre su sesión cruda
+para ver qué está pasando.
 Comprueba también que `claude` está en el PATH y con sesión iniciada.
 
 ## Empezar de cero sin perder el registro
@@ -95,14 +96,21 @@ Por eso, si algo va mal, **aparta** la base en vez de borrarla: así se puede
 volver atrás.
 
 ```bash
-systemctl --user stop hub-web hub-snapshotter
+systemctl --user stop hub-web hub-snapshotter hub-canal hub-encargos
 mkdir -p ~/.local/share/hub/apartada
 mv ~/.local/share/hub/hub.db* ~/.local/share/hub/apartada/
 systemctl --user start hub-web hub-snapshotter
 ```
 
+Si usas el canal o los encargos, arráncalos también (`hub-canal`,
+`hub-encargos`): los dos escriben en la base, por eso se paran antes de
+apartarla. Si no los activaste nunca, el `stop` sobre ellos no hace nada.
+
 Para volver a la de antes, el mismo `stop`, mueve de vuelta los archivos de
-`apartada/` y `start`. `projects.yml`, el intercambio, las tareas del orquestador
+`apartada/` y `start`. Si la base de antes también estaba mal, en
+`~/.local/share/hub/respaldos/` hay una copia por día de las dos últimas
+semanas (`hub-AAAAMMDD.db`): copia la que quieras como `hub.db`, con los
+servicios parados. `projects.yml`, el intercambio, las tareas del orquestador
 y sus permisos viven en archivos aparte y no se tocan.
 
 ## Desinstalar

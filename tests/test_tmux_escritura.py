@@ -1,6 +1,7 @@
 """🔴 Cómo escribe el hub en un panel de tmux.
 
-Es la mecánica de la única excepción a la decisión 22, y es frágil de una manera
+Es la mecánica de las excepciones acotadas a la decisión 22 —la primera fue la
+70; hay otras: 164, 199, 254 y la regla dura 15—, y es frágil de una manera
 que no se ve leyendo el código: los tres comandos parecen correctos y aun así
 parten el mensaje. Se comprobó contra el asistente real y estos tests fijan lo
 que se aprendió, para que un refactor no lo deshaga en silencio.

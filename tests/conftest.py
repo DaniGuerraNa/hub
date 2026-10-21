@@ -79,6 +79,10 @@ def _datos_aparte(tmp_path, monkeypatch):
     from hub import orquestador
     monkeypatch.setattr(orquestador, "_sesiones_de_claude",
                         lambda: tmp_path / "sesiones-que-no-existen")
+    # 🔴 Y la consulta de versión nueva (decisión 286): el ciclo lento hace un
+    # `git ls-remote` al repo publicado. La suite no sale a internet; los tests
+    # de `version` la encienden a propósito contra un repo local.
+    monkeypatch.setenv("HUB_BUSCAR_VERSIONES", "0")
 
 
 @pytest.fixture

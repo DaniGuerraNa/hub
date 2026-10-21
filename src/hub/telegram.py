@@ -205,18 +205,18 @@ class BotDeEncargos(Bot):
     `Bot` dice por qué: cada método es una capacidad más que alguien de fuera
     podría acabar teniendo, y el canal de consulta existe para que sólo haya dos
     —preguntar y recibir—. Aquí hacen falta cuatro cosas más, pero las hacen
-    falta **a otro bot, con otro token y en otro servicio** (decisión n11).
+    falta **a otro bot, con otro token y en otro servicio** (decisión 221).
     Heredar y no ampliar es lo que mantiene esa frase siendo verdad.
 
     Las cuatro, con su motivo:
 
     - **Fotos.** Son el mecanismo, no un adorno: quien no sabe describir un
-      estilo sí sabe elegir uno viéndolo (decisión f1).
+      estilo sí sabe elegir uno viéndolo (decisión 285).
     - **«escribiendo…»**, que es lo que evita que un silencio de veinte segundos
       se lea como que el bot no hace caso.
     - **Descargar un audio**, porque es la materia prima de todo esto.
     - **Responder a un mensaje concreto**, que es como él aprueba un plan: sobre
-      ese plan y no sobre un «sí» suelto (decisión n14).
+      ese plan y no sobre un «sí» suelto (decisión 281).
     """
 
     def _multiparte(self, metodo: str, campos: dict, archivo: tuple[str, str, bytes],
@@ -280,7 +280,7 @@ class BotDeEncargos(Bot):
         """Un mensaje con botones debajo (decisión 237): «Aprobar», «Otra ronda»…
 
         Pulsar uno llega como `callback_query` atado a ESTE mensaje, así que el
-        gate de n14 —aprobar es responder a ese mensaje— se cumple igual, sólo
+        gate de la 281 —aprobar es responder a ese mensaje— se cumple igual, sólo
         que con un dedo en vez de escribiendo «aprobado».
         """
         teclado = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in botones]]}
@@ -336,7 +336,7 @@ class BotDeEncargos(Bot):
     def descargar(self, file_id: str, destino: Path) -> Path:
         """Trae un audio a disco. Es la materia prima de todo el encargo.
 
-        Se baja **en casa** a propósito (decisión n4): es la voz de alguien
+        Se baja **en casa** a propósito (decisión 221): es la voz de alguien
         describiendo su negocio, y transcribirla fuera sacaría de la máquina
         justo lo que la regla dura 22 protege.
         """

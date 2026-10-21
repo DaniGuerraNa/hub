@@ -18,6 +18,19 @@ Dos cosas que conviene saber para leerlo bien:
 
 El hub no hace push ni te avisa. Mide y muestra.
 
+### Los datos del propio hub
+
+Debajo de las cifras, «Los datos del hub» dice cuándo se copió por última vez
+la base del hub (`hub.db`). Ahí viven cosas que no están en ningún repo: tus
+slots y sus notas, el canal, los mensajes programados y los encargos. El hub
+la copia solo **una vez al día** en `~/.local/share/hub/respaldos/` (o donde
+diga `HUB_RESPALDO`) y guarda las **14 últimas**. Si la última tiene más de dos
+días, la fila sale en rojo: algo impide copiarla, y conviene mirarlo.
+
+🔴 Esa carpeta está **en el mismo disco**. Si quieres que tus notas sobrevivan
+a un disco muerto, cópiala a otro sitio (otro disco, una nube) de vez en
+cuando, o apunta `HUB_RESPALDO` allí al instalar.
+
 ## Inventario — lo que has construido
 
 Escanea por convención: `.claude/agents/*.md`, `.claude/skills/*/SKILL.md`,
@@ -43,7 +56,7 @@ eso envenenaría justo la señal que hace útil esta pantalla.
 Se atribuyen por el prefijo que declaraste. Lo que no declara nadie sale como
 **sin dueño**.
 
-- Se arranca y se para **de uno en uno, con confirmación**. No hay «parar todo»,
+- Se arranca, se para y se reinicia **de uno en uno, con confirmación**. No hay «parar todo»,
   y borrar no se expone: en un mismo Docker conviven contenedores de varios
   proyectos, y un `docker stop $(docker ps -q)` se los lleva por delante.
 - Si Docker no contesta, el hub enseña **la última lectura buena** y dice que no

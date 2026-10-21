@@ -66,7 +66,7 @@ bash scripts/instalar.sh
 
 Es idempotente y no pisa nada: si ya hay un `projects.yml` en `HUB_HOME`, lo
 respeta. Genera los servicios de systemd con las rutas reales de **este** clon,
-los arranca y comprueba las siete pantallas.
+los arranca y comprueba que nueve pantallas contestan 200 (la lista está en `scripts/instalar.sh`, paso 5).
 
 Si el script falla en el último paso, no lo des por bueno: enseña
 `journalctl --user -u hub-web -n 40 --no-pager`.

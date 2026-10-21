@@ -155,7 +155,8 @@ def descartar(con: sqlite3.Connection, pane_id: str) -> None:
 
 def abrir(con: sqlite3.Connection, slot_id: int, session: str | None = None,
           conservar_al_morir: bool = False) -> str | None:
-    """Lanza el slot en tmux. La UI lanza terminales, no las hospeda (decisión 16).
+    """Lanza el slot en tmux. Lanzar es abrir la ventana; mirarla y escribir en ella
+    es cosa de la terminal embebida (decisión 34, que revocó la 16).
 
     🔴 **Crea la sesión si no hay ninguna.** Hasta el 3-sep esto era un
     `new-window` a secas, que exige un servidor de tmux corriendo. En una máquina

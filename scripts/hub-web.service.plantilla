@@ -10,6 +10,10 @@ Environment=HUB_HOME=@HUB_HOME@
 # en tmux —`claude`, sobre todo— sí lo necesita. Probarlo a mano no lo detecta,
 # porque una shell interactiva sí lo tiene.
 Environment=PATH=@PATH@
+# El puerto también aquí, no sólo en ExecStart: lo que comprueba si la web
+# contesta (pánico, avisos) lee `config.WEB_PORT`, y sin esto valía 8787 aunque
+# el hub se hubiera instalado en otro puerto.
+Environment=HUB_PORT=@PUERTO@
 # 🔴 Para que un aborto deje rastro. `hub-web` se murió 14 veces con SIGABRT
 # entre el 2 y el 4 de septiembre sin escribir una sola línea en el registro:
 # el fallo se veía como «se cayó el hub» y no había por dónde empezar. Con esto

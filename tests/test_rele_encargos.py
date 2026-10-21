@@ -282,7 +282,7 @@ def _con_plan(con, escena):
 
 
 def test_el_plan_se_recuerda_por_su_message_id(con, escena):
-    """Sin esto la aprobación no tendría a qué atarse (decisión n14)."""
+    """Sin esto la aprobación no tendría a qué atarse (decisión 281)."""
     plan_msg, bot = _con_plan(con, escena)
 
     assert plan_msg == bot.siguiente_id
@@ -501,7 +501,7 @@ def test_un_audio_atascado_tambien_acaba_avisando_de_la_espera(con, escena):
 
 
 def test_aprobar_pone_a_construir_sin_pedir_un_segundo_permiso(con, escena, monkeypatch):
-    """🔴 El gate va antes de gastar, no antes de publicar (decisión n7).
+    """🔴 El gate va antes de gastar, no antes de publicar (decisión 223).
 
     Pedir un segundo clic convertiría una decisión en dos permisos, que es como
     se acaba aprobando sin mirar.
@@ -552,7 +552,7 @@ def test_si_no_se_puede_construir_el_canal_no_se_queda_mudo(con, escena, monkeyp
     assert any("constructor" in r["detalle"] for r in encargos.registro(con))
 
 
-# ── Publicar lo construido: sin segundo permiso (n7), con tres frenos ───────
+# ── Publicar lo construido: sin segundo permiso (decisión 228), con tres frenos ───────
 
 
 def _construido(con, encargo_id="encargo-1", nombre="fiados-del-barrio"):
@@ -595,7 +595,7 @@ def despliegue(monkeypatch, tmp_path):
 
 
 def test_lo_construido_se_publica_solo_y_la_url_llega_a_los_dos(con, escena, despliegue):
-    """🔴 «El gate va antes de gastar, no antes de publicar» (n7)."""
+    """🔴 «El gate va antes de gastar, no antes de publicar» (decisión 228)."""
     encargo_id = _construido(con)
 
     assert rele_encargos.desplegar_construidos(con, despliegue.ajustes) == 1

@@ -26,7 +26,9 @@ from hub import db, modelos, orquestador as orq, orquestador_cli, rele, transcri
 
 @pytest.fixture
 def escena(con):
-    for pid, guardrail in (("alfa", "ask"), ("beta", "ask"), ("prohibido", "never")):
+    # alfa en `auto` para probar la mecánica sin confirmaciones; las de `ask`
+    # tienen sus propios tests (decisión 279).
+    for pid, guardrail in (("alfa", "auto"), ("beta", "ask"), ("prohibido", "never")):
         con.execute(
             "INSERT INTO proyecto (id, nombre, asiento, guardrail) VALUES (?,?,?,?)",
             (pid, pid.title(), f"/tmp/{pid}", guardrail),
@@ -641,6 +643,112 @@ def test_el_cli_ensena_la_tarea_con_su_alcance(escena, capsys, monkeypatch):
     assert "beta" not in salida
 
 
+# ─────────────────── guardrail ask: el dueño confirma (279) ──────────────────
+
+
+def _alfa_pide_confirmar(con):
+    con.execute("UPDATE proyecto SET guardrail = 'ask' WHERE id = 'alfa'")
+    con.commit()
+
+
+def test_con_ask_mandar_crea_una_peticion_y_no_escribe_nada(escena, sesion_libre):
+    _alfa_pide_confirmar(escena)
+    orq.fijar_nivel("alfa", "alto")
+    tarea_id = _activa()
+
+    with pytest.raises(orq.PendienteDeConfirmar) as exc:
+        orq.mandar(escena, "alfa", "%5", "cambia el logo")
+
+    assert sesion_libre == []
+    tarea = orq.cargar(tarea_id)
+    assert tarea["estado"] == orq.ESPERANDO_DUENO
+    [conf] = orq.pendientes_de_confirmar(tarea)
+    assert conf["proyecto"] == "alfa" and "cambia el logo" in conf["detalle"]
+    assert exc.value.conf_id == conf["id"]
+
+
+def test_con_ask_repetir_la_orden_no_crea_otra_peticion(escena, sesion_libre):
+    _alfa_pide_confirmar(escena)
+    orq.fijar_nivel("alfa", "alto")
+    tarea_id = _activa()
+    for _ in range(3):
+        with pytest.raises(orq.PendienteDeConfirmar):
+            orq.mandar(escena, "alfa", "%5", "cambia el logo")
+
+    assert len(orq.cargar(tarea_id)["confirmaciones"]) == 1
+
+
+def test_con_auto_manda_sin_preguntar(escena, sesion_libre):
+    orq.fijar_nivel("alfa", "alto")
+    tarea_id = _activa()
+
+    assert orq.mandar(escena, "alfa", "%5", "cambia el logo")["enviado"] is True
+    assert not orq.cargar(tarea_id).get("confirmaciones")
+
+
+def test_con_never_ni_siquiera_llega_a_pedir_confirmacion(escena, sesion_libre):
+    orq.fijar_nivel("prohibido", "alto")
+    tarea_id = _activa()
+
+    with pytest.raises(orq.SinPermiso):
+        orq.mandar(escena, "prohibido", "%5", "haz algo")
+
+    assert not orq.cargar(tarea_id).get("confirmaciones")
+
+
+def test_confirmada_despierta_al_orquestador_y_lo_siguiente_ya_se_manda(escena, sesion_libre):
+    _alfa_pide_confirmar(escena)
+    orq.fijar_nivel("alfa", "alto")
+    tarea_id = _activa()
+    with pytest.raises(orq.PendienteDeConfirmar):
+        orq.mandar(escena, "alfa", "%5", "cambia el logo")
+
+    orq.confirmar(tarea_id, 1, aprobar=True)
+
+    tarea = orq.cargar(tarea_id)
+    assert tarea["estado"] == orq.ACTIVA
+    assert "CONFIRMÓ" in tarea["despertar"][-1]
+    assert orq.mandar(escena, "alfa", "%5", "cambia el logo")["enviado"] is True
+    assert orq.mandar(escena, "alfa", "%5", "y ahora el pie")["enviado"] is True
+    assert len(sesion_libre) == 2
+
+
+def test_negada_no_escribe_y_no_se_vuelve_a_preguntar(escena, sesion_libre):
+    _alfa_pide_confirmar(escena)
+    orq.fijar_nivel("alfa", "alto")
+    tarea_id = _activa()
+    with pytest.raises(orq.PendienteDeConfirmar):
+        orq.mandar(escena, "alfa", "%5", "cambia el logo")
+
+    orq.confirmar(tarea_id, 1, aprobar=False)
+
+    with pytest.raises(orq.SinPermiso, match="NO confirmó"):
+        orq.mandar(escena, "alfa", "%5", "cambia el logo")
+    assert sesion_libre == []
+    assert len(orq.cargar(tarea_id)["confirmaciones"]) == 1
+
+
+def test_el_orquestador_no_tiene_orden_para_confirmar(escena):
+    """🔴 Sólo el dueño confirma (256, 279): ni orden en `./orq` ni `curl`."""
+    assert not any("confirm" in orden or "aprob" in orden for orden in orquestador_cli.ORDENES)
+    ajustes = json.loads((orq.preparar() / ".claude" / "settings.json").read_text())
+    assert "Bash(curl:*)" in ajustes["permissions"]["deny"]
+
+
+def test_el_cli_dice_que_espera_al_dueno_sin_salir_con_error(escena, capsys, monkeypatch):
+    monkeypatch.setattr(orquestador_cli.db, "conectar", lambda ruta: escena)
+    monkeypatch.setattr(orq, "sesiones", lambda con, p: [
+        {"pane_id": "%5", "nombre": "t", "cwd": "/tmp/beta", "agente": "Claude Code",
+         "trabajando": False}])
+    orq.fijar_nivel("beta", "alto")
+    _activa()
+
+    codigo = orquestador_cli.main(["mandar", "beta", "%5", "haz algo"])
+
+    assert codigo == 0
+    assert "confirme" in capsys.readouterr().out
+
+
 # ───────────────────────────────── la pantalla ──────────────────────────────
 
 
@@ -673,6 +781,26 @@ def test_la_pregunta_abierta_sale_arriba_con_su_formulario(cliente, escena):
     assert "¿Sigo con la B?" in pagina
     assert pagina.index("¿Sigo con la B?") < pagina.index("Nueva tarea")
     assert 'action="/orquestador/responder"' in pagina
+
+
+def test_la_confirmacion_pendiente_sale_arriba_y_se_contesta_desde_la_pantalla(
+        cliente, escena, sesion_libre):
+    _alfa_pide_confirmar(escena)
+    orq.fijar_nivel("alfa", "alto")
+    tarea_id = _activa()
+    with pytest.raises(orq.PendienteDeConfirmar):
+        orq.mandar(escena, "alfa", "%5", "cambia el logo")
+
+    pagina = cliente.get("/orquestador").text
+    assert "Pide confirmar: alfa" in pagina and "cambia el logo" in pagina
+    assert pagina.index("Pide confirmar") < pagina.index("Nueva tarea")
+
+    r = cliente.post("/orquestador/confirmar",
+                     data={"tarea_id": tarea_id, "conf_id": "1", "decision": "si"},
+                     follow_redirects=False)
+
+    assert r.status_code == 303
+    assert orq.cargar(tarea_id)["confirmaciones"][0]["estado"] == "aprobada"
 
 
 def test_los_permisos_se_conceden_desde_la_pantalla(cliente, escena):

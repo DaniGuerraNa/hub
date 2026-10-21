@@ -1,6 +1,6 @@
 """Pasar a texto un audio, en casa.
 
-🔴 **En casa y no en un servicio de fuera** (decisión n4). Lo que hay en estos
+🔴 **En casa y no en un servicio de fuera** (decisión 221). Lo que hay en estos
 archivos es la voz de alguien —la madre de quien usa el hub, para el primer
 encargo— describiendo su negocio: mandarla a transcribir a un tercero saca de la
 máquina justo lo que la regla dura 22 protege, y lo haría en el formato más

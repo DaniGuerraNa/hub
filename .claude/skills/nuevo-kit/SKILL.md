@@ -61,8 +61,12 @@ Pon lo tuyo donde la semilla trae ejemplos:
   marcadores, para que la plantilla **verifique en verde recién copiada** y se
   pueda probar antes de entenderla. El `id` acaba siendo el nombre de su
   carpeta: minúsculas, números y guiones.
-- **Los marcadores que sí quedan** —`@DESCRIPCION@`, `@FECHA@`,
-  `@NOTAS_DE_MANTENIMIENTO@`— están en campos de texto libre. Sustitúyelos.
+- **Los marcadores que sí quedan** —`@ID@` y `@NOMBRE@` en `README.md`,
+  `CHANGELOG.md` y `CLAUDE.md`; `@DESCRIPCION@`, `@FECHA@` y
+  `@NOTAS_DE_MANTENIMIENTO@` en campos de texto libre— hay que sustituirlos
+  todos. El botón «Kit nuevo» sólo pone el `id` y el `nombre` de `kit.yml`.
+  Compruébalo al acabar: `grep -rn '@[A-Z_]*@' <carpeta-del-kit>` no debe
+  devolver nada fuera de comentarios.
 
 **Deja `expone`, `consume` y `aplica` vacíos** hasta que haya contenido real: un
 manifiesto que promete archivos que no existen es peor que uno corto.

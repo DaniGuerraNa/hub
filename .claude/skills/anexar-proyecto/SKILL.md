@@ -51,9 +51,24 @@ nombres exactos.
 
 ### 3. Declara en el registro
 
-Edita `~/.local/share/hub/projects.yml` (o el que resuelva
-`python -m hub.kits_cli` si hay `HUB_HOME` propio) y añade el bloque. El archivo
-trae los campos comentados.
+**El caso simple —una carpeta, sin más rutas ni contenedores— no se edita a
+mano**: el hub tiene un alta que inserta el bloque sin reescribir el resto del
+archivo (decisión 113) y comprueba que el `estado_ref` existe:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/proyecto/anexar \
+  -H 'Content-Type: application/json' \
+  -d '{"id": "mi-app", "nombre": "Mi App", "ruta": "/ruta/absoluta/mi-app",
+       "estado_ref": "ESTADO.md", "dominio": "personal", "guardrail": "ask"}'
+```
+
+Es lo mismo que hace el asistente con `hub anexar`. Contesta `{"ok": true, …}`
+o `{"ok": false, "error": "…"}` con el motivo.
+
+**Si hace falta más** —`rutas`, un `patron:`, `contenedores`— edita el registro
+a mano. Está en `$HUB_HOME/projects.yml` (por omisión
+`~/.local/share/hub/projects.yml`), salvo que `HUB_PROJECTS_YML` diga otra
+cosa: es `config.projects_yml()`. El archivo trae los campos comentados.
 
 - El `id` es la identidad y **no cambia nunca**: los slots y las notas cuelgan
   de él. El `nombre` es sólo la etiqueta, y ése sí se cambia cuando quieras.

@@ -33,29 +33,38 @@ slots y darte el panorama de respaldo y servicios.
 ahí. Dentro del hub sí escribe —notas y slots— y **borrar no se le expone**.
 
 No es sólo una instrucción: su `.claude/settings.json` **deniega** `Edit`,
-`Write`, `rm`, `mv`, `git commit`, `git push`, `git checkout`, `docker` y
-`systemctl`.
+`Write`, `NotebookEdit`, `rm`, `mv`, `git commit`, `git push`, `git checkout`,
+`docker`, `systemctl` y `curl`.
 
 ## Cómo leer la pestaña
 
 - El **porcentaje** es su contexto ocupado. Se pone naranja al 70 %.
 - La **luz** dice si está vivo o pensando.
-- **Terminal** abre su sesión cruda, por si hace falta ver lo que hay debajo.
+- La **rueda** de la pestaña guarda **Compactar** y **Limpiar** (su contexto) y,
+  bajo «Si algo falla», **Terminal**, que abre su sesión cruda por si hace falta
+  ver lo que hay debajo.
 
 Si Claude Code le pide permiso para algo, el cuadro aparece **en el chat** con
 dos botones. Sin eso la conversación se quedaría muda sin decir por qué.
 
 ## Guardrails
 
-Cada proyecto declara en el registro cuánto permiso tiene el asistente:
+Cada proyecto lleva en el registro un `guardrail`: `auto`, `ask` o `never`.
+Lo que hace hoy cada valor, medido en el código:
 
 | | |
 |---|---|
-| `auto` | Puede ejecutar |
-| `ask` | Pregunta antes |
-| `never` | **Nunca**, aunque se lo pidas desde la interfaz |
+| `never` | El hub **no lanza agentes** en ese proyecto: ni los botones que abren `claude` ni el orquestador. Aunque se lo pidas desde la interfaz |
+| `ask` | Lo que el hub haría **solo** en ese proyecto te pide confirmación antes. Hoy eso es el orquestador: la primera vez que una tarea quiere tocar el proyecto (abrir una sesión, mandarle trabajo, cambiarle el modelo o compactarla), espera a que lo confirmes en [Orquestador](/orquestador). Se confirma una vez por tarea y proyecto |
+| `auto` | No pregunta: el orquestador trabaja ahí con el nivel que le diste |
+
+Lo que lanzas tú con un botón no pide una segunda confirmación: pulsarlo ya es
+tu sí.
 
 `never` significa nunca: primero se cambia el guardrail en el registro.
+
+El guardrail **no es el permiso del asistente**. El asistente es de sólo
+lectura sobre tus proyectos sea cual sea su guardrail (ver arriba).
 
 ## Para aprender el hub
 

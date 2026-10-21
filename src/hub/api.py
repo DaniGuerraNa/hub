@@ -21,11 +21,13 @@ from typing import Any
 
 from . import base
 from . import consumo as _consumo
+from . import copia_base
 from . import navegador
 from . import restauracion as _restauracion
 from . import registry
 from . import repos as _repos
 from . import tmux
+from . import version as _version
 from .models import Proyecto, Ruta
 
 
@@ -364,7 +366,14 @@ def rail(con: sqlite3.Connection) -> dict:
         1 for (asiento,) in con.execute(
             "SELECT asiento FROM proyecto WHERE tipo NOT IN ('asistente', 'kit')")
         if asiento and _carpeta_existe(asiento))
+    # Barato: tres archivos pequeños. Va en el raíl porque «falta terminar de
+    # actualizar» tiene que verse en cualquier pantalla (decisión 286).
+    try:
+        version = _version.estado()
+    except Exception:  # noqa: BLE001 — un pyproject raro no tumba todas las pantallas
+        version = None
     return {
+        "version": version,
         "sin_respaldo": sum(sin_push.values()),
         "servicios": corriendo,
         "paneles": len(paneles),
@@ -1058,6 +1067,9 @@ def respaldo(con: sqlite3.Connection, proyecto_id: str | None = None) -> dict:
         # realidad significa «no he mirado» es la peor cifra que este hub puede
         # enseñar. La pantalla lo dice en vez de dar el cero por bueno.
         "hay_git": _repos._hay_git(),
+        # La otra mitad del respaldo: los datos del propio hub, que no están en
+        # ningún repo (decisión 277).
+        "copia_base": copia_base.estado(),
         # Para el selector: los proyectos que TIENEN repos, no todos. Ofrecer
         # veinte opciones de las que quince dan una lista vacía no es un filtro,
         # es una trampa.
@@ -1786,6 +1798,7 @@ def orquestador(con: sqlite3.Connection, tarea_id: str = "", proyecto: str = "")
             "bitacora": [{**b, "hora": _hora_local(b.get("cuando"))}
                          for b in reversed(orq.bitacora(elegida["id"]))][:80],
             "esperando": [e for e in elegida["esperas"] if e["estado"] == "esperando"],
+            "confirmar": orq.pendientes_de_confirmar(elegida),
             "viva": elegida["estado"] in orq.VIVAS,
         }
 
@@ -1799,6 +1812,8 @@ def orquestador(con: sqlite3.Connection, tarea_id: str = "", proyecto: str = "")
              and (not proyecto or proyecto in (t.get("proyectos") or []))]
     return {
         "viva": viva,
+        # Lo que el orquestador no puede hacer sin el dueño (decisión 279).
+        "confirmar": orq.pendientes_de_confirmar(viva) if viva else [],
         "detalle": detalle,
         "cola": [t for t in tareas if t["estado"] == orq.EN_COLA],
         "lista": lista[:30],
@@ -1896,6 +1911,7 @@ def guia(con: sqlite3.Connection) -> dict[str, Any]:
         "hechos": sum(1 for p in obligatorios if p["hecho"]),
         "total": len(obligatorios),
         "mapa": _guia.mapa(),
+        "version": _version.para_la_guia(),
     }
 
 

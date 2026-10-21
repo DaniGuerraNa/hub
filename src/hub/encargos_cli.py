@@ -1,6 +1,6 @@
 """Las manos del agente entrevistador. Todo lo que puede hacer, y nada más.
 
-🔴 **Este archivo ES el contrato de la decisión f9.** El agente que habla con la
+🔴 **Este archivo ES el contrato de la decisión 222.** El agente que habla con la
 persona no construye y no puede aunque quiera: su única salida es la ficha, y su
 única forma de hablar es encolar un mensaje que manda otro proceso. Cada
 subcomando que se añada aquí amplía lo que ese agente puede hacer en el mundo, y
@@ -12,7 +12,7 @@ Lo que **no** hay, y no es un olvido:
   22— es quien manda. Un agente con el token sería un agente que puede escribir
   a cualquiera.
 - **No despliega, no toca git, no abre puertos.** El gate humano va antes de
-  gastar (decisión n7); si el agente pudiera construir, ese gate ya no
+  gastar (decisión 223); si el agente pudiera construir, ese gate ya no
   significaría nada porque el gasto habría empezado antes de la aprobación.
 - **No borra un encargo.** Borrar es de quien lo encargó, y el hub no poda nada
   solo (principio 9).
@@ -176,7 +176,7 @@ def cmd_ficha(con, args) -> int:
 def cmd_preguntar(con, args) -> int:
     """La siguiente pregunta que toque, encolada y contada.
 
-    Contar es lo que hace que el tope exista (decisión f8): quien no sabe algo
+    Contar es lo que hace que el tope exista (decisión 217): quien no sabe algo
     no lo va a saber a la quinta pregunta, e insistir es la forma más rápida de
     que alguien deje de contestar.
     """
@@ -237,7 +237,7 @@ def cmd_responde(con, args) -> int:
 
 
 def cmd_anota(con, args) -> int:
-    """Lo que contó y no cabía en ninguna casilla. Nada se tira (decisión f10)."""
+    """Lo que contó y no cabía en ninguna casilla. Nada se tira (decisión 217)."""
     encargo_id = _encargo_actual(con, args.encargo)
     ficha = encargos.cargar_ficha(con, encargo_id)
     ficha.anota(args.texto, args.fase or "")
@@ -306,7 +306,7 @@ def cmd_muestras(con, args) -> int:
     """Las imágenes del catálogo, que son el mecanismo y no un adorno.
 
     Quien no tiene vocabulario técnico no puede describir un estilo, pero sí
-    puede señalar uno (decisión f1). Por eso esto encola una presentación, las
+    puede señalar uno (decisión 285). Por eso esto encola una presentación, las
     fotos **numeradas** y una sola pregunta: «¿cuál se parece más?».
 
     🔴 Numeradas porque sin número contestó «el quinto» queriendo decir el
@@ -666,7 +666,7 @@ def cmd_proponer(con, args) -> int:
     """Cierra la ficha y manda el plan al dueño. Aquí acaba lo que el agente puede.
 
     🔴 Lo que sale de aquí es **lo que él va a aprobar**, y aprobarlo autoriza
-    gasto y un despliegue público (decisión n14). Por eso el informe es un
+    gasto y un despliegue público (decisión 281). Por eso el informe es un
     archivo que el agente escribió y se puede releer, no un texto improvisado en
     una llamada: lo aprobado tiene que poder mirarse después tal como era.
     """
@@ -716,7 +716,7 @@ def cmd_proponer(con, args) -> int:
 
     fila = encargos.ver(con, encargo_id)
     if encargos.de_confianza(con, int(fila["user_id"])):
-        # 🔴 De confianza (decisión 236): el gate de n7 lo pone él POR PERSONA
+        # 🔴 De confianza (decisión 236): el gate de la 223 lo pone él POR PERSONA
         # desde el hub, y aquí ya está puesto. El plan le llega igual, como
         # información y no como pregunta —sin `clase="plan"`, así no hay
         # `plan_msg` al que responder—, y el relé lo construye en su vuelta.
@@ -761,7 +761,7 @@ def cmd_listo(con, args) -> int:
     terminar de escribir su último archivo es cambiar un estado. Publicar lo
     hace el relé en su siguiente vuelta, si `encargos.yml` dice dónde —y sin
     pedir otro permiso, porque *«el gate va antes de gastar, no antes de
-    publicar»* (decisión n7): el permiso fue el «aprobado». Si no está
+    publicar»* (decisión 228): el permiso fue el «aprobado». Si no está
     configurado, el aviso trae el comando para hacerlo a mano.
     """
     encargo_id = _encargo_actual(con, args.encargo)

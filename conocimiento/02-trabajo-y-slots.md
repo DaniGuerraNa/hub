@@ -1,7 +1,9 @@
 # La pantalla de trabajo, los slots y la terminal
 
 `/trabajo` es donde vas a pasar el día: **slots a la izquierda, terminal en
-medio, nota a la derecha**.
+medio y, a la derecha, un panel con cuatro pestañas**: Nota, Lienzos, Consultas
+y Programados. La nota se explica aquí; las otras tres, en
+[`10-mas-pantallas.md`](10-mas-pantallas.md).
 
 ## Qué es un slot
 
@@ -20,9 +22,9 @@ La relación es: `proyecto → N slots → 1 nota por slot, y N ventanas por slo
 
 ## La pantalla del proyecto: donde se administran los slots
 
-`/proyecto/<id>` — se llega pinchando cualquier proyecto. Es la **octava
-pantalla**, no sale en el raíl porque depende de cuál estés mirando, y es donde
-está todo lo que se puede hacer con un slot.
+`/proyecto/<id>` — se llega pinchando cualquier proyecto. No sale en el raíl
+porque depende de cuál estés mirando, y es donde está todo lo que se puede
+hacer con un slot.
 
 **Crear uno a mano**, sin esperar a promoverlo desde la bandeja: «Slot nuevo».
 Además del nombre y la ruta, dos campos que conviene conocer:
@@ -110,5 +112,10 @@ veas. No relanza nada por su cuenta.
 Si trabajas con otro comando (por ejemplo `claude --model …`), ponlo en
 `HUB_COMANDO_CLAUDE` (ver `INSTALAR.md`).
 
-> 🔴 La terminal da acceso de shell a quien alcance el puerto. Escucha sólo en
-> `127.0.0.1`. No la expongas sin autenticación.
+> 🔴 **La terminal da acceso de shell a quien alcance el puerto.** Por eso el hub
+> escucha sólo en `127.0.0.1` y nunca se pone en `0.0.0.0` ni se expone a
+> internet. Para usarlo desde el móvil u otro aparato está [Acceso](/acceso): se
+> entra por una red privada (tipo Tailscale) con nombres exactos, cada aparato
+> se da de alta con un QR, y la terminal además sólo se abre desde fuera con el
+> interruptor «terminal remota», apagado de fábrica y otra vez en cada
+> reinicio. Detalle en [`10-mas-pantallas.md`](10-mas-pantallas.md).

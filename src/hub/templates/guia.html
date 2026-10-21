@@ -52,6 +52,11 @@
   .pantalla p { margin:4px 0 6px; font-size:13px; color:var(--texto-2); }
   .pantalla ul { margin:0; padding-left:18px; font-size:12.5px; color:var(--texto-3); }
   .pantalla li { margin:2px 0; }
+#version .version { max-width: 70ch; }
+#version .version pre { background: var(--superficie); border: 1px solid var(--borde);
+  border-radius: 10px; padding: 10px 12px; overflow-x: auto; }
+#version .novedades { white-space: pre-wrap; font-size: 13px; }
+#version .aviso-texto { color: var(--texto); }
 </style>
 
 <div class="guia-cabeza">
@@ -113,6 +118,38 @@
     </ul>
   </section>
   {% endfor %}
+</div>
+
+{% set v = g.version %}
+<div id="version">
+{{ ui.seccion('ajustes', 'Versión', 'tienes la ' ~ v.codigo) }}
+<div class="version">
+  {% if v.falta_terminar %}
+  <p class="aviso-texto"><strong>Falta terminar de actualizar.</strong> El código ya es la {{ v.codigo }}, pero la actualización no se
+    terminó{% if v.instalada %} (lo último instalado del todo es la {{ v.instalada }}){% endif %}.
+    Faltan pasos que <code>git pull</code> no hace: regenerar los servicios, refrescar el
+    asistente y lo propio de cada versión.</p>
+  {% endif %}
+  {% if v.hay_nueva %}
+  <p>Hay una versión nueva publicada: la <strong>{{ v.publicada }}</strong>.
+    {% if v.url_novedades %}<a href="{{ v.url_novedades }}" rel="noopener" target="_blank">Qué trae</a>.{% endif %}</p>
+  {% elif v.publicada %}
+  <p>Estás al día: la última publicada es la {{ v.publicada }}.</p>
+  {% elif not v.buscar %}
+  <p>No se buscan versiones nuevas (<code>HUB_BUSCAR_VERSIONES=0</code>).</p>
+  {% endif %}
+  {% if v.error %}<p class="tenue">La última vez que se miró si había versión nueva falló: {{ v.error }}</p>{% endif %}
+  <p>Para actualizar, en la carpeta del hub:</p>
+  <pre><code>bash scripts/actualizar.sh</code></pre>
+  <p class="tenue">Baja la versión, regenera los servicios, refresca el asistente, aplica los
+    pasos de cada versión, reinicia lo que estaba en marcha y te enseña qué cambió. Tus
+    datos no se tocan. Nada se actualiza solo: lo decides tú.</p>
+  {% if v.novedades %}
+  <details><summary>Qué trajo la {{ v.codigo }}</summary>
+    <pre class="novedades">{{ v.novedades }}</pre>
+  </details>
+  {% endif %}
+</div>
 </div>
 
 <script src="/static/guia.js"></script>

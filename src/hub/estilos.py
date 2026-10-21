@@ -914,7 +914,7 @@ def identificar(respuesta: str, grupo: str = "estilos") -> str | None:
 def hoja(estilo_id: str) -> str:
     """El CSS de un estilo, listo para un sitio de verdad y no para una captura.
 
-    🔴 Es lo que cierra el círculo de la decisión f1. Ella no describió un
+    🔴 Es lo que cierra el círculo de la decisión 285. Ella no describió un
     estilo: **señaló una foto**. Si lo construido se escribiera con un CSS
     cualquiera, esa elección habría sido un trámite. Dándole el mismo CSS que
     pintó la muestra, lo que ve se parece a lo que eligió porque literalmente lo

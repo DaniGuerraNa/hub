@@ -204,8 +204,10 @@ def hosts() -> tuple[str, ...]:
         if not texto:
             continue
         if "*" in texto or "?" in texto:
+            # Decisión 162. El número no va en el mensaje: quien lo lee no tiene
+            # ARQUITECTURA.md, que no se publica.
             raise AccesoInvalido(
-                f"«{texto}» lleva un comodín, y aquí no se admiten (decisión 162): "
+                f"«{texto}» lleva un comodín, y aquí no se admiten: "
                 "sin validar el `Host` los nombres de sesión se enumeran por "
                 "DNS-rebinding. Escribe el nombre exacto de la máquina en la red "
                 "privada."

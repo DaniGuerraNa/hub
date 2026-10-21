@@ -294,7 +294,7 @@ def raiz() -> Path:
 def carpeta(encargo_id: str) -> Path:
     """La carpeta de un encargo. Todo lo suyo está dentro y nada suyo fuera.
 
-    Es lo que hace cumplible el guardrail `never` de la decisión n8: un encargo
+    Es lo que hace cumplible el guardrail `never` de la decisión 222: un encargo
     es de otra persona y el hub sólo escribe aquí dentro.
     """
     return raiz() / valido(encargo_id)

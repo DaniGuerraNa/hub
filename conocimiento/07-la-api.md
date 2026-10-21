@@ -60,20 +60,32 @@ puede ejecutar cualquier cosa. Lo que se cierra es que una web que visites
 maneje tu hub por detrás.
 
 Y por lo mismo: **no expongas el puerto a la red**. La API es de lectura, pero
-`/terminal` da acceso de shell y vive en el mismo servidor.
+`/terminal` da acceso de shell y vive en el mismo servidor. El hub escucha sólo
+en `127.0.0.1`; para entrar desde otro aparato está [Acceso](/acceso) —red
+privada, nombres exactos, aparatos dados de alta con un QR y la terminal tras
+su propio interruptor—, explicado en [`10-mas-pantallas.md`](10-mas-pantallas.md).
+Nunca `0.0.0.0` ni internet.
 
-### Los dos que crean cosas
+### Los que crean cosas
 
-| Endpoint | Qué hace |
-|---|---|
-| `POST /api/proyecto/nuevo` | `{id, nombre, ruta, dominio?, guardrail?, estado_ref?}` |
-| `POST /api/kit/nuevo` | `{id, nombre, ruta, guardrail?}` — copia `semillas/kit/` |
+| Endpoint | Cuerpo | Qué hace |
+|---|---|---|
+| `POST /api/proyecto/nuevo` | `{id, nombre, ruta, dominio?, guardrail?, estado_ref?, rutas?}` | Carpeta **vacía** + alta + agente dentro |
+| `POST /api/kit/nuevo` | `{id, nombre, ruta, guardrail?}` | Igual, copiando `semillas/kit/` |
+| `POST /api/proyecto/anexar` | `{id, nombre, ruta, dominio?, guardrail?, estado_ref?}` | Sólo el alta de una carpeta que **ya existe**. No escribe dentro ni lanza a nadie |
+| `POST /api/slot` | `{proyecto_id, nombre, ruta?}` | Un slot |
+| `POST /api/nota` | `{texto, slot_id?}` | Una nota. Sin `slot_id`, en el slot del panel donde estás |
+| `POST /api/programado` | `{slot_id, texto, cuando}` | Un mensaje programado; `cuando` con zona horaria |
+| `POST /api/lienzo` | `{proyecto_id, titulo, cuerpo, plantilla?, slot?}` | Un lienzo. Si ya existe y lo editaste tú, contesta 409 |
 
-Los dos crean una carpeta **vacía**, la acotan con permisos, dan el alta en el
-registro y lanzan un agente dentro. Y los dos contestan siempre con `ok`, sin
-lanzar excepciones a la cara:
+En `proyecto/nuevo`, `estado_ref` vale `ESTADO.md` si no lo mandas, y `rutas`
+es una lista (o un texto con una ruta por línea). `dominio` vale `personal` y
+`guardrail`, `ask`.
+
+Los dos primeros contestan siempre con `ok`, sin lanzar excepciones a la cara:
 
 - `{"ok": false, "ocupada": true}` — la ruta ya tiene contenido. No se toca nada.
+- `{"ok": false, "bloqueado": true}` — el guardrail del proyecto lo impide.
 - `{"ok": true, "agente": false, "aviso": "…"}` — con `guardrail: never` la cosa
   **queda creada y registrada**, pero no se lanza a nadie. 🔴 Míralo: dar por
   hecho que `ok` implica agente deja un proyecto que existe y que nadie sabe que

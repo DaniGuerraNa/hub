@@ -29,6 +29,15 @@ kits:
     descripcion: Identidad del proyecto y punteros a lo que ya tiene. Obligatoria.
     obligatorio: true
 
+  # Publicar contenido visual en la web del hub (decisión 157). La skill y las
+  # plantillas viven en el kit; el comando `hub lienzo` y los motores de dibujo,
+  # en el hub. Es el kit que este mismo repo declara en `.claude/hub/kits.yml`.
+  - id: lienzos
+    nombre: Lienzos
+    version: "0.2"
+    origen: https://github.com/DaniGuerraNa/kit-lienzos.git
+    descripcion: Publicar diagramas, decisiones, pasos y comparativas en la web del hub en vez de soltarlos como texto.
+
   # Ejemplo de kit externo. Descomenta y pon el repo real cuando publiques uno.
   # - id: orquestacion
   #   nombre: Kit de orquestación

@@ -34,7 +34,7 @@ class Proyecto(BaseModel):
     # aporta dependencias declaradas en `consumidores/`.
     # `asistente` marca el proyecto que el hub pinta como chat en vez de como
     # terminal. Va aquí y no en una ruta cableada para que mudarlo sea editar
-    # una línea de YAML (decisión 75). Sólo puede haber uno; manda el primero.
+    # una línea de YAML (decisión 68). Sólo puede haber uno; manda el primero.
     tipo: Literal["proyecto", "kit", "asistente"] = "proyecto"
     asiento: str | None = None
     rutas: list[Ruta] = Field(default_factory=list)

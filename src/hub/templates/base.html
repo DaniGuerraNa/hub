@@ -841,6 +841,9 @@ dialog.paleta li .detalle {
   /* Lo que salió bien se lee una vez y se va (`_volver(..., fugaz=True)`). */
   .aviso-accion.fugaz { border-color:transparent; background:var(--superficie2); color:var(--texto-2); }
   .aviso-accion.ido { opacity:0; }
+  /* Falta terminar una actualización: el código ya es otro y lo instalado no. */
+  .aviso-accion.version-urge { border-color:var(--riesgo); }
+  .aviso-accion a { color:var(--acento); }
   .aviso-accion button { margin-left:auto; background:none; border:0; color:var(--texto-3);
                          font-size:16px; line-height:1; padding:0 2px; cursor:pointer; }
 </style>
@@ -908,6 +911,21 @@ dialog.paleta li .detalle {
     <button class="sutil" id="abrir-paleta" title="Ctrl+K">Buscar <span class="tecla">Ctrl K</span></button>
     <form method="post" action="/refrescar" class="enlinea"><button class="sutil">Refrescar</button></form>
   </header>
+  {# La versión (decisión 286): que falta terminar de actualizar se dice en
+     TODAS las pantallas, porque quien hizo `git pull` y reinició ve el código
+     nuevo funcionando y no tiene otra forma de saber que le faltan pasos. #}
+  {% set v = rail.version %}
+  {% if v and v.falta_terminar %}
+  <div class="aviso-accion version-urge" role="alert">
+    <span>Falta terminar de actualizar a la {{ v.codigo }}: en la carpeta del hub,
+      <code>bash scripts/actualizar.sh</code>. <a href="/guia#version">Qué hace</a></span>
+  </div>
+  {% elif v and v.hay_nueva %}
+  <div class="aviso-accion" role="status">
+    <span>Hay una versión nueva del hub, la {{ v.publicada }} (tienes la {{ v.codigo }}).
+      <a href="/guia#version">Novedades y cómo actualizar</a></span>
+  </div>
+  {% endif %}
   {# Lo que falló en la acción anterior, dicho aquí y no tragado (regla 21). #}
   {% if request is defined and request.query_params.get('aviso') %}
   {% set fugaz = request.query_params.get('fugaz') %}

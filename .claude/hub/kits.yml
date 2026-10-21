@@ -18,7 +18,7 @@ kits:
       - .claude/hub/capabilities.yml
       - .claude/hub/kits.yml
   - id: lienzos
-    version: "0.1"
-    aplicado: 2026-09-01
+    version: "0.2"
+    aplicado: 2026-10-20
     destinos:
       - .claude/skills/lienzos/SKILL.md

@@ -1,13 +1,13 @@
 """El contrato del agente que construye. Empieza donde acaba el entrevistador.
 
-Dos agentes y no uno, y la separación es la decisión n7 hecha código: el que
+Dos agentes y no uno, y la separación es la decisión 223 hecha código: el que
 habla con la persona **sólo planifica**, que es barato; el que construye no
 arranca hasta que un humano ha visto el plan y ha dicho que sí. Si fueran el
 mismo, el gasto habría empezado antes de la aprobación y el gate no significaría
 nada.
 
 🔴 **Lo que construye es un sitio ESTÁTICO**, y eso no es una limitación técnica
-sino la decisión n9 hecha verdad por construcción. Un MVP de encargo es de una
+sino la decisión 284 hecha verdad por construcción. Un MVP de encargo es de una
 persona, sin uso simultáneo, y existe para que alguien lo mire y reaccione — no
 para que su negocio dependa de él. Sin servidor no hay base de datos que
 respaldar, ni proceso que se caiga un sábado, ni secreto que guardar. El día que
@@ -224,7 +224,7 @@ def acotar(carpeta: Path) -> None:
 def abrir_agente(con: sqlite3.Connection, encargo_id: str) -> dict:
     """Pone al constructor a trabajar. Sólo sobre algo aprobado.
 
-    🔴 La comprobación del estado ES el gate de la decisión n7. Es lo único que
+    🔴 La comprobación del estado ES el gate de la decisión 223. Es lo único que
     separa «alguien vio el plan y dijo que sí» de «un agente se puso a gastar
     porque una función se llamó desde el sitio equivocado».
     """

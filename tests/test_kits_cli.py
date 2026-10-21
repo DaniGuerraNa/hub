@@ -494,3 +494,15 @@ def test_un_kit_NORMAL_sin_su_tag_dice_qué_hacer(entorno, monkeypatch, tmp_path
     err = capsys.readouterr().err
     assert "tag v0.1" in err, "hay que decir cómo publicarlo"
     assert "tipo: kit" in err, "y la otra salida: declararlo en desarrollo"
+
+
+def test_la_ruta_de_un_kit_en_desarrollo_es_su_carpeta(catalogo_en_desarrollo, capsys):
+    """Lo que el comentario de arriba daba por hecho y no era verdad: `ruta`
+    sólo miraba lo instalado y contestaba «no está instalado»."""
+    assert kits_cli.ruta("endev", None) == 0
+    assert capsys.readouterr().out.strip() == str(catalogo_en_desarrollo)
+
+
+def test_la_ruta_en_desarrollo_tambien_comprueba_la_version(catalogo_en_desarrollo, capsys):
+    assert kits_cli.ruta("endev", "9.9") == 1
+    assert "no existe" in capsys.readouterr().err

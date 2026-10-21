@@ -33,7 +33,7 @@ proyectos:
 | `asiento` | Desde dónde trabajas |
 | `rutas` | Repos y otras ubicaciones (ver abajo) |
 | `estado_ref` | Puntero al documento que dice cómo va el proyecto |
-| `guardrail` | Permiso del asistente para ejecutar cosas ahí |
+| `guardrail` | `never`: el hub no lanza agentes ahí (ni los botones que abren `claude` ni el orquestador). `ask`: lo que el hub haría solo —hoy, el orquestador— te pide confirmación antes. `auto`: no pregunta. Detalle en `05-el-asistente.md` |
 | `status` | `archivado` lo saca de las listas sin borrarlo |
 | `tipo` | `kit` o `asistente`. Un proyecto normal no lo lleva; un kit sin él se mide, pero no sale en la vista de kits |
 | `contenedores` | **Prefijos** de nombres de contenedores Docker |
@@ -153,7 +153,8 @@ conexiones:
 > en un archivo de texto plano — para eso no es.
 
 También puedes añadirlas desde la pantalla de Conexiones: el formulario escribe
-en este mismo archivo, y sólo admite esos seis campos.
+en este mismo archivo, y sólo admite esos siete campos: los seis del ejemplo
+más una `nota`.
 
 ## Tipos especiales
 
