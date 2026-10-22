@@ -9,13 +9,16 @@ se justifica.
 
 from __future__ import annotations
 
+import json
+import os
+import re
 import sqlite3
 import time
 from datetime import datetime, timezone
 
 from . import version as _version
-from . import (busqueda, conexiones, config, consumo, copia_base, db, maquina, orquestador, programados,
-               registry, repos, servicios, terminal, tmux)
+from . import (busqueda, conexiones, config, consumo, copia_base, db, intercambio, maquina, orquestador, programados,
+               registry, repos, salud, servicios, terminal, tmux)
 from .registry import Atribuidor
 
 # Cada cuántos ciclos de 20 s se mide lo caro (git y docker). ~10 minutos: los
@@ -122,6 +125,39 @@ def reconciliar_bindings(
     return devueltos
 
 
+_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def claude_por_panel() -> dict[str, str]:
+    """`{pane_id: id de la conversación}` de los Claude Code vivos en tmux.
+
+    Claude Code escribe `~/.claude/sessions/<pid>.json` con su `sessionId` y
+    el panel de tmux donde corre (`"tmux": "sesion:@2.%7"`), y lo borra al
+    salir. Es lo que deja que «Restaurar» reanude la conversación exacta
+    (decisión 289) en vez de abrir una nueva.
+
+    🔴 Sólo de procesos vivos: un archivo que sobrevivió a un corte apunta a
+    un `%7` del servidor de tmux ANTERIOR, y el `%7` de hoy es otra ventana.
+    """
+    salida: dict[str, str] = {}
+    try:
+        archivos = list(orquestador._sesiones_de_claude().glob("*.json"))
+    except OSError:
+        return salida
+    for ruta in archivos:
+        try:
+            info = json.loads(ruta.read_text(encoding="utf-8"))
+            pid = int(info.get("pid") or 0)
+            os.kill(pid, 0)
+        except (OSError, ValueError, TypeError, ProcessLookupError, PermissionError):
+            continue
+        panel = str(info.get("tmux") or "").rsplit(".", 1)[-1]
+        sesion = str(info.get("sessionId") or "")
+        if pid > 0 and panel.startswith("%") and _UUID.match(sesion):
+            salida[panel] = sesion
+    return salida
+
+
 def capturar(con: sqlite3.Connection, atribuidor: Atribuidor) -> int | None:
     """Toma una muestra. Devuelve el id del snapshot, o None si tmux no responde."""
     pid = tmux.servidor_pid()
@@ -152,16 +188,23 @@ def capturar(con: sqlite3.Connection, atribuidor: Atribuidor) -> int | None:
         )
     }
 
+    try:
+        conversaciones = claude_por_panel()
+    except Exception as exc:  # el muestreo no muere por esto (regla dura 2)
+        print(f"[snapshotter] sesiones de Claude: {exc}", flush=True)
+        conversaciones = {}
     for p in paneles:
         etiqueta = tmux.inferir_etiqueta(p["titulo"], p["cwd"], p["comando"])
         proyecto_id = atribuidor.atribuir(p["cwd"])
         slot_id = bindings.get(p["pane_id"])
         con.execute(
             """INSERT INTO panel (snapshot_id, pane_id, session, window_idx, pane_idx,
-                                  cwd, titulo, comando, etiqueta, proyecto_id, slot_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                                  cwd, titulo, comando, etiqueta, proyecto_id, slot_id,
+                                  claude_sesion)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (snapshot_id, p["pane_id"], p["session"], p["window_idx"], p["pane_idx"],
-             p["cwd"], p["titulo"], p["comando"], etiqueta, proyecto_id, slot_id),
+             p["cwd"], p["titulo"], p["comando"], etiqueta, proyecto_id, slot_id,
+             conversaciones.get(p["pane_id"])),
         )
         if slot_id:
             con.execute(
@@ -233,6 +276,9 @@ def ciclo_lento(con: sqlite3.Connection) -> dict:
         # ¿Hay versión publicada más nueva? Un `git ls-remote` al día como
         # mucho (decisión 286); el resto de ciclos es leer un archivo.
         ("version", lambda: (_version.buscar_remota() or {}).get("ultima")),
+        # Lo soltado o pegado en la terminal caduca a los diez días (decisión
+        # 288). Cuántos se fueron, no cuáles: el nombre es de un proyecto.
+        ("intercambio", lambda: len(intercambio.podar_de_paso())),
     ):
         try:
             resultado[clave] = funcion()
@@ -276,6 +322,12 @@ def main() -> None:  # pragma: no cover - bucle del demonio
     con = db.abrir()
     ciclos = 0
     while True:
+        # El latido va primero y aparte: es lo que dice «estoy vivo» aunque no
+        # haya tmux que muestrear o el ciclo falle (decisión 289).
+        try:
+            salud.latir()
+        except Exception as exc:
+            print(f"[snapshotter] latido: {exc}", flush=True)
         try:
             un_ciclo(con)
             try:

@@ -500,6 +500,65 @@ y es a propósito.
 """
 
 
+# ─────────────────────── aplicar kits, pedido desde el chat ─────────────────
+#
+# 🔴 El asistente no escribe en los proyectos (decisión 69) y un kit toca
+# muchos archivos de un repo con historia: eso se revisa mirando los diffs.
+# Pero «aplícale los kits» dicho en el chat se quedaba en un «hazlo tú» con
+# un prompt que copiar, y el 21-oct ni eso: el asistente no sabía qué kits
+# había. Así que el hub prepara la ventana y no la lanza (decisión 287): la
+# abre en la carpeta del proyecto con el encargo ESCRITO y sin Enter —el
+# tercer caso de la regla dura 15, el de «Restaurar»—. El Enter lo pone la
+# persona, y la sesión que arranca es la suya, con sus permisos y sus diffs.
+
+
+def preparar_kits(con: sqlite3.Connection, proyecto_id: str, ids: list[str]) -> dict:
+    """Abre una ventana en el proyecto con el encargo de aplicar esos kits, sin Enter."""
+    from . import kits as _kits
+    from . import slots
+
+    proyecto = api.obtener_proyecto(con, proyecto_id)
+    if not proyecto:
+        raise ValueError(f"no hay ningún proyecto «{proyecto_id}».")
+    if proyecto["guardrail"] == "never":
+        raise GuardrailBloqueado(
+            f"«{proyecto['nombre']}» tiene guardrail `never`: ahí no se prepara "
+            "trabajo. Cámbialo en projects.yml si de verdad quieres aplicarle kits."
+        )
+    if not proyecto["asiento"] or not Path(proyecto["asiento"]).is_dir():
+        raise ValueError(f"«{proyecto['nombre']}» no tiene una carpeta donde aplicarlos.")
+
+    catalogo = _kits.catalogo()
+    pedidos = list(dict.fromkeys(i.strip() for i in ids if i and i.strip()))
+    if not pedidos:
+        raise ValueError("hace falta al menos un kit.")
+    desconocidos = [i for i in pedidos if i not in catalogo]
+    if desconocidos:
+        raise ValueError(
+            f"no están en el catálogo: {', '.join(desconocidos)}. "
+            f"Los que hay: {', '.join(sorted(catalogo))}."
+        )
+
+    hub = config.RAIZ_REPO
+    lista = ", ".join(f"`{i}`" for i in pedidos)
+    prompt = (
+        f"Aplica a este proyecto los kits {lista} del hub, de uno en uno y en ese orden. "
+        f"El procedimiento es la skill aplicar-kit del hub: léela en "
+        f"{hub}/.claude/skills/aplicar-kit/SKILL.md. Para cada kit, "
+        f"`bash {hub}/scripts/kit.sh aplicar <kit> {proyecto_id}` te da el plan. "
+        f"Enséñame lo que vas a escribir antes de escribirlo, y haz un commit por kit. "
+        f"Si un kit pide algo fuera de esta carpeta (un bot, un servicio, una clave), "
+        f"no lo hagas: apúntalo y dímelo al final, con los pasos."
+    )
+    session = slots.sesion_para(con, proyecto_id)
+    pane_id = slots.abrir_en(proyecto["asiento"], "kits", session,
+                             comando(prompt))
+    indice = next((p["window_idx"] for p in tmux.listar_paneles()
+                   if p["pane_id"] == pane_id), None)
+    return {"session": session, "ventana": indice, "kits": pedidos,
+            "ruta": proyecto["asiento"]}
+
+
 # --------------------------------------------------------------------------- #
 # Kits
 # --------------------------------------------------------------------------- #

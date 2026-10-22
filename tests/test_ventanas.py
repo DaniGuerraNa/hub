@@ -49,7 +49,7 @@ def test_crear_ventana_usa_la_ruta_del_slot(registro):
     tmux.nueva_ventana("work", "/tmp/demo", "investigación")
     assert registro[-1] == [
         "new-window", "-P", "-F", "#{window_index}",
-        "-t", "=work:", "-c", "/tmp/demo", "-n", "investigación",
+        "-a", "-t", "=work:{end}", "-c", "/tmp/demo", "-n", "investigación",
     ]
 
 
@@ -169,3 +169,23 @@ def test_una_ventana_sin_ruta_se_abre_donde_esta_la_sesion(registro):
 def test_con_ruta_manda_la_ruta_y_no_el_formato(registro):
     tmux.nueva_ventana("work", "/tmp/demo")
     assert registro[-1][-2:] == ["-c", "/tmp/demo"]
+
+
+def test_una_ventana_nueva_va_detras_de_la_ultima_aunque_haya_un_hueco(tmp_path):
+    """🔴 21-oct: tras cerrar una, tmux le daba a la siguiente el número libre
+    más bajo y quedaba a media lista. Con tmux de verdad (servidor de tests)."""
+    sesion = "al-final-prueba"
+    tmux._correr(["new-session", "-d", "-s", sesion, "-c", str(tmp_path)])
+    try:
+        tmux.nueva_ventana(sesion, str(tmp_path), "b")
+        tmux.nueva_ventana(sesion, str(tmp_path), "c")
+        tmux.cerrar_ventana(sesion, 1)
+
+        tmux.nueva_ventana(sesion, str(tmp_path), "d")
+        tmux.abrir_ventana(str(tmp_path), "e", None, sesion)
+
+        nombres = [v["nombre"] for v in tmux.listar_ventanas(sesion)]
+        assert nombres[-2:] == ["d", "e"]
+        assert [v["indice"] for v in tmux.listar_ventanas(sesion)][1:] == [2, 3, 4]
+    finally:
+        tmux._correr(["kill-session", "-t", f"={sesion}"])

@@ -926,6 +926,15 @@ dialog.paleta li .detalle {
       <a href="/guia#version">Novedades y cómo actualizar</a></span>
   </div>
   {% endif %}
+  {# El muestreo parado (decisión 289): sin él no se guarda qué ventanas hay y
+     un apagón no tiene vuelta. Se dice en todas las pantallas, ANTES de que
+     haga falta. #}
+  {% set m = rail.muestreo %}
+  {% if m and m.estado == 'mal' %}
+  <div class="aviso-accion version-urge" role="alert">
+    <span>{{ m.detalle }} <a href="/maquina#salud">Ver la salud del hub</a></span>
+  </div>
+  {% endif %}
   {# Lo que falló en la acción anterior, dicho aquí y no tragado (regla 21). #}
   {% if request is defined and request.query_params.get('aviso') %}
   {% set fugaz = request.query_params.get('fugaz') %}

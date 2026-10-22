@@ -330,6 +330,19 @@
     form.submit();
   }, true);
 
+  /* `<form data-una-vez>`: al enviarlo, su botón se apaga. Para lo que crea
+   * algo cada vez que se pulsa —«Lanzar» abre una ventana por pulsación— y
+   * tarda lo bastante como para que se vuelva a pulsar. Va después de la
+   * confirmación y la respeta: si ésta detuvo el envío, no se apaga nada. */
+  document.addEventListener('submit', (e) => {
+    const form = e.target;
+    if (e.defaultPrevented || !form.dataset || form.dataset.unaVez === undefined) return;
+    form.querySelectorAll('button, input[type=submit]').forEach(b => {
+      b.disabled = true;
+      if (b.tagName === 'BUTTON' && form.dataset.unaVez) b.textContent = form.dataset.unaVez;
+    });
+  });
+
   const combos = () => document.querySelectorAll('select[data-combo="si"]');
   combos().forEach(comboDe);
   // Global aparte y no colgado de `HubUI`: eso es el contrato de los diálogos

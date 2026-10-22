@@ -76,7 +76,7 @@ def cmd_tarea(con, args) -> int:
         print(f"- {linea['cuando'][11:16]} {linea['tipo']}{donde}: {texto[:300]}")
     print("\n## Alcance\n")
     _proyectos(con, solo_con_alcance=True)
-    print(f"\nIntercambio (para dejarle archivos al dueño): {intercambio.carpeta()}/")
+    print(f"\nIntercambio (para dejarle archivos al dueño): {intercambio.carpeta()}/<proyecto>/")
     return 0
 
 

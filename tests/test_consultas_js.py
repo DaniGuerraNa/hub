@@ -68,7 +68,7 @@ global.document = {
     return null;
   },
   querySelectorAll: (sel) => {
-    if (sel === '.pest-lado button') return [pestana];
+    if (sel === '.pest-lado button[data-hoja]') return [pestana];
     if (sel === '[data-filtro]') return filtros;
     return [];
   },

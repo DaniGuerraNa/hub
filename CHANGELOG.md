@@ -13,6 +13,71 @@ bash scripts/actualizar.sh
 Al terminar te enseña esta misma lista, sólo con las versiones que acabas de
 cruzar.
 
+## 0.3.0 — 2026-10-22
+
+Arreglos de lo que reportaron quienes lo usan, y lo que hace falta para que un
+apagón tenga vuelta.
+
+### Qué tienes que hacer
+
+- **Actualiza** con `bash scripts/actualizar.sh` en la carpeta del hub.
+- **Pulsa «Limpiar» en el chat del asistente** después de actualizar, para que
+  lea sus instrucciones nuevas.
+- **Marca los slots que quieras recuperar tras un apagón** (Trabajo → «↻ No
+  vuelve tras un apagón»). Máquina → «Salud del hub» te dice si no hay
+  ninguno.
+
+### Nuevo
+
+- **El asistente prepara la aplicación de kits.** Pídele «aplícale los kits
+  lienzos y telegram a mi-proyecto»: deja en `/trabajo` una ventana en la
+  carpeta del proyecto con el encargo escrito. No se lanza solo: pulsas Enter
+  allí y esa sesión te enseña lo que va a cambiar antes de hacerlo.
+- **Imágenes en la terminal web.** Arrastra una imagen sobre la terminal o
+  pégala del portapapeles (Ctrl+V): se guarda en la carpeta de intercambio del
+  hub y su ruta queda escrita en la terminal, lista para que Claude Code la
+  lea. No se envía sola.
+- **El intercambio va por proyecto y slot.** Lo que subes eliges de qué
+  proyecto o slot es, lo que pegas en la terminal va solo al de esa ventana, y
+  la pantalla lo agrupa así, lo más nuevo primero. Lo pegado o arrastrado en
+  la terminal **se borra solo a los 10 días** (cada archivo dice el día); lo
+  demás se queda hasta que lo borres.
+- **Restaurar reanuda tu conversación.** Tras un apagón, las ventanas que
+  tenían Claude Code vuelven con `claude --resume <id>` escrito (sin Enter):
+  la conversación exacta que tenían. Se cambia con `HUB_RESTAURAR_CLAUDE`
+  (`reanudar`, `nuevo` o `nada`).
+- **Marcar qué vuelve tras un apagón, con un clic.** En Trabajo, en la
+  cabecera del slot: «↻ Vuelve tras un apagón». Los marcados llevan ↻ en la
+  lista.
+- **Salud del hub**, en Máquina: si el muestreo late, si hay slots que
+  vuelven, si los servicios arrancan solos, el *linger* y la copia de la base,
+  cada uno con su arreglo. Si el muestreo se para, lo dicen todas las
+  pantallas.
+- **Teclas especiales en el móvil.** Debajo de la terminal, en pantallas
+  táctiles: Esc, Ctrl+C, Tab, ⇧Tab, flechas, Enter y «Imagen» para adjuntar
+  una foto del teléfono.
+
+### Qué cambia en lo que ya usabas
+
+- **Las respuestas en varias líneas se ven limpias en el chat del asistente.**
+  Salían con unas etiquetas `<pasted_content>` y la línea de la pantalla
+  delante. Y el asistente sabe ya que ese bloque lo escribiste tú.
+- **«Lanzar» un slot abre una sola ventana.** La página tardaba hasta 20
+  segundos en verlo abierto y seguía enseñando el botón; cada pulsación abría
+  otra. Ahora lo ve al momento, y el botón se apaga («Abriendo…») al pulsarlo.
+- **Las ventanas que abre el hub van al final de la lista.** Antes una nueva
+  tomaba el número de la última que cerraste y quedaba a media lista. Los
+  números ya no se reutilizan, así que pueden quedar huecos (1, 2, 5…): es a
+  propósito, para que un enlace o una terminal que se reconecta no acabe en
+  otra ventana.
+- **El panel de la derecha de Trabajo se pliega del todo** desde el propio
+  panel («»», junto a las pestañas) y se vuelve a abrir desde la pestaña
+  «‹ Nota» del borde. El botón «Nota» de la cabecera sigue haciendo lo mismo.
+- **La carpeta de intercambio**: lo que ya tenías ahí sale en «Sin proyecto»;
+  no se mueve ni caduca nada de lo anterior.
+- **Un clon sin remoto no enseña un error en «Versión»**: simplemente no busca
+  versiones nuevas.
+
 ## 0.2.0 — 2026-10-20
 
 La primera versión con número. Desde aquí, cada versión se publica con su

@@ -7,6 +7,28 @@
    'Cómo está el equipo de casa cuando no hay nadie delante. Se mide en el ciclo
     lento, así que lo que ves es la última lectura, con su hora.') }}
 
+{# La salud del propio hub (decisión 289): lo que tiene que estar en pie para
+   que un apagón tenga vuelta. Lo peor primero, y cada cosa con su arreglo. #}
+{{ ui.seccion('escudo', 'Salud del hub', 'Lo que tiene que estar en pie para que un apagón tenga vuelta.') }}
+<div class="tarjeta" id="salud" style="padding:0;margin-bottom:18px">
+  {% for r in salud %}
+  <div class="salud-fila">
+    <span class="insignia {{ {'mal': 'riesgo', 'aviso': 'espera', 'ok': 'ok'}[r.estado] }}">{{ {'mal': 'mal', 'aviso': 'aviso', 'ok': 'bien'}[r.estado] }}</span>
+    <div style="flex:1;min-width:0">
+      <strong>{{ r.nombre }}</strong>
+      <div class="tenue" style="font-size:13px">{{ r.detalle }}</div>
+      {% if r.arreglo %}<div style="font-size:12.5px;margin-top:3px">Arreglo: <code>{{ r.arreglo }}</code></div>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+<style>
+  .salud-fila { display:flex; gap:12px; align-items:flex-start; padding:10px 14px;
+                border-bottom:1px solid var(--borde); }
+  .salud-fila:last-child { border-bottom:none; }
+  .salud-fila code { overflow-wrap:anywhere; }
+</style>
+
 {% if not medidas %}
 <div class="aviso" style="border-left-color:var(--riesgo)">
   <div>

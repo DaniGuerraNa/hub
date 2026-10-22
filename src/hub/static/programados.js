@@ -25,7 +25,7 @@
   const cuandoInput = document.getElementById('programar-cuando');
   const boton = document.getElementById('programar-enviar');
   const estado = document.getElementById('programar-estado');
-  const pestanas = document.querySelectorAll('.pest-lado button');
+  const pestanas = document.querySelectorAll('.pest-lado button[data-hoja]');
   if (!lista) return;
 
   const CADENCIA = 10000;

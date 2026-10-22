@@ -85,7 +85,7 @@ global.document = {
   querySelector: (sel) => (sel === '.por-ventana.viendo' && !global.SIN_VENTANA)
     ? ventana : null,
   querySelectorAll: (sel) => {
-    if (sel === '.pest-lado button') return [nodos['pest-lienzos']];
+    if (sel === '.pest-lado button[data-hoja]') return [nodos['pest-lienzos']];
     if (sel === '.hoja') return [];
     // `.lienzo-item` y `.dec` se resuelven contra lo que el script pintó: se
     // reconstruyen desde el innerHTML para poder pulsar de verdad.

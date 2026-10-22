@@ -278,3 +278,44 @@ def test_una_ruta_buena_no_se_toca(con):
     (paso,) = restauracion.plan_de_restauracion(con, existe=TODO_EXISTE)
     assert paso["ruta"] == "/p/trabajo/sub"
     assert paso["aviso"] == ""
+
+
+# ─────────────── reanudar la conversación (decisión 289) ───────────────
+
+SESION = "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+
+
+def _con_conversacion(con, sesion, cwd="/p/a"):
+    _muestra(con, 10, 111, paneles=[("s", 0, 0, cwd, "claude", 1)])
+    con.execute("UPDATE panel SET claude_sesion=? WHERE snapshot_id=10", (sesion,))
+
+
+def test_una_ventana_con_claude_deja_escrito_reanudar_su_conversacion(con, monkeypatch):
+    monkeypatch.delenv("HUB_RESTAURAR_CLAUDE", raising=False)
+    _con_conversacion(con, SESION)
+
+    (v,) = restauracion.plan_de_restauracion(con, existe=TODO_EXISTE)
+
+    assert v["comando"] == f"claude --resume {SESION}" and v["reanuda"]
+
+
+@pytest.mark.parametrize("modo, esperado", [("nuevo", "claude"), ("nada", ""),
+                                            ("cualquier-cosa", f"claude --resume {SESION}")])
+def test_el_modo_se_elige_con_la_variable(con, monkeypatch, modo, esperado):
+    monkeypatch.setenv("HUB_RESTAURAR_CLAUDE", modo)
+    _con_conversacion(con, SESION)
+    (v,) = restauracion.plan_de_restauracion(con, existe=TODO_EXISTE)
+    assert v["comando"] == esperado
+
+
+def test_sin_conversacion_conocida_o_con_un_id_raro_se_deja_claude_a_secas(con):
+    _con_conversacion(con, "x; rm -rf ~")
+    (v,) = restauracion.plan_de_restauracion(con, existe=TODO_EXISTE)
+    assert v["comando"] == "claude" and not v["reanuda"]
+
+
+def test_si_se_abre_en_otra_carpeta_no_se_reanuda(con):
+    """Claude Code busca la conversación por la ruta: desde otra, `--resume` falla."""
+    _con_conversacion(con, SESION, cwd="/p/ya-no-esta")
+    (v,) = restauracion.plan_de_restauracion(con, existe=lambda r: r != "/p/ya-no-esta")
+    assert v["ruta"] == "/p/trabajo" and v["comando"] == "claude"

@@ -18,7 +18,7 @@
 (function () {
   const lista = document.getElementById('consultas-lista');
   const punto = document.getElementById('consultas-punto');
-  const pestanas = document.querySelectorAll('.pest-lado button');
+  const pestanas = document.querySelectorAll('.pest-lado button[data-hoja]');
   if (!lista) return;
 
   const CADENCIA = 6000;

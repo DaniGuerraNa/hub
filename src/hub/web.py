@@ -8,6 +8,7 @@ sin romperla.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
@@ -848,6 +849,15 @@ def archivos_vista(request: Request, ruta: str = ""):
         con.close()
 
 
+@app.get("/api/salud")
+def api_salud():
+    con = conexion()
+    try:
+        return {"ok": True, "revisiones": api.salud(con)}
+    finally:
+        con.close()
+
+
 @app.get("/maquina")
 def maquina_vista(request: Request):
     """Cómo está el equipo de casa cuando no hay nadie delante.
@@ -875,6 +885,7 @@ def maquina_vista(request: Request):
                 "limites": limites,
                 "armadas": bool(dueno) and avisos.activos(rele.ajustes()),
                 "dueno_nombre": canal.nombre_visible(dueno) if dueno else "",
+                "salud": api.salud(con),
                 "titulo": "Máquina",
                 "seccion": "maquina",
             },
@@ -953,7 +964,7 @@ def _tarjetas_de_maquina(medidas: dict, limites: dict) -> list[dict]:
 
 
 @app.get("/intercambio")
-def intercambio_vista(request: Request, aviso: str = "", por: str = "tema", q: str = ""):
+def intercambio_vista(request: Request, aviso: str = "", por: str = "proyecto", q: str = ""):
     """La carpeta por la que pasan los archivos entre el móvil y las sesiones.
 
     Existe porque desde el teléfono no había forma de meter un archivo en una
@@ -968,8 +979,11 @@ def intercambio_vista(request: Request, aviso: str = "", por: str = "tema", q: s
             request,
             "intercambio.html",
             {
-                "i": api.intercambio(por, q),
+                "i": api.intercambio(con, por, q),
+                # Dónde dejar lo que se sube: un proyecto o uno de sus slots.
+                "destinos": api.destinos_intercambio(con),
                 "limite": intercambio.tamano(intercambio.LIMITE),
+                "caducan": intercambio.CADUCAN_DIAS,
                 "carpeta": str(intercambio.carpeta()),
                 # A qué sesión se le puede pasar la ruta. Del último muestreo,
                 # igual que en el canal: quién puede recibirla de verdad lo
@@ -985,14 +999,57 @@ def intercambio_vista(request: Request, aviso: str = "", por: str = "tema", q: s
 
 
 @app.post("/intercambio/subir")
-async def intercambio_subir(archivo: UploadFile = File(...)):
-    """Lo que llega del móvil aterriza en la carpeta del hub y en ningún otro sitio."""
+async def intercambio_subir(archivo: UploadFile = File(...), destino: str = Form("")):
+    """Lo que llega del móvil aterriza en la carpeta del hub y en ningún otro sitio.
+
+    En la subcarpeta del proyecto o slot elegido (decisión 288).
+    """
+    con = conexion()
+    try:
+        dentro = api.subcarpeta_intercambio(con, destino)
+    finally:
+        con.close()
     try:
         datos = await archivo.read()
-        destino = intercambio.guardar(archivo.filename or "archivo", datos)
+        destino = intercambio.guardar(archivo.filename or "archivo", datos, dentro)
     except ValueError as exc:
         return _volver("/intercambio", f"No se subió: {exc}")
     return _volver("/intercambio", f"Subido como «{destino.name}».")
+
+
+@app.post("/api/terminal/adjuntar")
+async def terminal_adjuntar(archivo: UploadFile = File(...), pegado: str = Form(""),
+                            session: str = Form(""), ventana: str = Form(""),
+                            slot: str = Form("")):
+    """Una imagen soltada o pegada sobre la terminal: se guarda y se da su ruta.
+
+    🔴 21-oct: en la terminal web no se podía arrastrar una imagen ni pegarla
+    del portapapeles. El navegador no da la ruta de un archivo —es a
+    propósito, por seguridad—, y Claude Code lee el portapapeles de la
+    máquina, no el del navegador. Así que el archivo viaja: aterriza en la
+    carpeta de intercambio del hub, que es la que existe para que crucen
+    cosas (y nunca en el proyecto, primera regla), y la página escribe su ruta
+    en la terminal como si la hubieras tecleado. Sin Enter: lo envías tú.
+    """
+    con = conexion()
+    try:
+        dentro = api.subcarpeta_intercambio(
+            con, session=session, ventana=int(ventana) if ventana.isdigit() else None,
+            slot_id=int(slot) if slot.isdigit() else None)
+    finally:
+        con.close()
+    try:
+        datos = await archivo.read()
+        nombre = archivo.filename or "archivo"
+        if pegado:
+            # «image.png» todas las veces: con la hora se sabe cuál es cuál.
+            extension = Path(nombre).suffix or ".png"
+            nombre = f"pegado-{datetime.now().strftime('%Y%m%d-%H%M%S')}{extension}"
+        # De paso: caduca a los diez días (decisión 288).
+        destino = intercambio.guardar(nombre, datos, dentro, de_paso=True)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return {"ok": True, "ruta": str(destino)}
 
 
 @app.get("/intercambio/bajar/{nombre:path}")
@@ -1735,6 +1792,29 @@ def api_inventario(tipo: str = "", proyecto: str = ""):
     con = conexion()
     try:
         return api.inventario(con, tipo or None, proyecto or None)
+    finally:
+        con.close()
+
+
+@app.get("/api/kits/catalogo")
+def api_kits_catalogo():
+    """Qué kits se pueden aplicar, con lo que aporta cada uno."""
+    return {"ok": True, "kits": api.catalogo_kits()}
+
+
+@app.post("/api/kits/preparar")
+async def api_kits_preparar(request: Request):
+    """La ventana en el proyecto con el encargo escrito y sin Enter (decisión 287)."""
+    cuerpo = await request.json()
+    con = conexion()
+    try:
+        hecho = agentes.preparar_kits(con, str(cuerpo.get("proyecto") or ""),
+                                      [str(i) for i in (cuerpo.get("kits") or [])])
+        return {"ok": True, **hecho}
+    except agentes.GuardrailBloqueado as exc:
+        return {"ok": False, "bloqueado": True, "error": str(exc)}
+    except (ValueError, RuntimeError, tmux.TmuxNoDisponible) as exc:
+        return {"ok": False, "error": str(exc)}
     finally:
         con.close()
 
@@ -2549,6 +2629,26 @@ def slot_editar(
     return _volver(f"/proyecto/{mover_a.strip() or proyecto_id}")
 
 
+@app.post("/api/slot/{slot_id}/restaurar")
+async def api_slot_restaurar(slot_id: int, request: Request):
+    """Marca o desmarca que el slot vuelva tras un apagón, con un clic.
+
+    Desde la cabecera de Trabajo, que es donde se está cuando importa. Antes
+    sólo estaba en el formulario de edición de la ficha del proyecto, y un
+    usuario apagó el equipo sin haber marcado ninguno: al día siguiente no
+    había nada que restaurar y nada en pantalla lo había advertido (21-oct).
+    """
+    cuerpo = await request.json()
+    con = conexion()
+    try:
+        if not api.obtener_slot(con, slot_id):
+            return JSONResponse({"ok": False, "error": "ese slot no existe"}, status_code=404)
+        slots.editar(con, slot_id, restaurar=bool(cuerpo.get("restaurar")))
+        return {"ok": True, "restaurar": bool(cuerpo.get("restaurar"))}
+    finally:
+        con.close()
+
+
 @app.post("/slot/{slot_id}/estado")
 def slot_estado(
     slot_id: int,
@@ -2588,6 +2688,11 @@ def slot_abrir(
     aviso = None
     try:
         slots.abrir(con, slot_id, session.strip() or None)
+        # 🔴 Una muestra ya, no dentro de hasta 20 s: el estado del slot sale
+        # del último muestreo, y sin esto la página a la que se vuelve lo
+        # pintaba todavía «cerrado», con su «Lanzar» a la vista. Se volvía a
+        # pulsar y cada pulsación abría otra ventana (21-oct).
+        snapshotter.un_ciclo(con)
     except (tmux.TmuxNoDisponible, RuntimeError, ValueError) as exc:
         # Se dice, no se traga (regla dura 21). Hasta el 3-sep un `except:
         # pass` aquí convertía «no hay servidor de tmux» en un botón que no

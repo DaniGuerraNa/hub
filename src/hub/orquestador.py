@@ -1712,9 +1712,9 @@ añade él solo de dónde viene, el nivel de decisión y que cierre con un bloqu
 RESUMEN. Pide una cosa por mensaje cuando el orden importe.
 
 Si hay que entregarle un archivo al dueño (un APK, un informe), pídele a la sesión
-que lo **copie a la carpeta de Intercambio del hub**:
-`{{HUB_HOME}}/intercambio/` —la ruta la da `./orq tarea`— y díselo en el
-resumen. Nunca por Telegram ni por ningún otro sitio.
+que lo **copie a la carpeta de Intercambio del hub, en la de su proyecto**:
+`{{HUB_HOME}}/intercambio/<id-del-proyecto>/` —la ruta la da `./orq tarea`— y
+díselo en el resumen. Nunca por Telegram ni por ningún otro sitio.
 
 ## Los niveles
 

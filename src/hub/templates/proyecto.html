@@ -304,7 +304,7 @@
     <div class="barra">
       <a class="boton principal" href="/trabajo?slot={{ s.id }}">Trabajar</a>
       {% if s.status == 'activo' and s.ruta %}
-      <form method="post" action="/slot/{{ s.id }}/abrir" class="enlinea">
+      <form method="post" action="/slot/{{ s.id }}/abrir" class="enlinea" data-una-vez="Abriendo…">
         <input type="hidden" name="proyecto_id" value="{{ p.id }}">
         <button class="declinar" title="Abre una ventana nueva de tmux en la ruta del slot">Lanzar</button>
       </form>

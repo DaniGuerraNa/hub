@@ -33,10 +33,12 @@ ARNES = r"""
 // sólo se podía comprobar que no reventaba y a quién le pedía datos, no qué
 // hacía con la respuesta — y lo que se ve en pantalla es justo eso.
 const _porSelector = {};
+globalThis.DOC_OYENTES = {};
 const registro = { sockets: [], peticiones: [], errores: [], oyentes: [],
                    observados: [], clases: [], valores: [], portapapeles: [],
                    osc: [], avisos: [], enviados: [], temporizadores: [],
-                   pantalla: [], encajes: [], variables: [], alternadas: [] };
+                   pantalla: [], encajes: [], variables: [], alternadas: [],
+                   pegados: [], tecleado: [] };
 
 function elemento(id) {
   const el = {
@@ -85,7 +87,13 @@ function elemento(id) {
        **imposible de pulsar** desde un test. */
     _hijos: {},
     querySelector(sel){ return (this._hijos[sel] ||= elemento(sel)); },
-    querySelectorAll(){ return []; },
+    // Los botones de la barra de teclas, con su tecla: sin ellos no había
+    // nada que pulsar y la barra entera quedaba sin probar.
+    querySelectorAll(sel){
+      if (sel !== '[data-tecla]') return [];
+      return (this._hijos[sel] ||= ['esc', 'ctrl-c', 'shift-tab', 'arriba'].map(t => {
+        const b = elemento('tecla-' + t); b.dataset = { tecla: t }; return b; }));
+    },
     getBoundingClientRect(){ return { width: 800, height: 600 }; },
     // Lo que necesita un elemento para pasar por `<select>` y por nodo con
     // sitio en el árbol. Faltaba, y el código que envuelve un select —perfecta-
@@ -145,7 +153,10 @@ global.document = {
   documentElement: elemento('html'),
   fullscreenElement: null,
   exitFullscreen: () => { registro.pantalla.push('salir'); return Promise.resolve(); },
-  addEventListener(ev){ registro.oyentes.push('document:' + ev); },
+  // Las funciones también, por evento: soltar un archivo se escucha en el
+  // documento entero, y sin poder dispararlo no se podía probar.
+  addEventListener(ev, fn){ registro.oyentes.push('document:' + ev);
+                            (globalThis.DOC_OYENTES[ev] ||= []).push(fn); },
   execCommand(orden){ if (orden === 'copy') registro.portapapeles.push('(execCommand)');
                       return !global.EXECCOMMAND_FALLA; },
 };
@@ -226,7 +237,9 @@ global.WebSocket = class {
   static OPEN = 1;
   constructor(url) { this.url = url; this.readyState = 0;
                      registro.sockets.push(url); global.__sockets.push(this); }
-  send() {} close() {}
+  // Lo que sale por el socket es lo tecleado: se anota como texto.
+  send(d) { registro.tecleado.push(typeof d === 'string' ? d : new TextDecoder().decode(d)); }
+  close() {}
 };
 global.Terminal = class {
   constructor(opts) {
@@ -244,6 +257,7 @@ global.Terminal = class {
     globalThis.TERM = this;
   }
   loadAddon() {} open() {} onData() {} write() {} focus() {}
+  paste(d) { registro.pegados.push(d); }
   // Lo que hay seleccionado con el ratón. `SELECCION` lo fija el test.
   getSelection() { return typeof globalThis.SELECCION === 'string'
                      ? globalThis.SELECCION : ''; }

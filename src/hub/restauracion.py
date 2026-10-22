@@ -41,6 +41,37 @@ COMANDO_SUGERIDO = os.environ.get("HUB_COMANDO_CLAUDE", "").strip() or "claude" 
 # `node`, `npm` y `bash` se quedan fuera A PROPÓSITO: un `npm run dev` no se
 # reconstruye desde el nombre del proceso, y adivinarlo sería peor que dejar la
 # ventana lista para que él escriba lo suyo.
+# Qué se deja escrito en una ventana que tenía Claude Code (decisión 289):
+#
+#   reanudar  `claude --resume <id>`: la conversación que tenía esa ventana.
+#             Si no se sabe cuál era, `claude`. Por omisión: lo pidió el dueño
+#             tras ver que un apagón le dejaba las ventanas sin su conversación.
+#   nuevo     `claude`: una conversación nueva en esa carpeta.
+#   nada      la ventana en su carpeta, sin escribir nada.
+#
+# Siempre sin Enter: lo lanza la persona (decisión 164).
+MODOS_CLAUDE = ("reanudar", "nuevo", "nada")
+
+
+def modo_claude() -> str:
+    modo = os.environ.get("HUB_RESTAURAR_CLAUDE", "").strip().lower()
+    return modo if modo in MODOS_CLAUDE else "reanudar"
+
+
+# El id que se escribe es un UUID comprobado aquí, no texto de la base tal
+# cual: lo que acaba en una terminal son cadenas fijas o validadas.
+_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def comando_claude(sesion: str | None, modo: str | None = None) -> str:
+    modo = modo or modo_claude()
+    if modo == "nada":
+        return ""
+    if modo == "reanudar" and sesion and _UUID.match(sesion):
+        return f"{COMANDO_SUGERIDO} --resume {sesion}"
+    return COMANDO_SUGERIDO
+
+
 COMANDOS_CONOCIDOS = {
     # modelo: hereda — lo mismo que arriba; el comando va entero desde ahí.
     "claude": COMANDO_SUGERIDO,
@@ -183,16 +214,28 @@ def plan_de_restauracion(con: sqlite3.Connection, existe=None,
                 continue
             vistas.add(clave)
             con_ventana.add(slot["id"])
-            plan.append(_entrada(slot, f["cwd"], COMANDOS_CONOCIDOS.get(f["comando"], ""),
-                                 "muestra", existe))
+            claves = f.keys()
+            sesion = f["claude_sesion"] if "claude_sesion" in claves else None
+            if f["comando"] == "claude":
+                comando = comando_claude(sesion)
+            else:
+                comando = COMANDOS_CONOCIDOS.get(f["comando"], "")
+            entrada = _entrada(slot, f["cwd"], comando, "muestra", existe)
+            # 🔴 Una conversación se reanuda desde SU carpeta: Claude Code la
+            # busca por la ruta. Si la ventana se abre en otra (la de antes ya
+            # no existe), `--resume` fallaría; se deja un `claude` a secas.
+            if "--resume" in entrada["comando"] and entrada["ruta"] != entrada["ruta_pedida"]:
+                entrada["comando"] = comando_claude(None)
+            entrada["reanuda"] = "--resume" in entrada["comando"]
+            plan.append(entrada)
 
     # Un slot marcado que no salía en la muestra —cerrado antes del corte, o
     # creado después— sigue recibiendo su ventana en su ruta. Es el contrato de
     # la decisión 165, que esto amplía y no sustituye.
     for slot in marcados.values():
         if slot["id"] not in con_ventana:
-            plan.append(_entrada(slot, slot["ruta"],
-                                 slot["comando"] or COMANDO_SUGERIDO, "slot", existe))
+            comando = slot["comando"] or (comando_claude(None) if modo_claude() != "nada" else "")
+            plan.append({**_entrada(slot, slot["ruta"], comando, "slot", existe), "reanuda": False})
     return plan
 
 

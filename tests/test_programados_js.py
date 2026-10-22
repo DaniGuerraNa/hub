@@ -100,7 +100,7 @@ global.document = {
     if (sel !== SELECTOR_BUENO) return null;
     return SIN_SLOT ? null : nota;
   },
-  querySelectorAll: (sel) => (sel === '.pest-lado button' ? [pestana] : []),
+  querySelectorAll: (sel) => (sel === '.pest-lado button[data-hoja]' ? [pestana] : []),
 };
 global.window = { addEventListener(){} };
 global.setInterval = () => 0;

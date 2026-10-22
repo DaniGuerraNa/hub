@@ -620,6 +620,10 @@ _COLUMNAS_NUEVAS = [
     # Qué slots quiere volver a tener delante tras un apagón. Marca humana y por
     # slot: nada automático sobre los slots (regla dura 3, principio 9).
     ("slot", "restaurar", "INTEGER NOT NULL DEFAULT 0"),
+    # La conversación de Claude Code que corría en el panel, para que
+    # «Restaurar» deje escrito `claude --resume <id>` (decisión 289). Derivado:
+    # sale de `~/.claude/sessions/` en cada muestra.
+    ("panel", "claude_sesion", "TEXT"),
     # De dónde viene el episodio. Se guarda y no se deduce: en la vuelta
     # siguiente el estado ya no cambia, así que deducirlo perdía el origen.
     ("aviso", "previo", "TEXT"),

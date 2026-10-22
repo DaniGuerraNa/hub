@@ -25,7 +25,9 @@ fuera.
 
 from __future__ import annotations
 
+import json
 import re
+import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,7 +47,24 @@ LIMPIO = re.compile(r"[^A-Za-z0-9._-]+")
 
 # Cuántos niveles de subcarpeta se miran. Una sesión deja una carpeta con su
 # landing o sus muestras; un árbol entero no es algo que cruce por aquí.
-PROFUNDIDAD = 3
+#
+# Cinco y no tres desde que lo de dentro va por proyecto y slot (decisión 288):
+# `proyecto/slot/` ya gasta dos, y una landing dentro necesita las suyas.
+PROFUNDIDAD = 5
+
+# 🔴 Lo que se arrastra o se pega en la terminal es DE PASO: se borra solo a
+# los diez días (decisión 288). Lo pidió el dueño: *«esa parte del hub sólo es
+# de paso, no permanente; cada proyecto guarda lo que necesita en su propia
+# carpeta»*. Sólo eso caduca: lo que se sube desde el móvil o deja una sesión
+# para que te lo lleves se guardó a propósito y se queda hasta que lo borres.
+#
+# Cuáles son se apunta en un registro y no en el nombre: un archivo soltado
+# conserva el suyo, y adivinar por el nombre borraría lo que no tocaba.
+CADUCAN_DIAS = 10
+REGISTRO_DE_PASO = ".de-paso.json"
+
+# Lo que no es de ningún proyecto: lo subido sin elegir, o lo de antes.
+SIN_PROYECTO = ""
 
 
 def carpeta() -> Path:
@@ -68,18 +87,36 @@ def nombre_seguro(nombre: str) -> str:
     return base[:120] or "archivo"
 
 
-def libre(nombre: str) -> Path:
+def subcarpeta(proyecto_id: str = "", slot_id: int | None = None,
+               slot_nombre: str = "") -> str:
+    """Dónde va algo de ese proyecto y ese slot: `proyecto/12-back`.
+
+    El número delante es lo que identifica al slot —el nombre se puede
+    cambiar—; el nombre va detrás para que la carpeta se entienda sola en el
+    disco.
+    """
+    if not proyecto_id:
+        return SIN_PROYECTO
+    tramos = [nombre_seguro(proyecto_id)]
+    if slot_id:
+        tramos.append(f"{int(slot_id)}-{nombre_seguro(slot_nombre or 'slot')}".rstrip("-"))
+    return "/".join(tramos)
+
+
+def libre(nombre: str, dentro: str = "") -> Path:
     """Un destino que no pisa nada. Subir dos veces «foto.jpg» son dos archivos.
 
     Pisar en silencio sería perder lo de antes sin decirlo, y aquí lo de antes
     puede ser justo lo que el agente acaba de dejar para que te lo lleves.
     """
-    destino = carpeta() / nombre_seguro(nombre)
+    base = carpeta() / ruta_segura(dentro) if dentro else carpeta()
+    base.mkdir(parents=True, exist_ok=True)
+    destino = base / nombre_seguro(nombre)
     if not destino.exists():
         return destino
     tronco, punto, extension = destino.name.partition(".")
     for n in range(2, 1000):
-        candidato = carpeta() / f"{tronco}-{n}{punto}{extension}"
+        candidato = base / f"{tronco}-{n}{punto}{extension}"
         if not candidato.exists():
             return candidato
     raise ValueError(f"demasiados archivos llamados «{destino.name}»")
@@ -116,17 +153,80 @@ def resolver(nombre: str) -> Path:
     return destino
 
 
-def guardar(nombre: str, datos: bytes) -> Path:
-    """Escribe lo que llegó del móvil. Devuelve dónde quedó."""
+def guardar(nombre: str, datos: bytes, dentro: str = "", de_paso: bool = False) -> Path:
+    """Escribe lo que llegó. Devuelve dónde quedó.
+
+    `dentro` es la subcarpeta del proyecto y el slot (`subcarpeta`). `de_paso`
+    es lo soltado o pegado en la terminal: se apunta para que caduque.
+    """
     if not datos:
         raise ValueError("el archivo llegó vacío")
     if len(datos) > LIMITE:
         raise ValueError(
             f"son {tamano(len(datos))} y el límite son {tamano(LIMITE)}"
         )
-    destino = libre(nombre)
+    destino = libre(nombre, dentro)
     destino.write_bytes(datos)
+    if de_paso:
+        registro = _leer_de_paso()
+        registro[destino.relative_to(carpeta()).as_posix()] = destino.stat().st_mtime
+        _escribir_de_paso(registro)
     return destino
+
+
+def _leer_de_paso() -> dict[str, float]:
+    try:
+        datos = json.loads((carpeta() / REGISTRO_DE_PASO).read_text())
+        return {str(k): float(v) for k, v in datos.items()}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def _escribir_de_paso(registro: dict[str, float]) -> None:
+    destino = carpeta() / REGISTRO_DE_PASO
+    tmp = destino.with_suffix(".tmp")
+    tmp.write_text(json.dumps(registro, indent=0, sort_keys=True))
+    tmp.replace(destino)
+
+
+def caduca_en(nombre: str, registro: dict[str, float] | None = None) -> float | None:
+    """Cuándo se borra solo, o `None` si no caduca."""
+    registro = _leer_de_paso() if registro is None else registro
+    llegado = registro.get(nombre)
+    return None if llegado is None else llegado + CADUCAN_DIAS * 86400
+
+
+def podar_de_paso(ahora: float | None = None) -> list[str]:
+    """Borra lo de paso que cumplió sus diez días. Devuelve qué borró.
+
+    Va en el ciclo lento. Sólo toca lo apuntado en el registro, y cada ruta se
+    resuelve contra la carpeta antes de borrar: el registro es un archivo, y
+    lo que diga no puede sacar el borrado de aquí. Las carpetas de proyecto o
+    slot que se quedan vacías se quitan también.
+    """
+    ahora = time.time() if ahora is None else ahora
+    registro = _leer_de_paso()
+    borrados = []
+    for nombre in list(registro):
+        if ahora < registro[nombre] + CADUCAN_DIAS * 86400:
+            continue
+        try:
+            resolver(nombre).unlink()
+            borrados.append(nombre)
+        except ValueError:
+            pass  # ya no estaba (lo borraste tú): sólo sale del registro
+        del registro[nombre]
+        padre = (carpeta() / nombre).parent
+        raiz = carpeta().resolve()
+        while padre.resolve() != raiz and raiz in padre.resolve().parents:
+            try:
+                padre.rmdir()   # sólo si está vacía
+            except OSError:
+                break
+            padre = padre.parent
+    if borrados or len(registro) != len(_leer_de_paso()):
+        _escribir_de_paso(registro)
+    return borrados
 
 
 def listar() -> list[dict]:
@@ -137,6 +237,7 @@ def listar() -> list[dict]:
     salía en la página — estaba ahí y nadie podía verla.
     """
     raiz = carpeta().resolve()
+    de_paso = _leer_de_paso()
     archivos = []
     for hijo in carpeta().rglob("*"):
         relativa = hijo.relative_to(carpeta())
@@ -158,6 +259,10 @@ def listar() -> list[dict]:
             "cuando": datetime.fromtimestamp(
                 info.st_mtime, timezone.utc
             ).isoformat(timespec="seconds"),
+            # Los dos primeros tramos, tal cual: a qué proyecto y slot
+            # corresponden lo decide `api`, que es quien conoce el registro.
+            "tramos": list(relativa.parts[:-1]),
+            "caduca": caduca_en(relativa.as_posix(), de_paso),
         })
     return sorted(archivos, key=lambda a: a["mtime"], reverse=True)
 
@@ -170,7 +275,11 @@ def listar() -> list[dict]:
 # sí hay: las sesiones nombran lo que dejan con su tema delante
 # (`feria-muestras-…`, `tienda-memo-…`), y ese prefijo es el tema.
 
-AGRUPACIONES = {"recientes": "Recientes", "tema": "Tema", "fecha": "Fecha", "tipo": "Tipo"}
+# «Proyecto» primero y por omisión (decisión 288): lo que pasa por aquí es de
+# un proyecto y de un slot, como todo lo demás en el hub. Lo agrupa `api`, que
+# es quien sabe cómo se llaman.
+AGRUPACIONES = {"proyecto": "Proyecto", "recientes": "Recientes", "tema": "Tema",
+                "fecha": "Fecha", "tipo": "Tipo"}
 
 # Cuánto tiempo algo cuenta como «nuevo»: lo que una sesión acaba de dejar
 # mientras él mira. Una hora cubre una tanda de trabajo sin marcar el día entero.
@@ -302,11 +411,8 @@ def agrupar(archivos: list[dict], por: str = "tema",
 
 
 def borrar(nombre: str) -> None:
-    """Borrar es un acto humano y no hay poda automática (principio 9).
-
-    Nada caduca aquí solo: un archivo que desaparece por su cuenta es peor que
-    una carpeta desordenada, porque nadie se entera de lo que perdió.
-    """
+    """Borrar es un acto humano. La única excepción es lo de paso (decisión
+    288), y la página dice en cada archivo cuándo se irá."""
     resolver(nombre).unlink()
 
 

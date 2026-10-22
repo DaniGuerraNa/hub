@@ -100,17 +100,44 @@ Es lo que te deja retomar sin reconstruirlo de memoria.
 ### Volver a abrir las ventanas
 
 En la portada aparece **«Abrir N ventanas»**, pero sólo para los slots que
-tengan marcada la casilla **«devolverlo tras un apagón»** (al editar el slot, en
-la pantalla del proyecto). **Viene desmarcada**: márcala en los slots que
-quieras recuperar, o tras un corte la portada sólo te dirá que se perdió una
-sesión.
+**vuelven tras un apagón**. Viene desmarcado, así que márcalo en los que
+quieras recuperar: en **Trabajo**, en la cabecera del slot, pulsa **«↻ No vuelve
+tras un apagón»** y pasa a **«↻ Vuelve tras un apagón»**. En la lista de la
+izquierda, los marcados llevan un **↻** junto al nombre. (También está la casilla
+al editar el slot, en la pantalla del proyecto.)
 
-Restaurar abre cada ventana **en su carpeta** y deja escrito el comando —`claude`
-para las que tenían Claude Code— **sin pulsar Enter**: lo lanzas tú cuando lo
-veas. No relanza nada por su cuenta.
+Restaurar abre cada ventana **en su carpeta** y, en las que tenían Claude Code,
+deja escrito **`claude --resume <id>`**: la conversación exacta que tenía esa
+ventana. Pulsas Enter y sigues donde estabas. Si no se sabe cuál era, o la
+carpeta ya no existe, deja `claude` a secas. Nunca pulsa Enter ni relanza nada
+por su cuenta.
 
-Si trabajas con otro comando (por ejemplo `claude --model …`), ponlo en
-`HUB_COMANDO_CLAUDE` (ver `INSTALAR.md`).
+Para cambiar qué se deja escrito, pon `HUB_RESTAURAR_CLAUDE` en el entorno de
+`hub-web`: `reanudar` (por omisión), `nuevo` (un `claude` nuevo) o `nada` (sólo
+la carpeta). Si trabajas con otro comando (por ejemplo `claude --model …`),
+ponlo en `HUB_COMANDO_CLAUDE` (ver `INSTALAR.md`).
+
+### Salud del hub
+
+Para que un apagón tenga vuelta, el muestreo (`hub-snapshotter`) tiene que estar
+corriendo **antes**: es quien apunta qué ventanas tenías. En **Máquina →
+Salud del hub** ves, con su arreglo, si:
+
+- el muestreo late;
+- hay tmux abierto;
+- algún slot vuelve tras un apagón;
+- los servicios del hub están en marcha y arrancan solos;
+- el hub sigue vivo al cerrar todas las terminales (*linger*);
+- la copia diaria de la base está al día.
+
+Si el muestreo se para, **todas las pantallas lo dicen** con un aviso rojo.
+
+**Imágenes y teclas especiales.** Arrastra una imagen sobre la terminal o
+pégala con Ctrl+V: se guarda en la carpeta de intercambio del hub, en la de
+ese proyecto y slot, y su ruta queda escrita en la terminal, sin enviar, para
+que Claude Code la lea. Es de paso: se borra sola a los 10 días. En el
+móvil, debajo de la terminal hay una barra con Esc, Ctrl+C, Tab, ⇧Tab, las
+flechas, Enter e «Imagen», para adjuntar una foto del teléfono.
 
 > 🔴 **La terminal da acceso de shell a quien alcance el puerto.** Por eso el hub
 > escucha sólo en `127.0.0.1` y nunca se pone en `0.0.0.0` ni se expone a

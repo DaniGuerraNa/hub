@@ -17,7 +17,7 @@
   const vista   = document.getElementById('lienzos-vista');
   const buscar  = document.getElementById('lienzos-buscar');
   const punto   = document.getElementById('lienzos-punto');
-  const pestanas = document.querySelectorAll('.pest-lado button');
+  const pestanas = document.querySelectorAll('.pest-lado button[data-hoja]');
   if (!lista || !vista || !buscar) return;
 
   const CADENCIA = 4000;

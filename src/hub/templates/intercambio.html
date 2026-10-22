@@ -1,104 +1,14 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
 {% block contenido %}
-
-{{ ui.cabecera_vista('Intercambio',
-   'La carpeta por la que pasan los archivos entre el teléfono y las sesiones.
-    Nada cruza solo: lo que subes aterriza aquí, y lo que quieres bajarte lo
-    copia aquí la sesión.') }}
-
-{% if aviso %}
-<div class="aviso" style="margin-bottom:14px">{{ ui.placa('aviso') }}
-  <div style="flex:1">{{ aviso }}</div>
-</div>
-{% endif %}
-
-<div class="tarjeta">
-  <form method="post" action="/intercambio/subir" enctype="multipart/form-data"
-        class="barra" style="gap:10px;flex-wrap:wrap">
-    <input type="file" name="archivo" required
-           style="width:auto;flex:1;min-width:180px">
-    <button class="boton principal">Subir</button>
-  </form>
-  <p class="tenue" style="margin:8px 0 0;font-size:12.5px">
-    Hasta {{ limite }} por archivo. Van a <code>{{ carpeta }}</code>, que es del
-    hub: no se escribe nunca dentro de tus proyectos.
-  </p>
-</div>
-
-<style>
-  .inter-herr { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:10px 0 4px; }
-  .inter-herr form { display:flex; gap:6px; flex:1; min-width:200px; }
-  .inter-por { display:flex; gap:6px; flex-wrap:wrap; }
-  .inter-por a { font-size:12px; padding:3px 10px; border-radius:9999px; text-decoration:none;
-    color:var(--texto-2); background:var(--superficie); }
-  .inter-por a.aqui { color:var(--texto); background:color-mix(in srgb, var(--acento) 22%, transparent); }
-  .inter-grupo { margin-top:10px; }
-  .inter-grupo > summary { cursor:pointer; list-style:none; display:flex; gap:8px;
-    align-items:baseline; padding:10px 14px; }
-  .inter-grupo > summary::-webkit-details-marker { display:none; }
-  .inter-grupo > summary::before { content:"▸"; color:var(--texto-4); }
-  .inter-grupo[open] > summary::before { content:"▾"; }
-  .inter-grupo .titulo { font-weight:600; flex:1; min-width:0; overflow-wrap:anywhere; }
-  .inter-grupo .inter-cifra { color:var(--texto-4); font-size:12px; font-variant-numeric:tabular-nums; }
-  .inter-fila { padding:8px 14px; border-top:1px solid color-mix(in srgb, var(--texto) 8%, transparent); }
-  .inter-fila .nombre { overflow-wrap:anywhere; }
-  .inter-fila .sub { color:var(--texto-4); }
-  .inter-tipo { font-size:11px; padding:1px 7px; border-radius:9999px; color:var(--texto-3);
-    background:color-mix(in srgb, var(--texto) 7%, transparent); white-space:nowrap; }
-  .inter-tanda { padding:8px 14px 4px; font-size:11.5px; letter-spacing:.03em; color:var(--texto-3);
-    border-top:1px solid color-mix(in srgb, var(--texto) 12%, transparent);
-    background:color-mix(in srgb, var(--texto) 3%, transparent); }
-  .inter-nuevo { color:var(--texto); background:color-mix(in srgb, var(--acento) 26%, transparent); }
-  .inter-mas > summary { cursor:pointer; font-size:12px; color:var(--texto-3); margin-top:4px; }
-</style>
-
-{{ ui.seccion('carpeta', 'Lo que hay ahora',
-   'Nada se borra solo: aquí no hay poda automática.') }}
-
-<div class="inter-herr">
-  <nav class="inter-por" aria-label="Agrupar por">
-    {% for clave, etiqueta in i.agrupaciones.items() %}
-    <a href="/intercambio?por={{ clave }}{% if i.q %}&q={{ i.q | urlencode }}{% endif %}"
-       class="{{ 'aqui' if i.por == clave }}">{{ etiqueta }}</a>
-    {% endfor %}
-  </nav>
-  <form method="get" action="/intercambio" role="search">
-    <input type="hidden" name="por" value="{{ i.por }}">
-    <input type="text" name="q" value="{{ i.q }}" placeholder="Buscar por nombre"
-           aria-label="Buscar por nombre" style="flex:1">
-    <button class="boton">Buscar</button>
-    {% if i.q %}<a class="boton" href="/intercambio?por={{ i.por }}">Quitar</a>{% endif %}
-  </form>
-</div>
-{% if i.q %}
-<p class="tenue" style="font-size:12.5px;margin:4px 0">{{ i.encontrados }} de {{ i.total }} con «{{ i.q }}».</p>
-{% endif %}
-
-{# El grupo con lo más nuevo se abre solo: se viene aquí a por lo último. Los
-   demás, plegados, para que la lista no crezca sin fin. Buscando, abiertos
-   todos: si lo filtraste es que quieres verlo. #}
-{% for g in i.grupos %}
-<details class="tarjeta inter-grupo" style="padding:0" {{ 'open' if loop.first or i.q or i.grupos | length == 1 }}>
-  <summary>
-    <span style="color:var(--texto-3);align-self:center">{{ ui.icono('carpeta', 16) }}</span>
-    <span class="titulo">{{ g.titulo }}</span>
-    <span class="inter-cifra">{{ g.cuantos }} · {{ g.tamano }}</span>
-  </summary>
-  {# Una carpeta puede traer varias tandas de la misma sesión: cada una con su
-     hora, la última arriba, para ver qué acaba de llegar. #}
-  {% set varias = (g.tandas or []) | length > 1 %}
-  {% for t in (g.tandas or [{'archivos': g.archivos}]) %}
-  {% if varias %}
-  <div class="inter-tanda">Subido {{ t.etiqueta }} · {{ t.archivos | length }}</div>
-  {% endif %}
-  {% for a in t.archivos %}
+{% macro fila_archivo(a, i, paneles) %}
   <div class="inter-fila">
     <div class="fila" style="gap:10px;align-items:flex-start">
       <div class="pila" style="flex:1;min-width:0;gap:2px">
-        <span class="nombre">{% if a.subcarpeta %}<span class="sub">{{ a.subcarpeta }}/</span>{% endif %}{{ a.archivo }}</span>
+        <span class="nombre">{% if a.subcarpeta and i.por != 'proyecto' %}<span class="sub">{{ a.subcarpeta }}/</span>{% endif %}{{ a.archivo }}</span>
         <span class="tenue" style="font-size:12px">
           {% if a.nuevo %}<span class="inter-tipo inter-nuevo">nuevo</span>{% endif %}
+          {% if a.caduca_local %}<span class="inter-tipo inter-caduca" title="Lo pegaste o soltaste en la terminal: es de paso">se borra el {{ a.caduca_local }}</span>{% endif %}
           {% if i.por != 'tipo' %}<span class="inter-tipo">{{ a.tipo }}</span>{% endif %}
           {{ a.tamano }} · {{ a.cuando_local }}
         </span>
@@ -138,16 +48,129 @@
       </div>
     </details>
   </div>
+{% endmacro %}
+
+
+{{ ui.cabecera_vista('Intercambio',
+   'La carpeta por la que pasan los archivos entre el teléfono y las sesiones.
+    Nada cruza solo: lo que subes aterriza aquí, y lo que quieres bajarte lo
+    copia aquí la sesión.') }}
+
+{% if aviso %}
+<div class="aviso" style="margin-bottom:14px">{{ ui.placa('aviso') }}
+  <div style="flex:1">{{ aviso }}</div>
+</div>
+{% endif %}
+
+<div class="tarjeta">
+  <form method="post" action="/intercambio/subir" enctype="multipart/form-data"
+        class="barra" style="gap:10px;flex-wrap:wrap">
+    <input type="file" name="archivo" required
+           style="width:auto;flex:1;min-width:180px">
+    <select name="destino" aria-label="De qué proyecto o slot es" style="width:auto;flex:1;min-width:170px">
+      <option value="">Sin proyecto</option>
+      {% for d in destinos %}<option value="{{ d.valor }}">{{ d.etiqueta }}</option>{% endfor %}
+    </select>
+    <button class="boton principal">Subir</button>
+  </form>
+  <p class="tenue" style="margin:8px 0 0;font-size:12.5px">
+    Hasta {{ limite }} por archivo. Van a <code>{{ carpeta }}</code>, en la
+    subcarpeta del proyecto y slot que elijas: es del hub, no se escribe nunca
+    dentro de tus proyectos.
+  </p>
+</div>
+
+<style>
+  .inter-herr { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:10px 0 4px; }
+  .inter-herr form { display:flex; gap:6px; flex:1; min-width:200px; }
+  .inter-por { display:flex; gap:6px; flex-wrap:wrap; }
+  .inter-por a { font-size:12px; padding:3px 10px; border-radius:9999px; text-decoration:none;
+    color:var(--texto-2); background:var(--superficie); }
+  .inter-por a.aqui { color:var(--texto); background:color-mix(in srgb, var(--acento) 22%, transparent); }
+  .inter-grupo { margin-top:10px; }
+  .inter-grupo > summary { cursor:pointer; list-style:none; display:flex; gap:8px;
+    align-items:baseline; padding:10px 14px; }
+  .inter-grupo > summary::-webkit-details-marker { display:none; }
+  .inter-grupo > summary::before { content:"▸"; color:var(--texto-4); }
+  .inter-grupo[open] > summary::before { content:"▾"; }
+  .inter-grupo .titulo { font-weight:600; flex:1; min-width:0; overflow-wrap:anywhere; }
+  .inter-grupo .inter-cifra { color:var(--texto-4); font-size:12px; font-variant-numeric:tabular-nums; }
+  .inter-fila { padding:8px 14px; border-top:1px solid color-mix(in srgb, var(--texto) 8%, transparent); }
+  .inter-fila .nombre { overflow-wrap:anywhere; }
+  .inter-fila .sub { color:var(--texto-4); }
+  .inter-tipo { font-size:11px; padding:1px 7px; border-radius:9999px; color:var(--texto-3);
+    background:color-mix(in srgb, var(--texto) 7%, transparent); white-space:nowrap; }
+  .inter-tanda { padding:8px 14px 4px; font-size:11.5px; letter-spacing:.03em; color:var(--texto-3);
+    border-top:1px solid color-mix(in srgb, var(--texto) 12%, transparent);
+    background:color-mix(in srgb, var(--texto) 3%, transparent); }
+  .inter-nuevo { color:var(--texto); background:color-mix(in srgb, var(--acento) 26%, transparent); }
+  .inter-mas > summary { cursor:pointer; font-size:12px; color:var(--texto-3); margin-top:4px; }
+  .inter-seccion { padding:8px 14px 4px; font-size:12px; font-weight:600; color:var(--texto-2);
+    border-top:1px solid color-mix(in srgb, var(--texto) 12%, transparent);
+    background:color-mix(in srgb, var(--texto) 3%, transparent); display:flex; gap:8px; }
+  .inter-caduca { color:var(--texto-2); background:color-mix(in srgb, var(--espera) 22%, transparent); }
+</style>
+
+{{ ui.seccion('carpeta', 'Lo que hay ahora', 'Por proyecto y slot.') }}
+<p class="tenue" style="font-size:12.5px;margin:0 0 6px">
+  Es una carpeta de paso: lo que arrastras o pegas en la terminal se borra solo
+  a los {{ caducan }} días. Lo demás se queda hasta que lo borres. Lo que quieras
+  conservar, guárdalo en tu proyecto.
+</p>
+
+<div class="inter-herr">
+  <nav class="inter-por" aria-label="Agrupar por">
+    {% for clave, etiqueta in i.agrupaciones.items() %}
+    <a href="/intercambio?por={{ clave }}{% if i.q %}&q={{ i.q | urlencode }}{% endif %}"
+       class="{{ 'aqui' if i.por == clave }}">{{ etiqueta }}</a>
+    {% endfor %}
+  </nav>
+  <form method="get" action="/intercambio" role="search">
+    <input type="hidden" name="por" value="{{ i.por }}">
+    <input type="text" name="q" value="{{ i.q }}" placeholder="Buscar por nombre"
+           aria-label="Buscar por nombre" style="flex:1">
+    <button class="boton">Buscar</button>
+    {% if i.q %}<a class="boton" href="/intercambio?por={{ i.por }}">Quitar</a>{% endif %}
+  </form>
+</div>
+{% if i.q %}
+<p class="tenue" style="font-size:12.5px;margin:4px 0">{{ i.encontrados }} de {{ i.total }} con «{{ i.q }}».</p>
+{% endif %}
+
+{# El grupo con lo más nuevo se abre solo: se viene aquí a por lo último. Los
+   demás, plegados, para que la lista no crezca sin fin. Buscando, abiertos
+   todos: si lo filtraste es que quieres verlo. #}
+{% for g in i.grupos %}
+<details class="tarjeta inter-grupo" style="padding:0" {{ 'open' if loop.first or i.q or i.grupos | length == 1 }}>
+  <summary>
+    <span style="color:var(--texto-3);align-self:center">{{ ui.icono('carpeta', 16) }}</span>
+    <span class="titulo">{{ g.titulo }}</span>
+    <span class="inter-cifra">{{ g.cuantos }} · {{ g.tamano }}</span>
+  </summary>
+  {% if g.secciones %}
+  {% for sec in g.secciones %}
+  <div class="inter-seccion"><span style="flex:1">{{ sec.titulo }}</span><span class="inter-cifra">{{ sec.cuantos }}</span></div>
+  {% for a in sec.archivos %}{{ fila_archivo(a, i, paneles) }}{% endfor %}
   {% endfor %}
+  {% else %}
+  {# Una carpeta puede traer varias tandas de la misma sesión: cada una con su
+     hora, la última arriba, para ver qué acaba de llegar. #}
+  {% set varias = (g.tandas or []) | length > 1 %}
+  {% for t in (g.tandas or [{'archivos': g.archivos}]) %}
+  {% if varias %}
+  <div class="inter-tanda">Subido {{ t.etiqueta }} · {{ t.archivos | length }}</div>
+  {% endif %}
+  {% for a in t.archivos %}{{ fila_archivo(a, i, paneles) }}{% endfor %}
   {% endfor %}
+  {% endif %}
 </details>
 {% else %}
 <div class="vacio tenue">
   {% if i.q %}
   Nada con «{{ i.q }}».
   {% else %}
-  Nada todavía. Para bajarte algo de una sesión, cópialo aquí desde ella:
-  <code>cp informe.pdf {{ carpeta }}/</code>
+  Nada todavía. Para bajarte algo de una sesión, cópialo aquí desde ella, en la
+  carpeta de su proyecto: <code>cp informe.pdf {{ carpeta }}/&lt;proyecto&gt;/</code>
   {% endif %}
 </div>
 {% endfor %}

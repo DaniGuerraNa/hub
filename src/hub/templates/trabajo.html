@@ -21,6 +21,18 @@
   .taller.sin-rail { grid-template-columns: 1fr 5px var(--w-nota); }
   .taller.sin-nota { grid-template-columns: var(--w-rail) 5px 1fr; }
   .taller.sin-rail.sin-nota { grid-template-columns: 1fr; }
+  /* Plegar y desplegar el panel derecho desde el propio panel. */
+  .pest-lado .plegar-lado { margin-left:auto; padding:2px 8px; color:var(--texto-3); }
+  .desplegar-lado { display:none; position:absolute; right:0; top:50%;
+    transform:translateY(-50%); writing-mode:vertical-rl; padding:12px 5px;
+    border-radius:var(--r-boton) 0 0 var(--r-boton); background:var(--superficie);
+    color:var(--texto-2); border:1px solid var(--borde); border-right:0; font-size:12px; z-index:2; }
+  .taller.sin-nota .desplegar-lado { display:block; }
+  /* Su hueco, para que no tape la última columna: el ajuste de xterm cuenta
+     con este padding y pide a tmux una columna menos. */
+  .taller.sin-nota #marco { padding-right:34px; }
+  @media (max-width: 720px) { .desplegar-lado, .taller.sin-nota .desplegar-lado { display:none; }
+                              .taller.sin-nota #marco { padding-right:12px; } }
 
   /* `min-height:0` en las tres columnas: sin él, un grid item con contenido
      alto crece en vez de encogerse y empuja el terminal fuera de la pantalla. */
@@ -111,7 +123,18 @@
      bordes, y sin que xterm herede un alto que ya no vale. */
   /* En el flujo normal el envoltorio es transparente: hereda el reparto que
      tenía el marco y no cambia nada de lo medido hasta ahora. */
-  #lienzo-terminal { flex:1; min-height:0; display:flex; position:relative; }
+  #lienzo-terminal { flex:1; min-height:0; display:flex; flex-direction:column; position:relative; }
+  /* La barra de teclas: sólo donde no hay teclado de verdad. Se desplaza de
+     lado si no cabe, y nunca empuja la página de lado. */
+  .teclas { display:none; gap:6px; padding:6px; overflow-x:auto; flex-shrink:0;
+            background:var(--superficie); border-top:1px solid var(--borde); }
+  .teclas > button { flex-shrink:0; min-width:44px; min-height:36px; padding:0 10px;
+                     border-radius:var(--r-boton); font-size:13px;
+                     font-family: var(--mono, monospace); }
+  @media (pointer: coarse) { .teclas { display:flex; } }
+  #lienzo-terminal:fullscreen > .teclas { position:absolute; left:0; right:0; }
+  /* Mientras se arrastra un archivo encima: que se vea dónde va a caer. */
+  #lienzo-terminal.soltando { outline:2px dashed var(--acento); outline-offset:-4px; }
   #lienzo-terminal > #marco { flex:1; min-height:0; }
   /* A pantalla completa, el envoltorio es el lienzo y el marco se posiciona
      dentro: así el teclado puede encogerlo y desplazarlo, que es lo que la hoja
@@ -178,6 +201,13 @@
   /* Plegado, el número dice cuánto hay debajo: una lista que se esconde sin
      decir cuánto esconde se lee como una lista vacía. */
   .cuenta-slots { font-size:11px; color:var(--texto-3); padding-right:8px; }
+  /* Si el slot vuelve tras un apagón: en el raíl, sólo la marca; en la
+     cabecera, el botón que la cambia. Apagado se ve tenue, no tachado: no es
+     un error, es una elección. */
+  .marca-vuelve { color:var(--acento); margin-left:5px; font-size:11px; }
+  .vuelve { white-space:nowrap; }
+  .vuelve:not(.on) { color:var(--texto-3); }
+  .vuelve.on { color:var(--acento); }
   .proyecto:not(.plegado) .cuenta-slots { display:none; }
   /* La guía vertical dice «esto cuelga de lo de arriba» sin gastar una palabra. */
   .proyecto > .hijos { margin-left:16px; padding-left:8px; border-left:1px solid var(--borde); }
@@ -604,7 +634,7 @@
           <a class="item {{ 'activo' if slot and s.id == slot.id }}"
              href="/trabajo?slot={{ s.id }}">
             <span class="punto {{ s.estado }}" data-slot-punto="{{ s.id }}"
-                  title="{{ TITULOS_ESTADO.get(s.estado, '') }}"></span>{{ s.nombre }}
+                  title="{{ TITULOS_ESTADO.get(s.estado, '') }}"></span>{{ s.nombre }}{% if s.restaurar %}<span class="marca-vuelve" title="Vuelve tras un apagón">↻</span>{% endif %}
             <span class="sub mono">{{ s.ruta_corta or '—' }}</span>
           </a>
           {# Un slot sin ventana necesita poder abrirla DESDE AQUÍ. Antes el
@@ -612,7 +642,7 @@
              «Sin ventana abierta» y ninguna forma de abrirla. #}
           {% if s.estado == 'cerrado' %}
           <div class="lanzar-slot">
-            <form method="post" action="/slot/{{ s.id }}/abrir" class="enlinea">
+            <form method="post" action="/slot/{{ s.id }}/abrir" class="enlinea" data-una-vez="Abriendo…">
               <input type="hidden" name="proyecto_id" value="{{ p.id }}">
               <input type="hidden" name="destino" value="/trabajo?slot={{ s.id }}">
               <button class="sutil" title="Abre una ventana de tmux en la ruta del slot (o en el asiento del proyecto)">Lanzar</button>
@@ -738,6 +768,13 @@
         <span id="fuente-val" class="tenue"></span>
         <button id="mas" class="sutil" title="Aumentar la letra" aria-label="Aumentar la letra">A+</button>
       </div>
+      {# Si este slot vuelve tras un apagón: se ve y se cambia aquí, con un
+         clic, que es donde se está trabajando (decisión 289). #}
+      {% if slot %}
+      <button id="vuelve" type="button" class="sutil vuelve {{ 'on' if slot.restaurar }}"
+              data-slot="{{ slot.id }}" aria-pressed="{{ 'true' if slot.restaurar else 'false' }}"
+              title="Si se apaga el equipo, «Restaurar» vuelve a abrir este slot">↻ {{ 'Vuelve tras un apagón' if slot.restaurar else 'No vuelve tras un apagón' }}</button>
+      {% endif %}
       <button id="alternar-nota" class="sutil" title="Mostrar u ocultar la nota">Nota</button>
       <button id="pantalla-completa" class="sutil" aria-pressed="false"
               title="Darle la pantalla entera al terminal">⤢</button>
@@ -781,11 +818,32 @@
        Así que va a pantalla completa ESTE, que puede quedarse del tamaño que
        quiera el navegador, y el terminal se coloca dentro, donde sí mandamos
        nosotros. #}
-    <div id="lienzo-terminal"><div id="marco"></div></div>
+    <div id="lienzo-terminal"><div id="marco"></div>
+      {# Las teclas que un teclado de móvil no tiene, y lo que en el
+         escritorio se hace arrastrando: adjuntar una imagen. Dentro del
+         envoltorio para que siga ahí a pantalla completa. Sólo en pantallas
+         táctiles (CSS). #}
+      <div class="teclas" id="teclas" role="toolbar" aria-label="Teclas especiales">
+        <button type="button" data-tecla="esc">Esc</button>
+        <button type="button" data-tecla="ctrl-c" title="Interrumpir">Ctrl+C</button>
+        <button type="button" data-tecla="tab">Tab</button>
+        <button type="button" data-tecla="shift-tab" title="Cambiar de modo en Claude Code">⇧Tab</button>
+        <button type="button" data-tecla="arriba" aria-label="Arriba">↑</button>
+        <button type="button" data-tecla="abajo" aria-label="Abajo">↓</button>
+        <button type="button" data-tecla="izquierda" aria-label="Izquierda">←</button>
+        <button type="button" data-tecla="derecha" aria-label="Derecha">→</button>
+        <button type="button" data-tecla="enter">Enter</button>
+        <button type="button" id="adjuntar" title="Adjuntar una imagen: se escribe su ruta">Imagen</button>
+        <input type="file" id="adjuntar-archivo" accept="image/*" hidden>
+      </div>
+    </div>
     {# Confirmación de que el texto salió al portapapeles. Sin ella, copiar y no
        copiar se ven exactamente igual, que es como se pierde una selección
        creyendo que se tiene. #}
     <div id="copiado" aria-live="polite"></div>
+    {# Con el panel plegado, por dónde se vuelve: en el borde, donde estaba. #}
+    <button type="button" class="desplegar-lado" id="desplegar-lado"
+            title="Abrir el panel de nota, lienzos, consultas y programados">‹ Nota</button>
   </main>
 
   <div class="tirador der" data-lado="nota"></div>
@@ -806,6 +864,10 @@
          una consulta la hace Claude y espera respuesta de fuera; esto lo
          escribe él para su propio Claude. Mismo destino, origen opuesto. #}
       <button type="button" data-hoja="programados">Programados</button>
+      {# Plegar desde el propio panel: el «Nota» de la cabecera ya lo hacía,
+         pero estaba lejos y no se intuía (22-oct). #}
+      <button type="button" class="plegar-lado" id="plegar-lado"
+              title="Plegar el panel" aria-label="Plegar el panel">»</button>
     </div>
 
     <div class="hoja" data-hoja="nota">
@@ -1127,6 +1189,7 @@
   // A pantalla completa va el envoltorio, no el marco: ver el comentario del
   // marcado. Al elemento a pantalla completa no se le puede cambiar el tamaño.
   const lienzoTerm = document.getElementById('lienzo-terminal');
+  const barraTeclas = document.getElementById('teclas');
   let dedoY = null, arrastre = 0;
 
   marcoTerm.addEventListener('touchstart', (e) => {
@@ -1430,13 +1493,18 @@
          * 257 px por encima de lo que se ve. Con el alto bien puesto y sin esto,
          * media terminal cae fuera de pantalla por arriba — que es justo lo que
          * él veía: «sí hace el resize al escribir pero no al abrir el teclado». */
+        /* La barra de teclas va justo encima del teclado, y el marco se
+         * queda con lo que sobra: si no, la taparía o ella al prompt. */
+        const barra = barraTeclas.offsetHeight || 0;
         marcoTerm.style.setProperty('top', Math.round(vista.offsetTop) + 'px');
         marcoTerm.style.setProperty('bottom', 'auto');
-        marcoTerm.style.setProperty('height', util + 'px');
+        marcoTerm.style.setProperty('height', (util - barra) + 'px');
+        barraTeclas.style.setProperty('top', Math.round(vista.offsetTop + util - barra) + 'px');
       } else {
         marcoTerm.style.removeProperty('top');
         marcoTerm.style.removeProperty('bottom');
         marcoTerm.style.removeProperty('height');
+        barraTeclas.style.removeProperty('top');
       }
       reajustar();
     };
@@ -1594,11 +1662,33 @@
   document.getElementById('mas').onclick = () => fuente(term.options.fontSize + 1);
   document.getElementById('ajustar').onclick = ajustarAlAncho;
   document.getElementById('menos').onclick = () => fuente(term.options.fontSize - 1);
-  document.getElementById('alternar-nota').onclick = () => {
-    const oculta = taller.classList.toggle('sin-nota');
+  const vuelve = document.getElementById('vuelve');
+  if (vuelve) vuelve.addEventListener('click', async () => {
+    const quiere = !vuelve.classList.contains('on');
+    try {
+      const r = await fetch(`/api/slot/${vuelve.dataset.slot}/restaurar`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ restaurar: quiere }) });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'no se guardó');
+      vuelve.classList.toggle('on', d.restaurar);
+      vuelve.setAttribute('aria-pressed', String(d.restaurar));
+      vuelve.textContent = d.restaurar ? '↻ Vuelve tras un apagón' : '↻ No vuelve tras un apagón';
+    } catch (e) {
+      estado.textContent = 'no se pudo cambiar: ' + e.message;
+    }
+  });
+
+  const botonNota = document.getElementById('alternar-nota');
+  function alternarNota(oculta) {
+    oculta = taller.classList.toggle('sin-nota', oculta);
     guardado.set('sinNota', oculta);
+    botonNota.setAttribute('aria-pressed', String(!oculta));
     reajustar();
-  };
+  }
+  botonNota.addEventListener('click', () => alternarNota());
+  document.getElementById('plegar-lado').addEventListener('click', () => alternarNota(true));
+  document.getElementById('desplegar-lado').addEventListener('click', () => alternarNota(false));
 
   // Anchos arrastrables, persistidos.
   taller.style.setProperty('--w-rail', guardado.get('anchoRail', 240) + 'px');
@@ -1682,6 +1772,114 @@
   }
 
   term.onData(d => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(codificador.encode(d)); });
+
+  /* ── teclas especiales y adjuntar ─────────────────────────────────────────
+   *
+   * *«No puedo arrastrar imágenes a la consola para que se pegue su URL, ni
+   * pegar las que tengo en el portapapeles; y en el móvil debería haber
+   * botones para Esc, Ctrl+C…»* (21-oct).
+   *
+   * Todo sale por el MISMO socket que el tecleo: es la persona escribiendo,
+   * no el hub inyectando nada en un panel (regla dura 6). Las teclas son las
+   * secuencias que mandaría un teclado; la imagen, su ruta pegada. */
+  const SECUENCIAS = {
+    'esc': '\x1b', 'ctrl-c': '\x03', 'tab': '\t', 'shift-tab': '\x1b[Z',
+    'arriba': '\x1b[A', 'abajo': '\x1b[B', 'derecha': '\x1b[C', 'izquierda': '\x1b[D',
+    'enter': '\r',
+  };
+  const teclear = (texto) => {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(codificador.encode(texto));
+  };
+  barraTeclas.querySelectorAll('[data-tecla]').forEach(b => {
+    // `pointerdown` con preventDefault: un botón que roba el foco cierra el
+    // teclado del móvil a cada pulsación.
+    b.addEventListener('pointerdown', e => e.preventDefault());
+    b.addEventListener('click', () => { teclear(SECUENCIAS[b.dataset.tecla] || ''); term.focus(); });
+  });
+
+  /* La ruta va PEGADA (`term.paste`), no tecleada: Claude Code reconoce un
+   * pegado con la ruta de una imagen y la adjunta, y si la app no pidió
+   * pegado entre corchetes, xterm lo manda tal cual. Entre comillas si lleva
+   * espacios. Sin Enter: el mensaje lo envías tú. */
+  async function adjuntar(archivos, pegado) {
+    for (const archivo of archivos) {
+      estado.textContent = `subiendo ${archivo.name || 'imagen'}…`;
+      const datos = new FormData();
+      datos.append('archivo', archivo, archivo.name || 'imagen.png');
+      if (pegado) datos.append('pegado', '1');
+      // Para que caiga en la carpeta de su proyecto y su slot: la ventana que
+      // se está mirando, y el slot con el que se abrió la página si no consta.
+      datos.append('session', SESION || '');
+      datos.append('ventana', activa === null || activa === undefined ? '' : String(activa));
+      datos.append('slot', SLOT === null ? '' : String(SLOT));
+      try {
+        const r = await fetch('/api/terminal/adjuntar', { method: 'POST', body: datos });
+        const d = await r.json();
+        if (!d.ok) { estado.textContent = `no se adjuntó: ${d.error}`; continue; }
+        const ruta = /\s/.test(d.ruta) ? `"${d.ruta}"` : d.ruta;
+        term.paste(ruta + ' ');
+        estado.textContent = '';
+      } catch (e) {
+        estado.textContent = 'no se adjuntó: el hub no contesta';
+      }
+    }
+    term.focus();
+  }
+  // En fase de captura: el `paste` de xterm vive dentro y, con una imagen,
+  // pegaría una cadena vacía. Con texto no se toca nada y lo maneja él.
+  lienzoTerm.addEventListener('paste', e => {
+    const archivos = Array.from((e.clipboardData && e.clipboardData.files) || []);
+    if (!archivos.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    adjuntar(archivos, true);
+  }, true);
+  /* 🔴 En TODA la página y en fase de captura, no sólo sobre el terminal.
+   * El 21-oct soltar no hacía nada en su navegador —ni una petición llegó al
+   * hub— aunque en Chromium simulado funcionaba: con el manejador sólo en el
+   * marco, cualquier capa por medio o un soltar unos píxeles fuera dejaba al
+   * navegador hacer lo suyo, que es abrir el archivo o nada. Aquí no hay otro
+   * sitio donde soltar algo, así que todo lo que caiga va a la terminal.
+   *
+   * Y no sólo archivos: una imagen arrastrada desde otra web no trae archivo,
+   * trae su URL (`text/uri-list`), y lo que se pidió fue «que se pegue su
+   * URL». */
+  const llevaAlgo = (dt) => {
+    const tipos = Array.from((dt && dt.types) || []);
+    return tipos.includes('Files') || tipos.includes('text/uri-list');
+  };
+  const sobre = (e) => {
+    if (!llevaAlgo(e.dataTransfer)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    lienzoTerm.classList.add('soltando');
+  };
+  document.addEventListener('dragenter', sobre, true);
+  document.addEventListener('dragover', sobre, true);
+  document.addEventListener('dragleave', e => {
+    // Sólo al salir de la ventana: entre hijos también salta y parpadearía.
+    if (!e.relatedTarget) lienzoTerm.classList.remove('soltando');
+  }, true);
+  document.addEventListener('drop', e => {
+    lienzoTerm.classList.remove('soltando');
+    const dt = e.dataTransfer;
+    if (!llevaAlgo(dt)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const archivos = Array.from((dt && dt.files) || []);
+    if (archivos.length) { adjuntar(archivos, false); return; }
+    const url = (dt.getData('text/uri-list') || '').split(/\r?\n/)
+      .find(l => l && !l.startsWith('#'));
+    if (url) { term.paste(url.trim() + ' '); term.focus(); }
+  }, true);
+  const elegirArchivo = document.getElementById('adjuntar-archivo');
+  document.getElementById('adjuntar').addEventListener('pointerdown', e => e.preventDefault());
+  document.getElementById('adjuntar').addEventListener('click', () => elegirArchivo.click());
+  elegirArchivo.addEventListener('change', () => {
+    const archivos = Array.from(elegirArchivo.files || []);
+    elegirArchivo.value = '';
+    if (archivos.length) adjuntar(archivos, false);
+  });
   addEventListener('beforeunload', () => { cerradoAposta = true; if (ws) ws.close(); });
   conectar();
 

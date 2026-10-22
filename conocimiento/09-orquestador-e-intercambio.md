@@ -105,14 +105,21 @@ funciona igual.
 La carpeta por la que pasan archivos entre el teléfono y las sesiones, sin que
 el hub escriba nunca dentro de tus proyectos:
 
-- **Del teléfono a una sesión:** súbelo aquí y, en «Más», pulsa *Escribir la
-  ruta ahí*. La ruta aparece en el cuadro de Claude **sin Enter**, para que
-  añadas qué quieres que haga con él.
-- **De una sesión a ti:** pídele a la sesión que lo copie en la carpeta (la
-  ruta sale en la pantalla) y bájalo desde aquí.
+Es una carpeta **de paso**: lo que quieras conservar, guárdalo en tu proyecto.
 
-Se agrupa por **tema** (el principio del nombre), **fecha** o **tipo**, o todo
-en fila con **Recientes**. Dentro de cada grupo, los archivos van separados por
-**tandas de subida**, y lo último que llegó lleva la marca *nuevo*.
+- **Del teléfono a una sesión:** súbelo aquí eligiendo su proyecto o slot y, en
+  «Más», pulsa *Escribir la ruta ahí*. La ruta aparece en el cuadro de Claude
+  **sin Enter**, para que añadas qué quieres que haga con él.
+- **De la terminal:** lo que arrastras o pegas sobre la terminal de `/trabajo`
+  cae aquí solo, en la carpeta del proyecto y el slot de esa ventana.
+- **De una sesión a ti:** pídele a la sesión que lo copie en la carpeta de su
+  proyecto (`intercambio/<proyecto>/`) y bájalo desde aquí.
 
-Hasta 64 MB por archivo, y **nada se borra solo**: si sobra, se borra a mano.
+Se agrupa como el resto del hub: **por proyecto y, dentro, por slot**, lo más
+nuevo primero. También se puede ver por **fecha**, **tipo**, **tema** (el
+principio del nombre) o todo en fila con **Recientes**. Lo último que llegó
+lleva la marca *nuevo*.
+
+Hasta 64 MB por archivo. **Lo arrastrado o pegado en la terminal se borra solo a
+los 10 días**, y cada archivo dice el día. Lo que subes desde aquí o deja una
+sesión no caduca: se borra a mano.

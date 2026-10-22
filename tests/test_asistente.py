@@ -792,6 +792,37 @@ def test_el_chat_no_ensena_la_linea_de_la_pantalla():
     assert mensajes[0]["texto"].startswith("[hub:pantalla")   # sin tocar el original
 
 
+def test_una_respuesta_en_varias_lineas_se_ve_sin_el_envoltorio_del_pegado():
+    """🔴 21-oct: Claude Code guarda un pegado de varias líneas envuelto en
+    `<pasted_content>`, y el chat enseñaba las etiquetas y la línea de la
+    pantalla. Es el texto literal de aquel transcript."""
+    guardado = ('\n\n<pasted_content id="88ac">\n'
+                "[hub:pantalla /trabajo?session=p&ventana=7 · p · Hub]\n"
+                "1.- quiero hacer pruebas\n2.- personal\n3.- ok\n"
+                '</pasted_content id="88ac">\n')
+
+    visibles = asistente.ocultar_internos([{"rol": "user", "texto": guardado}])
+
+    assert visibles[0]["texto"] == "1.- quiero hacer pruebas\n2.- personal\n3.- ok"
+
+
+def test_el_envoltorio_se_queda_si_la_persona_escribio_algo_alrededor():
+    """Ahí separa lo suyo de lo pegado: quitarlo los mezclaría."""
+    texto = 'mira esto:\n<pasted_content id="a1">\nx\ny\n</pasted_content id="a1">'
+
+    assert asistente.sin_envoltorio_de_pegado(texto) == texto
+    assert asistente.sin_envoltorio_de_pegado(
+        '<pasted_content id="a1">\nx\n</pasted_content id="b2">') .startswith("<pasted")
+
+
+def test_un_mensaje_interno_envuelto_sigue_oculto_con_su_respuesta():
+    interno = f'<pasted_content id="z9">\n{asistente.PREFIJO_INTERNO} a\nb\n</pasted_content id="z9">'
+    mensajes = [{"rol": "user", "texto": interno}, {"rol": "assistant", "texto": "instr"}]
+
+    assert asistente.ocultar_internos(mensajes) == []
+    assert asistente.extraer_instrucciones(mensajes) == "instr"
+
+
 
 def test_el_no_cancela_aunque_el_cuadro_traiga_cuatro_opciones(tmux_falso, monkeypatch):
     """🔴 Sala limpia, 16-oct: leer fuera de su carpeta abre un cuadro de cuatro

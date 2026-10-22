@@ -110,6 +110,12 @@ def buscar_remota(raiz: Path | None = None, *, ahora: datetime | None = None,
         except (KeyError, ValueError):
             pass
     raiz = raiz or config.RAIZ_REPO
+    # Un clon sin `origin` (el de desarrollo, una copia suelta) no tiene de
+    # dónde mirar: no es un fallo que enseñar, es que no aplica.
+    sin_remoto = subprocess.run(["git", "-C", str(raiz), "remote", "get-url", "origin"],
+                                capture_output=True, text=True, timeout=5).returncode != 0
+    if sin_remoto:
+        return None
     datos = dict(previa or {})
     datos["mirado_en"] = ahora.isoformat(timespec="seconds")
     try:

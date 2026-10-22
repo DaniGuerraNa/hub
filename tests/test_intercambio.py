@@ -285,3 +285,85 @@ def test_dos_tandas_en_la_misma_hora_se_separan_y_solo_la_ultima_es_nueva(client
     assert pagina.count('class="inter-tanda"') == 2
     assert pagina.count(">nuevo<") == 2
     assert pagina.index("feria-repertorio-02.jpg") < pagina.index("feria-muestras-02.jpg")
+
+
+# ───────────────── por proyecto y slot, y lo de paso (decisión 288) ─────────────
+
+
+@pytest.fixture
+def registrados(cliente):
+    con = web.conexion()
+    con.execute("INSERT INTO proyecto (id, nombre, asiento) VALUES "
+                "('tienda','Tienda','/tmp/t'), ('blog','Blog','/tmp/b')")
+    con.execute("INSERT INTO slot (id, proyecto_id, nombre, creado_en) VALUES "
+                "(4,'tienda','front','2026-10-21'), (9,'blog','textos','2026-10-21')")
+    return con
+
+
+def test_lo_subido_va_a_la_carpeta_del_proyecto_y_slot_elegidos(cliente, home, registrados):
+    cliente.post("/intercambio/subir", data={"destino": "tienda:4"},
+                 files={"archivo": ("logo.png", b"x", "image/png")})
+    cliente.post("/intercambio/subir", data={"destino": "blog"},
+                 files={"archivo": ("idea.md", b"y", "text/markdown")})
+    # Un slot de OTRO proyecto no se mezcla: se queda en el proyecto.
+    cliente.post("/intercambio/subir", data={"destino": "tienda:9"},
+                 files={"archivo": ("raro.txt", b"z", "text/plain")})
+
+    assert (home / "intercambio/tienda/4-front/logo.png").exists()
+    assert (home / "intercambio/blog/idea.md").exists()
+    assert (home / "intercambio/tienda/raro.txt").exists()
+    assert intercambio.caduca_en("tienda/4-front/logo.png") is None   # subido: no caduca
+
+
+def test_la_pantalla_agrupa_por_proyecto_y_dentro_por_slot_lo_nuevo_primero(
+        cliente, home, registrados):
+    import os
+    from hub import api
+    for ruta, cuando in (("tienda/4-front/a.png", 100), ("tienda/b.md", 300),
+                         ("blog/9-textos/c.md", 200), ("suelto.txt", 50),
+                         ("landing-de-una-sesion/index.html", 400)):
+        destino = home / "intercambio" / ruta
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_text("x")
+        os.utime(destino, (cuando, cuando))
+
+    grupos = api.intercambio(registrados)["grupos"]
+
+    assert [g["titulo"] for g in grupos] == ["Sin proyecto", "Tienda", "Blog"]
+    tienda = grupos[1]
+    assert [(s["titulo"], [a["archivo"] for a in s["archivos"]]) for s in tienda["secciones"]] \
+        == [("Sin slot", ["b.md"]), ("front", ["a.png"])]
+    assert grupos[2]["secciones"][0]["titulo"] == "textos"
+    pagina = cliente.get("/intercambio").text
+    assert "Tienda" in pagina and "front" in pagina and "Sin proyecto" in pagina
+
+
+def test_lo_pegado_en_la_terminal_va_a_su_slot_y_caduca_a_los_diez_dias(
+        cliente, home, registrados):
+    r = cliente.post("/api/terminal/adjuntar", data={"pegado": "1", "slot": "4"},
+                     files={"archivo": ("image.png", b"\x89PNG", "image/png")})
+    ruta = r.json()["ruta"]
+    relativa = ruta.split("/intercambio/", 1)[1]
+
+    assert relativa.startswith("tienda/4-front/pegado-")
+    assert intercambio.caduca_en(relativa) is not None
+    assert "se borra el" in cliente.get("/intercambio").text
+
+
+def test_la_poda_borra_solo_lo_de_paso_vencido_y_las_carpetas_que_quedan_vacias(home):
+    import time
+    viejo = intercambio.guardar("viejo.png", b"1", "tienda/4-front", de_paso=True)
+    nuevo = intercambio.guardar("nuevo.png", b"2", "blog", de_paso=True)
+    guardado = intercambio.guardar("informe.pdf", b"3", "tienda")
+    registro = intercambio._leer_de_paso()
+    registro["tienda/4-front/viejo.png"] = time.time() - 11 * 86400
+    registro["../../fuera.txt"] = 0          # un registro manipulado no saca el borrado
+    intercambio._escribir_de_paso(registro)
+    (home / "fuera.txt").write_text("no se toca")
+
+    borrados = intercambio.podar_de_paso()
+
+    assert borrados == ["tienda/4-front/viejo.png"]
+    assert not viejo.exists() and not viejo.parent.exists()
+    assert nuevo.exists() and guardado.exists() and (home / "fuera.txt").exists()
+    assert set(intercambio._leer_de_paso()) == {"blog/nuevo.png"}

@@ -30,6 +30,11 @@ el asistente nunca lee la base ni escanea el disco por su cuenta.
                                   vuelve a leerlo cuando lo corrijan
   hub preguntar …                 pregúntale a otra persona cuando él no está,
                                   y sigue trabajando mientras contesta
+  hub kits                        qué kits se pueden aplicar y qué aporta cada uno
+  hub kit aplicar <proyecto> <kit> [<kit>…]
+                                  deja en /trabajo una ventana en ese proyecto
+                                  con el encargo escrito y SIN Enter: lo lanza
+                                  la persona y revisa ahí los cambios
 
 🔴 Lo que este script NO hace, y no es un olvido: no borra nada, y no escribe en
 ningún proyecto del usuario. Sobre ellos es sólo lectura. Lo único que escribe es
@@ -574,6 +579,32 @@ def cmd_preguntar(args):
         print(f"la respuesta llega sola al panel. `hub preguntar ver {qs[0]['id']}` para mirarla.")
 
 
+def cmd_kits(args):
+    """El catálogo: qué kits hay. «Aplícale lienzos y telegram» habla de éstos."""
+    r = pedir("/api/kits/catalogo")
+    for k in r.get("kits", []):
+        marca = " (lo lleva todo proyecto)" if k.get("obligatorio") else ""
+        print(f"- {k['id']} {k['version']} — {k['nombre']}{marca}: {k['descripcion']}")
+
+
+def cmd_kit(args):
+    """`hub kit aplicar <proyecto> <kit>…`: prepara, no aplica.
+
+    El hub abre una ventana en la carpeta del proyecto con el encargo escrito
+    y sin Enter. Tú no escribes en el proyecto, y el hub tampoco: lo lanza la
+    persona, y la sesión que arranca le enseña los cambios antes de hacerlos.
+    """
+    if len(args) < 3 or args[0] != "aplicar":
+        salir("uso: hub kit aplicar <proyecto> <kit> [<kit>…]   (los kits: hub kits)")
+    ids = [i for a in args[2:] for i in a.replace(",", " ").split()]
+    r = pedir("/api/kits/preparar", {"proyecto": args[1], "kits": ids})
+    if not r.get("ok"):
+        salir(r.get("error", "no se pudo preparar"))
+    print(f"Lista en /trabajo?session={r['session']}&ventana={r['ventana']}: "
+          f"una ventana en {r['ruta']} con el encargo de aplicar {', '.join(r['kits'])}.")
+    print("Está escrito y SIN lanzar: que pulse Enter ahí y revise lo que propone.")
+
+
 COMANDOS = {
     "estado": cmd_estado, "sesiones": cmd_sesiones, "sesion": cmd_sesion,
     "conexiones": cmd_conexiones,
@@ -581,6 +612,7 @@ COMANDOS = {
     "anexar": cmd_anexar,
     "guia": cmd_guia,
     "lienzo": cmd_lienzo, "preguntar": cmd_preguntar,
+    "kits": cmd_kits, "kit": cmd_kit,
 }
 
 

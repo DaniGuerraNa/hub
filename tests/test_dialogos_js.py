@@ -227,3 +227,47 @@ def test_la_confirmacion_de_formularios_no_cuelga_de_HubUI():
     i = guion.index("document.addEventListener('submit'")
     assert "HubUI.confirmar" in guion[i:i + 400]
     assert "HubUI.confirmarFormulario" not in guion
+
+
+ARNES_UNA_VEZ = r"""
+const oyentes = [];
+global.window = {};
+global.document = {
+  createElement(){ return { appendChild(){}, addEventListener(){} }; },
+  body: { appendChild(){}, classList: { add(){}, remove(){} } },
+  addEventListener(ev, fn){ if (ev === 'submit') oyentes.push(fn); },
+  querySelector(){ return null; },
+  querySelectorAll(){ return []; },
+};
+require(GUION_RUTA);
+
+function formulario(dataset) {
+  const boton = { tagName: 'BUTTON', disabled: false, textContent: 'Lanzar' };
+  return { boton, form: { dataset, querySelectorAll(){ return [boton]; } } };
+}
+function enviar(form, prevenido) {
+  const e = { target: form, defaultPrevented: !!prevenido, preventDefault(){ this.defaultPrevented = true; } };
+  for (const fn of oyentes) fn(e);
+}
+const a = formulario({ unaVez: 'Abriendo…' }); enviar(a.form);
+const b = formulario({}); enviar(b.form);
+const c = formulario({ unaVez: 'Abriendo…' }); enviar(c.form, true);
+console.log(JSON.stringify({ a: a.boton, b: b.boton, c: c.boton }));
+"""
+
+
+def test_un_formulario_de_una_vez_apaga_su_boton_al_enviarse(tmp_path):
+    """«Lanzar» abre una ventana por pulsación (21-oct): el segundo clic no
+    puede llegar. Y si la confirmación detuvo el envío, no se apaga nada."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node no disponible")
+    archivo = tmp_path / "una-vez.js"
+    archivo.write_text(ARNES_UNA_VEZ.replace("GUION_RUTA", json.dumps(str(GUION))), encoding="utf-8")
+    salida = subprocess.run([node, str(archivo)], capture_output=True, text=True, timeout=30)
+    assert salida.returncode == 0, salida.stderr
+    r = json.loads(salida.stdout.strip().splitlines()[-1])
+
+    assert r["a"] == {"tagName": "BUTTON", "disabled": True, "textContent": "Abriendo…"}
+    assert r["b"]["disabled"] is False
+    assert r["c"]["disabled"] is False

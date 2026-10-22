@@ -406,7 +406,7 @@ def nueva_ventana(
     hub en vez de en el proyecto, y no había nada en la pantalla que lo explicara.
     """
     validar_sesion(session)
-    args = ["new-window", "-P", "-F", "#{window_index}", "-t", f"={session}:"]
+    args = ["new-window", "-P", "-F", "#{window_index}", *al_final(session)]
     for clave, valor in (entorno or {}).items():
         args += ["-e", f"{clave}={valor}"]
     # `-c` admite un formato de tmux, resuelto contra el destino: es el idioma
@@ -508,6 +508,19 @@ def escribir_titulo(pane_id: str, titulo: str) -> None:
     _correr(["select-pane", "-t", pane_id, "-T", titulo])
 
 
+def al_final(session: str) -> list[str]:
+    """Dónde va una ventana nueva: detrás de la última de su sesión.
+
+    🔴 Sin esto tmux le da el número libre más bajo, y tras cerrar una la
+    siguiente se colaba en ese hueco, a media lista: no se veía cuál era la
+    última que se abrió (21-oct). Y no se renumera al cerrar, a propósito: la
+    terminal se reconecta y los enlaces apuntan por número de ventana, y
+    renumerar los haría caer en otra sin que nada lo dijera.
+    """
+    validar_sesion(session)
+    return ["-a", "-t", f"={session}:{{end}}"]
+
+
 def abrir_ventana(ruta: str, nombre: str, comando: str | None = None,
                   session: str | None = None,
                   conservar: bool = False) -> str:
@@ -522,7 +535,7 @@ def abrir_ventana(ruta: str, nombre: str, comando: str | None = None,
     # con `env`, que es lo que la regla dura 18 ya prescribía para el primer
     # panel de una sesión; ver `slots.abrir`.
     if session:
-        args += ["-t", session]
+        args += al_final(session)
     if comando:
         args.append(comando)
     # 🔴 `remain-on-exit` en la MISMA orden que crea la ventana, no en otra

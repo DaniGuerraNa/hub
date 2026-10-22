@@ -33,6 +33,10 @@ Para aplicarlo a un proyecto, abre Claude Code ahí y di **«aplica el kit X»**
 (skill `aplicar-kit`). El hub calcula qué haría falta y te lo enseña **antes** de
 escribir nada.
 
+O pídeselo al asistente desde el chat: *«aplícale los kits lienzos y telegram a
+mi-proyecto»*. Te deja en `/trabajo` una ventana en la carpeta del proyecto con
+ese mismo encargo escrito y **sin lanzar**: pulsas Enter allí y sigues igual.
+
 ## Dónde se instalan
 
 `~/.local/share/hub/kits/<id>/<version>/`, con la versión en la ruta. **Todas las

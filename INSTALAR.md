@@ -165,6 +165,7 @@ funciona. Están aquí porque la que no se documenta no existe.
 | `HUB_BIN` | `~/.local/bin` | Dónde enlaza `sembrar-asistente.sh` el comando `hub` |
 | `HUB_STATUSLINE_SIGUIENTE` | *(ninguno)* | Ver abajo |
 | `HUB_COMANDO_CLAUDE` | `claude` | Lo que «Restaurar» deja escrito (sin Enter) en las ventanas que tenían Claude Code. Va en el entorno de `hub-web` |
+| `HUB_RESTAURAR_CLAUDE` | `reanudar` | En las ventanas que tenían Claude Code, «Restaurar» deja escrito `claude --resume <id>` (`reanudar`), `claude` (`nuevo`) o nada (`nada`). Siempre sin Enter. Va en el entorno de `hub-web` |
 | `HUB_ACCESO_YML` | `$HUB_HOME/acceso.yml` | La puerta de acceso remoto: nombres admitidos y aparatos dados de alta |
 | `HUB_CANAL_YML` | `$HUB_HOME/canal.yml` | Ajustes del canal de consulta: el **puntero** al token del bot, nunca el token |
 | `HUB_ENCARGOS_YML` | `$HUB_HOME/encargos.yml` | Lo mismo para el bot de encargos, que es otro bot con otro token |

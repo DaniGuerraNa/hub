@@ -712,6 +712,24 @@ def con_pantalla(texto: str, ruta: str = "", titulo: str = "") -> str:
     return f"{PREFIJO_PANTALLA}{ruta}{' · ' + titulo if titulo else ''}]\n{texto}"
 
 
+# 🔴 Claude Code (medido en la 2.1.280) guarda un pegado de VARIAS líneas
+# envuelto en `<pasted_content id="…">…</pasted_content id="…">`, con saltos
+# delante; uno de una sola línea, tal cual. El chat manda todo por pegado
+# (decisión 71), así que una respuesta en varias líneas se pintaba con las
+# etiquetas y la línea de la pantalla a la vista. Sólo se quita cuando el
+# mensaje ENTERO es un pegado: si la persona escribió algo alrededor, el
+# envoltorio separa lo suyo de lo pegado y es información.
+_PEGADO_ENTERO = re.compile(
+    r'^\s*<pasted_content id="([^"<>]{1,40})">\n?(.*?)\n?</pasted_content id="\1">\s*$',
+    re.DOTALL,
+)
+
+
+def sin_envoltorio_de_pegado(texto: str) -> str:
+    m = _PEGADO_ENTERO.match(texto or "")
+    return m.group(2) if m else texto
+
+
 def sin_pantalla(texto: str) -> str:
     if (texto or "").startswith(PREFIJO_PANTALLA):
         return texto.split("\n", 1)[1] if "\n" in texto else ""
@@ -821,14 +839,14 @@ def ocultar_internos(mensajes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     saltar_respuesta = False
     for mensaje in mensajes:
         if mensaje.get("rol") == "user":
-            texto = mensaje.get("texto") or ""
+            texto = sin_envoltorio_de_pegado(mensaje.get("texto") or "")
             if es_meta_de_comando(texto):
                 continue
             if es_interno(texto):
                 saltar_respuesta = True
                 continue
             saltar_respuesta = False
-            if texto.startswith(PREFIJO_PANTALLA):
+            if texto != mensaje.get("texto") or texto.startswith(PREFIJO_PANTALLA):
                 mensaje = {**mensaje, "texto": sin_pantalla(texto)}
         elif saltar_respuesta:
             saltar_respuesta = False
@@ -840,7 +858,7 @@ def ocultar_internos(mensajes: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def extraer_instrucciones(mensajes: list[dict[str, Any]]) -> str | None:
     """La respuesta del asistente a la petición de compactado, si ya llegó."""
     for i, mensaje in enumerate(mensajes):
-        if mensaje.get("rol") == "user" and es_interno(mensaje.get("texto") or ""):
+        if mensaje.get("rol") == "user" and es_interno(sin_envoltorio_de_pegado(mensaje.get("texto") or "")):
             for siguiente in mensajes[i + 1:]:
                 if siguiente.get("rol") == "assistant" and (siguiente.get("texto") or "").strip():
                     return siguiente["texto"].strip()

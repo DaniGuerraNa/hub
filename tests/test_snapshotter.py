@@ -206,3 +206,26 @@ def test_la_reconciliacion_no_ata_una_ventana_que_no_estaba(con, atribuidor, mon
     por_id = {p["pane_id"]: p for p in api.paneles_abiertos(con)}
     assert por_id["%n0"]["slot_id"] == slot_id
     assert por_id["%n1"]["slot_id"] is None
+
+
+def test_apunta_que_conversacion_de_claude_corre_en_cada_panel_si_el_proceso_vive(
+        tmp_path, monkeypatch):
+    """Decisión 289: de ahí sale el `claude --resume` de «Restaurar». Un archivo
+    de un proceso muerto apunta a un panel del tmux de ANTES y no cuenta."""
+    import json
+    import os
+    from hub import orquestador, snapshotter
+
+    carpeta = tmp_path / "sessions"
+    carpeta.mkdir()
+    vivo = {"pid": os.getpid(), "sessionId": "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+            "tmux": "work:@2.%7"}
+    muerto = {"pid": 2 ** 22 + 7, "sessionId": "aaaaaaaa-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+              "tmux": "work:@3.%9"}
+    raro = {"pid": os.getpid(), "sessionId": "no-es-un-uuid", "tmux": "work:@4.%11"}
+    for i, d in enumerate((vivo, muerto, raro)):
+        (carpeta / f"{i}.json").write_text(json.dumps(d))
+    (carpeta / "roto.json").write_text("{")
+    monkeypatch.setattr(orquestador, "_sesiones_de_claude", lambda: carpeta)
+
+    assert snapshotter.claude_por_panel() == {"%7": vivo["sessionId"]}

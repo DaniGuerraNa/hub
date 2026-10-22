@@ -108,6 +108,13 @@ def test_con_HUB_BUSCAR_VERSIONES_0_no_se_sale_a_internet(clon_con_remoto, monke
     assert not (config.HUB_HOME / "version-remota.json").exists()
 
 
+def test_un_clon_sin_origin_no_busca_ni_apunta_un_fallo(clon_con_remoto):
+    clon, _ = clon_con_remoto
+    _git("remote", "remove", "origin", cwd=clon)
+    assert version.buscar_remota(clon) is None
+    assert not (config.HUB_HOME / "version-remota.json").exists()
+
+
 def test_la_suite_no_sale_a_internet_por_defecto():
     """El ciclo lento de cualquier test haría un `ls-remote` a GitHub."""
     assert os.environ["HUB_BUSCAR_VERSIONES"] == "0"

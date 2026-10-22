@@ -130,7 +130,7 @@
         <span class="tenue mono" style="flex:1;min-width:0;overflow:hidden;
               text-overflow:ellipsis;white-space:nowrap">{{ v.ruta or '—' }}</span>
         <span class="insignia {{ 'riesgo' if not v.ruta else '' }}">
-          {{ v.comando.split(' ')[0] if v.comando else ('no se abre' if not v.ruta else 'shell') }}</span>
+          {{ (v.comando.split(' ')[0] ~ (' · reanuda' if v.reanuda else '')) if v.comando else ('no se abre' if not v.ruta else 'shell') }}</span>
       </div>
       {% if v.aviso %}
       <p class="tenue" style="margin:0;padding:0 12px 8px;font-size:12px;color:var(--alerta)">{{ v.aviso }}</p>

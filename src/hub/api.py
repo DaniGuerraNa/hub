@@ -13,6 +13,7 @@ Convención de `snapshot.preservado`:
 from __future__ import annotations
 
 import contextlib
+import re
 import sqlite3
 from collections.abc import Sequence
 from datetime import datetime
@@ -372,8 +373,17 @@ def rail(con: sqlite3.Connection) -> dict:
         version = _version.estado()
     except Exception:  # noqa: BLE001 — un pyproject raro no tumba todas las pantallas
         version = None
+    # Que el muestreo no corre se dice en todas las pantallas: sin él, un
+    # apagón no tiene vuelta, y enterarse después es tarde (decisión 289).
+    # Barato: un archivo.
+    try:
+        from . import salud as _salud
+        muestreo = _salud.muestreo()
+    except Exception:  # noqa: BLE001
+        muestreo = None
     return {
         "version": version,
+        "muestreo": muestreo,
         "sin_respaldo": sum(sin_push.values()),
         "servicios": corriendo,
         "paneles": len(paneles),
@@ -884,6 +894,20 @@ def kits_de(kits_: list[dict], proyecto_id: str) -> list[dict]:
         if suyos:
             salida.append({**k, "consumidores": suyos})
     return salida
+
+
+def catalogo_kits() -> list[dict]:
+    """Qué kits se pueden aplicar, con lo que aporta cada uno.
+
+    El asistente lo necesita para entender «aplícale lienzos y telegram»: sin
+    esto no sabía que eran kits (21-oct).
+    """
+    from . import kits as _kits
+    return [
+        {"id": k, "nombre": v.get("nombre", k), "version": str(v.get("version", "")),
+         "descripcion": v.get("descripcion", ""), "obligatorio": bool(v.get("obligatorio"))}
+        for k, v in sorted(_kits.catalogo().items())
+    ]
 
 
 def kits(con: sqlite3.Connection) -> list[dict]:
@@ -1855,7 +1879,89 @@ def _hora_local(iso: str | None) -> str:
         return iso
 
 
-def intercambio(por: str = "tema", q: str = "") -> dict[str, Any]:
+def _intercambio_por_proyecto(con: sqlite3.Connection, archivos: list[dict]) -> list[dict]:
+    """Proyecto → slot → archivos, lo más nuevo primero en cada nivel (decisión 288).
+
+    La carpeta es `proyecto/<id>-<slot>/archivo`. Lo que no cuelga de un
+    proyecto registrado —subido sin elegir, o una carpeta que dejó una
+    sesión— va a «Sin proyecto», y lo de un proyecto sin slot, a «Sin slot».
+    """
+    from . import intercambio as _intercambio
+
+    proyectos = {f["id"]: f["nombre"] for f in con.execute("SELECT id, nombre FROM proyecto")}
+    slots = {f["id"]: f["nombre"] for f in con.execute("SELECT id, nombre FROM slot")}
+    arbol: dict[str, dict[str, list[dict]]] = {}
+    titulos: dict[str, str] = {}
+    for a in archivos:   # ya vienen ordenados, lo más nuevo primero
+        tramos = a.get("tramos") or []
+        proyecto = tramos[0] if tramos and tramos[0] in proyectos else ""
+        seccion = "Sin slot"
+        if proyecto and len(tramos) > 1:
+            m = re.match(r"^(\d+)(?:-|$)", tramos[1])
+            seccion = (slots.get(int(m.group(1))) if m else None) or tramos[1]
+        titulos[proyecto] = proyectos.get(proyecto, "Sin proyecto")
+        arbol.setdefault(proyecto, {}).setdefault(seccion, []).append(a)
+    grupos = []
+    for proyecto, secciones in arbol.items():
+        miembros = [a for lista in secciones.values() for a in lista]
+        grupos.append({
+            "titulo": titulos[proyecto],
+            "proyecto_id": proyecto,
+            "archivos": miembros,
+            "secciones": [{"titulo": t, "archivos": l, "cuantos": len(l)}
+                          for t, l in secciones.items()],
+            "tandas": [],
+            "cuantos": len(miembros),
+            "tamano": _intercambio.tamano(sum(a["bytes"] for a in miembros)),
+            "ultimo": max(a["mtime"] for a in miembros),
+        })
+    return sorted(grupos, key=lambda g: g["ultimo"], reverse=True)
+
+
+def destinos_intercambio(con: sqlite3.Connection) -> list[dict]:
+    """Dónde se puede dejar lo que se sube: cada proyecto, y cada slot suyo."""
+    destinos = []
+    for p in con.execute("SELECT id, nombre FROM proyecto WHERE status != 'archivado' "
+                         "AND tipo = 'proyecto' ORDER BY nombre"):
+        destinos.append({"valor": p["id"], "etiqueta": p["nombre"]})
+        for sl in con.execute("SELECT id, nombre FROM slot WHERE proyecto_id = ? "
+                              "AND status = 'activo' ORDER BY nombre", (p["id"],)):
+            destinos.append({"valor": f"{p['id']}:{sl['id']}",
+                             "etiqueta": f"{p['nombre']} · {sl['nombre']}"})
+    return destinos
+
+
+def subcarpeta_intercambio(con: sqlite3.Connection, destino: str = "", session: str = "",
+                           ventana: int | None = None, slot_id: int | None = None) -> str:
+    """La subcarpeta `proyecto/slot` para lo que llega, o la raíz si no se sabe.
+
+    `destino` es lo elegido en el formulario (`proyecto` o `proyecto:slot`).
+    Desde la terminal manda la ventana que se está mirando —según el último
+    muestreo—, y si no consta, el slot con el que se abrió la página.
+    """
+    from . import intercambio as _intercambio
+
+    proyecto_id, _, slot_txt = (destino or "").partition(":")
+    if not proyecto_id and session:
+        panel = next((p for p in paneles_abiertos(con)
+                      if p["session"] == session and p["window_idx"] == ventana), None)
+        if panel:
+            proyecto_id = panel.get("proyecto_id") or ""
+            slot_txt = str(panel.get("slot_id") or "")
+    if not slot_txt and slot_id:
+        slot_txt = str(slot_id)
+    slot = obtener_slot(con, int(slot_txt)) if slot_txt.isdigit() else None
+    if slot and not proyecto_id:
+        proyecto_id = slot["proyecto_id"]
+    if slot and slot["proyecto_id"] != proyecto_id:
+        slot = None   # un slot de otro proyecto no se mezcla
+    if not proyecto_id or not obtener_proyecto(con, proyecto_id):
+        return _intercambio.SIN_PROYECTO
+    return _intercambio.subcarpeta(proyecto_id, slot["id"] if slot else None,
+                                   slot["nombre"] if slot else "")
+
+
+def intercambio(con: sqlite3.Connection, por: str = "proyecto", q: str = "") -> dict[str, Any]:
     """La carpeta de intercambio, agrupada para que se sepa qué es cada cosa.
 
     `q` filtra por nombre (también la subcarpeta): es lo que se usa cuando uno
@@ -1863,7 +1969,7 @@ def intercambio(por: str = "tema", q: str = "") -> dict[str, Any]:
     """
     from . import intercambio as _intercambio
 
-    por = por if por in _intercambio.AGRUPACIONES else "tema"
+    por = por if por in _intercambio.AGRUPACIONES else "proyecto"
     archivos = _intercambio.listar()
     total = len(archivos)
     q = (q or "").strip()
@@ -1878,7 +1984,10 @@ def intercambio(por: str = "tema", q: str = "") -> dict[str, Any]:
     for a in archivos:
         a["cuando_local"] = _hora_local(a["cuando"])
         a["nuevo"] = a["nombre"] in recien
-    grupos = _intercambio.agrupar(archivos, por)
+        a["caduca_local"] = (datetime.fromtimestamp(a["caduca"]).strftime("%d/%m")
+                             if a.get("caduca") else None)
+    grupos = (_intercambio_por_proyecto(con, archivos) if por == "proyecto"
+              else _intercambio.agrupar(archivos, por))
     for g in grupos:
         for t in g["tandas"]:
             desde = datetime.fromtimestamp(t["desde"])
@@ -1894,6 +2003,12 @@ def intercambio(por: str = "tema", q: str = "") -> dict[str, Any]:
         "total": total,
         "encontrados": len(archivos),
     }
+
+
+def salud(con: sqlite3.Connection) -> list[dict]:
+    """Las comprobaciones de `/maquina` (decisión 289)."""
+    from . import salud as _salud
+    return _salud.revisar(con)
 
 
 def guia(con: sqlite3.Connection) -> dict[str, Any]:

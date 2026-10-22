@@ -866,3 +866,95 @@ def test_sin_ventanas_se_dice_por_que_no_hay_pestanas(tmp_path):
     # «Sin pestañas: no se pudieron pedir…» — o sea que un test que sólo mirara
     # el rótulo pasaría con el arreglo deshecho. Pasó al sabotearlo.
     assert "no tiene ventanas en el último muestreo" in tira, tira[:200]
+
+
+# ── teclas del móvil e imágenes sobre la terminal (21-oct) ────────────────────
+
+
+def _con_socket_abierto(tmp_path_factory, accion, respuestas=None):
+    return ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path_factory.mktemp("js"),
+                    {**PULSO, **(respuestas or {})},
+                    accion="__sockets[0].readyState = 1;\n" + accion)
+
+
+def test_la_barra_del_movil_manda_las_secuencias_de_un_teclado(tmp_path_factory):
+    r = _con_socket_abierto(tmp_path_factory, """
+      for (const t of ['esc', 'ctrl-c', 'shift-tab', 'arriba'])
+        nodo('teclas').querySelectorAll('[data-tecla]')
+          .find(b => b.dataset.tecla === t).disparar('click');
+    """)
+    assert r["errores"] == []
+    assert r["tecleado"][-4:] == ["\x1b", "\x03", "\x1b[Z", "\x1b[A"]
+
+
+def test_una_imagen_soltada_sube_y_su_ruta_se_pega_sin_enter(tmp_path_factory):
+    r = _con_socket_abierto(tmp_path_factory, """
+      const f = new File([new Uint8Array([137, 80])], 'captura.png', { type: 'image/png' });
+      for (const fn of DOC_OYENTES.drop) fn({ preventDefault(){}, stopPropagation(){},
+        dataTransfer: { files: [f], types: ['Files'] } });
+    """, {"POST /api/terminal/adjuntar": {"ok": True, "ruta": "/casa/intercambio/captura.png"}})
+    assert r["errores"] == []
+    assert "/api/terminal/adjuntar" in r["peticiones"]
+    assert r["pegados"] == ["/casa/intercambio/captura.png "]
+
+
+def test_pegar_una_imagen_la_adjunta_y_un_texto_lo_deja_a_xterm(tmp_path_factory):
+    r = _con_socket_abierto(tmp_path_factory, """
+      let detenido = 0;
+      const ev = (files) => ({ clipboardData: { files },
+        preventDefault(){ detenido++; }, stopPropagation(){} });
+      nodo('lienzo-terminal').disparar('paste', ev([]));
+      nodo('lienzo-terminal').disparar('paste',
+        ev([new File([new Uint8Array([1])], 'image.png', { type: 'image/png' })]));
+      globalThis.DETENIDO = detenido;
+    """, {"POST /api/terminal/adjuntar": {"ok": True, "ruta": "/casa con espacio/pegado.png"}})
+    assert r["errores"] == []
+    assert r["peticiones"].count("/api/terminal/adjuntar") == 1
+    assert r["pegados"] == ['"/casa con espacio/pegado.png" ']
+
+
+def test_una_imagen_arrastrada_desde_otra_web_pega_su_url(tmp_path_factory):
+    """Sin archivo: trae `text/uri-list`. Se pega la URL, sin subir nada."""
+    r = _con_socket_abierto(tmp_path_factory, """
+      let detenido = 0;
+      const dt = { files: [], types: ['text/uri-list', 'text/html'],
+                   getData: (t) => t === 'text/uri-list' ? '# c\\r\\nhttps://x.example/a.png' : '' };
+      for (const fn of DOC_OYENTES.dragover) fn({ dataTransfer: dt, preventDefault(){ detenido++; } });
+      for (const fn of DOC_OYENTES.drop) fn({ dataTransfer: dt, preventDefault(){}, stopPropagation(){} });
+      globalThis.DETENIDO = detenido;
+    """)
+    assert r["errores"] == []
+    assert r["pegados"] == ["https://x.example/a.png "]
+    assert "/api/terminal/adjuntar" not in r["peticiones"]
+
+
+def test_un_clic_en_la_cabecera_marca_que_el_slot_vuelva_tras_un_apagon(tmp_path_factory):
+    """Decisión 289: marcarlo se hace donde se trabaja, no en un formulario aparte."""
+    r = ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path_factory.mktemp("js"),
+                 {**PULSO, "POST /api/slot/7/restaurar": {"ok": True, "restaurar": True}},
+                 accion="nodo('vuelve').disparar('click');")
+    assert r["errores"] == []
+    assert {"url": "/api/slot/7/restaurar", "metodo": "POST",
+            "cuerpo": {"restaurar": True}} in r["enviados"]
+    assert ["vuelve:on", True] in r["alternadas"]
+
+
+def test_el_panel_derecho_se_pliega_desde_el_propio_panel_y_se_despliega_desde_el_borde(
+        tmp_path_factory):
+    """22-oct: el «Nota» de la cabecera ya lo plegaba, pero no se intuía."""
+    r = ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path_factory.mktemp("js"), PULSO,
+                 accion="nodo('plegar-lado').disparar('click');"
+                        "nodo('desplegar-lado').disparar('click');")
+    assert r["errores"] == []
+    plegados = [v for k, v in r["alternadas"] if k.endswith(":sin-nota")]
+    assert plegados[-2:] == [True, False]
+
+
+def test_el_boton_de_plegar_no_cuenta_como_pestana():
+    """Las hojas se eligen con `[data-hoja]`: si el «»» contara, al pulsarlo
+    escondería todas y el panel se quedaría en blanco."""
+    from pathlib import Path
+    estaticos = Path(__file__).resolve().parents[1] / "src" / "hub" / "static"
+    for archivo in ("lienzos.js", "consultas.js", "programados.js"):
+        texto = (estaticos / archivo).read_text()
+        assert "'.pest-lado button[data-hoja]'" in texto, archivo

@@ -527,3 +527,80 @@ def test_cancelar_dos_veces_lo_dice_en_vez_de_callar(cliente):
     assert cliente.post(f"/api/programado/{ident}/cancelar").json()["ok"] is True
     segunda = cliente.post(f"/api/programado/{ident}/cancelar").json()
     assert segunda["ok"] is False and "ya no estaba pendiente" in segunda["error"]
+
+
+def test_tras_lanzar_un_slot_la_pagina_ya_lo_ve_abierto(cliente, tmp_path):
+    """🔴 21-oct: el estado del slot sale del último muestreo, que puede tener
+    20 s. Se volvía a una página que lo pintaba «cerrado» con su «Lanzar», se
+    pulsaba otra vez y cada pulsación abría otra ventana. Con tmux de verdad
+    (el servidor aparte de los tests)."""
+    from hub import api, tmux
+
+    con = web.conexion()
+    con.execute("INSERT INTO slot (proyecto_id, nombre, ruta, creado_en) "
+                "VALUES ('demo','lanzado',?,'2026-10-21')", (str(tmp_path),))
+    slot_id = con.execute("SELECT id FROM slot WHERE nombre='lanzado'").fetchone()[0]
+    con.close()
+    try:
+        r = cliente.post(f"/slot/{slot_id}/abrir",
+                         data={"proyecto_id": "demo", "session": "lanzar-prueba",
+                               "destino": f"/trabajo?slot={slot_id}"},
+                         follow_redirects=False)
+        assert r.status_code == 303 and "aviso=" not in r.headers["location"]
+
+        con = web.conexion()
+        snap = api.snapshot_actual(con)
+        atados = con.execute("SELECT COUNT(*) FROM panel WHERE snapshot_id=? AND slot_id=?",
+                             (snap["id"], slot_id)).fetchone()[0]
+        con.close()
+        assert atados == 1
+        assert f'action="/slot/{slot_id}/abrir"' not in cliente.get(r.headers["location"]).text
+    finally:
+        for s in ("lanzar-prueba", "demo"):
+            if tmux.existe_sesion(s):
+                tmux._correr(["kill-session", "-t", f"={s}"])
+
+
+def test_el_boton_lanzar_se_apaga_al_pulsarlo(cliente, tmp_path):
+    """Un «Lanzar» es una ventana por pulsación: el segundo clic no llega."""
+    con = web.conexion()
+    con.execute("INSERT INTO slot (proyecto_id, nombre, ruta, creado_en) "
+                "VALUES ('demo','boton',?,'2026-10-21')", (str(tmp_path),))
+    con.close()
+    for pagina in ("/proyecto/demo", "/trabajo?slot=1"):
+        html = cliente.get(pagina).text
+        assert 'action="/slot/1/abrir" class="enlinea" data-una-vez="Abriendo…"' in html, pagina
+
+
+def test_una_imagen_pegada_en_la_terminal_aterriza_en_intercambio(cliente):
+    """Y nunca en el proyecto: el hub no escribe en carpetas ajenas."""
+    from hub import intercambio
+
+    r = cliente.post("/api/terminal/adjuntar", data={"pegado": "1"},
+                     files={"archivo": ("image.png", b"\x89PNG", "image/png")})
+    ruta = r.json()["ruta"]
+    assert r.json()["ok"] and ruta.startswith(str(intercambio.carpeta()))
+    assert ruta.rsplit("/", 1)[-1].startswith("pegado-") and ruta.endswith(".png")
+
+    soltada = cliente.post("/api/terminal/adjuntar",
+                           files={"archivo": ("../../.ssh/captura de hoy.png", b"x", "image/png")})
+    assert soltada.json()["ruta"] == str(intercambio.carpeta() / "captura-de-hoy.png")
+
+    vacia = cliente.post("/api/terminal/adjuntar", files={"archivo": ("a.png", b"", "image/png")})
+    assert vacia.status_code == 400 and not vacia.json()["ok"]
+
+
+def test_marcar_que_un_slot_vuelve_se_ve_en_el_rail_y_en_la_cabecera(cliente, tmp_path):
+    con = web.conexion()
+    con.execute("INSERT INTO slot (id, proyecto_id, nombre, ruta, creado_en) "
+                "VALUES (5,'demo','back',?,'2026-10-22')", (str(tmp_path),))
+    con.close()
+    antes = cliente.get("/trabajo?slot=5").text
+    assert "No vuelve tras un apagón" in antes and 'class="marca-vuelve"' not in antes
+
+    r = cliente.post("/api/slot/5/restaurar", json={"restaurar": True})
+    assert r.json() == {"ok": True, "restaurar": True}
+
+    despues = cliente.get("/trabajo?slot=5").text
+    assert "↻ Vuelve tras un apagón" in despues and 'class="marca-vuelve"' in despues
+    assert cliente.post("/api/slot/999/restaurar", json={"restaurar": True}).status_code == 404
