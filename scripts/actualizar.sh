@@ -61,7 +61,28 @@ cd "$RAIZ"
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   mal "hay cambios sin guardar en archivos del hub:"
   git status --short --untracked-files=no >&2
-  printf '    guárdalos o descártalos antes; actualizar encima los mezclaría con los nuevos\n' >&2
+  # Quien llega aquí casi nunca sabe git, y «guárdalos» sin decir cómo lo
+  # deja en manos de un stash que luego no sabe reaplicar. Lo habitual es un
+  # parche de urgencia que la versión nueva ya trae: se mira, se guarda copia
+  # y se descarta. La rama queda para lo que de verdad sea suyo.
+  rama_actual=$(git rev-parse --abbrev-ref HEAD)
+  dia=$(date +%Y%m%d)
+  cat >&2 <<EOF
+    actualizar encima los mezclaría con los nuevos. Casi siempre son arreglos
+    de urgencia que la versión nueva ya trae. Mira para qué eran (git diff),
+    guarda una copia y descártalos:
+
+      git diff > ~/cambios-hub-$dia.patch
+      git restore .
+      bash scripts/actualizar.sh
+
+    Si son algo tuyo que quieres conservar, guárdalos en una rama:
+
+      git switch -c mis-cambios-$dia
+      git commit -am "Mis cambios antes de actualizar"
+      git switch $rama_actual
+      bash scripts/actualizar.sh
+EOF
   exit 1
 fi
 rama=$(git rev-parse --abbrev-ref HEAD)

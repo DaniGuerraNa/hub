@@ -388,7 +388,11 @@ def enviar_timbres(con: sqlite3.Connection, bot_: telegram.Bot) -> int:
     salidos = 0
     for ruta in orquestador.timbres_pendientes():
         try:
-            texto = json.loads(ruta.read_text(encoding="utf-8"))["texto"]
+            datos = json.loads(ruta.read_text(encoding="utf-8"))
+            texto = datos["texto"]
+            # Otros que dejan timbre aquí (el navegante) dicen en qué pantalla
+            # se contesta; sin decirlo, es del orquestador.
+            pantalla = str(datos.get("pantalla") or "Orquestador")[:30]
         except (OSError, ValueError, KeyError) as exc:
             canal.registrar(con, "falla", f"timbre ilegible {ruta.name}: {exc}")
             ruta.unlink(missing_ok=True)
@@ -398,7 +402,7 @@ def enviar_timbres(con: sqlite3.Connection, bot_: telegram.Bot) -> int:
             ruta.unlink(missing_ok=True)
             continue
         try:
-            bot_.enviar(int(quien["user_id"]), f"🧭 {texto}\nMíralo en el hub → Orquestador.")
+            bot_.enviar(int(quien["user_id"]), f"🧭 {texto}\nMíralo en el hub → {pantalla}.")
         except telegram.TelegramCaido as exc:
             canal.registrar(con, "falla", f"no salió un timbre del orquestador: {exc}")
             break

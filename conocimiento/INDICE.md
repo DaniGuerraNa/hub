@@ -16,6 +16,7 @@ haga falta.
 | [`09-orquestador-e-intercambio.md`](09-orquestador-e-intercambio.md) | Mandar trabajo a las sesiones sin estar delante, sus permisos, y pasar archivos desde el teléfono |
 | [`10-mas-pantallas.md`](10-mas-pantallas.md) | Entrar desde el móvil (Acceso), Telegram (Canal, avisos, pánico y Encargos), las pestañas Lienzos, Consultas y Programados de Trabajo, Archivos y comandos preparados, Máquina, Consumo y los atajos |
 | [`11-versiones.md`](11-versiones.md) | Qué versión tengo, cómo me entero de que hay otra, cómo actualizo y qué significa «falta terminar de actualizar» |
+| [`12-navegante-y-reuniones.md`](12-navegante-y-reuniones.md) | Qué son Navegante y Reuniones, cómo se preparan (el agente de Windows incluido) y qué hacer si no van |
 
 🔴 **Si la pregunta es «¿puedo abrir el puerto a la red?», la respuesta es no**, y
 no hace falta abrir ningún documento para decirlo: la pantalla `/terminal` da

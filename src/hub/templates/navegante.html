@@ -1,0 +1,330 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% import "_preparar.html" as prep %}
+{% block contenido %}
+{{ prep.estilos() }}
+
+<style>
+  /* Una columna, en el orden en que se usa: lo que espera respuesta, el
+     navegador, enseñarle, correr, y lo que pasó. Pensada para usarse a diario
+     y también desde el teléfono (contestar). */
+  .nav-v { display:grid; gap:14px; grid-template-columns:minmax(0, 1fr); }
+  .nav-v code { overflow-wrap:anywhere; }
+  .nav-v .tarjeta h2 { margin:0 0 10px; font-size:15px; }
+  .nav-v .tarjeta p.ayuda { margin:0 0 10px; color:var(--texto-3); font-size:13px; max-width:70ch; }
+  .fila-ctl { display:grid; grid-template-columns:110px minmax(0,1fr) auto; gap:10px; align-items:center;
+              padding:10px 0; border-top:1px solid var(--borde); }
+  .fila-ctl:first-of-type { border-top:0; padding-top:0; }
+  .fila-ctl .que { font-weight:600; font-size:13.5px; }
+  .fila-ctl .como { font-size:13px; color:var(--texto-2); min-width:0; }
+  .fila-ctl form { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; margin:0; }
+  @media (max-width: 620px) {
+    .fila-ctl { grid-template-columns:minmax(0,1fr); gap:6px; }
+    .fila-ctl form { justify-content:flex-start; }
+  }
+  .ir-a { display:flex; gap:8px; flex-wrap:wrap; }
+  .ir-a input { flex:1; min-width:220px; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .chips button { font-size:12px; padding:4px 10px; }
+  .pregunta-nav { display:grid; gap:6px; padding:12px 0; border-top:1px solid var(--borde); }
+  .pregunta-nav:first-of-type { border-top:0; padding-top:0; }
+  .pregunta-nav .accion { font-weight:600; font-size:15px; color:var(--texto); }
+  .pregunta-nav .destino, .mono { font-family:ui-monospace, Menlo, Consolas, monospace; font-size:12px;
+                           color:var(--texto-2); overflow-wrap:anywhere; }
+  .acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .formulario { display:grid; gap:10px; max-width:640px; }
+  .formulario textarea { min-height:70px; font-family:ui-monospace, Menlo, Consolas, monospace; font-size:12.5px; }
+  .flujo { border-top:1px solid var(--borde); padding:10px 0; }
+  .flujo:first-of-type { border-top:0; padding-top:0; }
+  .flujo summary { cursor:pointer; display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+  .flujo summary .n { font-weight:600; }
+  .flujo .desc { color:var(--texto-3); font-size:12.5px; margin:6px 0 10px; max-width:70ch; }
+  .eventos { width:100%; border-collapse:collapse; font-size:12.5px; }
+  .eventos td { padding:5px 8px 5px 0; border-top:1px solid var(--borde); vertical-align:top; }
+  .eventos td.tenue:first-child { white-space:nowrap; }
+  .eventos .url { font-family:ui-monospace, Menlo, Consolas, monospace; color:var(--texto-2);
+                  overflow-wrap:anywhere; }
+  .marca { font-size:11px; padding:1px 8px; border-radius:999px; white-space:nowrap; }
+  .marca.bloqueada, .marca.denegada, .marca.caducada, .marca.fallo, .marca.apagado
+    { color:var(--riesgo); background:color-mix(in srgb, var(--riesgo) 14%, transparent); }
+  .marca.permitida, .marca.aprobada, .marca.bien, .marca.encendido
+    { color:var(--ok); background:color-mix(in srgb, var(--ok) 14%, transparent); }
+  .marca.pregunta, .marca.pendiente, .marca.en-curso, .marca.grabando, .marca.cortada
+    { color:var(--espera); background:color-mix(in srgb, var(--espera) 14%, transparent); }
+  .marca.coleccion { color:var(--texto-3); background:var(--elevado); }
+  .tabla-scroll { overflow-x:auto; }
+  .dos { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; }
+  ul.mapa-nav { margin:0; padding-left:0; list-style:none; display:grid; gap:8px; }
+  ul.mapa-nav ul { margin:4px 0 0; padding-left:18px; font-size:13px; }
+  .nav-v details.plegado > summary { cursor:pointer; font-weight:600; font-size:15px; }
+</style>
+
+{{ ui.cabecera_vista('Navegante', 'El navegador que maneja Claude: encenderlo, enseñarle, correr flujos y contestar lo que pide') }}
+
+{% set e = n.estado or {} %}
+{% set nav_ = e.navegador or {} %}
+{% set gua = e.guardian or {} %}
+{% set refrescar = n.pendientes or e.grabando or (n.corridas | selectattr('estado', 'equalto', 'en-curso') | list) %}
+<div class="nav-v" {% if refrescar %}data-refrescar="5"{% endif %}>
+<datalist id="pantallas-conocidas">{% for p in n.mapa.pantallas %}<option value="{{ p }}">{% endfor %}</datalist>
+
+{% if not n.listo %}
+  {% set sig = prep.siguiente_de(n.pasos) | trim %}
+  <div class="tarjeta prep" id="preparar">
+    <h2>Preparar el Navegante</h2>
+    {{ prep.cabeza('Un navegador de verdad que maneja Claude, con un guardián que pausa todo lo que modifica hasta que tú lo permites. Lo hace un laboratorio que viene con el hub; antes de usarlo hay que preparar su entorno una vez.',
+                   'navegador-lab', 'Ayúdame a preparar el Navegante: qué me falta y cómo lo consigo.', rail.hay_asistente) }}
+    <ol class="prep-pasos">
+      {% for p in n.pasos %}{{ prep.paso(p, loop.index, p.id == sig) }}{% endfor %}
+    </ol>
+  </div>
+{% endif %}
+
+  {# Lo que el guardián tiene en pausa se contesta siempre, preparado o no:
+     una petición esperando no puede quedar detrás de una tarjeta de pasos. #}
+
+  {% if n.pendientes %}
+  <div class="tarjeta" id="preguntas">
+    <h2>Te pregunta ({{ n.pendientes | length }})</h2>
+    {% for p in n.pendientes %}
+    <div class="pregunta-nav">
+      <span class="accion">{{ p.accion }}</span>
+      <span class="destino">{{ p.metodo }} {{ p.url }}</span>
+      <span class="tenue" style="font-size:12px">{{ p.hora }} · política {{ p.politica }}.
+        La petición está en pausa hasta que contestes; sin respuesta, cuenta como no.</span>
+      <form method="post" action="/navegante/responder" class="acciones">
+        <input type="hidden" name="id" value="{{ p.id }}">
+        <button class="boton principal" name="aprobar" value="si">Permitir una vez</button>
+        <button class="boton" name="aprobar" value="no">No</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+{% if n.listo %}
+
+  <div class="tarjeta" id="control">
+    <h2>El navegador</h2>
+
+    <div class="fila-ctl">
+      <span class="que">Navegador</span>
+      <span class="como">
+        {% if nav_.vivo %}<span class="marca encendido">encendido</span>
+          {{ nav_.pestanas | length }} pestaña{{ 's' if (nav_.pestanas | length) != 1 }}
+          {% for p in nav_.pestanas[:3] %}<br><span class="mono">{{ p.titulo[:50] or p.url[:60] }}</span>{% endfor %}
+        {% else %}<span class="marca apagado">apagado</span> El perfil guarda tu sesión entre encendidos.{% endif %}
+      </span>
+      <form method="post" action="/navegante/accion">
+        {% if nav_.vivo %}<button class="boton" name="que" value="cerrar">Cerrar</button>
+        {% else %}<button class="boton principal" name="que" value="encender">Encender</button>{% endif %}
+      </form>
+    </div>
+
+    <div class="fila-ctl">
+      <span class="que">Guardián</span>
+      <span class="como">
+        {% if gua.vivo %}<span class="marca encendido">vigilando</span> política <strong>{{ gua.politica }}</strong> · modo {{ gua.modo }}
+        {% else %}<span class="marca apagado">parado</span> 🔴 Sin guardián nada frena una petición que modifique.{% endif %}
+      </span>
+      <form method="post" action="/navegante/accion">
+        {% if gua.vivo %}<button class="boton" name="que" value="parar-guardian">Parar</button>
+        {% else %}
+          <select name="politica" aria-label="Política">
+            {% for p in n.politicas %}<option value="{{ p.archivo }}">{{ p.archivo }} ({{ p.modo }})</option>{% endfor %}
+          </select>
+          <button class="boton principal" name="que" value="guardian">Vigilar</button>
+        {% endif %}
+      </form>
+    </div>
+
+    <div class="fila-ctl">
+      <span class="que">Verlo y manejarlo</span>
+      <span class="como">La vista en vivo: ves lo que hace Claude, inicias sesión tú y grabas los flujos con tu ratón.
+        Se abre en <span class="mono">localhost:4848</span>, así que sólo desde esta PC.</span>
+      <form method="post" action="/navegante/accion">
+        <button class="boton {{ 'principal' if nav_.vivo }}" name="que" value="panel" {{ 'disabled' if not nav_.vivo }}>Preparar vista</button>
+        {% if e.panel and e.panel.vivo %}<a class="boton" href="{{ e.panel.url }}" target="_blank" rel="noopener">Abrir ↗</a>{% endif %}
+      </form>
+    </div>
+
+    <div class="fila-ctl" style="grid-template-columns:minmax(0,1fr)">
+      <form method="post" action="/navegante/accion" class="ir-a" style="justify-content:flex-start">
+        <input type="hidden" name="que" value="ir">
+        <input name="url" type="url" placeholder="https://… — abre una dirección en el navegador" aria-label="Dirección" required {{ 'disabled' if not nav_.vivo }}>
+        <button class="boton" {{ 'disabled' if not nav_.vivo }}>Ir</button>
+      </form>
+      <details style="margin-top:8px"><summary class="tenue" style="font-size:12.5px;cursor:pointer">Accesos directos</summary>
+        <form method="post" action="/navegante/accion" class="ir-a" style="margin-top:8px">
+          <input type="hidden" name="que" value="acceso">
+          <input name="nombre" placeholder="Portal AWS trabajo" aria-label="Nombre del acceso" required style="max-width:200px;min-width:140px">
+          <input name="url" type="url" placeholder="https://…awsapps.com/start" aria-label="Dirección del acceso" required>
+          <button class="boton sutil">Guardar</button>
+        </form>
+        {% for a in n.accesos %}
+        <form method="post" action="/navegante/accion" style="display:flex;gap:8px;align-items:center;margin-top:6px">
+          <input type="hidden" name="que" value="quitar-acceso"><input type="hidden" name="nombre" value="{{ a.nombre }}">
+          <span style="font-size:13px">{{ a.nombre }}</span> <span class="mono tenue">{{ a.url }}</span>
+          <button class="boton sutil" style="font-size:11px;padding:2px 8px">Quitar</button>
+        </form>
+        {% endfor %}
+      </details>
+      {% if n.accesos %}
+      <form method="post" action="/navegante/accion" class="chips" style="justify-content:flex-start">
+        <input type="hidden" name="que" value="ir">
+        {% for a in n.accesos %}<button class="boton sutil" name="url" value="{{ a.url }}" {{ 'disabled' if not nav_.vivo }}>{{ a.nombre }}</button>{% endfor %}
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tarjeta" id="ensenar">
+    <h2>Enseñarle un flujo</h2>
+    {% if not e.grabando %}
+    <p class="ayuda">Graba <strong>fragmentos</strong>: un trozo que va de una pantalla a otra (o lee una sin
+      salir de ella). Luego se unen abajo, en «Componer». Inicia sesión <strong>antes</strong> de grabar. Luego pulsa grabar, hazlo una vez en la vista en
+      vivo y vuelve aquí a guardarlo. Lo que teclees en un campo de contraseña no se guarda.</p>
+    <form method="post" action="/navegante/accion" class="acciones">
+      <button class="boton principal" name="que" value="grabar" {{ 'disabled' if not nav_.vivo }}>Empezar a grabar</button>
+      {% if not nav_.vivo %}<span class="tenue" style="font-size:12.5px">Enciende el navegador primero.</span>{% endif %}
+    </form>
+    {% else %}
+    <p class="ayuda"><span class="marca grabando">● grabando</span> Haz el flujo en la vista en vivo. Al terminar,
+      ponle nombre. En «parámetros» escribe los valores que cambiarán la próxima vez, uno por línea:
+      <span class="mono">grupo=/aws/lambda/pedidos-crear</span> — cada aparición se convierte en un hueco.</p>
+    <form method="post" action="/navegante/accion" class="formulario">
+      <input type="hidden" name="que" value="parar-grabacion">
+      <label>Nombre<input name="nombre" required pattern="[a-z0-9][a-z0-9_-]*" placeholder="errores-pedidos"></label>
+      <label>Para qué sirve<input name="descripcion" placeholder="Cuenta los errores de las Lambdas de pedidos"></label>
+      <label>Dónde guardarlo
+        <select name="coleccion">{% for c in n.colecciones %}<option>{{ c }}</option>{% endfor %}</select></label>
+      <div class="dos">
+        <label>Empieza en la pantalla<input name="desde" list="pantallas-conocidas" placeholder="apigw-lista"></label>
+        <label>Termina en<input name="hasta" list="pantallas-conocidas" placeholder="apigw-detalle"></label>
+      </div>
+      <label>Parámetros<textarea name="parametros" placeholder="base=https://…&#10;grupo=/aws/lambda/…"></textarea></label>
+      <div class="acciones"><button class="boton principal">Parar y guardar</button></div>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta" id="flujos">
+    <h2>Flujos</h2>
+    {% for f in n.flujos %}
+    <details class="flujo">
+      <summary><span class="n">{{ f.nombre }}</span> <span class="marca coleccion">{{ f.coleccion }}</span>
+        {% if f.pantallas and f.pantallas.desde %}<span class="mono tenue">{{ f.pantallas.desde }} → {{ f.pantallas.hasta or f.pantallas.desde }}</span>{% endif %}
+        <span class="tenue" style="font-size:12px">{{ f.pasos }} pasos{% if f.usa %} · une {{ f.usa | length }} fragmentos{% endif %} · {{ f.modo }}</span></summary>
+      {% if f.error %}<p class="desc">No se puede leer: {{ f.error }}</p>{% else %}
+      {% if f.descripcion %}<p class="desc">{{ f.descripcion }}</p>{% endif %}
+      <form method="post" action="/navegante/accion" class="formulario">
+        <input type="hidden" name="que" value="correr">
+        <input type="hidden" name="flujo" value="{{ f.coleccion }}/{{ f.nombre }}">
+        {% for k, d in f.parametros.items() if not (d or {}).secreto %}
+        <label>{{ k }}{% if d and d.descripcion %} — {{ d.descripcion }}{% endif %}
+          <input name="p_{{ k }}" value="{{ (d or {}).defecto or (d or {}).ejemplo or '' }}"></label>
+        {% endfor %}
+        <div class="acciones"><button class="boton principal" {{ 'disabled' if not (nav_.vivo and gua.vivo) }}>Correr</button>
+          {% if not gua.vivo %}<span class="tenue" style="font-size:12.5px">Hace falta el guardián vigilando.</span>{% endif %}
+          <span class="mono tenue">{{ f.ruta }}</span></div>
+      </form>
+      {% if f.usa %}<p class="desc">Une: {% for u in f.usa %}<span class="mono">{{ u }}</span>{{ ' → ' if not loop.last }}{% endfor %}</p>{% endif %}
+      <form method="post" action="/navegante/accion" class="acciones" style="margin-top:8px">
+        <input type="hidden" name="que" value="pantallas">
+        <input type="hidden" name="flujo" value="{{ f.coleccion }}/{{ f.nombre }}">
+        <input name="desde" list="pantallas-conocidas" value="{{ (f.pantallas or {}).desde or '' }}" placeholder="empieza en" aria-label="Empieza en" style="max-width:160px">
+        <input name="hasta" list="pantallas-conocidas" value="{{ (f.pantallas or {}).hasta or '' }}" placeholder="termina en" aria-label="Termina en" style="max-width:160px">
+        <button class="boton sutil">Marcar pantallas</button>
+      </form>
+      {% endif %}
+    </details>
+    {% else %}
+    <p class="tenue" style="margin:0">Ninguno todavía. Enséñale uno arriba.</p>
+    {% endfor %}
+  </div>
+
+  <div class="tarjeta" id="componer">
+    <h2>Componer</h2>
+    <p class="ayuda">Une fragmentos en orden en un flujo nuevo. Los parámetros con el mismo nombre (región, base)
+      se comparten. Si uno no termina en la pantalla donde empieza el siguiente, te avisa.</p>
+    {% if n.flujos | length >= 2 %}
+    <form method="post" action="/navegante/accion" class="formulario">
+      <input type="hidden" name="que" value="componer">
+      {% for i in range(1, 6) %}
+      <label>{{ i }}.º
+        <select name="pieza_{{ i }}">
+          <option value="">{{ '—' if i > 2 else 'elige' }}</option>
+          {% for f in n.flujos %}<option value="{{ f.coleccion }}/{{ f.nombre }}">{{ f.coleccion }}/{{ f.nombre }}{% if f.pantallas and f.pantallas.desde %} ({{ f.pantallas.desde }} → {{ f.pantallas.hasta or f.pantallas.desde }}){% endif %}</option>{% endfor %}
+        </select></label>
+      {% endfor %}
+      <div class="dos">
+        <label>Nombre<input name="nombre" required pattern="[a-z0-9][a-z0-9_-]*" placeholder="revisar-api"></label>
+        <label>Dónde guardarlo<select name="coleccion">{% for c in n.colecciones %}<option>{{ c }}</option>{% endfor %}</select></label>
+      </div>
+      <label>Para qué sirve<input name="descripcion"></label>
+      <div class="acciones"><button class="boton principal">Componer</button></div>
+    </form>
+    {% else %}<p class="tenue" style="margin:0">Hacen falta al menos dos flujos.</p>{% endif %}
+  </div>
+
+  <div class="tarjeta" id="mapa">
+    <h2>Mapa de pantallas</h2>
+    {% if n.mapa.pantallas %}
+    <p class="ayuda">De cada pantalla, los fragmentos que salen de ella y adónde llevan.</p>
+    <ul class="mapa-nav">
+      {% for p, caminos in n.mapa.salen.items() %}
+      <li><strong class="mono">{{ p }}</strong>
+        {% if caminos %}<ul>{% for c in caminos %}
+          <li><span class="mono">{{ c.flujo }}</span> → {% if c.hasta == p %}<span class="tenue">se queda</span>{% else %}<span class="mono">{{ c.hasta }}</span>{% endif %}</li>
+        {% endfor %}</ul>{% else %}<span class="tenue" style="font-size:12px"> · no sale ningún fragmento</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="tenue" style="margin:0">Marca en qué pantalla empieza y acaba cada flujo y aparecerá aquí.</p>{% endif %}
+    {% if n.mapa.sin_pantalla %}<p class="tenue" style="font-size:12.5px;margin:8px 0 0">Sin pantallas marcadas:
+      {% for x in n.mapa.sin_pantalla %}<span class="mono">{{ x }}</span>{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+  </div>
+
+  <div class="tarjeta" id="corridas">
+    <h2>Corridas</h2>
+    {% for c in n.corridas %}
+    <p style="margin:4px 0"><span class="marca {{ c.estado }}">{{ {'bien':'bien','fallo':'falló','en-curso':'en curso','cortada':'cortada'}[c.estado] }}</span>
+      {% if c.estado in ['bien', 'fallo'] %}<a href="/navegante/corrida?flujo={{ c.flujo }}&cuando={{ c.cuando }}"><strong>{{ c.flujo }}</strong></a>
+      {% else %}<strong>{{ c.flujo }}</strong>{% endif %}
+      <span class="tenue">{{ c.cuando[6:8] }}-{{ c.cuando[4:6] }} {{ c.cuando[9:11] }}:{{ c.cuando[11:13] }}:{{ c.cuando[13:15] }}</span></p>
+    {% else %}
+    <p class="tenue" style="margin:0">Ninguna todavía.</p>
+    {% endfor %}
+  </div>
+
+  <details class="tarjeta plegado">
+    <summary>Lo que decidió el guardián</summary>
+    {% if n.registro %}
+    <div class="tabla-scroll" style="margin-top:10px"><table class="eventos">
+      {% for e_ in n.registro %}
+      <tr><td class="tenue">{{ e_.hora }}</td>
+          <td><span class="marca {{ e_.evento }}">{{ e_.evento }}</span></td>
+          <td>{{ e_.accion }}</td>
+          <td class="url">{{ e_.metodo }} {{ e_.url }}</td>
+          <td class="tenue">{{ e_.motivo }}</td></tr>
+      {% endfor %}
+    </table></div>
+    {% else %}<p class="tenue">Sin registro todavía.</p>{% endif %}
+  </details>
+
+  {% if n.preguntas | rejectattr('estado', 'equalto', 'pendiente') | list %}
+  <details class="tarjeta plegado">
+    <summary>Preguntas contestadas</summary>
+    <div class="tabla-scroll" style="margin-top:10px"><table class="eventos">
+      {% for p in n.preguntas if p.estado != 'pendiente' %}
+      <tr><td class="tenue">{{ p.hora }}</td><td><span class="marca {{ p.estado }}">{{ p.estado }}</span></td>
+          <td>{{ p.accion }}</td><td class="url">{{ p.metodo }} {{ p.url }}</td></tr>
+      {% endfor %}
+    </table></div>
+  </details>
+  {% endif %}
+{% endif %}
+</div>
+<script src="/static/navegante.js"></script>
+<script src="/static/guia.js"></script>
+{% endblock %}

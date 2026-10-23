@@ -25,6 +25,9 @@ def registro(monkeypatch):
 
     monkeypatch.setattr(tmux, "_correr", falso)
     monkeypatch.setattr(tmux, "rama_git", lambda cwd: None)
+    # El listado lleva DESKTOP como el título que tmux pone solo (el hostname):
+    # sin fijarlo, la prueba sólo pasaba en una máquina que se llamara así.
+    monkeypatch.setattr(tmux, "_titulo_por_defecto", lambda: {"desktop"})
     return llamadas
 
 

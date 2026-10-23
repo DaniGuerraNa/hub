@@ -1,0 +1,50 @@
+{% extends "base.html" %}{% block titulo %}CloudWatch{% endblock %}{% block contenido %}
+<nav class="lateral" aria-label="CloudWatch"><strong>CloudWatch</strong>
+<a href="#home">Panel</a><a href="#logsV2:log-groups">Grupos de registros</a><a href="#logsV2:logs-insights">Logs Insights</a></nav>
+<div style="overflow:hidden" id="vista"></div>
+<template id="t-insights">
+ <h1>Logs Insights</h1>
+ <div class="panel">
+  <fieldset><legend>Grupos de registros</legend>
+  {% for g in grupos %}<label style="display:block"><input type="checkbox" class="grupo" value="{{ g }}"> {{ g }}</label>{% endfor %}
+  </fieldset>
+  <label for="editor" style="display:block;margin-top:10px">Consulta</label>
+  <div id="editor" role="textbox" aria-multiline="true" aria-label="Editor de consultas" contenteditable="true"
+   style="font:13px monospace;border:1px solid #aab7b8;min-height:80px;padding:8px;white-space:pre;background:#fbfbfb">fields @timestamp, @message, @logStream
+| sort @timestamp desc
+| limit 20</div>
+  <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+   <button class="boton primario" id="ejecutar">Ejecutar consulta</button>
+   <span id="estado" role="status"></span></div>
+ </div>
+ <div class="panel"><h2>Registros</h2><div id="resultados"><p>Sin resultados todavía.</p></div></div>
+</template>
+<template id="t-grupos"><h1>Grupos de registros</h1><ul>{% for g in grupos %}<li>{{ g }}</li>{% endfor %}</ul></template>
+<template id="t-home"><h1>CloudWatch</h1><p>Panel de mentira.</p></template>
+<script>
+ // Como la real: la vista depende del fragmento y el servidor no lo ve.
+ function pintar(){const h=location.hash.slice(1);const id=h.includes('logs-insights')?'t-insights':h.includes('log-groups')?'t-grupos':'t-home';
+  vista.replaceChildren(document.getElementById(id).content.cloneNode(true));
+  if(id==='t-insights'){
+   // Deep link: #logsV2:logs-insights?queryDetail=<json> pre-rellena consulta y grupos.
+   const q=h.split('?queryDetail=')[1];
+   if(q){try{const d=JSON.parse(decodeURIComponent(q));if(d.editorString)editor.textContent=d.editorString;
+     (d.source||[]).forEach(g=>{const c=[...document.querySelectorAll('.grupo')].find(x=>x.value===g);if(c)c.checked=true});}catch(e){}}
+   ejecutar.onclick=lanzar;}}
+ async function lanzar(){
+  const grupos=[...document.querySelectorAll('.grupo:checked')].map(c=>c.value);
+  estado.textContent='Ejecutando…';resultados.innerHTML='';
+  const r=await fetch('/api/logs/StartQuery',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({queryString:editor.innerText,logGroupNames:grupos})});
+  const j=await r.json();if(!r.ok){estado.textContent='Error: '+j.error;return;}
+  let res;do{await new Promise(s=>setTimeout(s,500));
+   res=await (await fetch('/api/logs/GetQueryResults',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({queryId:j.queryId})})).json();
+  }while(res.status==='Running');
+  estado.textContent=`Completada: ${res.filas.length} registros de ${res.registros_escaneados} escaneados`;
+  const t=document.createElement('table');t.setAttribute('aria-label','Resultados');
+  t.innerHTML='<thead><tr>'+res.campos.map(c=>'<th></th>').join('')+'</tr></thead><tbody></tbody>';
+  t.querySelectorAll('th').forEach((th,i)=>th.textContent=res.campos[i]);
+  res.filas.forEach(f=>{const tr=t.tBodies[0].insertRow();f.forEach(v=>tr.insertCell().textContent=v)});
+  resultados.append(t);}
+ addEventListener('hashchange',pintar);pintar();
+</script>
+{% endblock %}

@@ -73,6 +73,18 @@ def _datos_aparte(tmp_path, monkeypatch):
     # distintas en cada máquina. Apuntando a una carpeta que no existe, el que se
     # olvide se lleva un `ConsumoNoMedido` y se entera.
     monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path / "registro-que-no-existe"))
+    # Y el laboratorio del navegador: en la máquina de quien ejecuta puede haber
+    # preguntas pendientes de verdad, y el raíl las contaría en cada pantalla.
+    monkeypatch.setenv("NAV_DATOS", str(tmp_path / "navegador-lab-que-no-existe"))
+    # Y Reuniones: por omisión lee las grabaciones de verdad en `D:` y la llave
+    # del agente se escribiría en su carpeta real (decisión 280).
+    monkeypatch.setenv("REUNIONES_RAIZ", str(tmp_path / "reuniones-que-no-existen" / "grabaciones"))
+    monkeypatch.setenv("REUNIONES_AGENTE", str(tmp_path / "agente-que-no-existe"))
+    # Y los componentes mismos (decisión 293): sin esto, la suite medía el
+    # laboratorio y el procesado de verdad de quien la ejecuta, y «preparado»
+    # dependía de su máquina.
+    monkeypatch.setenv("NAV_LAB", str(tmp_path / "laboratorio-que-no-existe"))
+    monkeypatch.setenv("REUNIONES_PROYECTO", str(tmp_path / "procesado-que-no-existe"))
     # Y el estado que Claude Code escribe de cada sesión viva (decisión 270): el
     # orquestador lo consulta en cada espera, y en la máquina de quien ejecuta
     # la suite hay sesiones reales en paneles `%5` de verdad.

@@ -380,4 +380,7 @@ def test_actualizar_no_pisa_cambios_sin_guardar(clon_desechable):
 
     assert r.returncode != 0
     assert "cambios sin guardar" in r.stderr
+    assert "git diff > ~/cambios-hub-" in r.stderr
+    assert "git restore ." in r.stderr
+    assert "git switch -c mis-cambios-" in r.stderr
     assert not (casa / "version.json").exists()

@@ -1,0 +1,10 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Iniciar sesión | Consola FALSA</title></head>
+<body style="font:14px system-ui;display:grid;place-items:center;height:90vh;background:#f2f3f3">
+<form method="post" action="/login" style="background:#fff;padding:28px;display:grid;gap:10px;width:320px">
+ <h1 style="font-size:20px;margin:0">Iniciar sesión (IAM Identity Center FALSO)</h1>
+ <input type="hidden" name="siguiente" value="{{ siguiente }}">
+ <label>Usuario <input name="usuario" required autocomplete="username"></label>
+ <label>Contraseña <input name="clave" type="password" required autocomplete="current-password"></label>
+ <label><input type="checkbox" name="recordar" value="1"> Recordar este dispositivo</label>
+ <button>Iniciar sesión</button>
+</form></body></html>

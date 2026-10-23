@@ -37,11 +37,64 @@ Hace todo lo que una versión necesita:
 - comprueba que el hub contesta;
 - al final te enseña qué cambió.
 
-Tus datos (`~/.local/share/hub/`) no se tocan.
+Tus datos (`~/.local/share/hub/`) no se borran ni se editan. Lo único que
+cambia ahí es lo que la versión necesita: se apunta la versión instalada
+(`version.json`), y la base recibe las tablas o columnas nuevas, sin perder
+lo que tenía. Del asistente se refrescan sus archivos, y cada uno que cambia
+queda al lado con `.antes-<fecha>`.
 
 Si algo falla, para ahí y lo dice, y la versión no se da por instalada.
 Arregla lo que diga y vuelve a correrlo: retoma desde el principio sin
 problema. Si ya bajaste el código a mano, usa `--sin-bajar`.
+
+## Dónde está «la carpeta del hub»
+
+Es el clon desde el que corren los servicios, y no tiene por qué ser la
+carpeta en la que estés. En Windows el hub vive **dentro de WSL**: el comando
+se corre en la terminal de Ubuntu, no en PowerShell ni en una copia del repo
+en el disco de Windows. Para saber cuál es:
+
+```bash
+systemctl --user show hub-web -p WorkingDirectory
+```
+
+Sin servicios, es la carpeta desde la que lanzas `bash scripts/arrancar.sh`.
+
+## Tengo cambios míos en el clon
+
+Si tocaste el código del hub —o se lo pediste a una sesión de Claude—,
+`actualizar.sh` (y `git pull`) paran antes de pisarlo y lo dicen.
+
+**Lo habitual es que sean arreglos de urgencia**: algo no funcionaba y se
+parcheó ahí mismo. La versión nueva casi siempre los trae resueltos, así que
+lo que conviene es mirar para qué eran, guardar una copia y descartarlos:
+
+```bash
+git diff                                 # para qué eran
+git diff > ~/cambios-hub-$(date +%Y%m%d).patch   # la copia, por si acaso
+git restore .                            # descarta sólo cambios del código del hub
+bash scripts/actualizar.sh
+```
+
+`git restore .` sólo deshace cambios en archivos del repo del hub. Tus datos
+(`~/.local/share/hub/`: el registro, la base, los respaldos) y tus proyectos
+están fuera y no se tocan.
+
+Si después de actualizar vuelve a fallar lo que parcheaste, **cuéntalo** con
+esa copia: es la forma de que el arreglo llegue a la versión publicada.
+
+Si en cambio son algo tuyo que quieres conservar, guárdalos en una rama:
+
+```bash
+git switch -c mis-cambios-$(date +%Y%m%d)
+git commit -am "Mis cambios antes de actualizar"
+git switch main
+bash scripts/actualizar.sh
+```
+
+El hub queda **sin** ellos; siguen en esa rama. `git stash` también sirve,
+pero reaplicarlo encima de la versión nueva suele dar conflictos, y un stash
+olvidado no se ve en ningún sitio.
 
 ## «Falta terminar de actualizar»
 
@@ -52,7 +105,16 @@ asistente pueden ser los de la versión anterior. Se arregla con
 `bash scripts/actualizar.sh --sin-bajar`.
 
 **Si instalaste el hub antes de la 0.2.0**, es lo que verás la primera vez: esa
-versión es la primera con número, y antes no existía `actualizar.sh`.
+versión es la primera con número, y antes no existía `actualizar.sh`. Esa vez,
+en la carpeta del hub:
+
+```bash
+git status --short --untracked-files=no     # si sale algo, mira «Tengo cambios míos en el clon»
+git pull --ff-only && bash scripts/actualizar.sh --sin-bajar
+```
+
+Da igual a qué versión llegues: el comando es el mismo, y al final te enseña
+lo que cambió en todas las que cruzaste.
 
 ## Qué cambió en cada versión
 

@@ -1,0 +1,11 @@
+nombre: apigw-lista
+descripcion: Abre la lista de API Gateway de una región y la guarda.
+modo: lectura
+pantallas: {desde: consola, hasta: apigw-lista}
+parametros:
+  base: {ejemplo: http://127.0.0.1:8790}
+  region: {defecto: us-east-1}
+pasos:
+  - ir: "{{base}}/apigateway/main/apis?region={{region}}"
+  - esperar: {rol: table, nombre: APIs}
+  - extraer: {tabla: APIs, a: apis}

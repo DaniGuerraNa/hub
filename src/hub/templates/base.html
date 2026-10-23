@@ -881,14 +881,21 @@ dialog.paleta li .detalle {
       ('/consumo', 'consumo', 'Consumo', 'lineas'),
       ('/conexiones', 'conexiones', 'Conexiones', 'enlace'),
       ('/orquestador', 'orquestador', 'Orquestador', 'agente'),
+      ('/navegante', 'navegante', 'Navegante', 'navegador'),
+      ('/reuniones', 'reuniones', 'Reuniones', 'reunion'),
       ('/canal', 'canal', 'Canal', 'conversacion'),
       ('/encargos', 'encargos', 'Encargos', 'bandeja'),
       ('/acceso', 'acceso', 'Acceso', 'llave'),
       ('/contexto', 'contexto', 'Contexto', 'documento'),
       ('/guia', 'guia', 'Guía', 'ok')] %}
+  {# Navegante y Reuniones salen siempre, también sin preparar: su pantalla
+     enseña entonces los pasos para tenerlos, y una entrada que no sale no se
+     descubre (decisión 293). #}
   <a href="{{ ruta }}" class="enlace {{ 'aqui' if seccion == clave }}" title="{{ nombre }}">
     {{ ui.icono(icono) }}<span class="nom">{{ nombre }}</span>
-    {% if clave == 'respaldo' and rail.sin_respaldo %}
+    {% if clave == 'navegante' and rail.navegante_pendientes %}
+      <span class="cuenta urge">{{ rail.navegante_pendientes }}</span>
+    {% elif clave == 'respaldo' and rail.sin_respaldo %}
       <span class="cuenta urge">{{ rail.sin_respaldo }}</span>
     {% elif clave == 'servicios' and rail.servicios %}
       <span class="cuenta">{{ rail.servicios }}</span>
@@ -987,12 +994,16 @@ dialog.paleta li .detalle {
        «Reescanear» en el inventario: bajo la rueda. #}
     <div id="asistente-acciones">
       <span class="tenue" id="asistente-estado"></span>
+      {# A la vista y no bajo la rueda: es lo que se busca al entrar —«¿dónde
+         está lo que hablamos ayer?»— y no es irreversible (decisión 290). #}
+      <button class="sutil" id="asistente-anteriores"
+              title="Volver a una conversación anterior con el asistente">Chats anteriores</button>
       {% call ui.menu_ajustes('Acciones del asistente', 'der arriba') %}
         <div class="rotulo-menu">Su contexto</div>
         <button class="sutil" id="asistente-compactar"
                 title="Genera sus propias instrucciones y compacta">Compactar</button>
         <button class="sutil peligro" id="asistente-limpiar"
-                title="Borra su contexto">Limpiar</button>
+                title="Empieza una conversación nueva; la de ahora queda en «Chats anteriores»">Limpiar</button>
         <div class="separador"></div>
         <div class="rotulo-menu">Si algo falla</div>
         <a class="boton sutil" id="asistente-crudo" href="/terminal?session=asistente"

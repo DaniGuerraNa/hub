@@ -78,6 +78,8 @@ scripts/actualizar.sh --sin-bajar`.
 | **Máquina** | Cómo está el equipo cuando no hay nadie delante: disco, memoria, GPU y, si hay un SAI por USB, si se fue la luz |
 | **Consumo** | Cuántos tokens ha costado cada proyecto en los últimos días, leído del registro de Claude Code (que borra lo de más de 30 días) |
 | **Orquestador** | Le das una tarea y él se la pide a la sesión de cada proyecto, paso a paso. Ver [`conocimiento/09`](conocimiento/09-orquestador-e-intercambio.md) antes de darle permisos |
+| **Navegante** | Un navegador de verdad que maneja Claude, con un guardián que pausa lo que modifica hasta que lo permites. Se le enseña un flujo haciéndolo una vez |
+| **Reuniones** | Graba la reunión de otro monitor (pantalla, audio de la aplicación y tu micro) y la procesa en tu máquina: transcripción, resumen y tareas. Necesita un agente pequeño en Windows |
 | **Canal** y **Encargos** | Preguntar y recibir encargos por Telegram. Opcionales: sus servicios se instalan parados |
 | **Acceso** | Usar el hub desde el móvil u otro aparato: por qué nombres se entra, qué aparatos pueden, y si la terminal está abierta desde fuera. Ver [`conocimiento/10`](conocimiento/10-mas-pantallas.md) |
 | **Guía** | Por dónde empezar: los primeros pasos, que se marcan solos al hacerlos, y qué hay en cada pantalla. Con «Guíame», el asistente te acompaña |
@@ -168,7 +170,9 @@ WSL o Linux con `git`, `tmux`, [`uv`](https://astral.sh/uv) y
 [Claude Code](https://claude.com/claude-code). Python 3.12 no hace falta
 tenerlo: uv lo descarga solo. `systemd --user` es lo normal para que arranque
 solo, pero sin él también funciona (`--sin-servicios`). Opcionalmente `docker`
-y `rg`. El diagnóstico te lo dice todo:
+y `rg`. Navegante y Reuniones traen su propio componente y se preparan
+desde su pantalla ([`conocimiento/12`](conocimiento/12-navegante-y-reuniones.md)).
+El diagnóstico te lo dice todo:
 
 ```bash
 bash scripts/doctor.sh

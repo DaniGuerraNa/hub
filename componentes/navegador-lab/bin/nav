@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# `nav` desde cualquier carpeta: corre la CLI con el entorno del laboratorio.
+# PYTHONPATH porque el laboratorio no se instala como paquete; sin él, `nav`
+# sólo funcionaba lanzado desde su carpeta (el hub lo llama desde la suya).
+RAIZ="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+unset VIRTUAL_ENV
+PYTHONPATH="$RAIZ${PYTHONPATH:+:$PYTHONPATH}" exec uv run --quiet --project "$RAIZ" python -m navegador.cli "$@"

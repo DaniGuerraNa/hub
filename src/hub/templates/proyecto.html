@@ -348,7 +348,7 @@
       </label>
       <label>
         <input type="checkbox" name="restaurar" value="1" style="width:auto"
-          {% if s.restaurar %}checked{% endif %}> devolverlo tras un apagón
+          {% if s.restaurar %}checked{% endif %}> persistente (se reabre al volver a encender el equipo)
       </label>
       <label>Mover a otro proyecto (id, vacío = no mover)</label>
       <input type="text" name="mover_a" placeholder="{{ p.id }}">

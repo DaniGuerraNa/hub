@@ -1,6 +1,6 @@
 [project]
 name = "hub"
-version = "0.3.0"
+version = "0.3.1"
 description = "Índice central de proyectos, sesiones de trabajo y capacidades"
 requires-python = ">=3.12"
 dependencies = [

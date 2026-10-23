@@ -20,6 +20,38 @@ La relación es: `proyecto → N slots → 1 nota por slot, y N ventanas por slo
   ventana que estás mirando, no la del slot con el que entraste.
 - Se guarda sola mientras escribes.
 
+### El árbol de la izquierda
+
+Proyecto → slot → ventanas, una dentro de otra. Bajo cada slot están sus
+ventanas abiertas, cada una con su punto de estado: pulsa una para verla, doble
+clic para renombrarla, **×** para cerrarla y **«+ Ventana»** para abrir otra en
+la carpeta del slot. Las ventanas que no son de ningún slot están al final, en
+«Sin organizar». En el escritorio el árbol sustituye a las pestañas de encima
+de la terminal; con el raíl plegado, a pantalla completa o en el móvil vuelven
+las pestañas.
+
+### Crear un proyecto o un slot
+
+En la lista de la izquierda de Trabajo: **«+ Proyecto»** arriba, y **«+ Slot
+nuevo»** al final de cada proyecto. El slot nuevo se abre solo con Claude dentro
+y te lleva a su terminal. Los proyectos sin nada abierto no salen en la lista;
+para ellos está **«+ Slot en otro proyecto»**, al final.
+
+### Retomar una conversación
+
+Cerrar la terminal no borra la conversación: Claude Code la guarda entera. En la
+cabecera del slot, **«Conversaciones»** lista las de su carpeta, la última
+arriba, con su título (o lo primero que pediste) y cuándo fueron.
+**«Retomar»** abre una ventana nueva del slot con esa conversación, tal como la
+dejaste. La que ya está abierta en una ventana dice «abierta ahora» y te lleva a
+ella en vez de abrirla dos veces. Un slot sin ventanas te las ofrece en el
+centro de la pantalla.
+
+El asistente tiene lo mismo bajo su chat: **«Chats anteriores»**. «Limpiar»
+empieza una conversación nueva y la anterior queda ahí.
+
+Claude Code borra las conversaciones de más de 30 días.
+
 ## La pantalla del proyecto: donde se administran los slots
 
 `/proyecto/<id>` — se llega pinchando cualquier proyecto. No sale en el raíl
@@ -88,25 +120,26 @@ Se recuerdan entre sesiones.
 
 Además `A−`/`A+` (9–22) y los bordes entre paneles se arrastran.
 
-## Recuperación tras un corte
+## Slots persistentes: recuperar el trabajo al reiniciar
 
 Un demonio fotografía el estado de tmux cada 20 segundos. Si el servidor de tmux
-muere —se cerró WSL, se apagó la PC—, el hub **conserva la última muestra buena**
+muere —cerraste WSL, apagaste o reiniciaste el equipo, se fue la luz—, el hub **conserva la última muestra buena**
 y te la enseña en la portada: qué paneles tenías, en qué carpetas y con qué
 slots.
 
 Es lo que te deja retomar sin reconstruirlo de memoria.
 
-### Volver a abrir las ventanas
+### Marcar un slot como persistente
 
-En la portada aparece **«Abrir N ventanas»**, pero sólo para los slots que
-**vuelven tras un apagón**. Viene desmarcado, así que márcalo en los que
-quieras recuperar: en **Trabajo**, en la cabecera del slot, pulsa **«↻ No vuelve
-tras un apagón»** y pasa a **«↻ Vuelve tras un apagón»**. En la lista de la
-izquierda, los marcados llevan un **↻** junto al nombre. (También está la casilla
-al editar el slot, en la pantalla del proyecto.)
+Un slot **persistente** se reabre cuando vuelves a encender el equipo: la
+portada te ofrece **«Reabrir tus slots persistentes»** con un botón **«Abrir N
+ventanas»**. Los slots nacen no persistentes; márcalo en los que quieras
+conservar: en **Trabajo**, en la cabecera del slot, pulsa **«↻ No persistente»**
+y pasa a **«↻ Persistente»**. En la lista de la izquierda, los persistentes
+llevan un **↻** junto al nombre. (También está la casilla al editar el slot, en
+la pantalla del proyecto.)
 
-Restaurar abre cada ventana **en su carpeta** y, en las que tenían Claude Code,
+Reabrir abre cada ventana **en su carpeta** y, en las que tenían Claude Code,
 deja escrito **`claude --resume <id>`**: la conversación exacta que tenía esa
 ventana. Pulsas Enter y sigues donde estabas. Si no se sabe cuál era, o la
 carpeta ya no existe, deja `claude` a secas. Nunca pulsa Enter ni relanza nada
@@ -119,13 +152,13 @@ ponlo en `HUB_COMANDO_CLAUDE` (ver `INSTALAR.md`).
 
 ### Salud del hub
 
-Para que un apagón tenga vuelta, el muestreo (`hub-snapshotter`) tiene que estar
+Para que el hub pueda reabrir tu trabajo, el muestreo (`hub-snapshotter`) tiene que estar
 corriendo **antes**: es quien apunta qué ventanas tenías. En **Máquina →
 Salud del hub** ves, con su arreglo, si:
 
 - el muestreo late;
 - hay tmux abierto;
-- algún slot vuelve tras un apagón;
+- tienes algún slot persistente;
 - los servicios del hub están en marcha y arrancan solos;
 - el hub sigue vivo al cerrar todas las terminales (*linger*);
 - la copia diaria de la base está al día.

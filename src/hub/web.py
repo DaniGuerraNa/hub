@@ -27,9 +27,9 @@ from fastapi.templating import Jinja2Templates
 
 from . import consumo as _consumo_mod
 from . import (acceso, agentes, api, asistente, avisos, busqueda, buzon, canal, catalogo,
-               comandos, config, db, encargos, entrega, entrevistador, insignias,
+               comandos, config, conversaciones, db, encargos, entrega, entrevistador, insignias,
                intercambio, lienzos, maquina, navegador, orquestador,
-               programados, registry, rele, rele_encargos, servicios,
+               programados, registry, restauracion, rele, rele_encargos, servicios,
                slots, snapshotter, terminal, tmux, transcripts)
 from . import conexiones as conexiones_mod
 from . import repos as repos_git
@@ -1199,6 +1199,262 @@ async def orquestador_detener(request: Request):
     return _volver(f"/orquestador?tarea={quote(tarea_id)}", "Detenida." + extra, fugaz=True)
 
 
+@app.get("/reuniones")
+def reuniones_vista(request: Request, aviso: str = ""):
+    """Grabar una reunión en otro monitor mientras se trabaja, y lo procesado."""
+    return _vista(request, "reuniones.html", {"r": api.reuniones(), "aviso": aviso,
+                                              "titulo": "Reuniones", "seccion": "reuniones"})
+
+
+@app.get("/reuniones/miniatura/{n}")
+def reuniones_miniatura(n: int):
+    from . import reuniones
+    p = reuniones.miniatura(n)
+    return FileResponse(p, media_type="image/jpeg") if p else PlainTextResponse("no hay", status_code=404)
+
+
+@app.get("/reuniones/{id_}")
+def reunion_vista(request: Request, id_: str):
+    try:
+        d = api.reunion(id_)
+    except ValueError as exc:
+        return _volver("/reuniones", str(exc))
+    return _vista(request, "reunion.html", {"d": d, "titulo": (d.get("resumen") or {}).get("titulo") or id_,
+                                            "seccion": "reuniones"})
+
+
+@app.get("/reuniones/{id_}/foto/{segundo}")
+def reunion_foto(id_: str, segundo: int):
+    from . import reuniones
+    try:
+        return FileResponse(reuniones.foto(id_, segundo), media_type="image/jpeg")
+    except ValueError:
+        return PlainTextResponse("no existe", status_code=404)
+
+
+@app.post("/reuniones/conectar")
+def reuniones_conectar(request: Request):
+    """Saca la llave del agente y la deja en su carpeta (decisión 280).
+
+    🔴 La llave se pinta en ESTA respuesta y en ninguna otra: no va por la URL
+    de `_volver` —quedaría en el historial y en los registros— ni se puede
+    volver a leer después, porque el hub sólo guarda su hash. Llegar aquí ya
+    exige ser de casa o un aparato dado de alta, y un `Origin` propio."""
+    from . import reuniones
+    nueva = reuniones.conectar_agente()
+    return _vista(request, "reuniones.html", {"r": api.reuniones(), "aviso": "", "llave_nueva": nueva,
+                                              "titulo": "Reuniones", "seccion": "reuniones"})
+
+
+@app.post("/reuniones/carpeta")
+async def reuniones_carpeta(request: Request):
+    """Dónde va el agente en Windows: el único dato que hace falta pedir."""
+    from . import reuniones
+    f = await request.form()
+    try:
+        destino = reuniones.guardar_carpeta_windows(str(f.get("ruta") or ""))
+    except ValueError as exc:
+        return _volver("/reuniones", f"No se guardó: {exc}.")
+    return _volver("/reuniones", f"Guardado: desde aquí se ve como {destino}.", fugaz=True)
+
+
+@app.post("/reuniones/copiar-agente")
+def reuniones_copiar_agente():
+    from . import reuniones
+    try:
+        hecho = reuniones.copiar_agente()
+    except (ValueError, OSError) as exc:
+        return _volver("/reuniones", f"No se copió: {exc}")
+    return _volver("/reuniones", f"Agente copiado a {hecho['windows']}. Ahora, en Windows, doble clic en "
+                                 "instalar.cmd dentro de esa carpeta.")
+
+
+@app.post("/componentes/preparar")
+async def componentes_preparar(request: Request):
+    """La ventana en la carpeta del componente con el encargo escrito y sin Enter (decisión 293)."""
+    from . import componentes
+    f = await request.form()
+    nombre = str(f.get("nombre") or "")
+    volver = "/navegante" if nombre == "navegador-lab" else "/reuniones"
+    try:
+        hecho = componentes.preparar(nombre)
+    except (ValueError, RuntimeError, tmux.TmuxNoDisponible) as exc:
+        return _volver(volver, f"No se abrió la ventana: {exc}")
+    destino = f"/trabajo?session={quote(hecho['session'])}"
+    if hecho["ventana"] is not None:
+        destino += f"&ventana={hecho['ventana']}"
+    return _volver(destino)
+
+
+@app.get("/api/componentes")
+def api_componentes():
+    return {"ok": True, **api.componentes()}
+
+
+@app.post("/api/componentes/preparar")
+async def api_componentes_preparar(request: Request):
+    """Lo mismo que el botón, para el asistente: prepara, no lanza (decisión 293)."""
+    from . import componentes
+    cuerpo = await request.json()
+    try:
+        return {"ok": True, **componentes.preparar(str(cuerpo.get("nombre") or ""))}
+    except (ValueError, RuntimeError, tmux.TmuxNoDisponible) as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/reuniones/accion")
+async def reuniones_accion(request: Request):
+    from . import reuniones
+    f = await request.form()
+    que = str(f.get("que") or "")
+    try:
+        if que == "grabar":
+            o = reuniones.grabar(str(f.get("monitor") or ""), str(f.get("app") or ""),
+                                 str(f.get("micro") or ""), str(f.get("titulo") or ""))
+            return _volver("/reuniones", f"Grabando ({o['id']}). El agente empieza en un segundo.", fugaz=True)
+        if que == "parar":
+            o = reuniones.parar()
+            return _volver("/reuniones", "Parada. Cuando el agente cierre los archivos se procesa sola.", fugaz=True)
+        if que == "miniaturas":
+            reuniones.pedir_miniaturas()
+            return _volver("/reuniones", "Pedidas las miniaturas: llegan en un par de segundos.", fugaz=True)
+        if que == "comprimir":
+            id_ = str(f.get("id") or "")
+            reuniones.lanzar_compresion([id_])
+            return _volver(f"/reuniones/{id_}", "Comprimiendo el audio: tarda poco, la página se actualiza sola.",
+                           fugaz=True)
+        if que == "comprimir-todas":
+            ids = reuniones.sin_comprimir()
+            reuniones.lanzar_compresion(ids)
+            return _volver("/reuniones", f"Comprimiendo {len(ids)} reunion{'es' if len(ids) != 1 else ''}.",
+                           fugaz=True)
+        if que == "procesar":
+            reuniones.lanzar_procesado(str(f.get("id") or ""))
+            return _volver(f"/reuniones/{f.get('id')}", "Procesando: transcribir y resumir.", fugaz=True)
+        if que == "voces":
+            id_ = str(f.get("id") or "")
+            reuniones.lanzar_voces(id_)
+            return _volver(f"/reuniones/{id_}", "Separando las voces y rehaciendo el resumen.", fugaz=True)
+        if que == "nombres":
+            id_ = str(f.get("id") or "")
+            nombres = {k[len("voz:"):]: str(v) for k, v in f.items() if k.startswith("voz:")}
+            reuniones.lanzar_nombres(id_, nombres, resumen=bool(f.get("resumen")))
+            return _volver(f"/reuniones/{id_}", "Nombres guardados." + (
+                " Rehaciendo el resumen con ellos." if f.get("resumen") else ""), fugaz=True)
+    except ValueError as exc:
+        return _volver("/reuniones", f"No se hizo: {exc}")
+    return _volver("/reuniones", f"orden desconocida: {que}")
+
+
+def _llave_del_agente(request: Request):
+    """Los endpoints del agente exigen su llave, también desde casa: la puerta
+    de dispositivos se fía del `Host`, y eso se forja (decisión 280)."""
+    from . import reuniones
+    if reuniones.llave_valida(request.headers.get(reuniones.CABECERA)):
+        return None
+    reuniones.llave_rechazada()
+    return JSONResponse({"error": "llave",
+                         "ayuda": "Falta la llave del agente o no vale. Genérala en /reuniones "
+                                  "(«Conectar el agente»)."}, status_code=401)
+
+
+@app.post("/api/reuniones/latido")
+async def reuniones_latido(request: Request):
+    """El agente de Windows: cuenta qué ve y recibe la orden vigente. No hay
+    otra forma de hablar con él (no escucha puertos)."""
+    from . import reuniones
+    if (rechazo := _llave_del_agente(request)) is not None:
+        return rechazo
+    try:
+        datos = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "json"}, status_code=400)
+    return JSONResponse(reuniones.latido(datos if isinstance(datos, dict) else {}))
+
+
+@app.post("/api/reuniones/miniatura/{n}")
+async def reuniones_subir_miniatura(request: Request, n: int):
+    from . import reuniones
+    if (rechazo := _llave_del_agente(request)) is not None:
+        return rechazo
+    try:
+        reuniones.guardar_miniatura(n, await request.body())
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/navegante")
+def navegante_vista(request: Request, aviso: str = ""):
+    """El navegador que maneja Claude: contestar lo que pide y ver qué hizo."""
+    return _vista(request, "navegante.html", {
+        "n": api.navegante(), "aviso": aviso,
+        "titulo": "Navegante", "seccion": "navegante"})
+
+
+@app.post("/navegante/accion")
+async def navegante_accion(request: Request):
+    """Los botones de la pantalla: cada uno es un `nav` de una lista cerrada.
+
+    Lo que tarda (correr un flujo) se lanza y se vuelve; la corrida aparece en
+    la lista y la página se refresca sola mientras esté en curso."""
+    from . import navegante
+    f = dict(await request.form())
+    que = str(f.pop("que", ""))
+    try:
+        ok, salida = navegante.hacer(que, f)
+    except ValueError as exc:
+        return _volver("/navegante", f"No se hizo: {exc}")
+    if que in ("parar-grabacion", "componer") and ok:
+        try:
+            r = json.loads(salida.splitlines()[-1])
+            avisos = " ".join("⚠ " + a for a in r.get("avisos", []))
+            return _volver("/navegante#flujos",
+                           f"Flujo guardado con {r['pasos']} pasos en {r['ruta']}. {avisos}".strip())
+        except (ValueError, KeyError, IndexError):
+            pass
+    ultima = (salida.strip().splitlines() or [""])[-1][:300]
+    return _volver("/navegante", ultima or ("Hecho." if ok else "Falló sin decir por qué."), fugaz=ok)
+
+
+@app.get("/navegante/corrida")
+def navegante_corrida_vista(request: Request, flujo: str = "", cuando: str = ""):
+    try:
+        c = api.navegante_corrida(flujo, cuando)
+    except ValueError as exc:
+        return _volver("/navegante", str(exc))
+    return _vista(request, "navegante_corrida.html", {
+        "c": c, "titulo": f"{flujo} · {cuando}", "seccion": "navegante"})
+
+
+@app.get("/navegante/imagen")
+def navegante_imagen(flujo: str = "", cuando: str = "", nombre: str = ""):
+    """Las capturas de una corrida. Confinadas a su carpeta: los tres trozos se
+    validan antes de ser ruta (ver `navegante.imagen`)."""
+    from . import navegante
+    try:
+        return FileResponse(navegante.imagen(flujo, cuando, nombre), media_type="image/png")
+    except ValueError:
+        return PlainTextResponse("no existe", status_code=404)
+
+
+@app.post("/navegante/responder")
+async def navegante_responder(request: Request):
+    """La respuesta del dueño a una petición pausada por el guardián.
+
+    🔴 Es el único sitio desde el que se aprueba además de la terminal del
+    dueño: la sesión de Claude que pidió no puede (deny en su proyecto), igual
+    que el orquestador no se concede alcance (decisión 256)."""
+    from . import navegante
+    f = await request.form()
+    aprobar = str(f.get("aprobar") or "") == "si"
+    try:
+        d = navegante.responder(str(f.get("id") or ""), aprobar)
+    except ValueError as exc:
+        return _volver("/navegante", f"No se contestó: {exc}")
+    return _volver("/navegante", f"{'Permitida' if aprobar else 'Denegada'}: {d.get('accion')}.", fugaz=True)
+
+
 @app.post("/orquestador/reanudar")
 async def orquestador_reanudar(request: Request):
     formulario = await request.form()
@@ -2038,6 +2294,7 @@ def trabajo(
                 "slot_id": slot,
                 "ancho_completo": True,
                 "seccion": "trabajo",
+                "cierre_sin_sesion": CIERRE_SIN_SESION,
                 "titulo": (ctx["slot"] or {}).get("nombre") or ctx["session"] or "Trabajo",
             },
         )
@@ -2110,8 +2367,22 @@ async def api_nueva_ventana(session: str, request: Request):
             return {"ok": False,
                     "error": f"la sesión «{session}» ya no existe en tmux — se habrá "
                              "cerrado su última ventana. Vuelve a abrirla desde su slot."}
+        # Con slot, la ventana nace atada a él, igual que con «+ Ventana» del
+        # raíl: abierta desde un slot es de ese slot. Antes este «+» sólo
+        # usaba su carpeta, y la ventana salía suelta en «Sin organizar» (23-oct).
+        slot_id = cuerpo.get("slot")
+        if isinstance(slot_id, int) and slot_id > 0:
+            con = conexion()
+            try:
+                slot = api.obtener_slot(con, slot_id)
+                if slot and slot["status"] == "activo":
+                    slots.abrir(con, slot_id, session=session)
+                    snapshotter.un_ciclo(con)
+                    return {"ok": True}
+            finally:
+                con.close()
         tmux.nueva_ventana(session, cuerpo.get("ruta") or None, cuerpo.get("nombre") or None)
-    except (tmux.DestinoInvalido, RuntimeError) as exc:
+    except (tmux.DestinoInvalido, tmux.TmuxNoDisponible, RuntimeError, ValueError) as exc:
         return {"ok": False, "error": str(exc)}
     return {"ok": True}
 
@@ -2128,6 +2399,13 @@ async def api_editar_ventana(session: str, indice: int, request: Request):
     except (tmux.DestinoInvalido, RuntimeError) as exc:
         return {"ok": False, "error": str(exc)}
     return {"ok": True}
+
+
+# Código de cierre propio (4000-4999 es de la aplicación): el destino de la
+# terminal no existe y no tiene sentido reintentar. Viaja a `trabajo.html` en su
+# contexto en vez de escribirse dos veces: un 4404 cambiado en un solo lado no
+# falla, se queda reintentando.
+CIERRE_SIN_SESION = 4404
 
 
 @app.websocket("/ws/terminal/{session}")
@@ -2178,7 +2456,12 @@ async def terminal_socket(ws: WebSocket, session: str, ventana: int | None = Non
     await ws.accept()
     try:
         espejo = terminal.crear_espejo(session, ventana)
-    except (terminal.DestinoInvalido, RuntimeError) as exc:
+    except (terminal.SesionInexistente, terminal.DestinoInvalido) as exc:
+        await ws.send_bytes(f"\r\n[hub] no se pudo abrir {session}: {exc}\r\n".encode())
+        await ws.close(code=CIERRE_SIN_SESION)
+        return
+    except RuntimeError as exc:
+        # Éste sí se reintenta: es tmux fallando, no un destino que no existe.
         await ws.send_bytes(f"\r\n[hub] no se pudo abrir {session}: {exc}\r\n".encode())
         await ws.close()
         return
@@ -2580,10 +2863,18 @@ def slot_nuevo(
     nota: str = Form(""),
     comando: str = Form(""),
     autostart_claude: str = Form(""),
+    ir: str = Form(""),
 ):
+    """`ir=trabajo` es el «Crear y abrir» de Trabajo: crea el slot, le abre su
+    primera ventana y lleva a ella. Quien crea un slot ahí quiere empezar a
+    trabajar, no volver a la ficha del proyecto (22-oct)."""
     con = conexion()
+    destino, aviso = f"/proyecto/{proyecto_id}", None
     try:
-        slots.crear(
+        if not nombre.strip():
+            return _volver(destino if ir != "trabajo" else "/trabajo",
+                           "Un slot necesita nombre: es lo que verás en la lista.")
+        slot_id = slots.crear(
             con,
             proyecto_id,
             nombre.strip(),
@@ -2592,9 +2883,19 @@ def slot_nuevo(
             comando.strip() or None,
             bool(autostart_claude),
         )
+        if ir == "trabajo":
+            destino = f"/trabajo?slot={slot_id}"
+            try:
+                pane_id = slots.abrir(con, slot_id)
+                snapshotter.un_ciclo(con)
+                panel = api.panel_por_id(con, pane_id) if pane_id else None
+                if panel:
+                    destino = f"/trabajo?session={panel['session']}&ventana={panel['window_idx']}"
+            except (tmux.TmuxNoDisponible, RuntimeError, ValueError) as exc:
+                aviso = f"El slot está creado, pero no se pudo abrir su ventana: {exc}"
     finally:
         con.close()
-    return _volver(f"/proyecto/{proyecto_id}")
+    return _volver(destino, aviso)
 
 
 @app.post("/slot/{slot_id}/editar")
@@ -2701,6 +3002,39 @@ def slot_abrir(
     finally:
         con.close()
     return _volver(destino.strip() or f"/proyecto/{proyecto_id}", aviso)
+
+
+@app.get("/api/slot/{slot_id}/conversaciones")
+def api_slot_conversaciones(slot_id: int):
+    con = conexion()
+    try:
+        return {"conversaciones": api.conversaciones(con, slot_id)}
+    finally:
+        con.close()
+
+
+@app.post("/slot/{slot_id}/retomar")
+def slot_retomar(slot_id: int, sesion: str = Form(...)):
+    """Abre otra ventana del slot con una conversación anterior (decisión 290).
+
+    Es «Lanzar» con `claude --resume <id>` en vez de `claude`: el botón lo
+    pulsa la persona, y la conversación se valida contra la lista del slot.
+    """
+    con = conexion()
+    destino, aviso = f"/trabajo?slot={slot_id}", None
+    try:
+        ficha = conversaciones.retomable(con, slot_id, sesion.strip())
+        pane_id = slots.abrir(con, slot_id,
+                              comando=restauracion.comando_claude(ficha["id"], "reanudar"))
+        snapshotter.un_ciclo(con)
+        panel = api.panel_por_id(con, pane_id) if pane_id else None
+        if panel:
+            destino = f"/trabajo?session={panel['session']}&ventana={panel['window_idx']}"
+    except (tmux.TmuxNoDisponible, RuntimeError, ValueError) as exc:
+        aviso = f"No se pudo retomar: {exc}"
+    finally:
+        con.close()
+    return _volver(destino, aviso)
 
 
 @app.post("/restaurar")
@@ -2979,6 +3313,22 @@ def api_asistente(desde: str = ""):
     nuevo en vez de releer la conversación entera cada segundo y medio.
     """
     return asistente.conversacion(registry.cargar(), desde or None)
+
+
+@app.get("/api/asistente/conversaciones")
+def api_asistente_conversaciones():
+    return {"conversaciones": asistente.conversaciones_anteriores(registry.cargar())}
+
+
+@app.post("/api/asistente/retomar")
+async def api_asistente_retomar(request: Request):
+    """Vuelve a una conversación anterior. La UI confirma: corta la actual."""
+    cuerpo = await request.json()
+    try:
+        return asistente.retomar(registry.cargar(), str(cuerpo.get("sesion") or ""))
+    except (asistente.AsistenteNoDisponible, tmux.TmuxNoDisponible, RuntimeError,
+            ValueError) as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 @app.post("/api/asistente/abrir")

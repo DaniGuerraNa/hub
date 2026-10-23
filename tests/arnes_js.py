@@ -258,6 +258,8 @@ global.Terminal = class {
   }
   loadAddon() {} open() {} onData() {} write() {} focus() {}
   paste(d) { registro.pegados.push(d); }
+  // El filtro de teclas: se guarda para poder preguntarle qué deja pasar.
+  attachCustomKeyEventHandler(fn) { globalThis.FILTRO_TECLAS = fn; }
   // Lo que hay seleccionado con el ratón. `SELECCION` lo fija el test.
   getSelection() { return typeof globalThis.SELECCION === 'string'
                      ? globalThis.SELECCION : ''; }

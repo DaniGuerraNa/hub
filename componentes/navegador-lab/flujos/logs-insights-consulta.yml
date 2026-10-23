@@ -1,0 +1,37 @@
+nombre: logs-insights-consulta
+descripcion: Lanza una consulta de CloudWatch Logs Insights sobre un grupo de logs
+  y devuelve la tabla de resultados. Salió de grabar al dueño haciéndolo una vez.
+modo: lectura
+pantallas:
+  desde: consola
+  hasta: logs-insights
+parametros:
+  base:
+    ejemplo: http://127.0.0.1:8790
+  grupo:
+    ejemplo: /aws/lambda/pedidos-crear
+  consulta:
+    ejemplo: fields @timestamp, @message | filter @message like /ERROR/ | limit 20
+pasos:
+- ir: '{{base}}/cloudwatch/home#logsV2:logs-insights'
+- marcar:
+    rol: checkbox
+    nombre: '{{grupo}}'
+    alternativas:
+    - etiqueta: '{{grupo}}'
+- rellenar:
+    rol: textbox
+    nombre: Editor de consultas
+    valor: '{{consulta}}'
+- pulsar:
+    rol: button
+    nombre: Ejecutar consulta
+- esperar:
+    texto: Completada
+    ms_max: 60000
+- extraer:
+    rol: status
+    a: resumen
+- extraer:
+    tabla: Resultados
+    a: filas

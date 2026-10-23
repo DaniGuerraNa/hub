@@ -1,0 +1,42 @@
+nombre: apigateway-mapa
+descripcion: 'Mapa de las API Gateway de una región: cada API con su protocolo, etapas
+  y rutas (método, ruta, integración). Sólo lectura.'
+modo: lectura
+pantallas:
+  desde: consola
+  hasta: apigw-lista
+parametros:
+  base:
+    ejemplo: http://127.0.0.1:8790
+    descripcion: raíz de la consola
+  region:
+    ejemplo: us-east-1
+    defecto: us-east-1
+pasos:
+- ir: '{{base}}/apigateway/main/apis?region={{region}}'
+- esperar:
+    rol: table
+    nombre: APIs
+- extraer:
+    tabla: APIs
+    a: apis
+- para_cada:
+    lista: apis
+    como: api
+    clave: Nombre
+    a: detalle
+    pasos:
+    - pulsar:
+        rol: link
+        nombre: '{{api.Nombre}}'
+        exacto: true
+    - esperar:
+        rol: table
+        nombre: Rutas
+    - extraer:
+        testid: etapas
+        a: etapas
+    - extraer:
+        tabla: Rutas
+        a: rutas
+    - ir: '{{base}}/apigateway/main/apis?region={{region}}'

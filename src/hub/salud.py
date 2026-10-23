@@ -73,13 +73,13 @@ def muestreo(ahora: datetime | None = None) -> dict:
     if edad is None:
         return {"clave": "muestreo", "nombre": "Muestreo", "estado": "mal",
                 "detalle": "El snapshotter no ha latido nunca: no está corriendo. Sin él no se "
-                           "guarda qué ventanas tenías y tras un apagón no hay nada que restaurar.",
+                           "guarda qué ventanas tenías y al reiniciar no habrá nada que reabrir.",
                 "arreglo": arreglo}
     if edad >= MAL_SEGUNDOS:
         return {"clave": "muestreo", "nombre": "Muestreo", "estado": "mal",
                 "detalle": f"El snapshotter no late desde hace {_hace(edad)}. Mientras no "
-                           "corra, no se guarda qué ventanas tienes: un apagón ahora no se "
-                           "podría restaurar.",
+                           "corra, no se guarda qué ventanas tienes: si reinicias ahora, no se "
+                           "podrán reabrir.",
                 "arreglo": arreglo, "edad": edad}
     if edad >= AVISO_SEGUNDOS:
         return {"clave": "muestreo", "nombre": "Muestreo", "estado": "aviso",
@@ -97,8 +97,8 @@ def _tmux() -> dict:
                 "detalle": "Hay un servidor de tmux con ventanas que vigilar."}
     return {"clave": "tmux", "nombre": "tmux", "estado": "aviso",
             "detalle": "No hay tmux abierto. Es normal nada más encender el equipo; si tenías "
-                       "ventanas, mira en Panorama si te ofrece restaurarlas.",
-            "arreglo": "Panorama → «Puedes volver a dejarlo como estaba»"}
+                       "slots persistentes, Panorama te ofrece reabrirlos.",
+            "arreglo": "Panorama → «Reabrir tus slots persistentes»"}
 
 
 def _restauracion(con: sqlite3.Connection) -> dict:
@@ -106,16 +106,16 @@ def _restauracion(con: sqlite3.Connection) -> dict:
     marcados = con.execute(
         "SELECT COUNT(*) FROM slot WHERE status='activo' AND restaurar=1").fetchone()[0]
     if not activos:
-        return {"clave": "restauracion", "nombre": "Restaurar tras un apagón", "estado": "ok",
-                "detalle": "Todavía no hay slots: no hay nada que devolver."}
+        return {"clave": "restauracion", "nombre": "Slots persistentes", "estado": "ok",
+                "detalle": "Todavía no hay slots: no hay nada que reabrir."}
     if not marcados:
-        return {"clave": "restauracion", "nombre": "Restaurar tras un apagón", "estado": "aviso",
-                "detalle": f"Ninguno de tus {activos} slots vuelve tras un apagón: si se apaga "
-                           "el equipo, «Restaurar» no tendrá nada que abrir.",
-                "arreglo": "En Trabajo, en la cabecera de cada slot, pulsa «↻ No vuelve tras un "
-                           "apagón» para que vuelva"}
-    return {"clave": "restauracion", "nombre": "Restaurar tras un apagón", "estado": "ok",
-            "detalle": f"{marcados} de {activos} slots vuelven tras un apagón (marcados con ↻)."}
+        return {"clave": "restauracion", "nombre": "Slots persistentes", "estado": "aviso",
+                "detalle": f"Ninguno de tus {activos} slots es persistente: si reinicias el "
+                           "equipo, no habrá nada que reabrir.",
+                "arreglo": "En Trabajo, en la cabecera de cada slot que quieras conservar, "
+                           "pulsa «↻ No persistente» para que pase a «↻ Persistente»"}
+    return {"clave": "restauracion", "nombre": "Slots persistentes", "estado": "ok",
+            "detalle": f"{marcados} de {activos} slots son persistentes (marcados con ↻)."}
 
 
 def _systemctl(*args: str) -> str | None:

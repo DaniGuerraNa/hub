@@ -4,9 +4,9 @@ La pestaña de abajo a la derecha. Un chat que te sigue por todas las pantallas 
 responde sobre **tus** proyectos.
 
 Detrás no hay ningún motor de chat: hay una ventana de tmux con `claude` dentro,
-y el hub pinta su transcript. Por eso no hay historial que guardar ni sesión que
-reanudar, y por eso **Compactar** y **Limpiar** son de verdad `/compact` y
-`/clear`.
+y el hub pinta su transcript. Por eso **Compactar** y **Limpiar** son de verdad
+`/compact` y `/clear`, y el historial es el que ya guarda Claude Code: cada
+conversación en su archivo.
 
 ## Instalarlo
 
@@ -40,6 +40,9 @@ No es sólo una instrucción: su `.claude/settings.json` **deniega** `Edit`,
 
 - El **porcentaje** es su contexto ocupado. Se pone naranja al 70 %.
 - La **luz** dice si está vivo o pensando.
+- **Chats anteriores**, junto a la rueda, lista sus conversaciones pasadas y
+  vuelve a la que elijas, donde la dejaste. «Limpiar» no borra la de antes:
+  queda ahí.
 - La **rueda** de la pestaña guarda **Compactar** y **Limpiar** (su contexto) y,
   bajo «Si algo falla», **Terminal**, que abre su sesión cruda por si hace falta
   ver lo que hay debajo.

@@ -136,8 +136,12 @@ def localizar() -> str | None:
     return None
 
 
-def asegurar_sesion(proyectos: list[Proyecto]) -> dict[str, Any]:
-    """Devuelve el panel del asistente, creándolo si hace falta."""
+def asegurar_sesion(proyectos: list[Proyecto], reanudar: str | None = None) -> dict[str, Any]:
+    """Devuelve el panel del asistente, creándolo si hace falta.
+
+    `reanudar` es el id de una conversación anterior: arranca con ella
+    (decisión 290). Sólo cuenta si hay que crear el panel.
+    """
     pane_id = localizar()
     if pane_id:
         return {"pane_id": pane_id, "session": SESION, "creada": False}
@@ -162,10 +166,10 @@ def asegurar_sesion(proyectos: list[Proyecto]) -> dict[str, Any]:
             # después: así `claude` ES el proceso de la ventana y nunca se teclea
             # nada en una shell (decisión 22).
             tmux.nueva_sesion(SESION, proyecto.asiento, VENTANA,
-                              comando_de_arranque(proyecto), _entorno(proyecto))
+                              comando_de_arranque(proyecto, reanudar), _entorno(proyecto))
         else:
             tmux.nueva_ventana(SESION, proyecto.asiento, VENTANA,
-                               comando_de_arranque(proyecto), _entorno(proyecto))
+                               comando_de_arranque(proyecto, reanudar), _entorno(proyecto))
     except (tmux.TmuxNoDisponible, RuntimeError) as exc:
         raise AsistenteNoDisponible(str(exc)) from exc
 
@@ -186,7 +190,7 @@ def _entorno(proyecto: Proyecto) -> dict[str, str]:
     return {"PATH": tmux.path_de_usuario(str(Path(proyecto.asiento) / "bin"))}
 
 
-def comando_de_arranque(proyecto: Proyecto | None = None) -> str:
+def comando_de_arranque(proyecto: Proyecto | None = None, reanudar: str | None = None) -> str:
     """`claude` con el PATH correcto delante.
 
     El PATH va **en el comando** y no sólo en el `-e` de tmux porque se comprobó
@@ -199,6 +203,8 @@ def comando_de_arranque(proyecto: Proyecto | None = None) -> str:
     sigue diciendo `claude` y `localizar()` no se entera de nada.
     """
     base = f"claude {modelos.bandera(MODELO)}"
+    if reanudar:
+        base += f" --resume {shlex.quote(reanudar)}"
     if not proyecto or not proyecto.asiento:
         return base
     ruta = tmux.path_de_usuario(str(Path(proyecto.asiento) / "bin"))
@@ -992,6 +998,65 @@ def transcript_vivo(proyectos: list[Proyecto]) -> Path | None:
     if not candidatos:
         return None
     return max(candidatos, key=transcripts.mtime)
+
+
+def conversaciones_anteriores(proyectos: list[Proyecto], limite: int = 12) -> list[dict[str, Any]]:
+    """Sus conversaciones, la más reciente primero, marcando la que está abierta.
+
+    «Limpiar» no borra la anterior: Claude Code la deja entera en su archivo.
+    Esto es lo que quien lo usa esperaba encontrar —un historial de chats como
+    el de la web— y estaba ahí sin ninguna puerta (decisión 290).
+    """
+    from . import conversaciones, transcripts
+
+    proyecto = proyecto_asistente(proyectos)
+    if not proyecto:
+        return []
+    archivos: list[Path] = []
+    for directorio in transcripts.directorios_de(proyecto):
+        archivos.extend(transcripts.jsonl_de(directorio))
+    vivo = transcript_vivo(proyectos)
+    salida = []
+    for archivo in sorted(archivos, key=transcripts.mtime, reverse=True):
+        ficha = conversaciones._ficha(archivo)
+        if not ficha or not ficha.get("turnos"):
+            continue
+        salida.append({**ficha, "actual": bool(vivo and archivo == vivo)})
+        if len(salida) >= limite:
+            break
+    return salida
+
+
+def retomar(proyectos: list[Proyecto], sesion: str) -> dict[str, Any]:
+    """Vuelve a una conversación anterior en el mismo panel del asistente.
+
+    🔴 Se relanza el panel con `claude --resume <id>`: lo que hubiera en curso
+    se corta, y la UI lo confirma antes. Es el panel del hub, validado por id
+    (regla dura 15), no una ventana de trabajo.
+    """
+    from . import transcripts
+
+    ficha = next((c for c in conversaciones_anteriores(proyectos, limite=100)
+                  if c["id"] == sesion), None)
+    if not ficha:
+        raise ValueError("esa conversación no es del asistente")
+    proyecto = proyecto_asistente(proyectos)
+    if ficha["actual"]:
+        return {"ok": True, "ya_estaba": True}
+    archivo = transcripts.ruta_de_sesion(sesion, transcripts.directorios_de(proyecto))
+    pane_id = localizar()
+    if pane_id:
+        tmux.relanzar_panel(pane_id, proyecto.asiento, comando_de_arranque(proyecto, sesion),
+                            _entorno(proyecto))
+        pane_id = _esperar_panel()
+    else:
+        pane_id = asegurar_sesion(proyectos, reanudar=sesion)["pane_id"]
+    # El chat pinta el archivo escrito más recientemente, y `--resume` no lo
+    # toca hasta el primer mensaje (medido): sin esto se seguiría viendo la
+    # conversación que se acaba de dejar. Sólo la fecha, el contenido no.
+    if archivo:
+        os.utime(archivo)
+    return {"ok": True, "pane_id": pane_id, "listo": bool(pane_id and _esperar_listo(pane_id))}
 
 
 def conversacion(

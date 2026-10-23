@@ -111,10 +111,23 @@ def obtener_proyecto(con: sqlite3.Connection, proyecto_id: str) -> dict | None:
 
 
 def snapshot_actual(con: sqlite3.Connection) -> dict | None:
-    fila = con.execute(
-        "SELECT * FROM snapshot WHERE preservado = 0 ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    return _fila_a_dict(fila) if fila else None
+    """La última muestra, y sólo si es del servidor de tmux que sigue vivo.
+
+    🔴 Se mira el último snapshot a secas y se descarta si está preservado; no
+    es lo mismo que pedir `WHERE preservado = 0`. Al morir el servidor,
+    `detectar_corte` marca sólo la ÚLTIMA muestra de ese epoch, y la penúltima
+    —mismo servidor muerto, mismos paneles— pasaba a ser la «actual» sin que
+    nadie la pisara, porque sin servidor no se escribe un snapshot vacío
+    (regla dura 4). Tras reiniciar WSL, el hub enseñaba como abiertas
+    terminales que ya no existían, con su «Abrir» llevando a una sesión muerta.
+
+    Sin muestra viva no hay nada abierto, que es la verdad. Lo que se perdió lo
+    enseña `recuperacion_pendiente`, que es la que lee los preservados.
+    """
+    fila = con.execute("SELECT * FROM snapshot ORDER BY id DESC LIMIT 1").fetchone()
+    if fila is None or fila["preservado"]:
+        return None
+    return _fila_a_dict(fila)
 
 
 def paneles_de(con: sqlite3.Connection, snapshot_id: int) -> list[dict]:
@@ -152,9 +165,17 @@ def recuperacion_pendiente(con: sqlite3.Connection) -> dict | None:
 
     No dice "se perdieron 23 paneles" — eso son IDs sin significado. Devuelve los
     slots y las rutas, que es lo que permite retomar.
+
+    Un corte sin nada abierto no se anuncia: el snapshotter preserva la última
+    muestra de cada servidor que muere, tuviera paneles o no, y reiniciar con
+    la terminal cerrada dejaba un «se perdió una sesión · 0 paneles» que no
+    había perdido nada. Un aviso sin nada que hacer se aprende a ignorar.
     """
     fila = con.execute(
-        "SELECT * FROM snapshot WHERE preservado = 1 ORDER BY id DESC LIMIT 1"
+        """SELECT * FROM snapshot s
+           WHERE s.preservado = 1
+             AND EXISTS (SELECT 1 FROM panel p WHERE p.snapshot_id = s.id)
+           ORDER BY s.id DESC LIMIT 1"""
     ).fetchone()
     if not fila:
         return None
@@ -287,11 +308,29 @@ def contexto_trabajo(
         if panel["slot_id"] and panel["slot_id"] not in panel_por_slot:
             panel_por_slot[panel["slot_id"]] = panel
 
+    # Las ventanas de cada slot, colgadas de él en el raíl: proyecto → slot →
+    # ventanas, «como carpetas, una dentro de otra» (decisión 291). Una por
+    # ventana de tmux, no por panel: una ventana partida en dos es una sola.
+    ventanas_por_slot: dict[int, list[dict]] = {}
+    vistas: set[tuple[str, int]] = set()
+    for panel in paneles:
+        clave = (panel["session"], panel["window_idx"])
+        if not panel["slot_id"] or clave in vistas:
+            continue
+        vistas.add(clave)
+        ventanas_por_slot.setdefault(panel["slot_id"], []).append({
+            "session": panel["session"], "ventana": panel["window_idx"],
+            "pane_id": panel["pane_id"],
+            "etiqueta": panel.get("etiqueta") or f"{panel['session']}:{panel['window_idx']}",
+            "estado": estado_de_panel(panel),
+        })
+
     proyectos = listar_proyectos(con)
     for p in proyectos:
         p["slots"] = slots_de(con, p["id"])
         for s in p["slots"]:
             s["estado"] = estado_de_panel(panel_por_slot.get(s["id"]))
+            s["ventanas"] = ventanas_por_slot.get(s["id"], [])
         p["paneles_abiertos"] = por_proyecto.get(p["id"], 0)
         # Un proyecto entra en la barra si hay algo suyo que mirar. Se calcula
         # aquí y no en la plantilla porque «slots O paneles» en Jinja obliga a
@@ -381,7 +420,9 @@ def rail(con: sqlite3.Connection) -> dict:
         muestreo = _salud.muestreo()
     except Exception:  # noqa: BLE001
         muestreo = None
+    from . import navegante as _nav
     return {
+        "navegante_pendientes": _nav.pendientes() if _nav.instalado() else 0,
         "version": version,
         "muestreo": muestreo,
         "sin_respaldo": sum(sin_push.values()),
@@ -2035,3 +2076,103 @@ def _carpeta_existe(ruta: str) -> bool:
         return Path(ruta).expanduser().is_dir()
     except OSError:
         return False
+
+
+# ──────────────────── el navegante (el navegador de Claude) ──────────────────
+
+
+def navegante() -> dict[str, Any]:
+    """Lo que pinta /navegante: preguntas del guardián, guardianes vivos,
+    sus últimas decisiones y los últimos flujos corridos."""
+    import time
+    from . import navegante as nav
+    def hora(t):
+        return time.strftime("%d-%m %H:%M:%S", time.localtime(float(t))) if t else ""
+    preguntas = [{**p, "hora": hora(p.get("creada"))} for p in nav.preguntas()]
+    r = nav.resumen() or {}
+    conf = r.get("config") or {}
+    from . import componentes
+    pasos = componentes.pasos_navegante()
+    return {
+        "instalado": nav.instalado(),
+        "pasos": pasos,
+        "listo": componentes.listo(pasos),
+        "lab": str(nav.lab()),
+        "lab_disponible": nav.disponible(),
+        "carpeta": str(nav.carpeta()),
+        "estado": r.get("estado"),
+        "flujos": r.get("flujos", []),
+        "mapa": r.get("mapa") or {"pantallas": [], "salen": {}, "sin_pantalla": []},
+        "politicas": r.get("politicas", []),
+        "accesos": conf.get("accesos", []),
+        "colecciones": [c["nombre"] for c in conf.get("colecciones", [])],
+        "preguntas": preguntas,
+        "pendientes": [p for p in preguntas if p.get("estado") == "pendiente"],
+        "registro": [{**e, "hora": hora(e.get("t"))} for e in nav.registro()],
+        "corridas": nav.corridas(),
+    }
+
+
+def componentes() -> dict[str, Any]:
+    """Qué les falta a Navegante y Reuniones para funcionar (decisión 293). Lo
+    lee el asistente para guiar, con los mismos pasos que pintan las pantallas."""
+    from . import componentes as _c
+    from . import reuniones as _r
+    pasos = _c.pasos_navegante()
+    return {
+        "navegante": {"carpeta": str(_c.carpeta("navegador-lab")), "pasos": pasos,
+                      "listo": _c.listo(pasos), "pantalla": "/navegante"},
+        "reuniones": {**_r.preparacion(), "pantalla": "/reuniones"},
+    }
+
+
+def navegante_corrida(flujo: str, cuando: str) -> dict[str, Any]:
+    from . import navegante as nav
+    return nav.corrida(flujo, cuando)
+
+
+# ───────────────────────────────── reuniones ─────────────────────────────────
+
+
+def reuniones() -> dict[str, Any]:
+    from . import reuniones as r
+    a = r.agente()
+    o = r.orden()
+    lista = r.lista()
+    pendientes = [x for x in lista if x["terminada"] and not x["comprimida"] and x["estado"] != "procesando"]
+    return {"agente": a, "orden": o, "lista": lista, "raiz": str(r.raiz()),
+            "sin_comprimir": {"n": len(pendientes), "bytes": sum(x["tamano"] for x in pendientes),
+                              "comprimiendo": any(x["comprimiendo"] for x in lista)},
+            "miniaturas": [m["n"] for m in a.get("monitores") or [] if r.miniatura(m["n"])],
+            "grabando": a.get("grabando") if o.get("grabar") else None,
+            "preparacion": r.preparacion(),
+            "conexion": {"hay_llave": r.hay_llave(), "rechazo": r.rechazo_reciente(),
+                         "carpeta_agente": str(r.carpeta_agente()),
+                         "carpeta_existe": r.carpeta_agente().is_dir()}}
+
+
+def reunion(id_: str) -> dict[str, Any]:
+    from . import reuniones as r
+    from . import base as _b  # noqa: F401
+    d = r.detalle(id_)
+    # Las voces que hay (Persona 1, 2…), en orden, con el nombre que tengan.
+    vistas = sorted({s["quien"] for s in d["transcripcion"]
+                     if str(s.get("quien", "")).startswith("Persona ")},
+                    key=lambda q: int(q.split()[-1]) if q.split()[-1].isdigit() else 0)
+    d["voces"] = [{"clave": q, "nombre": d["nombres"].get(q, "")} for q in vistas]
+    d["sin_separar"] = bool(d["transcripcion"]) and not vistas and any(
+        s.get("quien") == "Reunión" for s in d["transcripcion"])
+    d["transcripcion"] = [{**s, "nombre": d["nombres"].get(s.get("quien"), s.get("quien"))}
+                          for s in d["transcripcion"]]
+    hh = lambda s: f"{int(s) // 3600:02d}:{int(s) % 3600 // 60:02d}:{int(s) % 60:02d}"
+    # La transcripción con las fotos intercaladas en su segundo, igual que el .md.
+    eventos = [(s["ini"], 1, {**s, "hora": hh(s["ini"])}) for s in d["transcripcion"]] + \
+              [(f, 0, {"foto": f, "hora": hh(f)}) for f in d["fotos"]]
+    d["linea"] = [e[2] for e in sorted(eventos, key=lambda e: (e[0], e[1]))]
+    return d
+
+
+def conversaciones(con: sqlite3.Connection, slot_id: int) -> list[dict]:
+    """Las conversaciones de Claude de un slot, para retomarlas (decisión 290)."""
+    from . import conversaciones as conv
+    return conv.de_slot(con, slot_id)

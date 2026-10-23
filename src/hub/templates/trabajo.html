@@ -201,7 +201,7 @@
   /* Plegado, el número dice cuánto hay debajo: una lista que se esconde sin
      decir cuánto esconde se lee como una lista vacía. */
   .cuenta-slots { font-size:11px; color:var(--texto-3); padding-right:8px; }
-  /* Si el slot vuelve tras un apagón: en el raíl, sólo la marca; en la
+  /* Si el slot es persistente (se reabre al volver a encender): en el raíl, sólo la marca; en la
      cabecera, el botón que la cambia. Apagado se ve tenue, no tachado: no es
      un error, es una elección. */
   .marca-vuelve { color:var(--acento); margin-left:5px; font-size:11px; }
@@ -212,6 +212,40 @@
   /* La guía vertical dice «esto cuelga de lo de arriba» sin gastar una palabra. */
   .proyecto > .hijos { margin-left:16px; padding-left:8px; border-left:1px solid var(--borde); }
   .vacio { padding:4px 10px; font-size:11px; color:var(--texto-3); font-style:italic; }
+  /* Crear, en el raíl (22-oct). El «+ Slot nuevo» va como una fila más de
+     la lista pero en tono de acción, para que se lea como el sitio donde
+     nacen los slots y no como uno de ellos. */
+  .rotulo-con-accion { display:flex; align-items:center; gap:6px; }
+  .rotulo-con-accion > span { flex:1; }
+  .rotulo-con-accion .mas { text-transform:none; letter-spacing:0; font-size:11.5px; padding:2px 8px; }
+  .nuevo-slot { display:block; width:calc(100% - 4px); text-align:left; margin:2px 0 4px;
+    padding:5px 10px; font-size:12px; color:var(--acento); background:none; border:0;
+    border-radius:var(--r-nav); cursor:pointer; }
+  .nuevo-slot:hover { background:var(--superficie); }
+  .guia-vacia { padding:4px 10px 8px; font-size:12.5px; display:flex; flex-direction:column; gap:8px; }
+  .guia-vacia p { margin:0; }
+  /* Las ventanas bajo su slot (decisión 291): un nivel más hondo, más
+     pequeñas, con su propio punto de estado. */
+  .ventanas-slot { margin:0 0 4px 14px; padding-left:8px; border-left:1px solid var(--borde); }
+  .fila-ventana { display:flex; align-items:center; }
+  .ventana-item { flex:1; min-width:0; display:flex; align-items:center; gap:6px; padding:3px 8px;
+    font-size:12px; color:var(--texto-2); border-radius:var(--r-nav); text-decoration:none; }
+  .ventana-item .txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ventana-item:hover { background:var(--superficie); color:var(--texto); text-decoration:none; }
+  .ventana-item.activa { background:var(--superficie2); color:var(--texto); }
+  .cerrar-ventana { margin:0; visibility:hidden; }
+  .fila-ventana:hover .cerrar-ventana, .cerrar-ventana:focus-within { visibility:visible; }
+  .cerrar-ventana button { padding:1px 7px; font-size:13px; color:var(--texto-3); }
+  .nueva-ventana-slot { background:none; border:0; cursor:pointer; padding:3px 8px; font-size:11.5px;
+    color:var(--texto-3); }
+  .nueva-ventana-slot:hover { color:var(--acento); }
+  /* En el escritorio, con el raíl a la vista, las pestañas de encima de la
+     terminal sobran: las ventanas ya están en el árbol. Vuelven donde el
+     raíl no se ve —plegado, terminal a solas o el móvil—. */
+  @media (min-width: 721px) {
+    .taller:not(.sin-rail) .pestanas { display:none; }
+    body.completo.terminal-sola .taller .pestanas { display:flex; }
+  }
 
   .item { display:block; padding:6px 10px; border-radius:var(--r-nav); font-size:14px; color:var(--texto-2); line-height:1.35; }
   .item:hover { background:var(--superficie); color:var(--texto); text-decoration:none; }
@@ -249,6 +283,25 @@
 
   .slot-vacio { padding:24px; max-width:52ch; display:flex; flex-direction:column; gap:10px; }
   .slot-vacio p { margin:0; }
+  /* Conversaciones anteriores (decisión 290): una fila por conversación, el
+     título arriba y cuándo debajo, como un menú. */
+  /* El resumen del menú es un icono de 30 px; éste lleva texto. */
+  .menu.conversaciones > summary { width:auto; height:auto; display:inline-flex; white-space:nowrap;
+    font-size:12.5px; padding:4px 9px; color:var(--texto-2); }
+  .conversaciones > summary::-webkit-details-marker { display:none; }
+  .pop-conv { width:min(380px, 86vw); max-height:60vh; overflow-y:auto; }
+  .pop-conv .conv { align-items:flex-start !important; justify-content:flex-start !important;
+    text-align:left !important; padding:7px 10px; }
+  .conv-lista { display:flex; flex-direction:column; gap:4px; }
+  .conv-lista form { margin:0; }
+  .conv { display:flex !important; flex-direction:column; align-items:flex-start; gap:2px;
+    width:100%; text-align:left; white-space:normal; }
+  .conv-lista .conv { padding:8px 11px; border-radius:var(--r-input);
+    background:var(--superficie); border:0; color:var(--texto); cursor:pointer; text-decoration:none; }
+  .conv-lista .conv:hover { background:var(--elevado); }
+  .conv-titulo { font-size:13px; line-height:1.35; overflow-wrap:anywhere; }
+  .conv-datos { font-size:11.5px; color:var(--texto-3); }
+  .conv-nota { margin:6px 4px 2px !important; font-size:11.5px; color:var(--texto-3); }
 
   details.ocultas { padding:2px 10px; }
   details.ocultas > summary { font-size:11px; color:var(--texto-3); cursor:pointer;
@@ -611,9 +664,29 @@
     </select>
 
     {% set en_uso = proyectos | selectattr('en_uso') | list %}
-    {% if en_uso %}
+    {# Crear vive AQUÍ también, no sólo en Panorama: la primera persona que
+       usó el hub sin que se lo enseñaran entró por Trabajo, no encontró cómo
+       crear un proyecto y creyó que sólo se podía pidiéndoselo al asistente
+       (22-oct). #}
     <div class="grupo">
-      <div class="rotulo">Proyectos</div>
+      <div class="rotulo rotulo-con-accion"><span>Proyectos</span>
+        <button type="button" class="sutil mas" data-nuevo-proyecto
+                title="Crear un proyecto nuevo">+ Proyecto</button></div>
+      {% if not en_uso %}
+      <div class="guia-vacia">
+        {% if proyectos %}
+        <p>Ningún proyecto tiene trabajo abierto todavía.</p>
+        <p class="tenue">Dentro de un proyecto creas <strong>slots</strong>: cada
+        uno es una línea de trabajo con sus terminales y su conversación con Claude.</p>
+        <button type="button" class="principal" data-nuevo-slot="">Crear un slot</button>
+        {% else %}
+        <p>Aún no tienes proyectos.</p>
+        <p class="tenue">Un proyecto es una carpeta en la que trabajas. Dentro
+        creas <strong>slots</strong>: líneas de trabajo con sus terminales.</p>
+        <button type="button" class="principal" data-nuevo-proyecto>Crear tu primer proyecto</button>
+        {% endif %}
+      </div>
+      {% endif %}
       {% for p in en_uso %}
       {# `mirando` lo decide el servidor, que ya sabe de qué proyecto cuelga el
          slot abierto. El script no tiene que ir a buscarlo al DOM: menos
@@ -634,9 +707,43 @@
           <a class="item {{ 'activo' if slot and s.id == slot.id }}"
              href="/trabajo?slot={{ s.id }}">
             <span class="punto {{ s.estado }}" data-slot-punto="{{ s.id }}"
-                  title="{{ TITULOS_ESTADO.get(s.estado, '') }}"></span>{{ s.nombre }}{% if s.restaurar %}<span class="marca-vuelve" title="Vuelve tras un apagón">↻</span>{% endif %}
+                  title="{{ TITULOS_ESTADO.get(s.estado, '') }}"></span>{{ s.nombre }}{% if s.restaurar %}<span class="marca-vuelve" title="Persistente: se reabre cuando vuelves a encender el equipo">↻</span>{% endif %}
             <span class="sub mono">{{ s.ruta_corta or '—' }}</span>
           </a>
+          {# Sus ventanas, colgadas de él: proyecto → slot → ventanas, «como
+             carpetas, una dentro de otra» (decisión 291). En el escritorio
+             sustituyen a las pestañas de encima de la terminal. Pulsar una de
+             la sesión que ya se ve cambia sin recargar; una de otra sesión,
+             navega. #}
+          {% if s.ventanas %}
+          <div class="ventanas-slot">
+            {% for v in s.ventanas %}
+            <div class="fila-ventana">
+              <a class="ventana-item {{ 'activa' if v.session == session and v.ventana == ventana }}"
+                 href="/trabajo?session={{ v.session }}&ventana={{ v.ventana }}"
+                 data-sesion="{{ v.session }}" data-ventana="{{ v.ventana }}"
+                 title="{{ v.etiqueta }} — {{ v.session }}:{{ v.ventana }} · doble clic para renombrar">
+                <span class="punto {{ v.estado }}" title="{{ TITULOS_ESTADO.get(v.estado, '') }}"></span>
+                <span class="txt">{{ v.etiqueta }}</span>
+              </a>
+              <form method="post" action="/panel/accion" class="cerrar-ventana"
+                    data-confirmar-titulo="Cerrar la ventana «{{ v.etiqueta }}»"
+                    data-confirmar-ok="Cerrar la ventana"
+                    data-confirmar="Muere todo lo que esté corriendo dentro. El slot «{{ s.nombre }}» sigue, y su conversación con Claude se puede retomar desde «Conversaciones».">
+                <input type="hidden" name="pane_id" value="{{ v.pane_id }}">
+                <input type="hidden" name="accion" value="cerrar_ventana">
+                <input type="hidden" name="destino" value="/trabajo?slot={{ s.id }}">
+                <button class="sutil" title="Cerrar esta ventana" aria-label="Cerrar esta ventana">×</button>
+              </form>
+            </div>
+            {% endfor %}
+            <form method="post" action="/slot/{{ s.id }}/abrir" class="enlinea" data-una-vez="Abriendo…">
+              <input type="hidden" name="proyecto_id" value="{{ p.id }}">
+              <input type="hidden" name="destino" value="/trabajo?slot={{ s.id }}">
+              <button class="nueva-ventana-slot" title="Otra ventana de este slot, en su carpeta">+ Ventana</button>
+            </form>
+          </div>
+          {% endif %}
           {# Un slot sin ventana necesita poder abrirla DESDE AQUÍ. Antes el
              único «Lanzar» vivía en /proyecto: quien entraba a trabajar veía
              «Sin ventana abierta» y ninguna forma de abrirla. #}
@@ -670,11 +777,19 @@
             sin slots · {{ p.paneles_abiertos }} ventana{{ 's' if p.paneles_abiertos != 1 }} abierta{{ 's' if p.paneles_abiertos != 1 }}
           </div>
           {% endif %}
+          {# Al final de los suyos y siempre a la vista: dónde se crea un slot
+             no se adivinaba (22-oct). #}
+          <button type="button" class="nuevo-slot" data-nuevo-slot="{{ p.id }}"
+                  title="Una línea de trabajo nueva en {{ p.nombre }}, con su terminal">+ Slot nuevo</button>
         </div>
       </div>
       {% endfor %}
+      {% if en_uso and proyectos | rejectattr('en_uso') | list %}
+      <button type="button" class="nuevo-slot" data-nuevo-slot=""
+              title="Los proyectos sin nada abierto no salen en la lista">+ Slot en otro proyecto</button>
+      {% endif %}
     </div>
-    {% endif %}
+    <script type="application/json" id="proyectos-para-slot">{% set para_slot = [] %}{% for p in proyectos %}{% set _ = para_slot.append([p.id, p.nombre]) %}{% endfor %}{{ para_slot | tojson }}</script>
 
     <div class="grupo">
       <div class="rotulo">Sin organizar</div>
@@ -768,12 +883,19 @@
         <span id="fuente-val" class="tenue"></span>
         <button id="mas" class="sutil" title="Aumentar la letra" aria-label="Aumentar la letra">A+</button>
       </div>
-      {# Si este slot vuelve tras un apagón: se ve y se cambia aquí, con un
+      {# Si este slot es persistente: se ve y se cambia aquí, con un
          clic, que es donde se está trabajando (decisión 289). #}
       {% if slot %}
       <button id="vuelve" type="button" class="sutil vuelve {{ 'on' if slot.restaurar }}"
               data-slot="{{ slot.id }}" aria-pressed="{{ 'true' if slot.restaurar else 'false' }}"
-              title="Si se apaga el equipo, «Restaurar» vuelve a abrir este slot">↻ {{ 'Vuelve tras un apagón' if slot.restaurar else 'No vuelve tras un apagón' }}</button>
+              title="Persistente: cuando vuelvas a encender el equipo, el hub te ofrece reabrir este slot con su conversación">↻ {{ 'Persistente' if slot.restaurar else 'No persistente' }}</button>
+      {# Las conversaciones de Claude que tuvo este slot. Cerrar la consola no
+         las borra —Claude Code las guarda enteras—, pero nada lo decía y se
+         perdía el hilo (decisión 290). #}
+      <details class="menu der conversaciones">
+        <summary class="sutil" title="Conversaciones de Claude en este slot, para retomarlas">Conversaciones</summary>
+        <div class="menu-pop pop-conv"><div data-conversaciones="{{ slot.id }}"></div></div>
+      </details>
       {% endif %}
       <button id="alternar-nota" class="sutil" title="Mostrar u ocultar la nota">Nota</button>
       <button id="pantalla-completa" class="sutil" aria-pressed="false"
@@ -806,6 +928,10 @@
         <button class="principal" title="Abre una ventana de tmux en la ruta del slot">Abrir una ventana aquí</button>
       </form>
       {% if slot.ruta %}<p class="tenue mono">{{ slot.ruta }}</p>{% endif %}
+      {# Lo más probable al llegar aquí es que se cerrara la consola a medias:
+         la conversación sigue guardada y se retoma tal cual (decisión 290). #}
+      <p style="margin-top:8px"><strong>O retoma una conversación anterior</strong></p>
+      <div class="conv-lista" data-conversaciones="{{ slot.id }}"></div>
     </div>
     {% endif %}
     {# 🔴 El envoltorio existe SÓLO para la pantalla completa, y por una razón
@@ -1165,6 +1291,22 @@
   const ajuste = new FitAddon.FitAddon();
   term.loadAddon(ajuste);
   term.open(document.getElementById('marco'));
+  /* 🔴 Ctrl+V es PEGAR, no la tecla de control. Sin esto xterm la convierte en
+   * `^V` y la manda a la shell, y el navegador nunca llega a pegar: ni texto
+   * ni la captura de Win+Shift+S. Medido el 22-oct con un teclado real en
+   * Chromium —el evento simulado de los primeros tests se saltaba la tecla y
+   * daba por bueno lo que no funcionaba—. Devolver `false` deja la tecla al
+   * navegador, que dispara el `paste` que manejan xterm (texto) y `adjuntar`
+   * (imágenes). Ctrl+Shift+V y Mayús+Insert igual. */
+  if (term.attachCustomKeyEventHandler) {
+    term.attachCustomKeyEventHandler(e => {
+      if (e.type !== 'keydown') return true;
+      const v = (e.key || '').toLowerCase() === 'v';
+      if ((e.ctrlKey || e.metaKey) && v && !e.altKey) return false;
+      if (e.shiftKey && e.key === 'Insert') return false;
+      return true;
+    });
+  }
 
   /* ── el dedo, que aquí es la rueda ───────────────────────────────────────
    *
@@ -1673,7 +1815,7 @@
       if (!d.ok) throw new Error(d.error || 'no se guardó');
       vuelve.classList.toggle('on', d.restaurar);
       vuelve.setAttribute('aria-pressed', String(d.restaurar));
-      vuelve.textContent = d.restaurar ? '↻ Vuelve tras un apagón' : '↻ No vuelve tras un apagón';
+      vuelve.textContent = d.restaurar ? '↻ Persistente' : '↻ No persistente';
     } catch (e) {
       estado.textContent = 'no se pudo cambiar: ' + e.message;
     }
@@ -1743,8 +1885,14 @@
     ws.onopen = () => { intentos = 0; estado.textContent = ''; reajustar(); term.focus(); };
     ws.onmessage = e => term.write(new Uint8Array(e.data));
     ws.onerror = () => { estado.textContent = 'error de conexión'; };
-    ws.onclose = async () => {
+    ws.onclose = async ev => {
       if (cerradoAposta) return;
+      /* La sesión ya no existe (`CIERRE_SIN_SESION` en web.py): no vuelve
+       * sola, así que reintentar sólo repintaría el mismo aviso para siempre. */
+      if (ev.code === {{ cierre_sin_sesion }}) {
+        estado.textContent = 'esa sesión ya no existe · ábrela desde su slot';
+        return;
+      }
       intentos++;
       // Espera creciente hasta 10 s: si WSL se está reiniciando, no sirve
       // martillear el puerto, pero al volver debe reengancharse solo.
@@ -1828,7 +1976,16 @@
   // En fase de captura: el `paste` de xterm vive dentro y, con una imagen,
   // pegaría una cadena vacía. Con texto no se toca nada y lo maneja él.
   lienzoTerm.addEventListener('paste', e => {
-    const archivos = Array.from((e.clipboardData && e.clipboardData.files) || []);
+    const dt = e.clipboardData;
+    let archivos = Array.from((dt && dt.files) || []);
+    // Una captura (Win+Shift+S) no es un archivo sino un mapa de bits: según
+    // el navegador llega sólo en `items`. Se recoge de ahí si `files` viene vacío.
+    if (!archivos.length && dt && dt.items) {
+      archivos = Array.from(dt.items)
+        .filter(i => i.kind === 'file')
+        .map(i => i.getAsFile())
+        .filter(Boolean);
+    }
     if (!archivos.length) return;
     e.preventDefault();
     e.stopPropagation();
@@ -2068,9 +2225,20 @@
     }
   }
 
+  /* El slot de la ventana que se está mirando. La de otro slot lleva el suyo;
+   * una suelta, ninguno (la nueva tampoco sería de nadie); el resto, el de la
+   * página. */
+  function slotDeLaActiva() {
+    const v = ventanas.find(x => String(x.indice) === String(activa));
+    if (v && v.pertenece === 'otro') return (v.slot && v.slot.id) || null;
+    if (v && v.pertenece === 'ninguno') return null;
+    return SLOT;
+  }
+
   function irA(indice) {
     activa = indice;
     pintarVentanas();
+    marcarEnRail(indice);
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ accion: 'ventana', indice }));
     }
@@ -2123,7 +2291,8 @@
        * nada y nada lo explicaba. Un fallo mudo se lee como «está roto». */
       const r = await fetch(`/api/sesion/${encodeURIComponent(SESION)}/ventanas`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ruta: RUTA_BASE }),
+        // El slot de la ventana que se mira: la nueva nace atada a él.
+        body: JSON.stringify({ ruta: RUTA_BASE, slot: slotDeLaActiva() }),
       });
       const d = await r.json().catch(() => ({}));
       if (!d.ok) {
@@ -2164,6 +2333,38 @@
       body: JSON.stringify({ nombre }),
     });
     cargarVentanas();
+  });
+
+  /* ── las ventanas en el árbol del raíl (decisión 291) ──────────────────
+   * Una de la sesión que ya se ve cambia sin recargar, igual que la pestaña:
+   * recargar cortaría el terminal. Una de otra sesión es un enlace normal. */
+  const itemsRail = Array.from(document.querySelectorAll('.ventana-item'));
+  function marcarEnRail(indice) {
+    itemsRail.forEach(el => el.classList.toggle('activa',
+      el.dataset.sesion === SESION && String(el.dataset.ventana) === String(indice)));
+  }
+  itemsRail.forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (el.dataset.sesion !== SESION || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      e.preventDefault();
+      irA(Number(el.dataset.ventana));
+    });
+    el.addEventListener('dblclick', async (e) => {
+      e.preventDefault();
+      const nombre = await HubUI.preguntar({
+        titulo: `Renombrar la ventana ${el.dataset.ventana}`,
+        etiqueta: 'Nombre',
+        valor: (el.querySelector('.txt') || {}).textContent || '',
+      });
+      if (!nombre) return;
+      await fetch(`/api/sesion/${encodeURIComponent(el.dataset.sesion)}/ventana/${el.dataset.ventana}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre }),
+      });
+      const txt = el.querySelector('.txt');
+      if (txt) txt.textContent = nombre;
+      if (el.dataset.sesion === SESION) cargarVentanas();
+    });
   });
 
   // Alt+1..9 para saltar de ventana sin soltar el teclado.
@@ -2288,6 +2489,9 @@
 {# Al final y en archivo aparte: el panel de lienzos no puede tumbar la terminal
    si revienta, y así se prueba ejecutándolo (regla dura 11). #}
 <script src="/static/plegar.js"></script>
+<script src="/static/conversaciones.js"></script>
+<script src="/static/proyecto-nuevo.js"></script>
+<script src="/static/slot-nuevo.js"></script>
 <script src="/static/lienzos.js"></script>
 <script src="/static/consultas.js"></script>
 <script src="/static/programados.js"></script>

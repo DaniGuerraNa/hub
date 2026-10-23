@@ -35,6 +35,12 @@ el asistente nunca lee la base ni escanea el disco por su cuenta.
                                   deja en /trabajo una ventana en ese proyecto
                                   con el encargo escrito y SIN Enter: lo lanza
                                   la persona y revisa ahí los cambios
+  hub componentes                 qué les falta a Navegante y Reuniones, paso
+                                  a paso, medido en esta máquina
+  hub preparar <navegante|reuniones>
+                                  deja en /trabajo una ventana en su carpeta
+                                  con Claude y el encargo de prepararlo, SIN
+                                  Enter: lo lanza la persona
 
 🔴 Lo que este script NO hace, y no es un olvido: no borra nada, y no escribe en
 ningún proyecto del usuario. Sobre ellos es sólo lectura. Lo único que escribe es
@@ -605,6 +611,29 @@ def cmd_kit(args):
     print("Está escrito y SIN lanzar: que pulse Enter ahí y revise lo que propone.")
 
 
+def cmd_componentes(args: list[str]) -> None:
+    """`hub componentes`: los mismos pasos que pintan /navegante y /reuniones."""
+    r = pedir("/api/componentes")
+    for nombre in ("navegante", "reuniones"):
+        c = r[nombre]
+        print(f"{nombre}: {'listo' if c['listo'] else 'sin preparar'} · {c['pantalla']}")
+        for p in c["pasos"]:
+            marca = "✓" if p["hecho"] else ("·" if p["opcional"] else "✗")
+            print(f"  {marca} {p['titulo']}" + ("" if p["hecho"] else f" — {p['como']}"))
+
+
+def cmd_preparar(args: list[str]) -> None:
+    """`hub preparar <navegante|reuniones>`: prepara la ventana, no la lanza."""
+    if len(args) != 1:
+        salir("uso: hub preparar <navegante|reuniones>")
+    r = pedir("/api/componentes/preparar", {"nombre": args[0]})
+    if not r.get("ok"):
+        salir(r.get("error", "no se pudo preparar"))
+    print(f"Lista en /trabajo?session={r['session']}&ventana={r['ventana']}: una ventana con "
+          f"Claude y el encargo de preparar {args[0]}.")
+    print("Está escrito y SIN lanzar: que pulse Enter ahí; esa sesión pide permiso para cada orden.")
+
+
 COMANDOS = {
     "estado": cmd_estado, "sesiones": cmd_sesiones, "sesion": cmd_sesion,
     "conexiones": cmd_conexiones,
@@ -613,6 +642,7 @@ COMANDOS = {
     "guia": cmd_guia,
     "lienzo": cmd_lienzo, "preguntar": cmd_preguntar,
     "kits": cmd_kits, "kit": cmd_kit,
+    "componentes": cmd_componentes, "preparar": cmd_preparar,
 }
 
 

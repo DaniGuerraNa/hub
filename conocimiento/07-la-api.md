@@ -34,6 +34,7 @@ por esta lista, que es un resumen.
 | `/api/paneles` | Los paneles de tmux del último muestreo |
 | `/api/buscar?q=` | Búsqueda sobre todo lo indexado |
 | `/api/sesiones` · `/api/sesion/<id>` | Sesiones de Claude Code y su contenido, ya filtrado |
+| `/api/componentes` | Qué les falta a Navegante y Reuniones, paso a paso |
 
 ```bash
 curl -s localhost:8787/api/respaldo | jq .commits_sin_respaldo
@@ -91,3 +92,19 @@ Los dos primeros contestan siempre con `ok`, sin lanzar excepciones a la cara:
   hecho que `ok` implica agente deja un proyecto que existe y que nadie sabe que
   existe.
 - `{"ok": true, "agente": true, "session": "…", "ventana": N}` — dónde mirarlo.
+
+### Preparar Navegante o Reuniones
+
+| Endpoint | Cuerpo | Qué hace |
+|---|---|---|
+| `POST /api/componentes/preparar` | `{nombre}` (`navegante` o `reuniones`) | Abre en `/trabajo` una ventana en su carpeta con Claude y el encargo de prepararlo, **sin Enter**. Contesta `{ok, session, ventana}` |
+
+### Los que llama el agente de Reuniones
+
+Sólo los usa el agente de Windows, y los dos exigen su llave en la cabecera
+`X-Reuniones-Token`, venga la petición de donde venga. Sin ella contestan 401.
+
+| Endpoint | Qué hace |
+|---|---|
+| `POST /api/reuniones/latido` | Cada segundo: qué ve el agente (monitores, micros, apps con audio, si graba). Devuelve la orden vigente |
+| `POST /api/reuniones/miniatura/<n>` | Una captura pequeña del monitor `n`, para elegir cuál grabar |

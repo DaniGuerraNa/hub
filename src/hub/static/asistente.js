@@ -22,6 +22,7 @@
   const flecha    = document.getElementById('asistente-flecha');
   const btCompact = document.getElementById('asistente-compactar');
   const btLimpiar = document.getElementById('asistente-limpiar');
+  const btAnteriores = document.getElementById('asistente-anteriores');
 
   const CLAVE = 'hub.asistente.abierto';
   const CADENCIA = 1500;
@@ -358,10 +359,55 @@
     cerrarMenu(btLimpiar);
     if (!await HubUI.confirmar({
       titulo: 'Limpiar su contexto',
-      mensaje: 'Olvida la conversación entera. No es reversible.',
+      mensaje: 'Empieza una conversación nueva. La de ahora no se borra: '
+             + 'queda en «Chats anteriores» y puedes volver a ella.',
       aceptar: 'Limpiar', peligro: true,
     })) return;
     await fetch('/api/asistente/limpiar', { method: 'POST' });
+    ultimo = null;
+    hilo.innerHTML = '';
+    refrescar();
+  });
+
+  // ── Chats anteriores (decisión 290) ──────────────────────────────────────
+
+  function fecha(iso) {
+    const d = new Date(iso || '');
+    if (isNaN(d)) return '';
+    return d.toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  }
+
+  if (btAnteriores) btAnteriores.addEventListener('click', async () => {
+    let lista = [];
+    try {
+      const r = await fetch('/api/asistente/conversaciones');
+      lista = ((r.ok && await r.json()) || {}).conversaciones || [];
+    } catch (e) { lista = []; }
+    const otras = lista.filter(c => !c.actual);
+    if (!otras.length) {
+      return HubUI.avisar({ titulo: 'Chats anteriores',
+        mensaje: 'Todavía no hay otra conversación con el asistente aparte de esta.' });
+    }
+    const datos = await HubUI.formulario({
+      titulo: 'Chats anteriores',
+      aceptar: 'Volver a ésta',
+      campos: [{ nombre: 'sesion', etiqueta: 'Conversación', valor: otras[0].id,
+        opciones: otras.map(c => [c.id,
+          `${fecha(c.fin)} · ${(c.titulo || c.primera || 'Sin título').slice(0, 70)}`]) }],
+      nota: 'Sigue donde la dejaste. La de ahora no se pierde: también queda aquí.',
+    });
+    if (!datos) return;
+    estado.textContent = 'cambiando de conversación…';
+    let d = {};
+    try {
+      const r = await fetch('/api/asistente/retomar', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sesion: datos.sesion }),
+      });
+      d = (r.ok && await r.json()) || {};
+    } catch (e) { d = { ok: false, error: 'sin conexión con el hub' }; }
+    estado.textContent = '';
+    if (!d.ok) return HubUI.avisar({ titulo: 'No se pudo volver a ella', mensaje: d.error || 'error desconocido' });
     ultimo = null;
     hilo.innerHTML = '';
     refrescar();

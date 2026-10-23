@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block titulo %}{{ api.nombre }} - Recursos{% endblock %}{% block contenido %}
+<p><a href="/apigateway/main/apis?region={{ region }}">APIs</a> &gt; {{ api.nombre }} ({{ api.id }})</p>
+<h1>{{ api.nombre }}</h1>
+<div class="panel"><dl><dt>Protocolo</dt><dd>{{ api.tipo }}</dd><dt>Etapas</dt><dd data-testid="etapas">{{ api.etapas|join(', ') }}</dd>
+<dt>Punto de enlace</dt><dd>https://{{ api.id }}.execute-api.{{ api.region }}.amazonaws.com</dd></dl>
+<button class="boton primario" id="desplegar">Implementar API</button></div>
+<div class="panel"><h2>Recursos</h2>
+<table aria-label="Rutas"><thead><tr><th>Método</th><th>Ruta</th><th>Integración</th></tr></thead><tbody>
+{% for r in api.rutas %}<tr><td>{{ r.metodo }}</td><td>{{ r.ruta }}</td><td>{{ r.integracion }}</td></tr>{% endfor %}
+</tbody></table></div>
+<script>desplegar.onclick=async()=>{await fetch('/api/apigateway/CreateDeployment',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({restApiId:'{{ api.id }}'})});alert('Implementación creada')}</script>
+{% endblock %}

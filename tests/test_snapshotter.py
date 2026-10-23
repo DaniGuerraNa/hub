@@ -81,6 +81,16 @@ def test_sin_servidor_no_pisa_la_ultima_muestra_buena(con, atribuidor, monkeypat
     assert perdido is not None and len(perdido["paneles"]) == 3
 
 
+def test_un_corte_sin_nada_abierto_no_se_anuncia(con, atribuidor, monkeypatch):
+    """Reiniciar con la terminal cerrada no pierde nada: no hay nada que avisar."""
+    _falsear(monkeypatch, 100, [])
+    snapshotter.capturar(con, atribuidor)
+    _falsear(monkeypatch, 200, _paneles(1))
+    snapshotter.capturar(con, atribuidor)
+
+    assert api.recuperacion_pendiente(con) is None
+
+
 def test_marcar_revisada_deja_de_anunciar(con, atribuidor, monkeypatch):
     _falsear(monkeypatch, 100, _paneles(2))
     snapshotter.capturar(con, atribuidor)
@@ -229,3 +239,36 @@ def test_apunta_que_conversacion_de_claude_corre_en_cada_panel_si_el_proceso_viv
     monkeypatch.setattr(orquestador, "_sesiones_de_claude", lambda: carpeta)
 
     assert snapshotter.claude_por_panel() == {"%7": vivo["sessionId"]}
+
+
+def test_sin_servidor_nada_sigue_contando_como_abierto(con, atribuidor, monkeypatch):
+    """Con tmux muerto, lo de antes no puede seguir saliendo como abierto.
+
+    `detectar_corte` preserva sólo la última muestra del servidor que murió, así
+    que la penúltima —mismos paneles— pasaba a ser la «actual» y nadie la
+    pisaba, porque sin servidor no se escribe nada. El slot salía en verde y su
+    «Abrir» llevaba a una terminal sin nada detrás.
+    """
+    _falsear(monkeypatch, 100, _paneles(3))
+    snapshotter.capturar(con, atribuidor)
+    snapshotter.capturar(con, atribuidor)  # dos del mismo servidor: se preserva una
+
+    _falsear(monkeypatch, None, [])
+    snapshotter.capturar(con, atribuidor)
+
+    assert api.snapshot_actual(con) is None
+    assert api.paneles_abiertos(con) == []
+    assert len(api.recuperacion_pendiente(con)["paneles"]) == 3
+
+
+def test_al_volver_tmux_lo_abierto_vuelve_a_verse(con, atribuidor, monkeypatch):
+    """Y la otra mitad: un corte no apaga la vista para siempre."""
+    _falsear(monkeypatch, 100, _paneles(2))
+    snapshotter.capturar(con, atribuidor)
+    _falsear(monkeypatch, None, [])
+    snapshotter.capturar(con, atribuidor)
+    _falsear(monkeypatch, 200, _paneles(1, base="%n"))
+    snapshotter.capturar(con, atribuidor)
+
+    paneles = api.paneles_abiertos(con)
+    assert len(paneles) == 1 and paneles[0]["pane_id"] == "%n0"

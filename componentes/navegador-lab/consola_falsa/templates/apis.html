@@ -1,0 +1,27 @@
+{% extends "base.html" %}{% block titulo %}API Gateway - APIs{% endblock %}{% block contenido %}
+<nav class="lateral" aria-label="API Gateway"><strong>API Gateway</strong><a href="#">APIs</a><a href="#">Nombres de dominio personalizados</a><a href="#">Enlaces de VPC</a></nav>
+<div style="overflow:hidden">
+<h1>APIs ({{ apis|length }})</h1>
+<div class="panel">
+ <div style="display:flex;gap:8px;margin-bottom:10px">
+  <button class="boton peligro" id="borrar" disabled>Eliminar</button>
+  <button class="boton primario">Crear API</button>
+ </div>
+ <table aria-label="APIs"><thead><tr><th></th><th>Nombre</th><th>Descripción</th><th>ID</th><th>Protocolo</th><th>Creada</th></tr></thead><tbody>
+ {% for a in apis %}<tr><td><input type="radio" name="sel" value="{{ a.id }}" aria-label="Seleccionar {{ a.nombre }}"></td>
+  <td><a href="/apigateway/main/apis/{{ a.id }}/resources?region={{ region }}">{{ a.nombre }}</a></td>
+  <td>{{ a.descripcion }}</td><td>{{ a.id }}</td><td>{{ a.tipo }}</td><td>{{ a.creada }}</td></tr>
+ {% else %}<tr><td colspan="6">No hay APIs en {{ region }}.</td></tr>{% endfor %}
+ </tbody></table>
+</div></div>
+<dialog id="confirmar"><h2>¿Eliminar API?</h2><p>Escribe <b>confirmar</b> para eliminar <span id="cual"></span>.</p>
+<input id="texto" aria-label="Confirmación"><div style="margin-top:12px;display:flex;gap:8px">
+<button class="boton" onclick="confirmar.close()">Cancelar</button><button class="boton peligro" id="si">Eliminar</button></div></dialog>
+<script>
+ let sel=null;document.querySelectorAll('input[name=sel]').forEach(r=>r.onchange=()=>{sel=r.value;borrar.disabled=false});
+ borrar.onclick=()=>{cual.textContent=sel;confirmar.showModal()};
+ si.onclick=async()=>{if(texto.value!=='confirmar')return;
+   await fetch('/api/apigateway/DeleteRestApi',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({restApiId:sel})});
+   confirmar.close();alert('API eliminada')};
+</script>
+{% endblock %}

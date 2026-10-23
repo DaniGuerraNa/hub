@@ -34,6 +34,16 @@ PREFIJO_ESPEJO = tmux.PREFIJO_ESPEJO
 # La validación vive en el adaptador: es la última frontera antes de tmux.
 DestinoInvalido = tmux.DestinoInvalido
 
+
+class SesionInexistente(RuntimeError):
+    """La sesión que se quiere ver ya no está en tmux.
+
+    Aparte de un `RuntimeError` cualquiera porque piden respuestas distintas:
+    un fallo de tmux puede pasar solo y la terminal reintenta, pero una sesión
+    muerta no vuelve sola —hay que abrir su slot— y reintentar sólo repinta el
+    mismo aviso cada diez segundos para siempre.
+    """
+
 # Lo que se espera a que el PTY admita más bytes cuando no hay bucle de eventos
 # que avise. Un `tmux attach` vivo drena en microsegundos; si tarda un segundo
 # es que no está leyendo, y entonces vale más cortar que colgar la petición.
@@ -181,7 +191,7 @@ def crear_espejo(session: str, ventana: int | None = None) -> str:
     # abre, no dice nada, y enseña un prompt en la carpeta del hub en lugar del
     # trabajo que se iba a ver. Comprobar antes convierte eso en una frase.
     if not tmux.existe_sesion(session):
-        raise RuntimeError(
+        raise SesionInexistente(
             f"la sesión «{session}» ya no existe en tmux — se habrá cerrado su "
             "última ventana. Vuelve a abrirla desde su slot."
         )

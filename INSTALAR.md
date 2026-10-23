@@ -161,6 +161,11 @@ funciona. Están aquí porque la que no se documenta no existe.
 | `HUB_TMUX_SOCKET` | *(ninguno)* | Servidor de tmux aparte (`tmux -L`). Los tests lo usan para no tocar tus sesiones |
 | `HUB_CONTEXTO_FICHERO` | `$HUB_HOME/asistente-contexto.json` | Dónde escribe el statusline del asistente su porcentaje de contexto. La leen el hub y el script, y el hub se la pasa al asistente al arrancarlo, así que los dos miran el mismo archivo |
 | `HUB_RESPALDO` | `$HUB_HOME/respaldos` | Dónde deja el snapshotter la copia diaria de `hub.db` (se guardan las 14 últimas). Apúntala a otro disco si quieres que sobreviva a éste |
+| `NAV_LAB` | `componentes/navegador-lab` | El laboratorio de Navegante, si lo tienes en otro sitio (`conocimiento/12-navegante-y-reuniones.md`) |
+| `NAV_DATOS` | `~/.local/share/navegador-lab` | Los datos del Navegante: el perfil de Chrome con tus cookies, las preguntas del guardián y las corridas |
+| `REUNIONES_PROYECTO` | `componentes/reuniones` | El procesado de Reuniones, si lo tienes en otro sitio |
+| `REUNIONES_AGENTE` | la carpeta que eliges en Reuniones | Dónde está el agente de Windows, visto desde WSL (`/mnt/c/…`) |
+| `REUNIONES_RAIZ` | junto al agente | Dónde están las grabaciones, vistas desde WSL |
 | `HUB_BUSCAR_VERSIONES` | `1` | Con `0`, el hub no mira si hay versión nueva publicada (un `git ls-remote` al día como mucho) |
 | `HUB_BIN` | `~/.local/bin` | Dónde enlaza `sembrar-asistente.sh` el comando `hub` |
 | `HUB_STATUSLINE_SIGUIENTE` | *(ninguno)* | Ver abajo |
@@ -204,11 +209,19 @@ servicios y el asistente de antes. El hub lo detecta —compara la versión del
 código con la que `actualizar.sh` apuntó al terminar, en
 `$HUB_HOME/version.json`— y lo dice arriba en todas las pantallas.
 
-🔴 **Si lo instalaste antes de la 0.2.0** no tienes todavía `actualizar.sh`:
+🔴 **Si lo instalaste antes de la 0.2.0** no tienes todavía `actualizar.sh`, y
+el `git pull` de esa primera vez no comprueba nada por ti:
 
 ```bash
-git pull && bash scripts/actualizar.sh --sin-bajar
+git status --short --untracked-files=no     # tiene que salir vacío
+git pull --ff-only && bash scripts/actualizar.sh --sin-bajar
 ```
+
+Si `git status` enseña archivos, son cambios tuyos en el código del hub (o de
+una sesión de Claude que lo tocó): qué hacer con ellos está en
+[`conocimiento/11-versiones.md`](conocimiento/11-versiones.md#tengo-cambios-míos-en-el-clon).
+En Windows, todo esto se corre **dentro de WSL**, en el clon que usan los
+servicios (`systemctl --user show hub-web -p WorkingDirectory`).
 
 **Cómo te enteras de que hay versión nueva:** el hub mira una vez al día las
 etiquetas del repo publicado (`git ls-remote`, no baja nada) y, si hay una más

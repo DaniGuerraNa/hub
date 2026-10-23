@@ -13,6 +13,94 @@ bash scripts/actualizar.sh
 Al terminar te enseña esta misma lista, sólo con las versiones que acabas de
 cruzar.
 
+## Sin publicar
+
+Lo que irá en la próxima versión. Al publicarla, este título pasa a ser su
+número.
+
+<!-- 🔴 SIN CONFIRMAR: en el navegador del dueño aún no pega (ESTADO §1).
+     No publicar esta línea hasta verlo funcionar allí. -->
+- **Ctrl+V pega en la terminal web**, texto e imágenes (también la captura de
+  Win+Shift+S). Antes la terminal se quedaba la tecla como `^V` y no pegaba
+  nada: la 0.3.0 lo anunciaba y no funcionaba. Ctrl+Shift+V y Mayús+Insert
+  hacen lo mismo.
+
+## 0.3.1 — 2026-10-23
+
+Corrección de errores y mejoras de uso: lo que pasaba al reiniciar WSL, crear
+y retomar desde Trabajo sin salir de ahí, y dos pantallas nuevas que se
+preparan solas paso a paso.
+
+### Qué tienes que hacer
+
+- **Actualiza** con `bash scripts/actualizar.sh` en la carpeta del hub.
+- **Pulsa «Limpiar» en el chat del asistente** después de actualizar: sabe
+  ayudarte a preparar Navegante y Reuniones, y eso viene en sus instrucciones
+  nuevas.
+- Si quieres **Navegante** o **Reuniones**, entra en su pantalla: te dice qué
+  falta y cómo conseguirlo. Si no, no hace falta nada.
+
+### Nuevo
+
+- **Navegante.** Un navegador de verdad que maneja Claude, con un guardián
+  que pausa todo lo que modifica hasta que lo permites. Se le enseña un flujo
+  haciéndolo una vez y lo repite.
+- **Reuniones.** Graba la reunión que tienes en otro monitor (pantalla, audio
+  sólo de la aplicación y tu micro) y la procesa en tu máquina: transcripción,
+  resumen, tareas y decisiones. Necesita un agente pequeño en Windows; la
+  pantalla lo copia a la carpeta que elijas y lo instalas con un doble clic.
+- Las dos vienen con el hub (en `componentes/`) y, mientras no están
+  preparadas, su pantalla enseña los pasos que faltan, medidos en tu máquina.
+  **«Preparar con Claude»** abre una ventana con el encargo escrito y sin
+  lanzar; **«Guíame»** se lo pregunta al asistente. Desde el chat:
+  `hub componentes` y `hub preparar <navegante|reuniones>`. Todo en
+  `conocimiento/12-navegante-y-reuniones.md`.
+- **Crear desde Trabajo.** En la lista de la izquierda hay «+ Proyecto» y, al
+  final de cada proyecto, «+ Slot nuevo». Crear un slot desde ahí le abre su
+  terminal con Claude y te lleva a ella. Si aún no tienes proyectos, la lista
+  te explica qué son y te ofrece crear el primero.
+- **Conversaciones anteriores de un slot.** En la cabecera del slot,
+  «Conversaciones» lista las que tuviste con Claude en esa carpeta, con su
+  título y cuándo fueron. «Retomar» abre una ventana con esa conversación tal
+  como la dejaste: cerrar la consola ya no es perder el hilo. Un slot sin
+  ninguna ventana abierta te las ofrece directamente.
+- **Las ventanas, dentro de su slot.** La lista de la izquierda de Trabajo es
+  ahora un árbol: proyecto → slot → ventanas. Pulsa una para verla, doble clic
+  para renombrarla, × para cerrarla y «+ Ventana» para abrir otra en ese slot.
+  En el escritorio sustituye a las pestañas de encima de la terminal, que
+  siguen apareciendo con el raíl plegado, a pantalla completa y en el móvil.
+- **Chats anteriores del asistente**, a la vista bajo su chat. «Limpiar» ya no
+  pierde nada: la conversación de antes queda ahí y puedes volver a ella.
+
+Claude Code guarda cada conversación 30 días; las más viejas las borra él.
+
+### Qué cambia en lo que ya usabas
+
+- **Tras reiniciar WSL, las terminales que ya no existen dejan de salir como
+  abiertas.** Antes el slot seguía en verde y su «Abrir» llevaba a una sesión
+  muerta. Lo que se perdió sigue en el aviso de la portada, para reabrirlo.
+- **Ya no sale «se perdió una sesión · 0 paneles»** al reiniciar sin nada
+  abierto: no se había perdido nada.
+- **Una terminal cuya sesión ya no existe lo dice y deja de reintentar**
+  («esa sesión ya no existe · ábrela desde su slot»), en vez de repetir el
+  mismo error cada diez segundos. Si lo que falla es tmux un momento, sigue
+  reintentando sola como antes.
+- **«Vuelve tras un apagón» ahora se llama «Persistente».** Es lo mismo: un
+  slot persistente se reabre cuando vuelves a encender el equipo, por apagón o
+  porque apagaste tú. Lo que ya tenías marcado sigue marcado. En la portada, el
+  aviso se llama «Reabrir tus slots persistentes».
+- **Una ventana abierta con el «+» de las pestañas queda en su slot.** Antes
+  se abría en la carpeta del slot pero salía suelta, en «Sin organizar».
+- **Al entrar en Trabajo, todos los proyectos salen plegados** salvo el del
+  slot que estás mirando.
+- **Si tienes cambios propios en el código del hub, `actualizar.sh` te dice
+  qué hacer con ellos** en vez de sólo pararse: guardar una copia y
+  descartarlos (lo habitual, si eran arreglos de urgencia) o guardarlos en una
+  rama. La receta, y cómo encontrar la carpeta del hub en WSL, están en
+  `conocimiento/11-versiones.md`.
+- **Los tests ya no dependen del nombre de tu máquina.** Uno sólo pasaba en un
+  equipo llamado `DESKTOP`.
+
 ## 0.3.0 — 2026-10-22
 
 Arreglos de lo que reportaron quienes lo usan, y lo que hace falta para que un
@@ -89,8 +177,14 @@ propios, y se actualiza con un solo comando.
 🔴 **Si instalaste el hub antes de esta versión**, actualiza esta vez así:
 
 ```bash
-git pull && bash scripts/actualizar.sh --sin-bajar
+git status --short --untracked-files=no     # tiene que salir vacío
+git pull --ff-only && bash scripts/actualizar.sh --sin-bajar
 ```
+
+Si `git status` enseña archivos, tienes cambios propios en el código del hub:
+qué hacer con ellos está en `conocimiento/11-versiones.md` («Tengo
+cambios míos en el clon»). Vale igual si llegas directamente a una versión
+posterior.
 
 `git pull` y reiniciar —lo que decía la documentación hasta ahora— **no basta
 esta vez**: los servicios se generan distinto y el asistente trae instrucciones

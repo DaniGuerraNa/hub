@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>{% block titulo %}Consola{% endblock %} | Consola FALSA</title>
+<style>
+ body{margin:0;font:14px system-ui,sans-serif;background:#f2f3f3;color:#16191f}
+ header{background:#232f3e;color:#fff;display:flex;gap:16px;align-items:center;padding:8px 16px}
+ header a{color:#fff;text-decoration:none} header .marca{font-weight:700}
+ header .der{margin-left:auto;display:flex;gap:12px;align-items:center}
+ .aviso-falsa{background:#d13212;color:#fff;font-weight:700;padding:2px 8px;border-radius:4px}
+ main{padding:20px 28px} table{border-collapse:collapse;background:#fff;width:100%}
+ th,td{border-bottom:1px solid #eaeded;padding:8px 10px;text-align:left} th{background:#fafafa}
+ .boton{border:1px solid #545b64;background:#fff;border-radius:2px;padding:6px 14px;cursor:pointer}
+ .primario{background:#ec7211;border-color:#ec7211;color:#fff}
+ .peligro{border-color:#d13212;color:#d13212}
+ .panel{background:#fff;padding:16px;margin-bottom:16px;box-shadow:0 1px 1px rgba(0,28,36,.3)}
+ dialog{border:1px solid #aab7b8;padding:20px;min-width:380px}
+ nav.lateral{float:left;width:200px;margin-right:24px} nav.lateral a{display:block;padding:4px 0}
+</style></head><body>
+<header>
+ <a class="marca" href="/console/home">aws</a>
+ <span class="aviso-falsa">CONSOLA FALSA · ensayo</span>
+ <input aria-label="Buscar servicios" placeholder="Buscar servicios" style="width:280px">
+ <div class="der">
+  <span id="reloj" aria-live="off"></span>
+  <span id="avisos" title="Notificaciones"></span>
+  <label>Región <select id="region" aria-label="Región" onchange="location.search='?region='+this.value">
+   {% for r in regiones %}<option {{ 'selected' if r == region }}>{{ r }}</option>{% endfor %}</select></label>
+  <span data-testid="cuenta">{{ u.usuario }} @ {{ u.cuenta }} ({{ u.rol }})</span>
+  <form method="post" action="/logout" style="margin:0"><button class="boton">Cerrar sesión</button></form>
+ </div>
+</header>
+<main>{% block contenido %}{% endblock %}</main>
+<script>
+ setInterval(async()=>{try{const r=await (await fetch('/api/estado/notificaciones')).json();
+   document.getElementById('reloj').textContent=r.hora;
+   document.getElementById('avisos').textContent='🔔 '+r.avisos;}catch(e){}},1000);
+</script>
+</body></html>

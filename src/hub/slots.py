@@ -154,7 +154,7 @@ def descartar(con: sqlite3.Connection, pane_id: str) -> None:
 
 
 def abrir(con: sqlite3.Connection, slot_id: int, session: str | None = None,
-          conservar_al_morir: bool = False) -> str | None:
+          conservar_al_morir: bool = False, comando: str | None = None) -> str | None:
     """Lanza el slot en tmux. Lanzar es abrir la ventana; mirarla y escribir en ella
     es cosa de la terminal embebida (decisión 34, que revocó la 16).
 
@@ -167,6 +167,9 @@ def abrir(con: sqlite3.Connection, slot_id: int, session: str | None = None,
 
     Y la ruta cae al asiento del proyecto cuando el slot no tiene la suya: «creé
     el slot sobre el proyecto» es exactamente eso.
+
+    `comando` sustituye al del slot: es como «Retomar» abre la ventana con
+    `claude --resume <id>` (decisión 290).
     """
     slot = api.obtener_slot(con, slot_id)
     if not slot:
@@ -180,7 +183,7 @@ def abrir(con: sqlite3.Connection, slot_id: int, session: str | None = None,
             f"«{slot['nombre']}» no tiene ruta y su proyecto no tiene asiento: "
             "no hay dónde abrir la ventana."
         )
-    comando = slot["comando"]
+    comando = comando or slot["comando"]
     if not comando and slot["autostart_claude"]:
         # Un slot es TU ventana de trabajo, no un agente del hub: la abres, la
         # miras y eliges tú con qué modelo trabajar, desde

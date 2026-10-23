@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+
+{# Lo extraído, pintado según su forma: una lista de filas es una tabla, una
+   lista de cosas con sus propias listas (un `para_cada`) son tablas anidadas,
+   y un texto es un texto. Recursivo porque `para_cada` puede ir dentro de otro. #}
+{% macro valor(v) -%}
+  {%- if v is mapping -%}
+    <dl class="datos">{% for k, x in v.items() %}<dt>{{ k }}</dt><dd>{{ valor(x) }}</dd>{% endfor %}</dl>
+  {%- elif v is iterable and v is not string -%}
+    {%- set filas = v | list -%}
+    {%- if filas and filas[0] is mapping -%}
+      {%- set cols = [] -%}
+      {%- for f in filas %}{% for k in f.keys() %}{% if k not in cols %}{% set _ = cols.append(k) %}{% endif %}{% endfor %}{% endfor -%}
+      <div class="tabla-scroll"><table class="datos-tabla">
+        <thead><tr>{% for c in cols %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for f in filas %}<tr>{% for c in cols %}<td>{{ valor(f.get(c, '')) }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+      </table></div>
+      <p class="tenue" style="font-size:12px;margin:4px 0 0">{{ filas | length }} fila{{ 's' if filas | length != 1 }}</p>
+    {%- else -%}
+      <ul>{% for x in filas %}<li>{{ valor(x) }}</li>{% endfor %}</ul>
+    {%- endif -%}
+  {%- else -%}{{ v }}{%- endif -%}
+{%- endmacro %}
+
+{% block contenido %}
+<style>
+  .corrida { display:grid; gap:14px; grid-template-columns:minmax(0,1fr); }
+  .corrida .tarjeta h2 { margin:0 0 10px; font-size:15px; }
+  .tabla-scroll { overflow-x:auto; }
+  .datos-tabla { border-collapse:collapse; font-size:12.5px; min-width:100%; }
+  .datos-tabla th { text-align:left; color:var(--texto-3); font-weight:500; padding:4px 10px 4px 0;
+                    border-bottom:1px solid var(--borde); white-space:nowrap; }
+  .datos-tabla td { padding:5px 10px 5px 0; border-top:1px solid var(--borde); vertical-align:top;
+                    overflow-wrap:anywhere; }
+  .datos-tabla .datos-tabla { font-size:12px; }
+  dl.datos { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:4px 12px; margin:0; }
+  dl.datos dt { color:var(--texto-3); font-size:12.5px; }
+  dl.datos dd { margin:0; }
+  .mono { font-family:ui-monospace, Menlo, Consolas, monospace; font-size:12px; overflow-wrap:anywhere; }
+  .corrida img { max-width:100%; border-radius:10px; border:1px solid var(--borde); }
+  pre.vista { max-height:360px; overflow:auto; font-size:11.5px; background:var(--lienzo);
+              padding:10px; border-radius:10px; white-space:pre-wrap; }
+</style>
+
+{{ ui.cabecera_vista(c.flujo, 'Corrida del ' ~ c.cuando[6:8] ~ '-' ~ c.cuando[4:6] ~ ' a las ' ~ c.cuando[9:11] ~ ':' ~ c.cuando[11:13]) }}
+<p><a href="/navegante#corridas">← Navegante</a></p>
+
+<div class="corrida">
+{% if c.resultado %}
+  {% set r = c.resultado %}
+  {% if r.parametros %}
+  <div class="tarjeta"><h2>Con estos parámetros</h2>{{ valor(r.parametros) }}</div>
+  {% endif %}
+  {% for k, v in (r.datos or {}).items() %}
+  <div class="tarjeta"><h2>{{ k }}</h2>{{ valor(v) }}</div>
+  {% else %}
+  <div class="tarjeta"><p class="tenue" style="margin:0">El flujo no tiene pasos <code>extraer</code>: corrió, pero no guardó datos.</p></div>
+  {% endfor %}
+  <details class="tarjeta"><summary>Pasos ({{ r.traza | length }})</summary>
+    <p class="mono">{% for t in r.traza %}{{ t.paso }}. {{ t.verbo }} · {{ t.ms }} ms<br>{% endfor %}</p></details>
+{% elif c.fallo %}
+  {% set f = c.fallo %}
+  <div class="tarjeta">
+    <h2>Falló en el paso {{ f.paso }}</h2>
+    <p>{{ f.error }}</p>
+    <p class="mono">{{ f.definicion }}</p>
+    <p class="tenue" style="font-size:12.5px">En <span class="mono">{{ f.url }}</span>. Pídele a Claude que lo
+      mire: «lee el fallo de {{ c.flujo }} y propón el arreglo del flujo».</p>
+  </div>
+  <details class="tarjeta"><summary>Lo que se veía en la página</summary><pre class="vista">{{ f.lo_que_se_veia }}</pre></details>
+{% endif %}
+{% for img in c.imagenes %}
+  <div class="tarjeta"><h2>{{ img }}</h2>
+    <img src="/navegante/imagen?flujo={{ c.flujo }}&cuando={{ c.cuando }}&nombre={{ img }}" alt="Captura {{ img }}"></div>
+{% endfor %}
+</div>
+{% endblock %}

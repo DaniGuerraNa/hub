@@ -1,0 +1,22 @@
+# Política para la consola REAL de AWS, en modo sólo lectura.
+#
+# 🔴 Esto es la segunda red. La primera es IAM: entra en la consola con un
+# permission set de lectura (ViewOnlyAccess + CloudWatchLogsReadOnlyAccess
+# acotado; ver investigacion/03 §3). Si la credencial no puede escribir, ningún
+# fallo de esta lista puede romper nada.
+#
+# Sin medir todavía contra la consola real: la lista de orígenes y de
+# telemetría hay que ajustarla en la primera sesión mirando `nav registro`.
+nombre: aws-lectura
+modo: preguntar          # lo que modifique se te pregunta (nav pendientes / el hub)
+origenes:
+  - https://*.aws.amazon.com
+  - https://*.console.aws.amazon.com
+  - https://*.signin.aws
+  - https://*.awsapps.com          # portal de IAM Identity Center
+  - https://*.amazonaws.com
+silenciar:
+  - https://*.shortbread.aws.dev/*
+  - https://*.telemetry*.amazonaws.com/*
+  - https://prod.pa.cdn.uis.awsstatic.com/*
+permitir: []

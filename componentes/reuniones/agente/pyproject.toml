@@ -1,0 +1,23 @@
+[project]
+name = "reuniones-agente"
+version = "0.1.0"
+description = "Agente de Windows que graba reuniones cuando el hub se lo pide"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "proc-tap",
+    "sounddevice",
+    "mss",
+    "pillow",
+    "numpy",
+    "pycaw",
+]
+
+[project.scripts]
+reuniones-agente = "agente:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+include = ["agente.py"]

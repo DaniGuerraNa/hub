@@ -29,7 +29,7 @@ def test_el_muestreo_se_juzga_por_su_latido(hace, estado):
 
 def test_sin_latido_nunca_el_muestreo_esta_mal_y_dice_que_no_habra_restauracion():
     m = salud.muestreo(AHORA)
-    assert m["estado"] == "mal" and "restaurar" in m["detalle"]
+    assert m["estado"] == "mal" and "reabrir" in m["detalle"]
     assert "systemctl --user restart hub-snapshotter" in m["arreglo"]
 
 
@@ -42,7 +42,7 @@ def test_avisa_si_ningun_slot_vuelve_tras_un_apagon(con):
     con.execute("INSERT INTO proyecto (id, nombre) VALUES ('p','P')")
     con.execute("INSERT INTO slot (proyecto_id, nombre, creado_en) VALUES ('p','a','x'), ('p','b','x')")
     r = salud._restauracion(con)
-    assert r["estado"] == "aviso" and "Ninguno de tus 2 slots" in r["detalle"]
+    assert r["estado"] == "aviso" and "Ninguno de tus 2 slots es persistente" in r["detalle"]
 
     con.execute("UPDATE slot SET restaurar=1 WHERE nombre='a'")
     assert salud._restauracion(con)["detalle"].startswith("1 de 2 slots")

@@ -57,6 +57,25 @@ def test_rechaza_destinos_que_no_son_un_nombre_de_sesion(malicioso):
         terminal.crear_espejo(malicioso)
 
 
+def test_una_sesion_que_ya_no_existe_no_crea_espejo_y_lo_dice_con_su_error(monkeypatch):
+    """🔴 tmux no falla al agrupar contra una sesión inexistente: crea el grupo,
+    con una shell vacía en la carpeta del hub. Y el error tiene clase propia
+    porque la terminal lo trata distinto: ése no se reintenta."""
+    llamadas = []
+
+    def falso(args, entrada=None):
+        llamadas.append(args)
+        if args[0] == "has-session":
+            raise RuntimeError("can't find session: work")
+        return ""
+
+    monkeypatch.setattr(tmux, "_correr", falso)
+
+    with pytest.raises(terminal.SesionInexistente):
+        terminal.crear_espejo("work")
+    assert not [a for a in llamadas if a[0] == "new-session"]
+
+
 def test_crea_un_espejo_agrupado_y_unico(monkeypatch):
     llamadas = []
     monkeypatch.setattr(tmux, "_correr", lambda args: llamadas.append(args) or "")
@@ -359,3 +378,50 @@ def test_sobre_una_sesion_viva_el_espejo_se_crea_igual_que_siempre():
                 tmux._correr(["kill-session", "-t", f"={s}"])
             except (RuntimeError, tmux.TmuxNoDisponible):
                 pass
+
+
+def test_una_sesion_muerta_cierra_el_socket_diciendo_que_no_se_reintente(monkeypatch):
+    """Sin un código propio, el cliente reintenta para siempre.
+
+    `trabajo.html` reconecta ante cualquier cierre —es lo que se quiere mientras
+    WSL vuelve—, y con una sesión que ya no existe eso repintaba el mismo aviso
+    cada diez segundos sin fin.
+    """
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    from hub import web
+
+    def falso(args, entrada=None):
+        if args[0] == "has-session":
+            raise RuntimeError("can't find session: work")
+        return ""
+
+    monkeypatch.setattr(tmux, "_correr", falso)
+
+    with TestClient(web.app).websocket_connect("/ws/terminal/work") as ws:
+        assert "ya no existe" in ws.receive_bytes().decode()
+        with pytest.raises(WebSocketDisconnect) as info:
+            ws.receive_bytes()
+    assert info.value.code == web.CIERRE_SIN_SESION
+
+
+def test_un_fallo_de_tmux_cierra_sin_codigo_para_que_se_reintente(monkeypatch):
+    """La otra mitad: lo pasajero sigue reintentándose solo."""
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    from hub import web
+
+    def falso(args, entrada=None):
+        if args[0] == "new-session":
+            raise RuntimeError("server exited unexpectedly")
+        return ""
+
+    monkeypatch.setattr(tmux, "_correr", falso)
+
+    with TestClient(web.app).websocket_connect("/ws/terminal/work") as ws:
+        ws.receive_bytes()
+        with pytest.raises(WebSocketDisconnect) as info:
+            ws.receive_bytes()
+    assert info.value.code != web.CIERRE_SIN_SESION

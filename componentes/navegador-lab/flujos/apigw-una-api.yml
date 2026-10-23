@@ -1,0 +1,24 @@
+nombre: apigw-una-api
+descripcion: Lista de APIs de la región y el detalle de una de ellas.
+modo: lectura
+pantallas:
+  desde: consola
+  hasta: apigw-detalle
+parametros:
+  base:
+    ejemplo: http://127.0.0.1:8790
+  region:
+    defecto: us-east-1
+  api:
+    ejemplo: pedidos-api
+    descripcion: nombre tal cual sale en la lista
+pasos:
+- usar:
+    flujo: lab/apigw-lista
+    con:
+      base: '{{base}}'
+      region: '{{region}}'
+- usar:
+    flujo: lab/apigw-detalle
+    con:
+      api: '{{api}}'

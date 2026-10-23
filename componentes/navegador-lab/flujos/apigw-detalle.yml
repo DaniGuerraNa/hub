@@ -1,0 +1,11 @@
+nombre: apigw-detalle
+descripcion: Desde la lista de APIs, entra en una y guarda sus etapas y rutas.
+modo: lectura
+pantallas: {desde: apigw-lista, hasta: apigw-detalle}
+parametros:
+  api: {ejemplo: pedidos-api, descripcion: nombre tal cual sale en la lista}
+pasos:
+  - pulsar: {rol: link, nombre: "{{api}}", exacto: true}
+  - esperar: {rol: table, nombre: Rutas}
+  - extraer: {testid: etapas, a: etapas}
+  - extraer: {tabla: Rutas, a: rutas}

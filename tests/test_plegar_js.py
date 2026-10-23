@@ -18,33 +18,44 @@ def test_arranca_sin_reventar(tmp_path):
     assert ejecutar(GUION, tmp_path)["errores"] == []
 
 
-def test_al_pulsar_se_pliega_y_queda_guardado(tmp_path):
-    """El efecto es doble: la caja se marca y la preferencia sobrevive al F5."""
+def test_al_entrar_todo_esta_plegado(tmp_path):
+    """22-oct: al entrar (o con F5) sólo queda abierto el proyecto que se mira;
+    antes había que cerrarlos a mano en cada carga."""
+    resultado = ejecutar(GUION, tmp_path)
+    assert resultado["errores"] == []
+    plegadas = [c for c in resultado["alternadas"] if c[0].endswith(":plegado")]
+    assert plegadas and all(v for _, v in plegadas)
+
+
+def test_el_proyecto_que_se_mira_queda_abierto(tmp_path):
+    resultado = ejecutar(
+        GUION, tmp_path,
+        previo="""
+          const [mirado] = document.querySelectorAll('.proyecto[data-proyecto]');
+          mirado.classList.add('mirando');
+          globalThis.MIRADO = mirado;
+        """,
+        accion="registro.mirado = MIRADO.classList.contains('plegado');",
+    )
+    assert resultado["errores"] == []
+    assert resultado["mirado"] is False
+
+
+def test_desplegar_a_mano_no_se_recuerda(tmp_path):
+    """Vale hasta la siguiente carga: recordarlo es lo que dejaba la lista
+    larga en cada F5."""
     resultado = ejecutar(
         GUION, tmp_path,
         accion="""
           const caja = document.querySelectorAll('.proyecto[data-proyecto]')[0];
           caja.querySelector('.plegar').disparar('click');
+          registro.abierto = !caja.classList.contains('plegado');
           registro.guardado = localStorage.getItem('hub.trabajo.plegados');
         """,
     )
-
     assert resultado["errores"] == []
-    assert [c for c in resultado["alternadas"] if c[0].endswith(":plegado")]
-    assert "demo" in (resultado.get("guardado") or "")
-
-
-def test_lo_plegado_vuelve_plegado_al_recargar(tmp_path):
-    """Sin esto el plegado dura hasta la siguiente navegación, o sea nada: en
-    esta vista se cambia de ventana a cada rato."""
-    resultado = ejecutar(
-        GUION, tmp_path,
-        previo="localStorage.setItem('hub.trabajo.plegados', JSON.stringify(['demo']));",
-    )
-
-    assert resultado["errores"] == []
-    plegadas = [c for c in resultado["alternadas"] if c[0].endswith(":plegado") and c[1]]
-    assert plegadas, "el proyecto guardado tenía que nacer plegado"
+    assert resultado["abierto"] is True
+    assert resultado["guardado"] is None
 
 
 def test_un_localStorage_que_falla_no_deja_el_rail_roto(tmp_path):

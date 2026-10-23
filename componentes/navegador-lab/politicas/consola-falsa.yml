@@ -1,0 +1,7 @@
+# Política para ensayar contra la consola falsa (127.0.0.1:8790).
+nombre: consola-falsa
+modo: lectura            # lectura | preguntar | libre
+origenes:
+  - http://127.0.0.1:8790
+  - http://localhost:8790
+permitir: [login, logout]   # el inicio de sesión es un POST y no modifica la cuenta

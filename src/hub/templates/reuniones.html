@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% import "_preparar.html" as prep %}
+{% block contenido %}
+{{ prep.estilos() }}
+<style>
+  /* Arriba, grabar: es lo que se hace con prisa cuando empieza la llamada.
+     Abajo, lo grabado. */
+  .reu { display:grid; gap:14px; grid-template-columns:minmax(0,1fr); }
+  .reu .tarjeta h2 { margin:0 0 10px; font-size:15px; }
+  .reu p.ayuda { margin:0 0 10px; color:var(--texto-3); font-size:13px; max-width:72ch; }
+  .monitores { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:10px; }
+  .monitor { border:1px solid var(--borde); border-radius:12px; padding:8px; cursor:pointer;
+             display:grid; gap:6px; background:var(--lienzo); }
+  .monitor:has(input:checked) { border-color:var(--acento); background:color-mix(in srgb, var(--acento) 8%, var(--lienzo)); }
+  .monitor img, .monitor .sin { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:8px;
+                                background:var(--elevado); display:grid; place-items:center;
+                                color:var(--texto-4); font-size:12px; }
+  .monitor > span:not(.placa) { font-size:12.5px; text-transform:none; letter-spacing:0; color:var(--texto-2); }
+  .reu .dos label input, .reu .dos label select { display:block; width:100%; margin-top:6px;
+                                                  text-transform:none; letter-spacing:0; font-size:14px; }
+  .dos { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; }
+  .acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+  .marca { font-size:11px; padding:1px 8px; border-radius:999px; white-space:nowrap; }
+  .marca.ok, .marca.hecho { color:var(--ok); background:color-mix(in srgb, var(--ok) 14%, transparent); }
+  .marca.mal, .marca.fallo { color:var(--riesgo); background:color-mix(in srgb, var(--riesgo) 14%, transparent); }
+  .marca.sin-comprimir { color:var(--texto-3); background:var(--elevado); }
+  .marca.espera, .marca.procesando, .marca.grabando, .marca.sin-procesar
+    { color:var(--espera); background:color-mix(in srgb, var(--espera) 14%, transparent); }
+  .rec { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  .rec .punto { width:12px; height:12px; border-radius:50%; background:var(--riesgo); }
+  @media (prefers-reduced-motion: no-preference) { .rec .punto { animation:latir 1.4s infinite; } }
+  @keyframes latir { 50% { opacity:.3; } }
+  .rec .cifra-rec { font-variant-numeric:tabular-nums; font-size:22px; font-weight:600; }
+  .lista-reu { display:grid; gap:0; }
+  .lista-reu a.fila { display:grid; grid-template-columns:150px minmax(0,1fr) auto; gap:10px; align-items:baseline;
+                      padding:10px 0; border-top:1px solid var(--borde); color:var(--texto); text-decoration:none; }
+  .lista-reu a.fila:first-child { border-top:0; }
+  .lista-reu .cuando { font-variant-numeric:tabular-nums; color:var(--texto-3); font-size:12.5px; }
+  .reu input.llave { width:100%; font-family:ui-monospace, Menlo, Consolas, monospace; font-size:13px; }
+  .reu details.conexion summary { cursor:pointer; color:var(--texto-2); font-size:13.5px; }
+  .reu details.conexion form { margin-top:10px; }
+  @media (max-width: 620px) { .lista-reu a.fila { grid-template-columns:minmax(0,1fr) auto; }
+                              .lista-reu .cuando { grid-column:1 / -1; } }
+</style>
+
+{{ ui.cabecera_vista('Reuniones', 'Graba la reunión de otro monitor mientras trabajas; luego, resumen, tareas y transcripción') }}
+
+{% set a = r.agente %}
+{% macro peso(b) %}{% if b >= 1e9 %}{{ '%.1f' | format(b / 1e9) }} GB{% else %}{{ (b / 1e6) | round | int }} MB{% endif %}{% endmacro %}
+{% set cx = r.conexion %}
+<div class="reu" {% if not llave_nueva and (r.orden.grabar or r.sin_comprimir.comprimiendo or (r.lista | selectattr('estado', 'in', ['procesando', 'grabando']) | list)) %}data-refrescar="5"{% endif %}>
+
+{% if llave_nueva %}
+  <div class="tarjeta">
+    <h2>Llave del agente <span class="marca ok">nueva</span></h2>
+    {% if llave_nueva.escrita_en %}
+    <p class="ayuda">Escrita en <code>{{ llave_nueva.escrita_en }}</code>. El agente la lee en cada latido: en un par
+      de segundos debería salir conectado, sin reiniciarlo. La anterior ya no vale.</p>
+    {% else %}
+    <p class="ayuda">No se ve la carpeta del agente (<code>{{ llave_nueva.carpeta }}</code>), así que cópiala a mano en un
+      archivo <code>token</code> junto a <code>agente.py</code>. 🔴 Sólo se enseña esta vez: el hub guarda su huella,
+      no la llave. Si la pierdes, saca otra.</p>
+    <input class="llave" readonly value="{{ llave_nueva.llave }}" aria-label="Llave del agente">
+    {% endif %}
+  </div>
+{% endif %}
+
+{% set pr = r.preparacion %}
+{% if not pr.listo %}
+  {% set sig = prep.siguiente_de(pr.pasos) | trim %}
+  <div class="tarjeta prep" id="preparar">
+    <h2>Preparar Reuniones</h2>
+    {{ prep.cabeza('Graba la reunión que tienes en otro monitor —pantalla, audio de la aplicación y tu micro— y la procesa en esta máquina: transcripción, resumen, tareas. Son dos piezas: el procesado, aquí en WSL, y un agente pequeño en Windows, que es el único que ve tu escritorio.',
+                   'reuniones', 'Ayúdame a preparar Reuniones: qué me falta y cómo lo consigo.', rail.hay_asistente) }}
+    <ol class="prep-pasos">
+      {% for p in pr.pasos %}
+        {% if p.id == 'carpeta' %}
+          {% call prep.paso(p, loop.index, p.id == sig) %}
+            <form method="post" action="/reuniones/carpeta">
+              <input type="text" name="ruta" value="{{ pr.windows }}" aria-label="Carpeta del agente en Windows">
+              <button class="boton">Guardar</button>
+            </form>
+          {% endcall %}
+        {% elif p.id == 'agente' %}
+          {% call prep.paso(p, loop.index, p.id == sig) %}
+            <form method="post" action="/reuniones/copiar-agente">
+              <button class="boton {{ 'principal' if p.id == sig }}">Copiar el agente a {{ pr.windows }}</button>
+            </form>
+          {% endcall %}
+        {% elif p.id == 'instalado' %}
+          {% call prep.paso(p, loop.index, p.id == sig) %}
+            <p>Si no tienes uv en Windows, en PowerShell:
+              <code>powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"</code></p>
+            <p>Después, en el Explorador, doble clic en <code>{{ pr.windows }}\instalar.cmd</code>. Lo deja arrancando
+              solo al iniciar sesión y lo lanza; esta pantalla lo verá en unos segundos.</p>
+          {% endcall %}
+        {% else %}
+          {{ prep.paso(p, loop.index, p.id == sig) }}
+        {% endif %}
+      {% endfor %}
+    </ol>
+  </div>
+{% endif %}
+
+{% if not cx.hay_llave %}
+  <form class="tarjeta" method="post" action="/reuniones/conectar">
+    <h2>Conectar el agente <span class="marca espera">sin llave</span></h2>
+    <p class="ayuda">El agente de Windows sólo puede hablar con el hub con una llave, para que nadie más pueda darle
+      órdenes ni hacerse pasar por él.{% if cx.carpeta_existe %} Se escribe en <code>{{ cx.carpeta_agente }}/token</code>,
+      donde la lee el agente.{% else %} No se ve su carpeta (<code>{{ cx.carpeta_agente }}</code>): se enseñará una vez
+      para copiarla a mano.{% endif %}</p>
+    <div class="acciones"><button class="boton principal">Generar la llave</button></div>
+  </form>
+{% endif %}
+
+{% if not a.vivo %}
+  {# Sin preparar, lo que falta ya lo dice la tarjeta de arriba; salvo una
+     llave rechazada, que es una avería y no un paso pendiente. #}
+  {% if pr.listo or cx.rechazo is not none %}
+  <div class="tarjeta">
+    <h2><span class="marca mal">agente desconectado</span></h2>
+    {% if cx.rechazo is not none %}
+    <p class="ayuda"><strong>El agente está llamando, pero sin una llave que valga</strong> (hace {{ cx.rechazo }} s).
+      {% if cx.hay_llave %}Saca otra abajo, en «Conexión del agente».{% endif %}</p>
+    {% endif %}
+    <p class="ayuda">{% if a.hace is not none %}El agente de Windows dio señales hace {{ a.hace }} s.{% else %}El agente de
+      Windows no ha llamado nunca a este hub.{% endif %} Arranca solo al iniciar sesión en Windows (desde la carpeta
+      Inicio); a mano: <code>{{ pr.windows }}\iniciar.cmd</code>.</p>
+  </div>
+  {% endif %}
+{% elif r.orden.grabar %}
+  {% set g = r.grabando or {} %}
+  <div class="tarjeta">
+    <div class="rec">
+      <span class="punto" aria-hidden="true"></span>
+      <span class="cifra-rec">{{ '%02d:%02d' | format((g.segundos or 0) // 60, (g.segundos or 0) % 60) }}</span>
+      <span>Grabando {% if r.orden.titulo %}«{{ r.orden.titulo }}» {% endif %}· monitor {{ r.orden.monitor }}
+        {% if r.orden.app %}· audio de <strong>{{ r.orden.app }}</strong>{% endif %}
+        {% if r.orden.micro %}· con tu micro{% endif %} · {{ g.fotos or 0 }} capturas</span>
+      <form method="post" action="/reuniones/accion" style="margin-left:auto">
+        <button class="boton principal" name="que" value="parar">Parar</button></form>
+    </div>
+    {% if g.errores %}<p class="ayuda" style="color:var(--riesgo);margin-top:10px">{{ g.errores | join(' · ') }}</p>{% endif %}
+  </div>
+{% else %}
+  <form class="tarjeta" method="post" action="/reuniones/accion">
+    <h2>Grabar <span class="marca ok">agente conectado · {{ a.equipo }}</span></h2>
+    <p class="ayuda">Graba el monitor elegido (1 captura por segundo, sólo se guardan las que cambian), el audio
+      <strong>sólo</strong> de la aplicación elegida —otra música no entra— y tu micro aparte. Al parar, se
+      transcribe aquí y Claude saca el resumen y las tareas. 🔴 Avisa a los demás de que grabas.</p>
+    <div class="monitores">
+      {% for m in a.monitores or [] %}
+      <label class="monitor">
+        {% if m.n in r.miniaturas %}<img src="/reuniones/miniatura/{{ m.n }}?t={{ a.t | int }}" alt="Monitor {{ m.n }}">
+        {% else %}<span class="sin">sin vista previa</span>{% endif %}
+        <span><input type="radio" name="monitor" value="{{ m.n }}" {{ 'checked' if loop.last }}>
+          Monitor {{ m.n }} · {{ m.ancho }}×{{ m.alto }}</span>
+      </label>
+      {% endfor %}
+    </div>
+    <div class="acciones" style="margin-top:6px">
+      <button class="boton sutil" name="que" value="miniaturas" formnovalidate>Ver qué hay en cada monitor</button>
+    </div>
+    <div class="dos" style="margin-top:12px">
+      <label>Audio de la aplicación
+        <select name="app">
+          <option value="">— ninguna —</option>
+          {% for x in a.apps or [] %}
+          <option value="{{ x.nombre }}" {{ 'selected' if x.nombre.lower().startswith(('ms-teams', 'teams')) }}>{{ x.nombre }}{% if x.activa %} · sonando ahora{% endif %}</option>
+          {% endfor %}
+        </select></label>
+      <label>Tu micrófono
+        <select name="micro">
+          <option value="">— no grabar mi voz —</option>
+          {% for m in a.microfonos or [] %}<option value="{{ m.n }}" {{ 'selected' if 'Quadcast' in m.nombre }}>{{ m.nombre }}</option>{% endfor %}
+        </select></label>
+      <label>De qué es (opcional)<input name="titulo" placeholder="Seguimiento infraestructura"></label>
+    </div>
+    <div class="acciones"><button class="boton principal" name="que" value="grabar">● Grabar</button>
+      <span class="tenue" style="font-size:12.5px">Si la aplicación no sale, entra primero en la llamada: abre su audio al empezar.</span></div>
+  </form>
+{% endif %}
+
+  <div class="tarjeta">
+    <h2>Grabadas</h2>
+    {% if r.sin_comprimir.n %}
+    <form method="post" action="/reuniones/accion" class="acciones" style="margin:0 0 10px">
+      <span>{{ r.sin_comprimir.n }} sin comprimir · <strong>{{ peso(r.sin_comprimir.bytes) }}</strong>.
+        <span class="tenue" style="font-size:12.5px">Comprimir pasa el audio a Opus (unas 15 veces menos) y borra el WAV original.</span></span>
+      <button class="boton" name="que" value="comprimir-todas" {{ 'disabled' if r.sin_comprimir.comprimiendo }}>
+        {{ 'Comprimiendo…' if r.sin_comprimir.comprimiendo else 'Comprimir todas' }}</button>
+    </form>
+    {% endif %}
+    {% if r.lista %}
+    <div class="lista-reu">
+      {% for x in r.lista %}
+      <a class="fila" href="/reuniones/{{ x.id }}">
+        <span class="cuando">{{ x.id[6:8] }}-{{ x.id[4:6] }} {{ x.id[9:11] }}:{{ x.id[11:13] }}{% if x.duracion %} · {{ x.duracion // 60 }} min{% endif %}</span>
+        <span>{{ x.titulo or 'Sin título' }}{% if x.tareas %} <span class="tenue">· {{ x.tareas }} tarea{{ 's' if x.tareas != 1 }}</span>{% endif %}</span>
+        <span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+          {% if x.comprimiendo %}<span class="marca espera">comprimiendo</span>
+          {% elif x.terminada and not x.comprimida %}<span class="marca sin-comprimir" title="{{ x.error_compresion or '' }}">sin comprimir · {{ peso(x.tamano) }}</span>
+          {% elif x.terminada %}<span class="tenue" style="font-size:11.5px">{{ peso(x.tamano) }}</span>{% endif %}
+          <span class="marca {{ x.estado | replace(' ', '-') }}">{{ x.estado }}</span></span>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}<p class="tenue" style="margin:0">Ninguna todavía. Se guardan en <code>{{ r.raiz }}</code>.</p>{% endif %}
+  </div>
+
+  {% if cx.hay_llave %}
+  <details class="tarjeta conexion">
+    <summary>Conexión del agente</summary>
+    <form method="post" action="/reuniones/conectar">
+      <p class="ayuda">El agente se identifica con una llave guardada en <code>{{ cx.carpeta_agente }}/token</code>; el hub
+        sólo guarda su huella. Cambiarla deja de valer la anterior al instante{% if cx.carpeta_existe %} y escribe la nueva
+        en esa carpeta{% else %}; como no se ve la carpeta, tendrás que copiarla a mano{% endif %}.</p>
+      <div class="acciones"><button class="boton">Cambiar la llave</button></div>
+    </form>
+  </details>
+  {% endif %}
+</div>
+<script src="/static/navegante.js"></script>
+<script src="/static/guia.js"></script>
+{% endblock %}

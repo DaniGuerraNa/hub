@@ -11,6 +11,34 @@ pedir permiso antes de tocar, y cómo verificar que quedó funcionando.
 🔴 **No instales nada del sistema sin permiso explícito, una cosa cada vez.**
 Estás en la máquina de alguien.
 
+## Si te piden actualizarlo
+
+Sigue `conocimiento/11-versiones.md`. Antes de correr nada:
+
+- **Localiza el clon que usan los servicios**
+  (`systemctl --user show hub-web -p WorkingDirectory`). Puede no ser la carpeta
+  en la que estás. En Windows el hub vive dentro de WSL: desde PowerShell o una
+  copia en el disco de Windows no se actualiza.
+- **Si hay cambios sin commitear en el clon, son del usuario.** No fuerces el
+  pull ni hagas `stash` por tu cuenta. Lee el `git diff`, explícale en una
+  frase para qué era cada cambio y si la versión nueva lo trae resuelto. Lo
+  habitual son arreglos de urgencia, y lo que se recomienda es guardar copia
+  (`git diff > ~/cambios-hub-<fecha>.patch`) y descartarlos con
+  `git restore .`. Si algo es suyo y quiere conservarlo, va a una rama. La
+  receta está en ese documento. **Descarta sólo con su sí.**
+- **Lo que hace `actualizar.sh` es parte de actualizar: córrelo entero.**
+  Apunta la versión en `~/.local/share/hub/version.json`, el código nuevo
+  añade a la base las tablas o columnas que le falten (no borra ni cambia lo
+  que hay), y refresca los archivos del asistente dejando al lado un
+  `.antes-<fecha>` de cada uno. El asistente lo sembró el hub, no es un
+  proyecto del usuario. Correr los pasos a mano para saltarse alguno deja la
+  instalación a medias.
+- **Lo que no haces tú por tu cuenta:** editar el registro (`projects.yml`),
+  cambiar guardrails o tocar los repos de sus proyectos. Si una versión
+  recomienda cambiar algo ahí, se lo dices y lo decide el usuario.
+- **Lee el «Qué tienes que hacer» de todas las versiones que cruza**, no sólo
+  de la última: cada una puede pedir un paso.
+
 ## Si te piden usarlo
 
 | Piden… | Skill |

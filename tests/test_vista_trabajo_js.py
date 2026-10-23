@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from arnes_js import ejecutar, script_de
+from hub import web
 
 CONTEXTO = {
     "session": "work",
@@ -25,6 +26,9 @@ CONTEXTO = {
     "paneles": [],
     "ancho_completo": True,
     "seccion": "trabajo",
+    # Sin esto el script sale con `ev.code === )` y node no lo parsea: el hueco
+    # se ve aquí como error de sintaxis, que es justo para lo que está.
+    "cierre_sin_sesion": web.CIERRE_SIN_SESION,
     "titulo": "back",
 }
 
@@ -524,13 +528,14 @@ def test_la_ventana_nueva_se_pide_en_la_ruta_del_slot(tmp_path):
     )
 
     creaciones = [e for e in r["enviados"] if e["url"].endswith("/ventanas")]
-    assert [e["cuerpo"] for e in creaciones] == [{"ruta": "/tmp/demo"}]
+    # Y con el slot de la página: la ventana nace atada a él (23-oct).
+    assert [e["cuerpo"] for e in creaciones] == [{"ruta": "/tmp/demo", "slot": 7}]
 
 
 # ───────────── por qué no conectó la terminal (decisión 207) ─────────────
 
 
-def _al_cerrarse_el_socket(respuesta, tmp_path):
+def _al_cerrarse_el_socket(respuesta, tmp_path, codigo=1006):
     """Dispara el `onclose` del WebSocket y devuelve lo que quedó en pantalla.
 
     🔴 El arnés contesta lo que contestaría el hub, no lo que le convenga al
@@ -544,13 +549,15 @@ def _al_cerrarse_el_socket(respuesta, tmp_path):
         # Sin `await`: la acción se inyecta en un contexto síncrono. El arnés
         # vuelca el registro a los ~40 ms, así que leer a los 10 deja de sobra
         # para que se resuelva el `fetch`, que es una microtarea.
+        # 1006 por omisión: es lo que da el navegador ante un apretón de
+        # manos rechazado, y el script lee `ev.code`.
         accion="""
-          __sockets[0].onclose();
+          __sockets[0].onclose({code: %d});
           setTimeout(() => {
             const e = nodo('estado');
             registro.valores.push(['estado', e.innerHTML || e.textContent]);
           }, 10);
-        """,
+        """ % codigo,
     )
 
 
@@ -582,6 +589,16 @@ def test_desde_fuera_y_con_el_interruptor_apagado_lo_dice_y_dice_dónde(tmp_path
         _al_cerrarse_el_socket({"de_casa": False, "remota_abierta": False}, tmp_path))
     assert "cerrada" in texto
     assert "/acceso" in texto
+
+
+def test_una_sesion_que_ya_no_existe_lo_dice_y_no_reintenta(tmp_path):
+    """Con el 4404 el script se para y dice qué hacer, en vez de anunciar un
+    reintento que acabaría en el mismo error cada diez segundos."""
+    texto = _texto_del_estado(_al_cerrarse_el_socket(
+        {"de_casa": True, "remota_abierta": False}, tmp_path,
+        codigo=web.CIERRE_SIN_SESION))
+    assert "ya no existe" in texto
+    assert "reintento" not in texto
 
 
 def test_en_casa_un_corte_sigue_siendo_un_corte(tmp_path):
@@ -958,3 +975,54 @@ def test_el_boton_de_plegar_no_cuenta_como_pestana():
     for archivo in ("lienzos.js", "consultas.js", "programados.js"):
         texto = (estaticos / archivo).read_text()
         assert "'.pest-lado button[data-hoja]'" in texto, archivo
+
+
+def test_ctrl_v_es_pegar_y_no_la_tecla_de_control(tmp_path_factory):
+    """🔴 22-oct: xterm convertía Ctrl+V en `^V` y el navegador nunca pegaba,
+    ni texto ni la captura de Win+Shift+S. Medido con un teclado real; aquí se
+    comprueba qué teclas se dejan al navegador (`false`) y cuáles no."""
+    r = _con_socket_abierto(tmp_path_factory, """
+      const k = (o) => FILTRO_TECLAS({ type: 'keydown', ctrlKey: false, metaKey: false,
+                                        shiftKey: false, altKey: false, ...o });
+      globalThis.RES = [k({ ctrlKey: true, key: 'v' }), k({ ctrlKey: true, shiftKey: true, key: 'V' }),
+                        k({ shiftKey: true, key: 'Insert' }), k({ ctrlKey: true, key: 'c' }),
+                        k({ key: 'v' }), FILTRO_TECLAS({ type: 'keyup', ctrlKey: true, key: 'v' })];
+      registro.pegados.push(JSON.stringify(RES));
+    """)
+    assert r["errores"] == []
+    assert r["pegados"][-1] == "[false,false,false,true,true,true]"
+
+
+def test_una_captura_que_llega_como_mapa_de_bits_tambien_se_adjunta(tmp_path_factory):
+    """Win+Shift+S no deja un archivo: deja una imagen en `items`, con `files` vacío."""
+    r = _con_socket_abierto(tmp_path_factory, """
+      const f = new File([new Uint8Array([1])], 'image.png', { type: 'image/png' });
+      nodo('lienzo-terminal').disparar('paste', { preventDefault(){}, stopPropagation(){},
+        clipboardData: { files: [], items: [{ kind: 'string', getAsFile: () => null },
+                                            { kind: 'file', getAsFile: () => f }] } });
+    """, {"POST /api/terminal/adjuntar": {"ok": True, "ruta": "/casa/pegado.png"}})
+    assert r["errores"] == []
+    assert r["pegados"] == ["/casa/pegado.png "]
+
+
+def test_una_ventana_del_arbol_de_la_misma_sesion_cambia_sin_recargar(tmp_path):
+    """Decisión 291: las ventanas cuelgan de su slot en el raíl. Pulsar una de
+    la sesión que ya se ve tiene que cambiar el terminal como la pestaña —por el
+    socket—, no navegar: recargar cortaría el terminal."""
+    previo = """
+      const [propia, ajena] = document.querySelectorAll('.ventana-item');
+      propia.dataset = { sesion: 'work', ventana: '2' };
+      ajena.dataset = { sesion: 'otra', ventana: '0' };
+      globalThis.PROPIA = propia; globalThis.AJENA = ajena;
+    """
+    accion = """
+      __sockets[0].readyState = 1;
+      const ev = () => ({ prevenido: false, preventDefault(){ this.prevenido = true; } });
+      const e1 = ev(); PROPIA.disparar('click', e1);
+      const e2 = ev(); AJENA.disparar('click', e2);
+      registro.propia = e1.prevenido; registro.ajena = e2.prevenido;
+    """
+    r = ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path, PULSO, previo=previo, accion=accion)
+    assert r["errores"] == []
+    assert r["propia"] is True and r["ajena"] is False
+    assert '{"accion":"ventana","indice":2}' in r["tecleado"]

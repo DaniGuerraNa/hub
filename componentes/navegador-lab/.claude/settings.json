@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(nav aprobar:*)",
+      "Bash(bin/nav aprobar:*)",
+      "Bash(*navegador.cli aprobar*)",
+      "Bash(nav denegar:*)",
+      "Bash(bin/nav denegar:*)",
+      "Edit(~/.local/share/navegador-lab/aprobaciones/**)",
+      "Edit(politicas/**)",
+      "Edit(~/.local/share/navegador-lab/politicas/**)",
+      "Edit(~/.local/share/navegador-lab/config.yml)",
+      "Write(~/.local/share/navegador-lab/aprobaciones/**)",
+      "Write(politicas/**)",
+      "Write(~/.local/share/navegador-lab/politicas/**)",
+      "Write(~/.local/share/navegador-lab/config.yml)",
+      "Bash(nav guardian:*)",
+      "Bash(bin/nav guardian:*)",
+      "Bash(*navegador.cli guardian*)",
+      "Bash(nav parar-guardian:*)",
+      "Bash(bin/nav parar-guardian:*)",
+      "Bash(*navegador.cli parar-guardian*)",
+      "Bash(*--sin-guardian*)"
+    ]
+  }
+}

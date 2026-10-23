@@ -1,0 +1,67 @@
+{# Los pasos para tener un componente funcionando (decisión 293). Los usan
+   Navegante y Reuniones mientras no están preparados. Tienen el aspecto de la
+   Guía a propósito: «lo que falta» se tiene que leer igual en todo el hub. #}
+
+{% macro estilos() %}
+<style>
+  .prep { display:grid; gap:12px; }
+  .prep > p { margin:0; color:var(--texto-2); font-size:14px; max-width:72ch; }
+  .prep .acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .prep-pasos { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+  .prep-paso { display:grid; grid-template-columns:auto minmax(0,1fr); gap:12px;
+               background:var(--lienzo); border:1px solid var(--borde);
+               border-radius:var(--r-tarjeta); padding:12px 14px; }
+  .prep-paso.siguiente { border-color:color-mix(in srgb, var(--acento) 55%, var(--borde)); }
+  .prep-paso .num { width:26px; height:26px; border-radius:var(--r-boton); display:grid;
+                    place-items:center; font-size:12.5px; font-weight:600;
+                    background:var(--elevado); color:var(--texto-2); }
+  .prep-paso.hecho .num { background:color-mix(in srgb, var(--ok) 18%, transparent); color:var(--ok); }
+  .prep-paso.siguiente .num { background:color-mix(in srgb, var(--acento) 22%, transparent); color:var(--acento); }
+  .prep-paso h3 { margin:2px 0 2px; font-size:14px; font-weight:600; color:var(--texto);
+                  display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .prep-paso .estado { font-size:11px; font-weight:500; padding:1px 8px; border-radius:999px;
+                       color:var(--texto-3); background:var(--elevado); }
+  .prep-paso.hecho .estado { color:var(--ok); background:color-mix(in srgb, var(--ok) 14%, transparent); }
+  .prep-paso.siguiente .estado { color:var(--acento); background:color-mix(in srgb, var(--acento) 14%, transparent); }
+  .prep-paso p { margin:0 0 6px; color:var(--texto-3); font-size:13px; max-width:68ch; overflow-wrap:anywhere; }
+  .prep-paso form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px; }
+  .prep-paso input[type=text] { flex:1 1 220px; min-width:0; font-family:ui-monospace, Menlo, Consolas, monospace;
+                                font-size:13px; }
+  .prep-paso code { overflow-wrap:anywhere; }
+</style>
+{% endmacro %}
+
+{# La cabecera: qué es, y las dos ayudas —la ventana con Claude y el asistente—. #}
+{% macro cabeza(explica, componente, pregunta, hay_asistente) %}
+  <p>{{ explica }}</p>
+  <div class="acciones">
+    <form method="post" action="/componentes/preparar">
+      <input type="hidden" name="nombre" value="{{ componente }}">
+      <button class="boton principal" title="Abre una ventana con Claude en su carpeta y el encargo escrito; lo lanzas tú con Enter">Preparar con Claude</button>
+    </form>
+    {% if hay_asistente %}
+    <button type="button" class="boton" data-guiame="{{ pregunta }}">Guíame</button>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+{# Un paso. Lo de dentro del `call` —un formulario, un comando— sólo se
+   enseña mientras el paso está por hacer. #}
+{% macro paso(p, n, siguiente=false) %}
+<li class="prep-paso {{ 'hecho' if p.hecho }} {{ 'siguiente' if siguiente }}" id="prep-{{ p.id }}">
+  <span class="num">{% if p.hecho %}✓{% else %}{{ n }}{% endif %}</span>
+  <div>
+    <h3>{{ p.titulo }}
+      {% if p.hecho %}<span class="estado">hecho</span>
+      {% elif siguiente %}<span class="estado">el siguiente</span>
+      {% elif p.opcional %}<span class="estado">opcional</span>{% endif %}
+    </h3>
+    {% if not p.hecho %}
+      <p>{{ p.como }}</p>
+      {% if caller %}{{ caller() }}{% endif %}
+    {% endif %}
+  </div>
+</li>
+{% endmacro %}
+
+{% macro siguiente_de(pasos) %}{{ (pasos | rejectattr('hecho') | rejectattr('opcional') | map(attribute='id') | first) or '' }}{% endmacro %}

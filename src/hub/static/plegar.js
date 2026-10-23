@@ -1,34 +1,27 @@
 /* Plegar proyectos en el raíl de la vista de trabajo.
  *
- * Con veinte proyectos indexados, el raíl es más largo que la pantalla de un
- * teléfono y llegar al slot de abajo cuesta tres barridos de pulgar. Plegar lo
- * que hoy no se toca es lo que hace que el índice quepa.
+ * Con veinte proyectos indexados, el raíl es más largo que la pantalla y
+ * llegar al slot de abajo cuesta varios barridos. Plegar lo que no se toca es
+ * lo que hace que el índice quepa.
  *
- * 🔴 Lo plegado se recuerda por proyecto en `localStorage`, y **nunca se pliega
- * el proyecto de lo que se está mirando**: esconder justo el slot que acabas de
- * abrir se lee como que el hub lo perdió.
+ * 🔴 **Al entrar, todo plegado salvo el proyecto de lo que se está mirando**
+ * (22-oct, lo pidió el dueño). Antes se recordaba lo plegado de cada proyecto,
+ * y con proyectos nuevos o desplegados una vez la lista volvía larga en cada
+ * F5: había que cerrarlos a mano para ver dónde estabas. Desplegar a mano vale
+ * hasta la siguiente carga, a propósito.
+ *
+ * `mirando` la pone el servidor, que sabe de qué proyecto cuelga el slot
+ * abierto. Si no hay ninguno —se entró sin slot—, se queda todo plegado.
  *
  * En archivo aparte y no en la plantilla, como `lienzos.js` y los demás: si
  * esto revienta, la terminal sigue viva — y así se prueba ejecutándolo
- * (regla dura 11), que es lo que pide este proyecto de todo su JavaScript.
+ * (regla dura 11).
  */
 (() => {
-  const CLAVE = 'hub.trabajo.plegados';
-
-  const leer = () => {
-    // Un `localStorage` que no se puede leer —modo privado, permisos— no puede
-    // dejar el raíl sin funcionar: se pierde la preferencia, no la lista.
-    try { return new Set(JSON.parse(localStorage.getItem(CLAVE)) || []); }
-    catch { return new Set(); }
-  };
-  const guardar = (plegados) => {
-    try { localStorage.setItem(CLAVE, JSON.stringify([...plegados])); } catch { /* da igual */ }
-  };
-
-  const plegados = leer();
+  // La preferencia vieja ya no se usa: se borra para no dejar basura.
+  try { localStorage.removeItem('hub.trabajo.plegados'); } catch { /* da igual */ }
 
   document.querySelectorAll('.proyecto[data-proyecto]').forEach((caja) => {
-    const id = caja.dataset.proyecto;
     const boton = caja.querySelector('.plegar');
     if (!boton) return;
 
@@ -37,15 +30,10 @@
       boton.setAttribute('aria-expanded', plegar ? 'false' : 'true');
     };
 
-    // La marca la pone el servidor, que ya sabe de qué proyecto cuelga el slot
-    // abierto: si es éste, se despliega aunque estuviera guardado plegado.
-    if (plegados.has(id) && !caja.classList.contains('mirando')) aplicar(true);
+    aplicar(!caja.classList.contains('mirando'));
 
     boton.addEventListener('click', () => {
-      const plegar = !caja.classList.contains('plegado');
-      aplicar(plegar);
-      if (plegar) { plegados.add(id); } else { plegados.delete(id); }
-      guardar(plegados);
+      aplicar(!caja.classList.contains('plegado'));
     });
   });
 })();

@@ -554,7 +554,11 @@ def test_tras_lanzar_un_slot_la_pagina_ya_lo_ve_abierto(cliente, tmp_path):
                              (snap["id"], slot_id)).fetchone()[0]
         con.close()
         assert atados == 1
-        assert f'action="/slot/{slot_id}/abrir"' not in cliente.get(r.headers["location"]).text
+        html = cliente.get(r.headers["location"]).text
+        # Ni «Lanzar» otra vez; sí su ventana colgada de él, con «+ Ventana»
+        # para abrir otra a propósito (decisión 291).
+        assert '<div class="lanzar-slot">' not in html
+        assert '<div class="ventanas-slot">' in html and "+ Ventana" in html
     finally:
         for s in ("lanzar-prueba", "demo"):
             if tmux.existe_sesion(s):
@@ -596,11 +600,19 @@ def test_marcar_que_un_slot_vuelve_se_ve_en_el_rail_y_en_la_cabecera(cliente, tm
                 "VALUES (5,'demo','back',?,'2026-10-22')", (str(tmp_path),))
     con.close()
     antes = cliente.get("/trabajo?slot=5").text
-    assert "No vuelve tras un apagón" in antes and 'class="marca-vuelve"' not in antes
+    assert "↻ No persistente" in antes and 'class="marca-vuelve"' not in antes
 
     r = cliente.post("/api/slot/5/restaurar", json={"restaurar": True})
     assert r.json() == {"ok": True, "restaurar": True}
 
     despues = cliente.get("/trabajo?slot=5").text
-    assert "↻ Vuelve tras un apagón" in despues and 'class="marca-vuelve"' in despues
+    assert "↻ Persistente" in despues and 'class="marca-vuelve"' in despues
     assert cliente.post("/api/slot/999/restaurar", json={"restaurar": True}).status_code == 404
+
+
+def test_la_terminal_sabe_que_cierre_significa_no_reintentes(cliente):
+    """El 4404 lo pone `web.py` y lo lee el script: cambiado en un solo lado no
+    falla nada, se queda reintentando. Se comprueba en el HTML servido porque
+    el arnés de node se salta donde node no está instalado."""
+    html = cliente.get("/trabajo?session=work").text
+    assert f"ev.code === {web.CIERRE_SIN_SESION}" in html

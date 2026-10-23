@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block titulo %}Inicio{% endblock %}{% block contenido %}
+<h1>Inicio de la consola</h1>
+<div class="panel"><h2>Visitados recientemente</h2>
+<ul><li><a href="/apigateway/main/apis?region={{ region }}">API Gateway</a></li>
+<li><a href="/cloudwatch/home?region={{ region }}#logsV2:logs-insights">CloudWatch</a></li></ul></div>
+{% endblock %}

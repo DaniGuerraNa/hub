@@ -146,6 +146,7 @@ def resumir_sesion(ruta: Path) -> dict[str, Any] | None:
     titulo = rama = cwd = None
     mensajes = 0
     humanos = 0
+    primera = None
 
     for dato in leer_lineas(ruta):
         tipo = dato.get("type")
@@ -163,6 +164,12 @@ def resumir_sesion(ruta: Path) -> dict[str, Any] | None:
         mensajes += 1
         if tipo == "user" and _texto_de(dato):
             humanos += 1
+            # Lo primero que se le pidió: es como la recuerda una persona
+            # cuando aún no hay título. Lo que empieza por «<» lo escribe
+            # Claude Code (avisos de comandos, recordatorios), no quien la usa.
+            texto = _texto_de(dato)
+            if primera is None and not texto.startswith("<"):
+                primera = " ".join(texto.split())[:140]
 
     if not mensajes:
         return None
@@ -170,6 +177,7 @@ def resumir_sesion(ruta: Path) -> dict[str, Any] | None:
     return {
         "id": ruta.stem,
         "titulo": titulo,
+        "primera": primera,
         "inicio": inicio,
         "fin": fin,
         "duracion_min": _duracion_min(inicio, fin),

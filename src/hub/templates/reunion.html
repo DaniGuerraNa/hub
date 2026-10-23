@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+<style>
+  .reu { display:grid; gap:14px; grid-template-columns:minmax(0,1fr); }
+  .reu .tarjeta h2 { margin:0 0 10px; font-size:15px; }
+  .reu ul { margin:0; padding-left:18px; display:grid; gap:4px; }
+  .linea { display:grid; gap:6px; }
+  .linea .dice { display:grid; grid-template-columns:70px 70px minmax(0,1fr); gap:8px; font-size:14px; }
+  .linea .hora { font-variant-numeric:tabular-nums; color:var(--texto-4); font-size:12px; padding-top:2px; }
+  .linea .quien { font-size:12px; font-weight:600; color:var(--texto-3); padding-top:2px; }
+  .linea .dice.yo .quien { color:var(--acento); }
+  .linea .foto { display:grid; grid-template-columns:70px minmax(0,1fr); gap:8px; }
+  .linea .foto img { max-width:min(100%, 520px); border-radius:10px; border:1px solid var(--borde); }
+  @media (max-width: 620px) { .linea .dice { grid-template-columns:60px minmax(0,1fr); }
+                              .linea .dice .hora { grid-row:span 2; } }
+  .marca { font-size:11px; padding:1px 8px; border-radius:999px; }
+  .marca.fallo { color:var(--riesgo); background:color-mix(in srgb, var(--riesgo) 14%, transparent); }
+  .marca.procesando { color:var(--espera); background:color-mix(in srgb, var(--espera) 14%, transparent); }
+</style>
+{% set r = d.resumen or {} %}
+{{ ui.cabecera_vista(r.titulo or d.meta.titulo or 'Reunión', d.id[6:8] ~ '-' ~ d.id[4:6] ~ ' a las ' ~ d.id[9:11] ~ ':' ~ d.id[11:13] ~ ((' · ' ~ d.meta.proceso.nombre) if d.meta.proceso and d.meta.proceso.nombre else '')) }}
+<div class="barra" style="gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+  <a href="/reuniones">← Reuniones</a>
+  <span style="flex:1"></span>
+  {# Para dársela a una sesión de Claude: se pega en su cuadro y la lee por la
+     ruta. Lo que viaja es la REFERENCIA, no el contenido, y sin el audio. #}
+  {% if r %}
+  <button type="button" class="boton" id="copiar-ruta"
+          data-texto="Reunión «{{ r.titulo or d.id }}» ({{ d.id }}). Resumen: {{ d.carpeta }}/resumen.md · Transcripción: {{ d.carpeta }}/transcripcion.md · Capturas de pantalla: {{ d.carpeta }}/fotos/"
+          title="Copia las rutas del resumen, la transcripción y las capturas para pegarlas en una sesión de Claude">Copiar ruta para Claude</button>
+  <span id="copiada" class="tenue" aria-live="polite" style="font-size:12px"></span>
+  {% endif %}
+</div>
+
+{% macro peso(b) %}{% if b >= 1e9 %}{{ '%.1f' | format(b / 1e9) }} GB{% else %}{{ (b / 1e6) | round | int }} MB{% endif %}{% endmacro %}
+<div class="reu" {% if d.procesado.estado == 'procesando' or d.comprimiendo %}data-refrescar="5"{% endif %}>
+  {% if d.meta.fin %}
+  <form class="tarjeta" method="post" action="/reuniones/accion" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <input type="hidden" name="id" value="{{ d.id }}">
+    <span>Ocupa <strong>{{ peso(d.tamano) }}</strong>
+      {% if d.comprimiendo %}· comprimiendo…
+      {% elif d.comprimida %}· audio comprimido{% if d.compresion and d.compresion.antes %} (antes {{ peso(d.compresion.antes) }}){% endif %}
+      {% else %}· audio sin comprimir{% if d.compresion and d.compresion.error %} <span class="tenue">(el último intento falló: {{ d.compresion.error }})</span>{% endif %}{% endif %}</span>
+    {% if not d.comprimida and not d.comprimiendo and d.procesado.estado != 'procesando' %}
+    <button class="boton" name="que" value="comprimir" style="margin-left:auto">Comprimir audio</button>{% endif %}
+  </form>
+  {% endif %}
+  {% if d.procesado.estado == 'procesando' %}
+  <div class="tarjeta"><span class="marca procesando">procesando</span>
+    {% for k, v in (d.procesado.etapas or {}).items() %} {{ k }}: {{ v }}{{ ' ·' if not loop.last }}{% endfor %}</div>
+  {% elif d.procesado.estado == 'fallo' or not d.procesado %}
+  <form class="tarjeta" method="post" action="/reuniones/accion">
+    {% if d.procesado.estado == 'fallo' %}<p><span class="marca fallo">falló</span> {{ d.procesado.error }}</p>
+    {% else %}<p class="tenue" style="margin-top:0">Sin procesar todavía.</p>{% endif %}
+    <input type="hidden" name="id" value="{{ d.id }}">
+    <button class="boton principal" name="que" value="procesar">Procesar</button>
+  </form>
+  {% endif %}
+
+  {% if r %}
+  <div class="tarjeta"><h2>Resumen</h2><p style="margin:0;max-width:75ch;white-space:pre-line">{{ r.resumen }}</p></div>
+  {% if r.para_mi %}<div class="tarjeta"><h2>Para ti</h2><ul>{% for x in r.para_mi %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
+  {% if r.tareas %}<div class="tarjeta"><h2>Tareas</h2><ul>{% for t in r.tareas %}
+    <li><strong>{{ t.quien }}</strong>: {{ t.que }}{% if t.cuando %} <span class="tenue">({{ t.cuando }})</span>{% endif %}</li>{% endfor %}</ul></div>{% endif %}
+  {% if r.decisiones %}<div class="tarjeta"><h2>Decisiones</h2><ul>{% for x in r.decisiones %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
+  {% if r.preguntas_abiertas %}<div class="tarjeta"><h2>Quedó abierto</h2><ul>{% for x in r.preguntas_abiertas %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
+  {% if r.momentos %}<div class="tarjeta"><h2>Momentos</h2><ul>{% for m in r.momentos %}<li><a href="#t-{{ m.t }}">{{ m.t }}</a> — {{ m.que }}</li>{% endfor %}</ul></div>{% endif %}
+  {% endif %}
+
+  {# Quién es quién. La pista de la aplicación mezcla a todos; se separan en
+     Persona 1, 2… por la voz, y aquí se les pone nombre. #}
+  {% if d.voces and d.procesado.estado != 'procesando' %}
+  <form class="tarjeta" method="post" action="/reuniones/accion">
+    <h2>Quién habla</h2>
+    <p class="tenue" style="margin-top:0;font-size:13px">Ponles nombre mirando la transcripción
+      de abajo. Tú eres siempre «Tú»: tu micro va aparte.</p>
+    <input type="hidden" name="id" value="{{ d.id }}">
+    <div style="display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">
+      {% for v in d.voces %}
+      <label style="display:grid;gap:4px;font-size:12px;color:var(--texto-3)">{{ v.clave }}
+        <input type="text" name="voz:{{ v.clave }}" value="{{ v.nombre }}" maxlength="60"
+               placeholder="Nombre"></label>
+      {% endfor %}
+    </div>
+    <div class="barra" style="gap:10px;margin-top:10px;flex-wrap:wrap;align-items:center">
+      <label style="display:flex;gap:6px;align-items:center;font-size:13px">
+        <input type="checkbox" name="resumen" value="1" checked> Rehacer el resumen con los nombres</label>
+      <button class="boton principal" name="que" value="nombres" style="margin-left:auto">Guardar nombres</button>
+    </div>
+  </form>
+  {% elif d.sin_separar and d.procesado.estado != 'procesando' %}
+  <form class="tarjeta" method="post" action="/reuniones/accion" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <input type="hidden" name="id" value="{{ d.id }}">
+    <span>Los demás salen todos como «Reunión».{% if d.procesado.etapas and d.procesado.etapas.voces %}
+      <span class="tenue">({{ d.procesado.etapas.voces }})</span>{% endif %}
+      {# La primera vez hace falta autorizar la descarga del modelo: sin
+         decir dónde están los pasos, el error no tiene salida. #}
+      {% if d.procesado.etapas and (d.procesado.etapas.voces or '').startswith('sin separar') %}
+      <br><span class="tenue" style="font-size:12.5px">La primera vez hay que autorizar la descarga
+        del modelo en Hugging Face: los pasos están en <code>{{ d.guia_voces }}</code>, apartado
+        «Separar las voces».</span>{% endif %}</span>
+    <button class="boton" name="que" value="voces" style="margin-left:auto">Separar las voces</button>
+  </form>
+  {% endif %}
+
+  {% if d.linea %}
+  <details class="tarjeta" {{ 'open' if not r }}>
+    <summary style="cursor:pointer;font-weight:600">Transcripción y capturas ({{ d.transcripcion | length }} intervenciones, {{ d.fotos | length }} capturas)</summary>
+    <div class="linea" style="margin-top:12px">
+      {% for e in d.linea %}
+      {% if e.foto is defined %}
+      <div class="foto" id="t-{{ e.hora }}"><span class="hora">{{ e.hora }}</span>
+        <img loading="lazy" src="/reuniones/{{ d.id }}/foto/{{ e.foto }}" alt="Pantalla a las {{ e.hora }}"></div>
+      {% else %}
+      <div class="dice {{ 'yo' if e.quien == 'Yo' }}" id="t-{{ e.hora }}"><span class="hora">{{ e.hora }}</span>
+        <span class="quien">{{ 'Tú' if e.quien == 'Yo' else (e.nombre or e.quien or 'Reunión') }}</span><span>{{ e.texto }}</span></div>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+</div>
+<script src="/static/navegante.js"></script>
+<script>
+(() => {
+  const boton = document.getElementById('copiar-ruta');
+  if (!boton) return;
+  const aviso = document.getElementById('copiada');
+  /* El portapapeles moderno y, si el navegador lo niega (fuera de un contexto
+   * seguro, o sin permiso), el de siempre con un textarea. Se dice qué pasó:
+   * copiar y no copiar se ven igual, y así se pierde una referencia creyendo
+   * que se tiene. */
+  const conTextarea = (texto) => {
+    const t = document.createElement('textarea');
+    t.value = texto;
+    t.setAttribute('readonly', '');
+    t.style.position = 'fixed'; t.style.opacity = '0';
+    document.body.appendChild(t);
+    t.select();
+    const ok = document.execCommand('copy');
+    t.remove();
+    return ok;
+  };
+  boton.addEventListener('click', async () => {
+    const texto = boton.dataset.texto;
+    let ok = false;
+    try { await navigator.clipboard.writeText(texto); ok = true; }
+    catch (e) { ok = conTextarea(texto); }
+    aviso.textContent = ok ? 'Copiada: pégala en la sesión de Claude'
+                           : 'No se pudo copiar: ' + texto;
+  });
+})();
+</script>
+{% endblock %}
