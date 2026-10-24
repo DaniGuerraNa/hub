@@ -410,6 +410,46 @@ def catalogo() -> dict[str, dict]:
     return fusionado
 
 
+def estado_en_catalogo(id_kit: str, datos: dict, proyectos: list) -> dict:
+    """Qué tiene esta máquina de un kit del catálogo, para quien lo va a usar.
+
+    `estado` es uno de: `con-el-hub` (la base, no se descarga), `en-desarrollo`
+    (es un kit que escribes tú), `instalado`, `otra-version` (hay una, no la del
+    catálogo) o `sin-instalar`. Los de máquina dicen además dónde está su
+    instalador, que el hub enseña y no ejecuta.
+    """
+    version = str(datos.get("version") or "")
+    if str(datos.get("origen") or "") == "interno":
+        return {"estado": "con-el-hub", "instalada": version}
+    if resolver_en_desarrollo(id_kit, proyectos):
+        return {"estado": "en-desarrollo", "instalada": None}
+    ya = ruta_de(id_kit, version)
+    if not ya.is_dir():
+        otras = instalados().get(id_kit) or []
+        return {"estado": "otra-version" if otras else "sin-instalar",
+                "instalada": otras[-1] if otras else None}
+    salida = {"estado": "instalado", "instalada": version, "ruta": str(ya),
+              "de_maquina": False, "instalador": None}
+    try:
+        kit = leer_manifiesto(ya)
+    except KitInvalido:
+        return salida
+    salida["de_maquina"] = kit.de_maquina
+    if kit.instalar:
+        salida["instalador"] = str(ya / kit.instalar)
+    return salida
+
+
+def instalar_del_catalogo(id_kit: str) -> Path:
+    """`kit.sh instalar <id>` para el botón: la versión que dice el catálogo."""
+    datos = catalogo().get(id_kit)
+    if not datos:
+        raise KitInvalido(f"«{id_kit}» no está en el catálogo")
+    if str(datos.get("origen") or "") == "interno":
+        raise KitInvalido(f"«{id_kit}» viene con el hub: no hay nada que instalar")
+    return instalar(id_kit, str(datos.get("version") or ""), str(datos.get("origen") or ""))
+
+
 # ───────────────────────── el registro del consumidor ─────────────────────────
 
 

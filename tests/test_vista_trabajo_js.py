@@ -1026,3 +1026,25 @@ def test_una_ventana_del_arbol_de_la_misma_sesion_cambia_sin_recargar(tmp_path):
     assert r["errores"] == []
     assert r["propia"] is True and r["ajena"] is False
     assert '{"accion":"ventana","indice":2}' in r["tecleado"]
+
+
+def test_dictar_graba_transcribe_y_pega_sin_enter(tmp_path_factory):
+    """Decisión 295: la voz va al cuadro de Claude Code como un pegado, y el
+    Enter lo pone la persona después de leerlo."""
+    r = _con_socket_abierto(tmp_path_factory, """
+      navigator.mediaDevices = { getUserMedia: async () => ({ getTracks: () => [{ stop(){} }] }) };
+      globalThis.MediaRecorder = class {
+        constructor(){ this.oy = {}; this.mimeType = 'audio/webm'; }
+        addEventListener(ev, fn){ (this.oy[ev] ||= []).push(fn); }
+        start(){}
+        stop(){ (this.oy.dataavailable || []).forEach(f => f({ data: new Blob(['x']) }));
+                (this.oy.stop || []).forEach(f => f()); }
+      };
+      const boton = document.querySelectorAll('[data-dictar]')[0];
+      boton.disparar('click');
+      setTimeout(() => boton.disparar('click'), 1);
+    """, {"POST /api/voz": {"ok": True, "texto": "explícame el fallo del login"}})
+    assert r["errores"] == []
+    assert r["peticiones"].count("/api/voz") == 1
+    assert r["pegados"] == ["explícame el fallo del login"]
+    assert "\r" not in "".join(r["tecleado"])

@@ -944,9 +944,16 @@ def catalogo_kits() -> list[dict]:
     esto no sabía que eran kits (21-oct).
     """
     from . import kits as _kits
+    try:
+        proyectos = registry.cargar()
+    except Exception:  # noqa: BLE001 — sin registro, ningún kit está en desarrollo
+        proyectos = []
+    # Lo que tiene esta máquina de cada uno va junto: es lo que pinta el
+    # catálogo de Inventario → Kits, con sus botones de instalar y aplicar.
     return [
         {"id": k, "nombre": v.get("nombre", k), "version": str(v.get("version", "")),
-         "descripcion": v.get("descripcion", ""), "obligatorio": bool(v.get("obligatorio"))}
+         "descripcion": v.get("descripcion", ""), "obligatorio": bool(v.get("obligatorio")),
+         **_kits.estado_en_catalogo(k, v, proyectos)}
         for k, v in sorted(_kits.catalogo().items())
     ]
 
@@ -2067,7 +2074,6 @@ def guia(con: sqlite3.Connection) -> dict[str, Any]:
         "hechos": sum(1 for p in obligatorios if p["hecho"]),
         "total": len(obligatorios),
         "mapa": _guia.mapa(),
-        "version": _version.para_la_guia(),
     }
 
 

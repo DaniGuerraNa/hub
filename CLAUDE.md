@@ -13,7 +13,9 @@ Estás en la máquina de alguien.
 
 ## Si te piden actualizarlo
 
-Sigue `conocimiento/11-versiones.md`. Antes de correr nada:
+Sigue `conocimiento/11-versiones.md`. Lo más fácil para la persona es el botón
+de la pantalla **Actualizaciones** (`/actualizaciones`), que hace lo mismo que
+`actualizar.sh`. Si lo haces tú desde la terminal, antes de correr nada:
 
 - **Localiza el clon que usan los servicios**
   (`systemctl --user show hub-web -p WorkingDirectory`). Puede no ser la carpeta

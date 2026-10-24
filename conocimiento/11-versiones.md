@@ -2,17 +2,19 @@
 
 ## Qué versión tengo
 
-En [`/guia`](/guia#version), sección **Versión**. Ahí salen tres cosas:
+En [Actualizaciones](/actualizaciones) (en el menú, **Ajustes**). Ahí salen:
 
 - **la tuya**: la del código de tu carpeta del hub;
 - **si la actualización está terminada**: `actualizar.sh` la apunta al acabar;
-- **la última publicada**: el hub la mira una vez al día.
+- **la última publicada**: el hub la mira cada hora, y otra vez al entrar en
+  esa pantalla. «Comprobar ahora» la mira en el momento.
 
 ## Cómo me entero de que hay una nueva
 
 Arriba, en todas las pantallas, sale «Hay una versión nueva del hub» con un
-enlace a sus novedades. El hub lo sabe porque una vez al día pregunta al repo
-publicado qué etiquetas tiene (`git ls-remote`, no baja nada). Es la única
+enlace a Actualizaciones, y en el menú, **Ajustes** lleva un aviso. El hub lo
+sabe porque pregunta al repo publicado qué etiquetas tiene (`git ls-remote`, no
+baja nada) cada hora y al entrar en Actualizaciones. Es la única
 consulta a internet que hace por su cuenta; si no la quieres, arranca el hub
 con `HUB_BUSCAR_VERSIONES=0`.
 
@@ -21,13 +23,18 @@ decides tú.
 
 ## Cómo actualizo
 
-En la carpeta del hub:
+**Con el botón:** en [Actualizaciones](/actualizaciones), «Actualizar ahora».
+Te pide confirmación, y la pantalla va enseñando lo que pasa. A mitad, el hub
+se reinicia y la página se queda unos segundos sin contestar: es normal, y
+vuelve sola con la versión nueva.
+
+**O en la terminal**, en la carpeta del hub:
 
 ```bash
 bash scripts/actualizar.sh
 ```
 
-Hace todo lo que una versión necesita:
+Las dos formas hacen lo mismo, todo lo que una versión necesita:
 
 - baja el código, y sólo si avanza en línea recta;
 - aplica los pasos propios de esa versión;
@@ -101,8 +108,8 @@ olvidado no se ve en ningún sitio.
 Ese aviso rojo arriba significa que el código de tu carpeta es más nuevo que lo
 que se instaló del todo. Normalmente es porque hiciste `git pull` y reiniciaste,
 sin `actualizar.sh`. El hub funciona, pero le faltan pasos: los servicios o el
-asistente pueden ser los de la versión anterior. Se arregla con
-`bash scripts/actualizar.sh --sin-bajar`.
+asistente pueden ser los de la versión anterior. Se arregla con el botón
+«Terminar ahora» del propio aviso, o con `bash scripts/actualizar.sh --sin-bajar`.
 
 **Si instalaste el hub antes de la 0.2.0**, es lo que verás la primera vez: esa
 versión es la primera con número, y antes no existía `actualizar.sh`. Esa vez,

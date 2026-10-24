@@ -40,6 +40,23 @@ class NoSeEntendio(RuntimeError):
     """Se ejecutó y no salió texto. No es lo mismo que no haber podido."""
 
 
+def por_omision() -> list[str] | None:
+    """El Whisper que ya trae Reuniones, si está preparado (decisión 295).
+
+    No es depender de él: es no pedirle a nadie que instale dos veces lo mismo.
+    El procesado de Reuniones lleva `faster-whisper` en su entorno, y quien lo
+    preparó ya tiene un transcriptor que funciona en su máquina. Lo declarado
+    en `encargos.yml` manda sobre esto.
+    """
+    from . import componentes, config
+
+    python = componentes.carpeta("reuniones") / ".venv" / "bin" / "python"
+    guion = config.RAIZ_REPO / "scripts" / "transcribir-whisper.py"
+    if python.is_file() and guion.is_file():
+        return [str(python), str(guion), "{audio}"]
+    return None
+
+
 def comando(ajustes: dict | None = None) -> list[str]:
     """Qué se ejecuta para transcribir, con `{audio}` donde va el archivo.
 
@@ -48,14 +65,14 @@ def comando(ajustes: dict | None = None) -> list[str]:
     escribe la primera vez, así que se acepta y se parte con `shlex`.
     """
     trozo = (ajustes or {}).get("transcripcion") or {}
-    crudo = trozo.get("comando")
+    crudo = trozo.get("comando") or por_omision()
     if not crudo:
         raise SinTranscriptor(
-            "no hay transcriptor configurado. En `encargos.yml`:\n\n"
+            "no hay transcriptor. Lo más fácil: prepara Reuniones (su pantalla "
+            "lo hace contigo), que trae Whisper, y el hub lo usa solo. O "
+            "declara uno en `encargos.yml`:\n\n"
             "    transcripcion:\n"
-            "      comando: [\"/ruta/a/python\", \"scripts/transcribir-whisper.py\", \"{audio}\"]\n\n"
-            "El hub no trae whisper a propósito: el modelo que va bien depende "
-            "de la máquina."
+            "      comando: [\"/ruta/a/python\", \"scripts/transcribir-whisper.py\", \"{audio}\"]"
         )
     partes = shlex.split(crudo) if isinstance(crudo, str) else [str(x) for x in crudo]
     if not any("{audio}" in p for p in partes):
@@ -103,3 +120,42 @@ def transcribir(ruta: Path, ajustes: dict | None = None) -> str:
     if not texto:
         raise NoSeEntendio("el transcriptor no devolvió texto")
     return texto
+
+
+# Varios minutos de voz en webm. Más que eso no es un mensaje que se dicta.
+LIMITE_AUDIO = 25 * 1024 * 1024
+_EXTENSIONES = {"webm", "ogg", "m4a", "mp4", "wav", "mp3"}
+
+
+def dictado(datos: bytes, nombre: str) -> str:
+    """El texto de lo que se dictó en la web, para la terminal.
+
+    El audio se escribe en `HUB_HOME/voz/` para poder transcribirlo y se borra
+    en cuanto sale bien: es la voz de alguien explicando su trabajo, y ya está
+    en texto. Si falla se queda, con lo que se puede reintentar o mirar qué
+    pasó. Nada sale de la máquina (decisión 221).
+    """
+    import time
+
+    import yaml
+
+    from . import config
+
+    if not datos:
+        raise ValueError("el audio llegó vacío")
+    if len(datos) > LIMITE_AUDIO:
+        raise ValueError("el audio es demasiado largo para dictar")
+    extension = (nombre.rsplit(".", 1)[-1] if "." in nombre else "webm").lower()
+    if extension not in _EXTENSIONES:
+        extension = "webm"
+    carpeta = config.HUB_HOME / "voz"
+    carpeta.mkdir(parents=True, exist_ok=True)
+    ruta = carpeta / f"{time.strftime('%y%m%d-%H%M%S')}-{time.time_ns() % 10**6}.{extension}"
+    ruta.write_bytes(datos)
+    ajustes = {}
+    if config.encargos_yml().is_file():
+        ajustes = yaml.safe_load(config.encargos_yml().read_text(encoding="utf-8")) or {}
+    texto = transcribir(ruta, ajustes)
+    ruta.unlink(missing_ok=True)
+    return texto
+

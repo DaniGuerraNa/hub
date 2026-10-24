@@ -186,6 +186,9 @@ body.completo .principal-col { min-height: 0; }
 body.completo .envoltura { max-width: none; padding: 0; display: flex;
                            flex-direction: column; min-height: 0; flex: 1; }
 body.completo .envoltura > :not(header) { flex: 1; min-height: 0; }
+/* Los avisos de arriba miden lo que su texto: sin esto la regla de encima los
+   estiraba como al terminal, y con dos avisos se comían media pantalla. */
+body.completo .envoltura > .aviso-accion { flex: none; }
 body.completo header { flex: none; }
 
 /* ── El raíl global ────────────────────────────────────────────────────── */
@@ -201,9 +204,21 @@ body.completo header { flex: none; }
 .rail-global .marca em { color: var(--acento); font-style: normal; }
 .rail-global .rotulo { font-size: 10px; text-transform: uppercase; letter-spacing: .12em;
   color: var(--texto-4); padding: 15px 10px 5px; }
-.rail-global a.enlace { display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+.rail-global .enlace { display: flex; align-items: center; gap: 10px; padding: 7px 10px;
   border-radius: 8px; color: var(--texto-2); font-size: 13.5px; }
-.rail-global a.enlace:hover { background: var(--superficie2); color: var(--texto); text-decoration: none; }
+.rail-global .enlace:hover { background: var(--superficie2); color: var(--texto); text-decoration: none; }
+/* Los grupos (decisión 297). El `summary` lleva la clase `enlace` para verse
+   igual que una entrada; lo que lo distingue es la flecha, que gira al abrir. */
+.rail-global .grupo-rail > summary { list-style: none; cursor: pointer; user-select: none; }
+.rail-global .grupo-rail > summary::-webkit-details-marker { display: none; }
+.rail-global .grupo-rail > summary.contiene { color: var(--texto); }
+.rail-global .flecha { margin-left: auto; color: var(--texto-4); font-size: 15px; line-height: 1;
+  transition: transform .15s; }
+.rail-global .cuenta + .flecha { margin-left: 6px; }
+.rail-global .grupo-rail[open] > summary .flecha { transform: rotate(90deg); }
+.rail-global .grupo-rail[open] > summary .cuenta { display: none; }
+.rail-global .sub { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 4px 17px;
+  padding-left: 8px; border-left: 1px solid var(--borde); }
 .rail-global a.enlace.aqui { background: var(--elevado); color: var(--texto); font-weight: 600; }
 .rail-global a.enlace.aqui svg { color: var(--acento); }
 .rail-global .cuenta { margin-left: auto; flex: none; font-size: 11px; color: var(--texto-4);
@@ -216,8 +231,11 @@ body.completo .rail-global { width: 56px; padding: 13px 8px; }
 body.completo .rail-global .rotulo,
 body.completo .rail-global .nom,
 body.completo .rail-global .cuenta,
+body.completo .rail-global .flecha,
 body.completo .rail-global .marca > span { display: none; }
-body.completo .rail-global a.enlace { justify-content: center; padding: 9px 0; }
+body.completo .rail-global .enlace { justify-content: center; padding: 9px 0; }
+body.completo .rail-global .sub { margin: 2px 0 4px; padding-left: 0; border-left: 0;
+  border-top: 1px solid var(--borde); padding-top: 2px; }
 body.completo .rail-global .marca { justify-content: center; padding: 5px 0 12px; }
 @media (max-width: 860px) {
   body { display: block; }
@@ -242,6 +260,12 @@ body.completo .rail-global .marca { justify-content: center; padding: 5px 0 12px
                  padding: 8px 10px; flex-direction: row; flex-wrap: wrap;
                  border-right: 0; border-bottom: 1px solid var(--borde); }
   .rail-global .rotulo { display: none; }
+  /* En fila, un grupo abierto ocupa la fila entera y sus pantallas van debajo,
+     también en fila: abrir uno no empuja los demás fuera de la pantalla. */
+  .rail-global .grupo-rail[open] { flex-basis: 100%; order: 1; }
+  .rail-global .sub,
+  body.completo .rail-global .sub { flex-direction: row; flex-wrap: wrap; margin: 2px 0 4px;
+                 padding: 4px 0 0; border-left: 0; border-top: 1px solid var(--borde); }
 }
 
 /* ── Gráficas ───────────────────────────────────────────────────────────── */
@@ -868,29 +892,13 @@ dialog.paleta li .detalle {
     <span>Hub<em>.</em></span>
   </a>
 
-  <div class="rotulo">Vistas</div>
-  {% for ruta, clave, nombre, icono in [
-      ('/', 'panorama', 'Panorama', 'casa'),
-      ('/trabajo', 'trabajo', 'Trabajo', 'terminal'),
-      ('/inventario', 'inventario', 'Inventario', 'lineas'),
-      ('/archivos', 'archivos', 'Archivos', 'carpeta'),
-      ('/intercambio', 'intercambio', 'Intercambio', 'intercambio'),
-      ('/respaldo', 'respaldo', 'Respaldo', 'escudo'),
-      ('/servicios', 'servicios', 'Servicios', 'pilas'),
-      ('/maquina', 'maquina', 'Máquina', 'equipo'),
-      ('/consumo', 'consumo', 'Consumo', 'lineas'),
-      ('/conexiones', 'conexiones', 'Conexiones', 'enlace'),
-      ('/orquestador', 'orquestador', 'Orquestador', 'agente'),
-      ('/navegante', 'navegante', 'Navegante', 'navegador'),
-      ('/reuniones', 'reuniones', 'Reuniones', 'reunion'),
-      ('/canal', 'canal', 'Canal', 'conversacion'),
-      ('/encargos', 'encargos', 'Encargos', 'bandeja'),
-      ('/acceso', 'acceso', 'Acceso', 'llave'),
-      ('/contexto', 'contexto', 'Contexto', 'documento'),
-      ('/guia', 'guia', 'Guía', 'ok')] %}
-  {# Navegante y Reuniones salen siempre, también sin preparar: su pantalla
-     enseña entonces los pasos para tenerlos, y una entrada que no sale no se
-     descubre (decisión 293). #}
+  {# 🔴 Agrupado (decisión 297): eran diecinueve entradas en fila, y buscar una
+     era leerlas todas. Arriba sólo lo de cada momento —Panorama y Trabajo—;
+     lo demás en grupos que se despliegan. Abierto, el del sitio donde estás.
+     Un grupo cerrado enseña lo urgente de dentro: un aviso no puede quedar
+     escondido detrás de un pliegue. `<details>` y no JavaScript: se abre con
+     teclado y funciona aunque el script no cargue. #}
+  {% macro entrada_rail(ruta, clave, nombre, icono) %}
   <a href="{{ ruta }}" class="enlace {{ 'aqui' if seccion == clave }}" title="{{ nombre }}">
     {{ ui.icono(icono) }}<span class="nom">{{ nombre }}</span>
     {% if clave == 'navegante' and rail.navegante_pendientes %}
@@ -901,8 +909,50 @@ dialog.paleta li .detalle {
       <span class="cuenta">{{ rail.servicios }}</span>
     {% elif clave == 'trabajo' and rail.paneles %}
       <span class="cuenta">{{ rail.paneles }}</span>
+    {% elif clave == 'actualizaciones' and rail.version and (rail.version.hay_nueva or rail.version.falta_terminar) %}
+      <span class="cuenta urge">1</span>
     {% endif %}
   </a>
+  {% endmacro %}
+  {{ entrada_rail('/', 'panorama', 'Panorama', 'casa') }}
+  {{ entrada_rail('/trabajo', 'trabajo', 'Trabajo', 'terminal') }}
+  {% set ver_rail = rail.version %}
+  {% set grupos_rail = [
+      ('Agentes', 'agente', rail.navegante_pendientes or 0, [
+        ('/orquestador', 'orquestador', 'Orquestador', 'agente'),
+        ('/navegante', 'navegante', 'Navegante', 'navegador'),
+        ('/reuniones', 'reuniones', 'Reuniones', 'reunion')]),
+      ('Proyectos', 'rejilla', 0, [
+        ('/inventario', 'inventario', 'Inventario', 'lineas'),
+        ('/archivos', 'archivos', 'Archivos', 'carpeta'),
+        ('/intercambio', 'intercambio', 'Intercambio', 'intercambio'),
+        ('/contexto', 'contexto', 'Contexto', 'documento')]),
+      ('Vigilar', 'escudo', rail.sin_respaldo or 0, [
+        ('/respaldo', 'respaldo', 'Respaldo', 'escudo'),
+        ('/servicios', 'servicios', 'Servicios', 'pilas'),
+        ('/maquina', 'maquina', 'Máquina', 'equipo'),
+        ('/consumo', 'consumo', 'Consumo', 'lineas')]),
+      ('Comunicación', 'conversacion', 0, [
+        ('/canal', 'canal', 'Canal', 'conversacion'),
+        ('/encargos', 'encargos', 'Encargos', 'bandeja')]),
+      ('Ajustes', 'ajustes', 1 if ver_rail and (ver_rail.hay_nueva or ver_rail.falta_terminar) else 0, [
+        ('/conexiones', 'conexiones', 'Conexiones', 'enlace'),
+        ('/acceso', 'acceso', 'Acceso', 'llave'),
+        ('/actualizaciones', 'actualizaciones', 'Actualizaciones', 'actualizar'),
+        ('/guia', 'guia', 'Guía', 'ok')]),
+  ] %}
+  {% for nombre_g, icono_g, urge_g, hijos in grupos_rail %}
+  {% set aqui_g = seccion in (hijos | map(attribute=1) | list) %}
+  <details {% if aqui_g %}open {% endif %}class="grupo-rail">
+    <summary class="enlace {{ 'contiene' if aqui_g }}" title="{{ nombre_g }}">
+      {{ ui.icono(icono_g) }}<span class="nom">{{ nombre_g }}</span>
+      {% if urge_g %}<span class="cuenta urge">{{ urge_g }}</span>{% endif %}
+      <span class="flecha" aria-hidden="true">›</span>
+    </summary>
+    <div class="sub">
+      {% for ruta, clave, nombre, icono in hijos %}{{ entrada_rail(ruta, clave, nombre, icono) }}{% endfor %}
+    </div>
+  </details>
   {% endfor %}
 
 </nav>
@@ -924,13 +974,13 @@ dialog.paleta li .detalle {
   {% set v = rail.version %}
   {% if v and v.falta_terminar %}
   <div class="aviso-accion version-urge" role="alert">
-    <span>Falta terminar de actualizar a la {{ v.codigo }}: en la carpeta del hub,
-      <code>bash scripts/actualizar.sh</code>. <a href="/guia#version">Qué hace</a></span>
+    <span>Falta terminar de actualizar a la {{ v.codigo }}.
+      <a href="/actualizaciones">Terminar ahora</a></span>
   </div>
   {% elif v and v.hay_nueva %}
   <div class="aviso-accion" role="status">
     <span>Hay una versión nueva del hub, la {{ v.publicada }} (tienes la {{ v.codigo }}).
-      <a href="/guia#version">Novedades y cómo actualizar</a></span>
+      <a href="/actualizaciones">Ver y actualizar</a></span>
   </div>
   {% endif %}
   {# El muestreo parado (decisión 289): sin él no se guarda qué ventanas hay y

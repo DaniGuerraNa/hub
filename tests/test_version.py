@@ -80,14 +80,26 @@ def test_la_version_publicada_es_la_etiqueta_mas_alta_del_remoto(clon_con_remoto
     assert "error" not in datos
 
 
-def test_se_mira_como_mucho_una_vez_al_dia(clon_con_remoto):
+def test_se_mira_como_mucho_una_vez_cada_hora(clon_con_remoto):
+    """Antes era una vez al día, y un usuario se quedó viendo la 0.3.0 con la
+    0.3.1 ya publicada (decisión 296)."""
     clon, publicado = clon_con_remoto
     ahora = datetime.now(timezone.utc)
     version.buscar_remota(clon, ahora=ahora)
     _git("tag", "v0.11.0", cwd=publicado)
 
-    assert version.buscar_remota(clon, ahora=ahora + timedelta(hours=3))["ultima"] == "0.10.0"
-    assert version.buscar_remota(clon, ahora=ahora + timedelta(hours=25))["ultima"] == "0.11.0"
+    assert version.buscar_remota(clon, ahora=ahora + timedelta(minutes=30))["ultima"] == "0.10.0"
+    assert version.buscar_remota(clon, ahora=ahora + timedelta(minutes=61))["ultima"] == "0.11.0"
+
+
+def test_al_entrar_en_actualizaciones_basta_con_cinco_minutos(clon_con_remoto):
+    clon, publicado = clon_con_remoto
+    ahora = datetime.now(timezone.utc)
+    version.buscar_remota(clon, ahora=ahora)
+    _git("tag", "v0.11.0", cwd=publicado)
+
+    assert version.buscar_remota(clon, ahora=ahora + timedelta(minutes=6),
+                                 cada=version.AL_ENTRAR)["ultima"] == "0.11.0"
 
 
 def test_sin_red_se_conserva_lo_ultimo_que_se_supo_y_se_apunta_el_fallo(clon_con_remoto):
@@ -215,7 +227,7 @@ def cliente(tmp_path, monkeypatch):
 def test_falta_terminar_de_actualizar_se_dice_en_todas_las_pantallas(cliente, pantalla):
     html = cliente.get(pantalla).text
     assert "Falta terminar de actualizar" in html
-    assert "bash scripts/actualizar.sh" in html
+    assert 'href="/actualizaciones">Terminar ahora' in html
 
 
 def test_con_la_actualizacion_terminada_no_hay_aviso(cliente):
@@ -225,20 +237,75 @@ def test_con_la_actualizacion_terminada_no_hay_aviso(cliente):
     assert "Hay una versión nueva" not in html
 
 
-def test_una_version_publicada_mas_nueva_se_anuncia_con_sus_novedades(cliente):
+def test_una_version_publicada_mas_nueva_se_anuncia_con_sus_novedades(cliente, monkeypatch):
+    from hub import actualizacion
+    # El clon de quien corre la suite puede tener cambios: no es lo que se prueba.
+    monkeypatch.setattr(actualizacion, "cambios_locales", lambda raiz=None: [])
     version.registrar(version.del_codigo())
     (config.HUB_HOME / "version-remota.json").write_text(
         json.dumps({"ultima": "99.0.0", "mirado_en": "2026-01-01T00:00:00+00:00"}))
     assert "Hay una versión nueva del hub, la 99.0.0" in cliente.get("/").text
-    guia = cliente.get("/guia").text
-    assert 'id="version"' in guia
-    assert "la <strong>99.0.0</strong>" in guia
+    pantalla = cliente.get("/actualizaciones").text
+    assert "La 99.0.0 está publicada" in pantalla
+    assert 'action="/actualizaciones/aplicar"' in pantalla
 
 
-def test_la_guia_dice_que_version_tienes_y_que_trajo(cliente):
-    guia = cliente.get("/guia").text
-    assert f"tienes la {version.del_codigo()}" in guia
-    assert "Qué trajo la" in guia
+def test_actualizaciones_dice_que_version_tienes_y_que_trajo(cliente):
+    """Vivía en /guia hasta la decisión 296: ahora tiene su pantalla."""
+    pantalla = cliente.get("/actualizaciones").text
+    assert f"<strong>{version.del_codigo()}</strong>" in pantalla
+    assert "Qué trajo la" in pantalla
+    assert 'id="version"' not in cliente.get("/guia").text
+
+
+def test_con_cambios_locales_no_se_ofrece_el_boton_y_se_dice_que_hacer(cliente, monkeypatch):
+    from hub import actualizacion
+    monkeypatch.setattr(actualizacion, "cambios_locales", lambda raiz=None: [" M src/hub/api.py"])
+    pantalla = cliente.get("/actualizaciones").text
+    assert "cambios sin guardar" in pantalla and "git restore ." in pantalla
+    assert 'action="/actualizaciones/aplicar"' not in pantalla
+    r = cliente.post("/actualizaciones/aplicar", headers={"origin": "http://127.0.0.1:8787"},
+                     follow_redirects=False)
+    assert "No%20se%20actualiz" in r.headers["location"]
+
+
+def test_el_boton_lanza_actualizar_sh_fuera_del_proceso_del_hub(cliente, monkeypatch):
+    """🔴 Fuera de su cgroup: `actualizar.sh` reinicia `hub-web`, y un hijo
+    normal moriría con él a mitad de la actualización."""
+    from hub import actualizacion
+    monkeypatch.setattr(actualizacion, "cambios_locales", lambda raiz=None: [])
+    monkeypatch.setattr(actualizacion, "_con_systemd", lambda: True)
+    lanzadas = []
+    monkeypatch.setattr(actualizacion.subprocess, "run",
+                        lambda cmd, **k: lanzadas.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
+    r = cliente.post("/actualizaciones/aplicar", headers={"origin": "http://127.0.0.1:8787"},
+                     follow_redirects=False)
+    assert r.headers["location"].startswith("/actualizaciones")
+    cmd = lanzadas[-1]
+    assert cmd[:2] == ["systemd-run", "--user"]
+    assert "scripts/actualizar.sh" in cmd[-1]
+    assert actualizacion.en_marcha()
+
+
+def test_una_actualizacion_en_marcha_no_se_lanza_dos_veces(monkeypatch):
+    from hub import actualizacion
+    (actualizacion.carpeta() / "inicio.json").write_text(json.dumps({"t": int(__import__("time").time())}))
+    with pytest.raises(RuntimeError, match="en marcha"):
+        actualizacion.lanzar()
+
+
+def test_el_resultado_se_lee_aunque_el_hub_se_haya_reiniciado():
+    """El registro y el resultado viven en archivos, no en la memoria del
+    proceso que se reinicia a mitad."""
+    import time
+    from hub import actualizacion
+    t = int(time.time())
+    (actualizacion.carpeta() / "inicio.json").write_text(json.dumps({"t": t}))
+    (actualizacion.carpeta() / "registro.log").write_text("\x1b[1m7/7 · Comprobación\x1b[0m\n  ✓ instalada\n")
+    (actualizacion.carpeta() / "resultado.json").write_text(json.dumps({"rc": 0, "t": t + 5}))
+    e = actualizacion.estado()
+    assert e["en_marcha"] is False and e["rc"] == 0
+    assert "7/7 · Comprobación" in e["registro"] and "\x1b" not in e["registro"]
 
 
 # ── los scripts ──────────────────────────────────────────────────────────────
@@ -384,3 +451,6 @@ def test_actualizar_no_pisa_cambios_sin_guardar(clon_desechable):
     assert "git restore ." in r.stderr
     assert "git switch -c mis-cambios-" in r.stderr
     assert not (casa / "version.json").exists()
+
+
+

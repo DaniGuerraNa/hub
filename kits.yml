@@ -38,9 +38,26 @@ kits:
     origen: https://github.com/DaniGuerraNa/kit-lienzos.git
     descripcion: Publicar diagramas, decisiones, pasos y comparativas en la web del hub en vez de soltarlos como texto.
 
-  # Ejemplo de kit externo. Descomenta y pon el repo real cuando publiques uno.
-  # - id: orquestacion
-  #   nombre: Kit de orquestación
-  #   version: "1.2"
-  #   origen: https://ejemplo.invalid/orquestacion.git
-  #   descripcion: Trabajar de forma semiautónoma — método, roles y delegación.
+  # Que una sesión que trabaja sola pueda preguntarle a otra persona por
+  # Telegram cuando el dueño no está, y seguir con la respuesta.
+  - id: telegram
+    nombre: Consulta por Telegram
+    version: "0.2"
+    origen: https://github.com/DaniGuerraNa/kit-telegram.git
+    descripcion: Que una sesión pueda preguntarle a otra persona por Telegram cuando tú no estás, y seguir trabajando con la respuesta.
+
+  # Kit de MÁQUINA: no toca proyectos, pone dos comandos en ~/.local/bin. Su
+  # instalador lo enseña el hub y lo lanza la persona.
+  - id: en-toolkit
+    nombre: Inmersión en inglés
+    version: "1.0"
+    origen: https://github.com/DaniGuerraNa/en-toolkit.git
+    descripcion: Mejorar tu inglés mientras programas. Guarda el vocabulario que buscas para repasarlo, y una sesión de Claude que te contesta en inglés y te corrige.
+
+  # El método para trabajar de forma semiautónoma: roles, delegación y el
+  # techo de consumo. La 2.1 es la primera limpia para el catálogo público.
+  - id: orquestacion
+    nombre: Orquestación
+    version: "2.1"
+    origen: https://github.com/DaniGuerraNa/kit-orquestacion.git
+    descripcion: Trabajar de forma semiautónoma con Claude Code — método, roles, delegación y techo de consumo.

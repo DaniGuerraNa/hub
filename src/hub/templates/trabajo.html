@@ -897,6 +897,11 @@
         <div class="menu-pop pop-conv"><div data-conversaciones="{{ slot.id }}"></div></div>
       </details>
       {% endif %}
+      {# Dictar en vez de teclear (decisión 295). El `/voice` de Claude Code
+         usa el micrófono de la máquina donde corre, y desde el navegador o el
+         móvil ese micrófono no es el tuyo. #}
+      <button type="button" class="sutil" data-dictar
+              title="Dictar: graba, se transcribe en tu máquina y el texto queda escrito en la terminal, sin enviarlo">Dictar</button>
       <button id="alternar-nota" class="sutil" title="Mostrar u ocultar la nota">Nota</button>
       <button id="pantalla-completa" class="sutil" aria-pressed="false"
               title="Darle la pantalla entera al terminal">⤢</button>
@@ -960,6 +965,7 @@
         <button type="button" data-tecla="derecha" aria-label="Derecha">→</button>
         <button type="button" data-tecla="enter">Enter</button>
         <button type="button" id="adjuntar" title="Adjuntar una imagen: se escribe su ruta">Imagen</button>
+        <button type="button" data-dictar title="Dictar: se escribe en la terminal sin enviarlo">Dictar</button>
         <input type="file" id="adjuntar-archivo" accept="image/*" hidden>
       </div>
     </div>
@@ -1943,6 +1949,66 @@
     // teclado del móvil a cada pulsación.
     b.addEventListener('pointerdown', e => e.preventDefault());
     b.addEventListener('click', () => { teclear(SECUENCIAS[b.dataset.tecla] || ''); term.focus(); });
+  });
+
+  /* Dictar (decisión 295): se graba en el navegador, se transcribe EN CASA
+   * (`/api/voz`, el mismo transcriptor que los encargos) y el texto se PEGA en
+   * la terminal, sin Enter. Una transcripción equivocada que se envía sola es
+   * el error que no se ve; así se lee antes de mandarlo. Sale por el mismo
+   * socket que el tecleo: es la persona escribiendo (regla dura 6). */
+  let grabadora = null;
+  const botonesDictar = document.querySelectorAll('[data-dictar]');
+  const marcarDictado = (grabando) => botonesDictar.forEach(b => {
+    b.classList.toggle('on', grabando);
+    b.textContent = grabando ? 'Parar' : 'Dictar';
+  });
+  async function transcribirDictado(trozos, tipo) {
+    estado.textContent = 'transcribiendo…';
+    const ext = tipo.includes('ogg') ? 'ogg' : tipo.includes('mp4') ? 'm4a' : 'webm';
+    const datos = new FormData();
+    datos.append('audio', new Blob(trozos, { type: tipo }), 'dictado.' + ext);
+    try {
+      const r = await fetch('/api/voz', { method: 'POST', body: datos });
+      const d = await r.json();
+      if (!d.ok) { estado.textContent = `no se transcribió: ${d.error}`; return; }
+      term.paste(d.texto);
+      estado.textContent = 'dictado escrito: revísalo y pulsa Enter';
+    } catch (e) {
+      estado.textContent = 'no se transcribió: el hub no contesta';
+    }
+    term.focus();
+  }
+  async function dictar() {
+    if (grabadora) { grabadora.stop(); return; }
+    if (!navigator.mediaDevices || !window.MediaRecorder) {
+      estado.textContent = 'este navegador no deja grabar aquí (hace falta HTTPS o localhost)';
+      return;
+    }
+    let flujo;
+    try {
+      flujo = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      estado.textContent = 'sin permiso para el micrófono';
+      return;
+    }
+    const trozos = [];
+    const esta = new MediaRecorder(flujo);
+    grabadora = esta;
+    esta.addEventListener('dataavailable', ev => { if (ev.data && ev.data.size) trozos.push(ev.data); });
+    esta.addEventListener('stop', () => {
+      flujo.getTracks().forEach(p => p.stop());
+      grabadora = null;
+      marcarDictado(false);
+      if (trozos.length) transcribirDictado(trozos, esta.mimeType || 'audio/webm');
+      else estado.textContent = 'no se grabó nada';
+    });
+    esta.start();
+    marcarDictado(true);
+    estado.textContent = 'grabando… pulsa «Parar» para terminar';
+  }
+  botonesDictar.forEach(b => {
+    b.addEventListener('pointerdown', e => e.preventDefault());
+    b.addEventListener('click', dictar);
   });
 
   /* La ruta va PEGADA (`term.paste`), no tecleada: Claude Code reconoce un

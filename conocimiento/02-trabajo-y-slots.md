@@ -100,6 +100,13 @@ tmux.
 - Cerrar la pestaña del navegador sólo te desata: los procesos siguen vivos,
   igual que un `detach`.
 - Si se cae la conexión, se reengancha sola.
+- **Dictar:** el botón «Dictar» (arriba, y en el móvil en la barra de teclas)
+  graba lo que dices, lo transcribe **en tu máquina** y lo deja escrito en la
+  terminal, sin enviarlo: lo lees y pulsas Enter. Sirve para explicarle algo
+  largo a Claude Code sin teclearlo. El `/voice` de Claude Code no sirve aquí:
+  usa el micrófono de la máquina donde corre `claude`, no el de tu navegador.
+  Necesita un transcriptor: si preparaste Reuniones, usa el suyo (Whisper);
+  si no, la terminal te dice cómo tenerlo.
 
 **No encoge tu terminal nativa.** Cada pestaña usa su propia sesión agrupada
 (`hub-<sesión>-<id>`), porque tmux dimensiona una sesión al cliente más pequeño.

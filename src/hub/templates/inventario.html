@@ -33,6 +33,14 @@
   .cap-meta strong { color:var(--texto-2); font-weight:600; }
 
   .kit-cab { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .catalogo-kits { display:grid; gap:10px; grid-template-columns:repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
+  .kit-cat { display:grid; gap:8px; align-content:start; }
+  .kit-cat .kit-cab { gap:8px; }
+  .kit-desc { margin:0; color:var(--texto-2); font-size:13.5px; }
+  .kit-acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .kit-acciones form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; min-width:0; }
+  .kit-acciones select { min-width:0; max-width:100%; }
+  .kit-acciones .mono { overflow-wrap:anywhere; }
   .cons { border:1px solid var(--borde); border-radius:var(--r-nav); padding:14px 16px; margin-top:12px; }
   .cons summary { font-size:14px; color:var(--texto-2); }
   .enlace-estado {
@@ -208,8 +216,62 @@
 </div>
 {% endif %}
 
+{% if ver == 'kits' and catalogo and not proyecto %}
+{# El catálogo es para quien USA kits: qué hay publicado, qué tiene esta
+   máquina y un botón para cada paso. Lo de abajo («Kits») es para quien los
+   HACE: consumidores y deriva. Son dos preguntas distintas en la misma pestaña. #}
+<h2 class="con-placa" style="margin-top:0" id="catalogo">{{ ui.placa('rejilla') }}
+  <span>Catálogo</span><span class="apunte">{{ catalogo | length }}</span></h2>
+<p class="tenue" style="margin:-4px 0 12px;font-size:13px;max-width:72ch">
+  Los kits que puedes usar. Instalar lo trae a esta máquina; aplicar lo pone en un
+  proyecto, en una ventana donde ves los cambios antes de hacerlos.
+</p>
+<div class="catalogo-kits">
+{% for k in catalogo %}
+<div class="tarjeta kit-cat">
+  <div class="kit-cab">
+    <strong style="font-size:15px;font-weight:500">{{ k.nombre }}</strong>
+    {% if k.version %}<span class="chip">v{{ k.version }}</span>{% endif %}
+    {% if k.estado == 'instalado' %}<span class="chip" style="color:var(--ok);border-color:var(--ok)">instalado</span>
+    {% elif k.estado == 'con-el-hub' %}<span class="chip">viene con el hub</span>
+    {% elif k.estado == 'en-desarrollo' %}<span class="chip">lo escribes tú</span>
+    {% elif k.estado == 'otra-version' %}<span class="chip frio">tienes la v{{ k.instalada }}</span>
+    {% else %}<span class="chip frio">sin instalar</span>{% endif %}
+    {% if k.de_maquina %}<span class="chip">de máquina</span>{% endif %}
+  </div>
+  {% if k.descripcion %}<p class="kit-desc">{{ k.descripcion }}</p>{% endif %}
+  <div class="kit-acciones">
+    {% if k.estado in ('sin-instalar', 'otra-version') %}
+      <form method="post" action="/kits/instalar">
+        <input type="hidden" name="id" value="{{ k.id }}">
+        <button class="principal">Instalar{% if k.estado == 'otra-version' %} la v{{ k.version }}{% endif %}</button>
+      </form>
+    {% elif k.de_maquina and k.instalador %}
+      <form method="post" action="/kits/instalar-en-maquina">
+        <input type="hidden" name="id" value="{{ k.id }}">
+        <button class="principal" title="Abre una ventana con la orden escrita y sin lanzar: míralo antes de pulsar Enter">Ponerlo en esta máquina</button>
+      </form>
+      <span class="tenue mono" style="font-size:12px">bash {{ k.instalador }}</span>
+    {% elif not k.obligatorio and k.estado in ('instalado', 'en-desarrollo') and aplicables %}
+      <form method="post" action="/kits/aplicar">
+        <input type="hidden" name="kit" value="{{ k.id }}">
+        <select name="proyecto" aria-label="Proyecto al que aplicarlo" required>
+          <option value="">Aplicar a…</option>
+          {% for p in aplicables %}<option value="{{ p.id }}">{{ p.nombre }}</option>{% endfor %}
+        </select>
+        <button>Aplicar</button>
+      </form>
+    {% elif k.obligatorio %}
+      <span class="tenue" style="font-size:12.5px">Todos los proyectos la llevan.</span>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
 {% if ver == 'kits' %}
-<h2 class="con-placa" style="margin-top:0">{{ ui.placa('rejilla') }}
+<h2 class="con-placa" style="margin-top:{{ '28px' if catalogo and not proyecto else '0' }}">{{ ui.placa('rejilla') }}
   {# Un kit mirándose a sí mismo NO está «usando kits»: ahí la lista es él y sus
      consumidores, que es la pregunta contraria. #}
   {%- set mirando_un_kit = kits | selectattr('id', 'equalto', proyecto) | list -%}

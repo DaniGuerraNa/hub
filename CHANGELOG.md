@@ -25,6 +25,52 @@ número.
   nada: la 0.3.0 lo anunciaba y no funcionaba. Ctrl+Shift+V y Mayús+Insert
   hacen lo mismo.
 
+## 0.4.0 — 2026-10-23
+
+Más fácil de usar: actualizar con un botón, dictarle a Claude Code, el menú
+agrupado y los kits con su catálogo y sus botones.
+
+### Qué tienes que hacer
+
+- **Actualiza esta vez como siempre**, con `bash scripts/actualizar.sh` en la
+  carpeta del hub. Desde esta versión, las siguientes se hacen con el botón de
+  **Actualizaciones**.
+- **Pulsa «Limpiar» en el chat del asistente**, para que sepa de la pantalla
+  Actualizaciones, del dictado y del catálogo de kits.
+- **Recarga con Ctrl+Shift+R** la primera vez: el menú y la terminal cambian.
+
+### Nuevo
+
+- **El catálogo de kits, con botones.** En Inventario → Kits, arriba, cada kit
+  publicado dice si lo tienes y en qué versión. **Instalar** lo trae a tu
+  máquina y **Aplicar a…** lo pone en el proyecto que elijas, en una ventana
+  donde ves los cambios antes de hacerlos. Sin terminal.
+- **Actualizar con un botón.** Nueva pantalla **Actualizaciones** (en el
+  menú, Ajustes): qué versión tienes, si hay otra y «Actualizar ahora». Te
+  enseña lo que va pasando y vuelve sola cuando el hub se reinicia. Ya no
+  hace falta copiar ningún comando.
+- **Dictar en la terminal.** El botón «Dictar» graba lo que dices, lo
+  transcribe en tu máquina y lo deja escrito en la terminal sin enviarlo,
+  para explicarle algo largo a Claude Code sin teclearlo. Si preparaste
+  Reuniones, usa su Whisper; si no, te dice cómo tener un transcriptor.
+- **El menú, agrupado.** Panorama y Trabajo arriba; el resto en cinco grupos
+  que se despliegan (Agentes, Proyectos, Vigilar, Comunicación y Ajustes). Un
+  grupo cerrado enseña sus avisos urgentes.
+- **Tres kits más en el catálogo:** *Orquestación* (el método para trabajar
+  de forma semiautónoma con Claude Code: roles, delegación y techo de
+  consumo), *Consulta por Telegram* (que una sesión pueda preguntarle a otra
+  persona cuando tú no estás) e *Inmersión en inglés* (un kit de máquina para
+  practicar inglés mientras programas).
+
+### Qué cambia en lo que ya usabas
+
+- **Las versiones nuevas se miran cada hora**, y otra vez al entrar en
+  Actualizaciones. Antes, una vez al día: una versión recién publicada podía
+  tardar un día en aparecer.
+- **La versión ya no está en la Guía**: tiene su pantalla, Actualizaciones.
+- **En Trabajo, los avisos de arriba miden lo que su texto.** Con dos avisos a
+  la vez se estiraban hasta ocupar media pantalla.
+
 ## 0.3.1 — 2026-10-23
 
 Corrección de errores y mejoras de uso: lo que pasaba al reiniciar WSL, crear

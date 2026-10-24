@@ -9,11 +9,13 @@ Tres números distintos, y confundirlos es el fallo que esto existe para evitar
   hizo `git pull` y reinició (lo que decía la documentación hasta la 0.2.0)
   sin completar los pasos de la versión: servicios regenerados, asistente
   refrescado, migraciones. El hub lo dice en todas las pantallas.
-- **la publicada** — la etiqueta `vX.Y.Z` más alta del remoto. Se mira una vez
-  al día desde el ciclo lento con `git ls-remote`, que no descarga nada.
+- **la publicada** — la etiqueta `vX.Y.Z` más alta del remoto. Se mira cada
+  hora desde el ciclo lento, y al entrar en Actualizaciones si lo apuntado
+  tiene más de cinco minutos, con `git ls-remote`, que no descarga nada.
 
 🔴 **Nada se actualiza solo** (principio 9). Saber que hay una versión nueva
-es información; aplicarla es una acción de la persona, con `actualizar.sh`.
+es información; aplicarla es una acción de la persona, con `actualizar.sh` o
+con su botón en Actualizaciones (`actualizacion.py`).
 
 🔴 Mirar el remoto es una consulta a internet, la única que hace el hub por su
 cuenta. Se apaga con `HUB_BUSCAR_VERSIONES=0`, y el resultado vive en un
@@ -37,7 +39,11 @@ ETIQUETA = re.compile(r"refs/tags/v(\d+\.\d+\.\d+)$")
 # La versión que se da por instalada cuando no hay `version.json`: todo lo
 # anterior al protocolo. Con ella, las migraciones desde la 0.2.0 se aplican.
 ANTES_DEL_PROTOCOLO = "0.1.0"
-CADA = timedelta(hours=24)
+CADA = timedelta(hours=1)
+# Al entrar en la pantalla Actualizaciones se mira otra vez si lo apuntado tiene
+# más de esto (decisión 296): quien entra ahí quiere saberlo ahora, y un día de
+# retraso dejó a un usuario viendo la 0.3.0 con la 0.3.1 ya publicada.
+AL_ENTRAR = timedelta(minutes=5)
 
 
 def clave(version: str) -> tuple[int, int, int]:
@@ -93,8 +99,9 @@ def etiquetas(salida_ls_remote: str) -> list[str]:
 
 
 def buscar_remota(raiz: Path | None = None, *, ahora: datetime | None = None,
-                  forzar: bool = False) -> dict | None:
-    """Mira la etiqueta más alta del remoto, como mucho una vez al día.
+                  forzar: bool = False, cada: timedelta | None = None) -> dict | None:
+    """Mira la etiqueta más alta del remoto, como mucho una vez cada `cada`
+    (por omisión `CADA`, una hora).
 
     Devuelve lo apuntado, o `None` si está apagado o no hay remoto. Un fallo de
     red no borra la lectura anterior: se apunta el error junto a ella.
@@ -105,7 +112,7 @@ def buscar_remota(raiz: Path | None = None, *, ahora: datetime | None = None,
     previa = remota()
     if previa and not forzar:
         try:
-            if ahora - datetime.fromisoformat(previa["mirado_en"]) < CADA:
+            if ahora - datetime.fromisoformat(previa["mirado_en"]) < (cada or CADA):
                 return previa
         except (KeyError, ValueError):
             pass

@@ -21,6 +21,18 @@ ajeno corriendo en tu máquina.
 
 ## Usarlos
 
+**Desde la pantalla:** [Inventario → Kits](/inventario?ver=kits), arriba, en
+**Catálogo**. Cada kit dice si lo tienes y en qué versión:
+
+- **Instalar** lo trae a tu máquina (lo mismo que `kit.sh instalar`).
+- **Aplicar a…**: eliges el proyecto y te lleva a una ventana en su carpeta con
+  el encargo escrito y sin lanzar. Pulsas Enter y esa sesión te enseña lo que
+  va a escribir antes de hacerlo.
+- Un kit **de máquina** dice **Ponerlo en esta máquina**: abre una ventana con
+  su instalador escrito, para que lo mires y lo lances tú.
+
+**Desde la terminal:**
+
 ```bash
 bash scripts/kit.sh listar              # qué hay en el catálogo, y qué tienes
 bash scripts/kit.sh instalar <id>       # lo trae a tu máquina

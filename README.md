@@ -64,6 +64,10 @@ scripts/actualizar.sh --sin-bajar`.
 
 ## Las pantallas
 
+En el menú, **Panorama** y **Trabajo** van arriba; el resto, en cinco grupos
+que se despliegan: **Agentes**, **Proyectos**, **Vigilar**, **Comunicación** y
+**Ajustes**.
+
 | | |
 |---|---|
 | **Panorama** | Qué pide atención hoy: commits sin respaldo, sesiones perdidas tras un corte, proyectos parados |
@@ -82,6 +86,7 @@ scripts/actualizar.sh --sin-bajar`.
 | **Reuniones** | Graba la reunión de otro monitor (pantalla, audio de la aplicación y tu micro) y la procesa en tu máquina: transcripción, resumen y tareas. Necesita un agente pequeño en Windows |
 | **Canal** y **Encargos** | Preguntar y recibir encargos por Telegram. Opcionales: sus servicios se instalan parados |
 | **Acceso** | Usar el hub desde el móvil u otro aparato: por qué nombres se entra, qué aparatos pueden, y si la terminal está abierta desde fuera. Ver [`conocimiento/10`](conocimiento/10-mas-pantallas.md) |
+| **Actualizaciones** | Qué versión tienes, si hay otra publicada y ponerla con un botón |
 | **Guía** | Por dónde empezar: los primeros pasos, que se marcan solos al hacerlos, y qué hay en cada pantalla. Con «Guíame», el asistente te acompaña |
 
 Y una más que no sale en el raíl porque depende de dónde estés: **la del

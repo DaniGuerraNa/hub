@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+<style>
+  /* Una columna: qué tienes, qué hay, el botón y lo que va pasando. */
+  .act { display:grid; gap:14px; max-width:860px; }
+  .act .tarjeta h2 { margin:0 0 10px; font-size:15px; }
+  .act p { margin:0 0 8px; color:var(--texto-2); font-size:14px; max-width:72ch; }
+  .act .cifras { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px; margin-bottom:10px; }
+  .act .cifra { background:var(--lienzo); border:1px solid var(--borde); border-radius:var(--r-input); padding:10px 12px; }
+  .act .cifra > span:not(.placa) { display:block; font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--texto-4); }
+  .act .cifra strong { font-size:18px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .act .acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px; }
+  .act pre { background:var(--lienzo); border:1px solid var(--borde); border-radius:var(--r-input);
+             padding:10px 12px; overflow-x:auto; font-size:12.5px; white-space:pre-wrap; margin:0; }
+  .act #registro { max-height:420px; overflow-y:auto; }
+  .act .marca { font-size:11px; padding:1px 8px; border-radius:999px; }
+  .act .marca.ok { color:var(--ok); background:color-mix(in srgb, var(--ok) 14%, transparent); }
+  .act .marca.mal { color:var(--riesgo); background:color-mix(in srgb, var(--riesgo) 14%, transparent); }
+  .act .marca.espera { color:var(--espera); background:color-mix(in srgb, var(--espera) 14%, transparent); }
+</style>
+
+{{ ui.cabecera_vista('Actualizaciones', 'Qué versión tienes, si hay otra y ponerla con un botón') }}
+
+<div class="act" id="act" data-en-marcha="{{ 'si' if a.en_marcha else 'no' }}">
+
+  <div class="tarjeta">
+    <h2>Tu versión</h2>
+    <div class="cifras">
+      <div class="cifra"><span>Tienes</span><strong>{{ vers.codigo }}</strong></div>
+      <div class="cifra"><span>Publicada</span><strong>{{ vers.publicada or '—' }}</strong></div>
+    </div>
+    {% if vers.falta_terminar %}
+      <p><span class="marca mal">falta terminar</span> El código ya es la {{ vers.codigo }}, pero la actualización no
+        se terminó{% if vers.instalada %} (lo último instalado del todo es la {{ vers.instalada }}){% endif %}: faltan
+        los servicios, el asistente y lo propio de la versión.</p>
+    {% elif vers.hay_nueva %}
+      <p><span class="marca espera">hay una nueva</span> La {{ vers.publicada }} está publicada.
+        {% if vers.url_novedades %}<a href="{{ vers.url_novedades }}" rel="noopener" target="_blank">Qué trae</a>.{% endif %}</p>
+    {% elif vers.publicada %}
+      <p><span class="marca ok">al día</span> No hay ninguna más nueva que la tuya.</p>
+    {% elif not vers.buscar %}
+      <p>No se buscan versiones nuevas (<code>HUB_BUSCAR_VERSIONES=0</code>).</p>
+    {% endif %}
+    {% if vers.error %}<p class="tenue">La última vez que se miró falló: {{ vers.error }}</p>{% endif %}
+    <p class="tenue" style="font-size:12.5px">Se mira cada hora y al entrar aquí{% if vers.mirado_en %}; la última vez,
+      {{ vers.mirado_en | replace('T', ' ') | truncate(16, true, '') }} (UTC){% endif %}.</p>
+    <div class="acciones">
+      <form method="post" action="/actualizaciones/comprobar"><button class="boton">Comprobar ahora</button></form>
+    </div>
+  </div>
+
+  {% if cambios %}
+  <div class="tarjeta">
+    <h2><span class="marca mal">cambios sin guardar</span> en el código del hub</h2>
+    <p>Actualizar encima los mezclaría con los nuevos, así que el botón espera. Casi siempre son arreglos de
+      urgencia que la versión nueva ya trae. En la carpeta del hub, guarda una copia y descártalos:</p>
+    <pre>git diff > ~/cambios-hub-$(date +%Y%m%d).patch
+git restore .</pre>
+    <p class="tenue">Si son algo tuyo que quieres conservar, guárdalos en una rama
+      (<code>conocimiento/11-versiones.md</code>, «Tengo cambios míos en el clon»).</p>
+    <pre>{{ cambios | join('\n') }}</pre>
+  </div>
+  {% elif (vers.hay_nueva or vers.falta_terminar) and not a.en_marcha %}
+  <form class="tarjeta" method="post" action="/actualizaciones/aplicar"
+        data-confirmar-titulo="{{ 'Terminar de actualizar' if vers.falta_terminar and not vers.hay_nueva else 'Actualizar a la ' ~ vers.publicada }}"
+        data-confirmar-ok="Actualizar"
+        data-confirmar="Baja la versión, regenera los servicios, refresca el asistente y reinicia el hub. La página se queda un momento sin contestar y vuelve sola. Tus datos no se tocan.">
+    {% if vers.falta_terminar and not vers.hay_nueva %}<input type="hidden" name="sin_bajar" value="1">{% endif %}
+    <h2>{{ 'Terminar de actualizar' if vers.falta_terminar and not vers.hay_nueva else 'Actualizar a la ' ~ vers.publicada }}</h2>
+    <p>Hace todo lo que la versión necesita, en orden, y te enseña aquí lo que va pasando. Si algo falla, para y lo
+      dice, y la versión no se da por instalada.</p>
+    <div class="acciones"><button class="boton principal">Actualizar ahora</button></div>
+  </form>
+  {% endif %}
+
+  {% if a.lanzada %}
+  <div class="tarjeta">
+    <h2>Última actualización
+      <span id="resultado">
+        {% if a.en_marcha %}<span class="marca espera">en marcha</span>
+        {% elif a.rc == 0 %}<span class="marca ok">terminada</span>
+        {% elif a.rc is not none %}<span class="marca mal">falló</span>{% endif %}
+      </span></h2>
+    <pre id="registro">{{ a.registro or 'Empezando…' }}</pre>
+  </div>
+  {% endif %}
+
+  {% if vers.novedades %}
+  <details class="tarjeta plegado">
+    <summary>Qué trajo la {{ vers.codigo }}</summary>
+    <pre style="margin-top:10px">{{ vers.novedades }}</pre>
+  </details>
+  {% endif %}
+</div>
+<script src="/static/actualizaciones.js"></script>
+{% endblock %}

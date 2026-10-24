@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import html
 import json
+import shlex
 import sqlite3
 import sys
 
@@ -1517,6 +1518,21 @@ def orquestador_audio(audio: UploadFile = File(...)):
     return JSONResponse({"ok": True, "texto": texto})
 
 
+@app.post("/api/voz")
+def api_voz(audio: UploadFile = File(...)):
+    """Dictar en la terminal: devuelve el texto y no manda nada (decisión 295).
+
+    `def` y no `async def`, como `/orquestador/audio`: transcribir tarda
+    segundos y bloquearía el bucle de eventos, terminal incluida."""
+    from . import transcribir
+
+    try:
+        texto = transcribir.dictado(audio.file.read(), audio.filename or "audio.webm")
+    except (ValueError, transcribir.SinTranscriptor, transcribir.NoSeEntendio) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)})
+    return JSONResponse({"ok": True, "texto": texto})
+
+
 @app.post("/archivos/terminal")
 async def archivos_terminal(request: Request):
     """Abre una ventana de tmux en esa carpeta, con el comando escrito y sin Enter.
@@ -1912,6 +1928,12 @@ def inventario(
                     con, tipo or None, proyecto or None, archivadas=bool(archivadas)
                 ),
                 "kits": kits,
+                # El catálogo es para quien USA kits; `kits` es para quien los
+                # hace. Las dos preguntas viven en la misma pestaña.
+                "catalogo": api.catalogo_kits() if ver == "kits" else [],
+                "aplicables": [p for p in api.listar_proyectos(con)
+                               if p.get("tipo") == "proyecto" and p.get("asiento")
+                               and p.get("guardrail") != "never"] if ver == "kits" else [],
                 "tipo": tipo,
                 "ver": ver,
                 "proyecto": proyecto,
@@ -1922,6 +1944,58 @@ def inventario(
         )
     finally:
         con.close()
+
+
+@app.post("/kits/instalar")
+def kits_instalar(id: str = Form(...)):
+    """«Instalar» del catálogo: clona el kit en la etiqueta de su versión."""
+    from . import kits as _kits
+    volver = "/inventario?ver=kits#catalogo"
+    try:
+        destino = _kits.instalar_del_catalogo(id)
+    except _kits.KitInvalido as exc:
+        return _volver(volver, f"No se instaló: {exc}")
+    return _volver(volver, f"Instalado en {destino}.", fugaz=True)
+
+
+@app.post("/kits/aplicar")
+def kits_aplicar(kit: str = Form(...), proyecto: str = Form(...)):
+    """«Aplicar a…»: la misma ventana que prepara el asistente (decisión 287),
+    con el encargo escrito y sin Enter. Lo lanza la persona y ve los cambios."""
+    volver = "/inventario?ver=kits#catalogo"
+    con = conexion()
+    try:
+        hecho = agentes.preparar_kits(con, proyecto, [kit])
+    except (agentes.GuardrailBloqueado, ValueError, RuntimeError, tmux.TmuxNoDisponible) as exc:
+        return _volver(volver, f"No se preparó: {exc}")
+    finally:
+        con.close()
+    destino = f"/trabajo?session={quote(hecho['session'])}"
+    if hecho["ventana"] is not None:
+        destino += f"&ventana={hecho['ventana']}"
+    return _volver(destino)
+
+
+@app.post("/kits/instalar-en-maquina")
+def kits_instalar_en_maquina(id: str = Form(...)):
+    """Un kit de máquina trae su instalador, un script de otro repositorio: el
+    hub no lo ejecuta. Abre una ventana en su carpeta con la orden escrita y sin
+    Enter —el tercer caso de la regla dura 15—, para que la lance la persona
+    después de mirarlo."""
+    from . import kits as _kits
+    volver = "/inventario?ver=kits#catalogo"
+    datos = _kits.catalogo().get(id)
+    if not datos:
+        return _volver(volver, f"«{id}» no está en el catálogo.")
+    estado = _kits.estado_en_catalogo(id, datos, [])
+    if not estado.get("instalador"):
+        return _volver(volver, f"«{id}» no trae instalador propio, o aún no está instalado.")
+    try:
+        slots.abrir_en(estado["ruta"], f"instalar-{id}", "hub",
+                       f"bash {shlex.quote(estado['instalador'])}")
+    except (ValueError, RuntimeError, tmux.TmuxNoDisponible) as exc:
+        return _volver(volver, f"No se abrió la ventana: {exc}")
+    return _volver("/trabajo?session=hub")
 
 
 @app.post("/inventario/escanear")
@@ -2222,6 +2296,63 @@ def _ventana_activa(session: str) -> int | None:
         return next(v["indice"] for v in tmux.listar_ventanas(session) if v["activa"])
     except (StopIteration, tmux.DestinoInvalido):
         return None
+
+
+@app.get("/actualizaciones")
+def actualizaciones_vista(request: Request, aviso: str = ""):
+    """Qué versión tienes, si hay otra y el botón para ponerla (decisión 296).
+
+    Al entrar se mira otra vez si lo apuntado tiene más de cinco minutos:
+    quien abre esta pantalla quiere saberlo ahora, no dentro de una hora."""
+    from . import actualizacion
+    from . import version as _version
+
+    try:
+        _version.buscar_remota(cada=_version.AL_ENTRAR)
+    except Exception as exc:  # noqa: BLE001 — sin red se enseña lo último que se supo
+        print(f"[actualizaciones] no se pudo mirar la versión publicada: {exc}", flush=True)
+    return _vista(request, "actualizaciones.html", {
+        # `vers` y no `v`: base.html hace `{% set v = rail.version %}` y lo pisaría.
+        "vers": _version.para_la_guia(), "a": actualizacion.estado(),
+        "cambios": actualizacion.cambios_locales(), "aviso": aviso,
+        "titulo": "Actualizaciones", "seccion": "actualizaciones",
+    })
+
+
+@app.post("/actualizaciones/comprobar")
+def actualizaciones_comprobar():
+    from . import version as _version
+
+    datos = _version.buscar_remota(forzar=True)
+    if datos is None:
+        return _volver("/actualizaciones", "No se buscan versiones: este clon no tiene remoto o "
+                                           "HUB_BUSCAR_VERSIONES=0.")
+    if datos.get("error"):
+        return _volver("/actualizaciones", f"No se pudo mirar: {datos['error']}")
+    return _volver("/actualizaciones", f"Comprobado: la última publicada es la {datos.get('ultima')}.",
+                   fugaz=True)
+
+
+@app.post("/actualizaciones/aplicar")
+def actualizaciones_aplicar(sin_bajar: str = Form("")):
+    """El botón: `actualizar.sh` entero, fuera de este proceso (decisión 296)."""
+    from . import actualizacion
+
+    if actualizacion.cambios_locales():
+        return _volver("/actualizaciones", "No se actualizó: hay cambios sin guardar en el código del "
+                                           "hub. Mira arriba qué hacer con ellos.")
+    try:
+        actualizacion.lanzar(sin_bajar=bool(sin_bajar))
+    except RuntimeError as exc:
+        return _volver("/actualizaciones", f"No se lanzó: {exc}")
+    return _volver("/actualizaciones")
+
+
+@app.get("/api/actualizacion")
+def api_actualizacion():
+    """Lo que lee la pantalla mientras actualiza, también al volver del reinicio."""
+    from . import actualizacion
+    return {"ok": True, **actualizacion.estado()}
 
 
 @app.get("/guia")

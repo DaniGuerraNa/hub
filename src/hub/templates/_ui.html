@@ -38,6 +38,7 @@
    expresión de Jinja y rompen la plantilla entera.) #}
 {% macro icono(nombre, px=16) %}
 {%- set trazos = {
+  'actualizar': '<path d="M15 9a6 6 0 01-10.4 4.1M3 9a6 6 0 0110.4-4.1"/><path d="M13.5 2v3h-3M4.5 16v-3h3"/>',
   'casa': '<path d="M2.5 8L9 2.5 15.5 8v7a1 1 0 01-1 1h-3v-4.5h-3V16h-3a1 1 0 01-1-1z"/>',
   'terminal': '<rect x="2" y="3.5" width="14" height="11" rx="2"/><path d="M5.5 7.5l2 2-2 2"/>',
   'lineas': '<path d="M3 5h12M3 9h12M3 13h8"/>',

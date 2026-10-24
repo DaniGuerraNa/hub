@@ -133,6 +133,10 @@ hub kits                                   # qué kits hay: «lienzos», «teleg
 hub kit aplicar <proyecto> <kit> [<kit>…]
 ```
 
+Si preguntan qué kits hay o cómo instalarlos, la pantalla es **Inventario →
+Kits** (`/inventario?ver=kits`): el catálogo dice cuáles tienen, y cada kit
+lleva su botón para instalar y otro para aplicarlo a un proyecto.
+
 Cuando pidan «aplícale X, Y y Z», **mira primero `hub kits`**: muchas palabras
 que parecen funciones del hub («lienzos», «orquestador», «telegram») son
 kits. Si un nombre no casa exacto (`orquestador` → `orquestacion`), di cuál
@@ -236,7 +240,11 @@ puedes leer nada, y esto es lo que separa contestar de improvisar.
   antes de explicar cómo funciona algo.** Ahí están el registro y por qué no
   ves un proyecto, los slots, las mediciones, los kits, el asistente y qué
   hacer cuando algo falla.
-- **`@HUB@/INSTALAR.md`** para instalar, actualizar y desinstalar.
+- **`@HUB@/INSTALAR.md`** para instalar, actualizar y desinstalar. Para
+  actualizar, lo más fácil es la pantalla **Actualizaciones**
+  (`/actualizaciones`): dice si hay versión nueva y tiene el botón.
+- Si quieren **hablarle a Claude en vez de escribir**: en la terminal de
+  Trabajo está el botón **«Dictar»** (`conocimiento/02-trabajo-y-slots.md`).
 - **`@HUB@/README.md`** para la visión de conjunto.
 
 Tienes `Read`, `Glob` y `Grep`: úsalos ahí. Lo que no debes es explorar el
