@@ -9,8 +9,10 @@ WAL aguanta apagones y deja leer mientras el snapshotter escribe.
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from pathlib import Path
+from typing import Iterator
 
 from . import config
 
@@ -362,10 +364,12 @@ CREATE INDEX IF NOT EXISTS idx_programado_cuando
 
 -- ── Lo que el relé ya vio, para no avisar dos veces ─────────────────────────
 --
--- Una fila por panel de slot —y una, `hub`, por el latido—. NO es estado: es
--- una caché de lo último que se vio, reconstruible mirando tmux (regla dura 1).
--- Perderla cuesta silencio, no avisos repetidos: `avisos.py` no avisa nunca del
--- primer vistazo, sólo de una parada que vio producirse.
+-- Una fila por panel de slot —y una, `hub`, por el latido—. Es una caché de lo
+-- último que se vio, pero NO se rehace mirando tmux: cuándo empezó cada
+-- episodio y cuándo salió su aviso sólo están aquí (regla dura 1, decisión
+-- 363). Perderla cuesta silencio y la lista de los últimos avisos, no avisos
+-- repetidos: `avisos.py` no avisa nunca del primer vistazo, sólo de una parada
+-- que vio producirse.
 --
 -- `desde` es la edad del episodio y sólo se mueve cuando el estado cambia; es
 -- lo único contra lo que tiene sentido comparar un umbral. `avisado` se limpia
@@ -381,8 +385,9 @@ CREATE TABLE IF NOT EXISTS aviso (
 -- ── La salud de la máquina, medida en el ciclo lento ───────────────────────
 --
 -- Una fila por magnitud y sólo la ÚLTIMA: no es un histórico. Volver a medir la
--- reconstruye entera (regla dura 1), y guardar la serie convertiría al hub en un
--- sistema de monitorización, que es lo que el principio 9 dice que no es.
+-- reconstruye entera —derivada, no fuente (decisión 363)—, y guardar la serie
+-- convertiría al hub en un sistema de monitorización, que es lo que el
+-- principio 9 dice que no es.
 --
 -- `valor` a NULL con `texto` lleno es una fecha o un nombre —cuándo arrancó
 -- Windows, qué GPU hay—; las dos formas conviven porque la pantalla y las
@@ -511,6 +516,22 @@ CREATE TABLE IF NOT EXISTS encargo_registro (
     cuerpo      TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_encargo_registro ON encargo_registro(momento DESC);
+
+-- La bandeja de ideas del dueño (`ideas.py`, decisión 342). 🔴 Sólo vive aquí:
+-- lo que apuntó y nadie ha tomado no está en ningún otro sitio (regla dura 1).
+CREATE TABLE IF NOT EXISTS idea (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    texto     TEXT NOT NULL,
+    detalle   TEXT NOT NULL DEFAULT '',
+    proyecto  TEXT,
+    origen    TEXT NOT NULL,                    -- web | secretario | cli
+    estado    TEXT NOT NULL DEFAULT 'nueva',    -- nueva | tomada | descartada
+    ref       TEXT NOT NULL DEFAULT '',         -- dónde sigue al tomarla (C-0147)
+    motivo    TEXT NOT NULL DEFAULT '',         -- por qué se descartó
+    creada    TEXT NOT NULL,
+    movida    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_idea_estado ON idea(estado, id);
 """
 
 # FTS5 no está en todos los builds de SQLite. Si falta, la búsqueda cae a LIKE
@@ -533,13 +554,34 @@ class BaseIlegible(RuntimeError):
     de saber que la cura era renombrar un archivo.
 
     🔴 No se repara sola, y es deliberado: casi todo aquí se reconstruye
-    escaneando, pero **las notas y los slots no viven en ningún otro sitio**
-    (por eso `desinstalar.sh` no borra `HUB_HOME` sin que lo pidas). Borrar
-    automáticamente convertiría una avería recuperable en una pérdida.
+    escaneando, pero **lo de `SOLO_AQUI` no vive en ningún otro sitio** —las
+    notas y los slots, y no sólo ellos— (por eso `desinstalar.sh` no borra
+    `HUB_HOME` sin que lo pidas). Borrar automáticamente convertiría una avería
+    recuperable en una pérdida. El remedio empieza por la copia diaria (277).
     """
 
 
-def _porque_no_abre(ruta: Path, exc: Exception) -> str:
+#: Lo que sólo vive en `hub.db` y no se rehace escaneando (regla dura 1). Lo
+#: dice el remedio de una base rota: «se reconstruye» es verdad sólo para el
+#: resto, y quien lee el mensaje tiene que saber qué se juega (C-0113).
+SOLO_AQUI = (
+    "los slots y sus notas", "las ventanas ocultas y descartadas",
+    "el historial de muestras y vínculos de paneles", "el canal (usuarios, permisos, preguntas)",
+    "los mensajes programados", "los avisos enviados",
+    "los encargos", "las ideas del tablero sin tomar",
+)
+
+
+def _ultima_copia() -> Path | None:
+    try:
+        from . import copia_base
+        copias = copia_base.copias(copia_base.carpeta())
+    except OSError:
+        return None
+    return copias[-1] if copias else None
+
+
+def porque_no_abre(ruta: Path, exc: Exception) -> str:
     """El diagnóstico y el remedio, en la misma frase.
 
     🔴 El remedio que se propone es DESTRUCTIVO —renombrar la base se lleva las
@@ -562,14 +604,58 @@ def _porque_no_abre(ruta: Path, exc: Exception) -> str:
             f"No se puede escribir en {ruta}. Comprueba permisos y espacio libre "
             f"en el disco.\n\nDetalle: {detalle}"
         )
+    # Los tres archivos (`hub.db*`), no sólo la base: un `-wal` viejo que se
+    # quede al lado de la copia se le aplicaría encima y la estropearía.
+    apartada = ruta.parent / "apartada"
+    apartar = f"    mkdir -p {apartada}\n    mv {ruta}* {apartada}/\n"
+    pierdes = ", ".join(SOLO_AQUI)
+    copia = _ultima_copia()
+    if copia:
+        primero = (
+            f"Lo primero, la copia de cada día: la última es {copia}. Con los "
+            f"servicios del hub parados (conocimiento/06-problemas.md), aparta "
+            f"la rota y pon la copia en su sitio:\n\n{apartar}    cp {copia} {ruta}\n\n"
+            f"Sólo pierdes lo escrito desde esa copia.\n\n"
+            f"Si no te vale, apártalo sin copia y vuelve a arrancar: "
+        )
+    else:
+        primero = (
+            f"No hay copia de cada día en {ruta.parent / 'respaldos'}. "
+            f"Apártalo y vuelve a arrancar: "
+        )
     return (
-        f"El índice {ruta} está corrupto.\n\n"
-        f"Se reconstruye escaneando, así que puedes renombrarlo y volver a "
-        f"arrancar:\n\n    mv {ruta} {ruta}.roto\n\n"
-        f"🔴 Con él se van tus notas y tus slots, que son lo único del hub que "
-        f"no está en ningún otro sitio. Renómbralo, no lo borres.\n\n"
+        f"El índice {ruta} está corrupto.\n\n{primero}"
+        f"los proyectos, rutas, repos y servicios se reconstruyen escaneando."
+        f"{'' if copia else chr(10) * 2 + apartar}\n\n"
+        f"🔴 Sin copia se pierde lo que sólo vive ahí: {pierdes}. "
+        f"Apártalo, no lo borres.\n\n"
         f"Detalle: {detalle}"
     )
+
+
+@contextlib.contextmanager
+def transaccion(con: sqlite3.Connection) -> Iterator[None]:
+    """Varias escrituras como una sola: `BEGIN IMMEDIATE` y COMMIT, o ROLLBACK
+    si algo falla (C-0152). Dentro, sólo base: nunca tmux ni red, que un
+    rollback no deshace y que tendrían el cerrojo de escritura mientras tanto.
+
+    `IMMEDIATE` toma el cerrojo al empezar: en WAL los lectores no esperan, y
+    no hay `BUSY_SNAPSHOT` al pasar de leer a escribir. Se niega si ya hay una
+    abierta: un `BEGIN` dentro de otro falla con un error que no es «locked»
+    y el relé lo contaría como intento.
+    """
+    if con.in_transaction:
+        raise RuntimeError("ya hay una transacción abierta en esta conexión")
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        # SQLite pudo deshacerla ya por su cuenta (disco lleno, E/S): un
+        # ROLLBACK de más taparía el error de verdad.
+        if con.in_transaction:
+            con.execute("ROLLBACK")
+        raise
+    con.execute("COMMIT")
 
 
 def conectar(ruta: Path | None = None) -> sqlite3.Connection:
@@ -583,7 +669,7 @@ def conectar(ruta: Path | None = None) -> sqlite3.Connection:
         con.execute("PRAGMA foreign_keys=ON")
         return con
     except (sqlite3.Error, OSError) as exc:
-        raise BaseIlegible(_porque_no_abre(ruta, exc)) from exc
+        raise BaseIlegible(porque_no_abre(ruta, exc)) from exc
 
 
 # Columnas añadidas después de que la base ya existía. `CREATE TABLE IF NOT
@@ -624,6 +710,9 @@ _COLUMNAS_NUEVAS = [
     # «Restaurar» deje escrito `claude --resume <id>` (decisión 289). Derivado:
     # sale de `~/.claude/sessions/` en cada muestra.
     ("panel", "claude_sesion", "TEXT"),
+    # Si el agente del panel estaba trabajando, por el título o por la pantalla
+    # (`tui.ocupado`, decisión 393). Derivado: se rehace en cada muestra.
+    ("panel", "ocupado", "INTEGER NOT NULL DEFAULT 0"),
     # De dónde viene el episodio. Se guarda y no se deduce: en la vuelta
     # siguiente el estado ya no cambia, así que deducirlo perdía el origen.
     ("aviso", "previo", "TEXT"),
@@ -659,5 +748,5 @@ def abrir() -> sqlite3.Connection:
         # consulta. Aquí se paga una comprobación barata a cambio de que el
         # fallo salga con nombre y remedio en vez de en la vista de turno.
         con.close()
-        raise BaseIlegible(_porque_no_abre(config.DB_PATH, exc)) from exc
+        raise BaseIlegible(porque_no_abre(config.DB_PATH, exc)) from exc
     return con

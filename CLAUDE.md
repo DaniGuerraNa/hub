@@ -63,6 +63,8 @@ de la pantalla **Actualizaciones** (`/actualizaciones`), que hace lo mismo que
 3. **Nada automático.** No archiva, no expira y no hace push. Mide y muestra;
    la acción es del usuario. La única excepción son unos pocos avisos por
    Telegram de una lista cerrada, y sólo si el usuario activa el canal.
+   Lo que sugiere el secretario no es un aviso: espera en su pantalla hasta que
+   el usuario lo abre.
 
 ## Si te piden cambiar el código
 
@@ -94,7 +96,10 @@ vienen del repositorio de desarrollo, que no se publica. Lo que dicen:
 - **Todo lo que se pasa a una shell va con `shlex.quote`.** Un prompt o una
   plantilla son texto libre.
 - **El token de Telegram sólo lo leen los servicios del canal** (`hub-canal`,
-  `hub-encargos`), nunca `hub-web`, que es el que expone el puerto.
+  `hub-encargos`), nunca `hub-web`, que es el que expone el puerto. Lo mismo
+  con las llaves del secretario (su sesión de Telegram, su acceso a Google
+  Calendar): sólo las abre `hub-secretario`; la web sólo deja y lee cosas en su
+  base.
 - **`api.py` es la única costura de lectura.** Una plantilla o una ruta que
   consulta SQL o lee archivos por su cuenta es un defecto.
 - **El JavaScript se prueba ejecutándolo**, no sólo pidiendo la página: un 200

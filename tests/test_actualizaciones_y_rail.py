@@ -56,7 +56,7 @@ def test_el_menu_va_en_grupos_y_se_abre_el_de_la_pantalla_donde_estas(cliente):
 
 def test_panorama_y_trabajo_quedan_fuera_de_los_grupos(cliente):
     html = cliente.get("/").text
-    rail = html.split('<nav class="rail-global">')[1].split("</nav>")[0]
+    rail = html.split('<nav class="rail-global"')[1].split("</nav>")[0]
     primer_grupo = rail.index('class="grupo-rail"')
     assert rail.index('href="/trabajo"') < primer_grupo
 

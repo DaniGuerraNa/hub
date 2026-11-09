@@ -218,7 +218,7 @@ def acotar(carpeta: Path) -> None:
         }, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    agentes._confiar(carpeta)
+    agentes.confiar(carpeta)
 
 
 def abrir_agente(con: sqlite3.Connection, encargo_id: str) -> dict:

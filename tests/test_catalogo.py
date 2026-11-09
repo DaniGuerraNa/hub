@@ -7,6 +7,8 @@ sobre ella.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from hub import catalogo
@@ -157,6 +159,20 @@ def test_el_buscador_cae_a_grep_si_no_hay_ripgrep(monkeypatch):
 def test_sin_buscador_no_se_inventa_uso(monkeypatch):
     monkeypatch.setattr(catalogo, "buscador", lambda: None)
     assert catalogo.medir_uso([{"tipo": "agente", "nombre": "x", "ruta": "/a"}]) == {}
+
+
+def test_el_uso_se_mide_en_los_transcripts_que_dice_hub_transcripts(tmp_path, monkeypatch):
+    """C-0179: con la raíz fija en `~/.claude/projects`, medir recorría los
+    transcripts reales de quien ejecuta aunque `HUB_TRANSCRIPTS` dijera otro
+    sitio, y no veía los de ese sitio."""
+    # Un nombre que no está en ningún transcript real, tampoco en el de la
+    # sesión que escribió este test: si se buscara allí, no saldría.
+    nombre = f"agente-{uuid.uuid4().hex}"
+    _escribir(tmp_path / "transcripts" / "-home-demo" / "sesion.jsonl",
+              f'{{"type":"tool_use","input":{{"subagent_type":"{nombre}"}}}}\n')
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path / "transcripts"))
+    usos = catalogo.medir_uso([{"tipo": "agente", "nombre": nombre, "ruta": "/demo/agente.md"}])
+    assert list(usos) == ["/demo/agente.md"]
 
 
 def test_un_reescaneo_rapido_no_borra_la_medicion_de_uso(con, proyecto, monkeypatch):

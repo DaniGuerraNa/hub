@@ -224,7 +224,7 @@ def test_las_imagenes_de_una_corrida_no_salen_de_su_carpeta(cliente, datos):
         assert cliente.get("/navegante/imagen?" + q).status_code == 404
 
 
-def test_el_refresco_no_recarga_mientras_se_escribe():
+def _refresco(cuerpo: str):
     """navegante.js ejecutado en node con un documento mínimo (regla dura 11)."""
     import shutil, subprocess
     from pathlib import Path
@@ -232,18 +232,107 @@ def test_el_refresco_no_recarga_mientras_se_escribe():
         pytest.skip("hace falta node")
     guion = (Path(web.__file__).parent / "static" / "navegante.js").read_text()
     programa = """
-    let recargas = 0, tick = null;
-    const campo = {tagName: 'INPUT', value: '', defaultValue: ''};
+    let recargas = 0, refrescos = 0, tick = null, parado = 0, hay = true;
+    const avisos = [], oyentes = {};
+    // Un campo sabe si está dentro de una región, que es lo único que el
+    // refresco repinta (C-0187). El doble lee sólo los selectores que conoce y
+    // revienta con cualquier otro: si lo leyera todo igual, un selector que en
+    // el navegador no casa con nada pasaría aquí por bueno.
+    const hacer = (c) => ({...c, closest: (s) => s === '[data-region]' && c.region ? {} : null});
+    function coincide(c, lista) {
+      return lista.split(',').some((parte) => {
+        let s = parte.trim();
+        const enRegion = s.startsWith('[data-region] ');
+        if (enRegion) s = s.slice('[data-region] '.length);
+        const m = /^(textarea|select|input)(?:\\[type=(\\w+)\\]|(:not\\(\\[type\\]\\)))?$/.exec(s);
+        if (!m) throw new Error('selector que el doble no sabe leer: ' + s);
+        if (enRegion && !c.region) return false;
+        if (c.tagName !== m[1].toUpperCase()) return false;
+        if (m[2]) return c.type === m[2];
+        if (m[3]) return !c.type;
+        return true;
+      });
+    }
+    const campo = hacer({tagName: 'INPUT', value: '', defaultValue: '', region: true});
+    const campos = [campo];
+    global.window = global;
     global.document = {activeElement: null,
-      querySelector: (s) => s === '[data-refrescar]' ? {dataset: {refrescar: '5'}} : null,
-      querySelectorAll: () => [campo]};
+      querySelector: (s) => s === '[data-refrescar]' && hay ? {dataset: {refrescar: '5'}} : null,
+      querySelectorAll: (s) => campos.filter((c) => coincide(c, s)),
+      addEventListener: (ev, f) => { oyentes[ev] = f; }};
     global.location = {reload: () => recargas++};
-    global.setInterval = (f) => { tick = f; };
-    """ + guion + """
-    tick(); const libre = recargas;
-    document.activeElement = campo; tick(); const enfocado = recargas;
-    document.activeElement = null; campo.value = 'errores-ped'; tick();
-    console.log(JSON.stringify([libre, enfocado, recargas]));
-    """
+    global.setInterval = (f) => { tick = f; return 7; };
+    global.clearInterval = () => { parado++; };
+    global.HubUI = {avisar: (o) => avisos.push(o.titulo)};
+    global.HubSinRecarga = {refrescar: () => { refrescos++; return globalThis.FALLA
+      ? Promise.reject(new Error('el hub contestó 502')) : Promise.resolve([]); }};
+    """ + guion + "\n(async () => {" + cuerpo + "})();"
     salida = subprocess.run(["node", "-e", programa], capture_output=True, text=True, timeout=20, check=True)
-    assert json.loads(salida.stdout) == [1, 1, 1]
+    return json.loads(salida.stdout)
+
+
+def test_el_refresco_no_repinta_mientras_se_escribe():
+    r = _refresco("""
+    await tick(); const libre = refrescos;
+    document.activeElement = campo; await tick(); const enfocado = refrescos;
+    document.activeElement = null; campo.value = 'errores-ped'; await tick();
+    console.log(JSON.stringify([libre, enfocado, refrescos, recargas]));
+    """)
+    assert r == [1, 1, 1, 0]
+
+
+def test_el_refresco_cambia_la_pantalla_sin_recargarla_y_para_al_acabar():
+    """C-0167: `location.reload()` cada cinco segundos era la página entera
+    parpadeando. Ahora repinta sus regiones, y cuando ya no hay nada en marcha
+    —la página no trae `data-refrescar`— deja de preguntar."""
+    r = _refresco("""
+    await tick();
+    hay = false; oyentes['hub:repintado']();
+    console.log(JSON.stringify({ refrescos, recargas, parado }));
+    """)
+    assert r == {"refrescos": 1, "recargas": 0, "parado": 1}
+
+
+def test_si_el_hub_no_contesta_lo_dice_una_vez_y_para():
+    r = _refresco("""
+    globalThis.FALLA = true; await tick();
+    console.log(JSON.stringify({ avisos, parado }));
+    """)
+    assert r == {"avisos": ["La pantalla dejó de actualizarse"], "parado": 1}
+
+
+def test_un_desplegable_sin_tocar_no_frena_el_refresco_y_uno_cambiado_si():
+    """Medido en /navegante: un `<select>` sin `<option selected>` contaba como
+    tocado y la pantalla no volvía a actualizarse. Y en /reuniones, el monitor
+    o el micro elegidos y no enviados se perdían al repintar."""
+    r = _refresco("""
+    const opciones = [{defaultSelected: false}, {defaultSelected: false}];
+    const desplegable = {tagName: 'SELECT', options: opciones, selectedIndex: 0};
+    document.querySelectorAll = () => [desplegable];
+    await tick(); const sinTocar = refrescos;
+    desplegable.selectedIndex = 1; await tick();
+    console.log(JSON.stringify([sinTocar, refrescos]));
+    """)
+    assert r == [1, 1]
+
+
+def test_lo_que_queda_fuera_de_las_regiones_no_frena_el_refresco():
+    """C-0187, medido en Chromium: el panel del secretario sale en todas las
+    pantallas, y con «Leer las respuestas en voz alta» guardada su casilla la
+    marca el JS al cargar —`checked` distinto de `defaultChecked` para
+    siempre—. /navegante y /reuniones dejaban de actualizarse sin decirlo, y la
+    pregunta que espera «Permitir» no llegaba a verse. Lo mismo el borrador del
+    panel, el foco en él o lo escrito en la paleta: nada de eso se repinta, así
+    que nada de eso se pierde."""
+    r = _refresco("""
+    const voz = hacer({tagName: 'INPUT', type: 'checkbox', checked: true, defaultChecked: false});
+    const borrador = hacer({tagName: 'TEXTAREA', value: 'mañana a las', defaultValue: ''});
+    const paleta = hacer({tagName: 'INPUT', type: 'text', value: 'serv', defaultValue: ''});
+    campos.push(voz, borrador, paleta);
+    await tick(); const conElPanel = refrescos;
+    document.activeElement = borrador; await tick(); const conFocoFuera = refrescos;
+    document.activeElement = campo; await tick(); const conFocoDentro = refrescos;
+    document.activeElement = null; campo.value = 'errores-ped'; await tick();
+    console.log(JSON.stringify([conElPanel, conFocoFuera, conFocoDentro, refrescos]));
+    """)
+    assert r == [1, 2, 2, 2]

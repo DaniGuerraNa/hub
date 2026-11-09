@@ -89,7 +89,49 @@ def encargos_yml() -> Path:
     return Path(declarado) if declarado else HUB_HOME / "encargos.yml"
 
 
+def leer_ajustes(ruta: Path) -> dict:
+    """Un archivo de ajustes (`canal.yml`, `encargos.yml`). Sin archivo, `{}`:
+    sin configurar no es un error, es lo normal al llegar.
+
+    Aquí y no en el relé (C-0134): `encargos.yml` lo leen también quienes no
+    deben importar el módulo que abre el token (la web, las manos del agente).
+    Un YAML roto no se traga: deja el canal mudo, y callarlo haría que el
+    síntoma fuera «no llegan mensajes» sin ninguna pista.
+    """
+    import yaml
+
+    if not ruta.is_file():
+        return {}
+    try:
+        return yaml.safe_load(ruta.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{ruta} no es YAML válido: {exc}") from exc
+
+
 WEB_HOST = os.environ.get("HUB_HOST", "127.0.0.1")
+
+
+def exigir_loopback(host: str) -> str:
+    """`host` si es de esta máquina; si no, se para (regla dura 8, C-0112).
+
+    El hub da una shell por la web. Escuchar en `0.0.0.0` o en la IP de la red
+    local la abre a cualquiera que llegue con `Host: localhost`. Para entrar
+    desde fuera está `/acceso` con la red privada, que llega por loopback. Lo
+    mismo comprueban `instalar.sh`, `arrancar.sh` y `actualizar.sh`
+    (`scripts/lib/loopback.sh`), que son los que escriben `--host` en el unit.
+    """
+    import ipaddress
+
+    nombre = host.strip().strip("[]")
+    if nombre == "localhost":
+        return host
+    try:
+        if ipaddress.ip_address(nombre).is_loopback:
+            return host
+    except ValueError:
+        pass
+    raise SystemExit(f"HUB_HOST={host!r}: el hub sólo escucha en esta máquina (127.0.0.1). "
+                     "Para entrar desde otro aparato, mira /acceso.")
 WEB_PORT = int(os.environ.get("HUB_PORT", "8787"))
 
 

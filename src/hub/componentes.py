@@ -19,7 +19,7 @@ import os
 import shutil
 from pathlib import Path
 
-from . import config
+from . import config, maquina, mirar
 
 NOMBRES = ("navegador-lab", "reuniones")
 # Por el nombre de su pantalla, que es como lo llama quien lo usa.
@@ -52,15 +52,15 @@ def carpeta(nombre: str) -> Path:
 
 
 def _hay_chrome() -> bool:
-    if os.environ.get("NAV_CHROME") or any(
-        shutil.which(c) for c in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
-    ):
-        return True
-    cache = Path.home() / ".cache" / "ms-playwright"
-    return cache.is_dir() and any(cache.glob("chromium-*"))
+    # Elegir el navegador es de `mirar` (C-0052): el de Windows no cuenta, como
+    # antes, y de la caché de Playwright sólo vale un binario de verdad.
+    return bool(os.environ.get("NAV_CHROME") or mirar.cual_linux())
 
 
-def _paso(id_: str, titulo: str, hecho: bool, como: str, opcional: bool = False) -> dict:
+def paso(id_: str, titulo: str, hecho: bool, como: str, opcional: bool = False) -> dict:
+    """Un paso de lo que le falta a un componente. Pública porque Reuniones
+    cuenta con ella la mitad de Windows (`reuniones.preparacion`), y la
+    pantalla pinta las dos mitades igual."""
     return {"id": id_, "titulo": titulo, "hecho": hecho, "como": como, "opcional": opcional}
 
 
@@ -68,14 +68,14 @@ def pasos_navegante() -> list[dict]:
     """Lo que necesita el laboratorio, en el orden en que se consigue."""
     lab = carpeta("navegador-lab")
     return [
-        _paso("componente", "El laboratorio está en el clon", (lab / "bin" / "nav").exists(),
+        paso("componente", "El laboratorio está en el clon", (lab / "bin" / "nav").exists(),
               f"El hub lo busca en {lab}. Si lo tienes en otro sitio, arranca el hub con NAV_LAB."),
-        _paso("entorno", "Su entorno de Python y Node está preparado",
+        paso("entorno", "Su entorno de Python y Node está preparado",
               (lab / ".venv").is_dir() and (lab / "node_modules").is_dir(),
               "uv sync --frozen y npm ci en su carpeta. «Preparar con Claude» lo hace contigo."),
-        _paso("chrome", "Hay un Chrome o Chromium que abrir", _hay_chrome(),
+        paso("chrome", "Hay un Chrome o Chromium que abrir", _hay_chrome(),
               "npx playwright install chromium en su carpeta, si no tienes Chrome instalado."),
-        _paso("xvfb", "Pantalla virtual (Xvfb)", bool(shutil.which("Xvfb")),
+        paso("xvfb", "Pantalla virtual (Xvfb)", bool(shutil.which("Xvfb")),
               "sudo apt install xvfb. Sin ella el navegador va sin ventana, y algunos sitios lo bloquean.",
               opcional=True),
     ]
@@ -86,13 +86,15 @@ def pasos_reuniones_wsl() -> list[dict]:
     `reuniones.preparacion()`, que sabe del agente."""
     proyecto = carpeta("reuniones")
     return [
-        _paso("componente", "El procesado está en el clon", (proyecto / "pyproject.toml").exists(),
+        paso("componente", "El procesado está en el clon", (proyecto / "pyproject.toml").exists(),
               f"El hub lo busca en {proyecto}. Si lo tienes en otro sitio, arranca el hub con REUNIONES_PROYECTO."),
-        _paso("entorno", "Su entorno de Python está preparado", (proyecto / ".venv").is_dir(),
+        paso("entorno", "Su entorno de Python está preparado", (proyecto / ".venv").is_dir(),
               "uv sync --frozen en su carpeta. «Preparar con Claude» lo hace contigo; descarga Whisper, que pesa."),
-        _paso("ffmpeg", "ffmpeg, para comprimir las grabaciones", bool(shutil.which("ffmpeg")),
+        paso("ffmpeg", "ffmpeg, para comprimir las grabaciones", bool(shutil.which("ffmpeg")),
               "sudo apt install ffmpeg.", opcional=True),
-        _paso("gpu", "GPU NVIDIA para transcribir rápido", bool(shutil.which("nvidia-smi")),
+        # Por `maquina.encontrar` y no `shutil.which`: en WSL está fuera del
+        # PATH de la unit de `hub-web` (decisión 81, C-0119).
+        paso("gpu", "GPU NVIDIA para transcribir rápido", bool(maquina.encontrar("nvidia-smi")),
               "Sin ella se transcribe en la CPU, mucho más despacio.", opcional=True),
     ]
 

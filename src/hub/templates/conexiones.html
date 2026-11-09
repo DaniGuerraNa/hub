@@ -38,12 +38,17 @@
    en él y reindexa, no crea una segunda fuente de verdad— pero para seis campos
    no hace falta abrir un editor.
 
-   Cerrado por defecto: lo que se hace a diario aquí es consultar. #}
+   Cerrado por defecto: lo que se hace a diario aquí es consultar.
+
+   Sin recargar (C-0233): el alta cambia sólo la región «destinos». El
+   formulario queda fuera de ella: si sale bien se vacía y el plegado se
+   cierra (`sin-recarga.js`); si falla, el motivo llega en `?error=`, que es
+   otra pantalla para el script, y se navega como antes. #}
 <details class="tarjeta" style="margin-bottom:18px" {{ 'open' if error or not cs }}>
   <summary class="barra" style="cursor:pointer;gap:9px">
     {{ ui.placa('mas', '', 'sm') }}<strong style="font-weight:550">Añadir una conexión</strong>
   </summary>
-  <form method="post" action="/conexiones/nueva" style="margin-top:14px">
+  <form method="post" action="/conexiones/nueva" style="margin-top:14px" data-sin-recarga>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(230px,100%),1fr));gap:0 22px">
       <div>
         <label>Alias</label>
@@ -96,6 +101,9 @@
   </form>
 </details>
 
+{# Fuera de los dos `if`: tras la primera alta, el «No hay ninguna» se
+   cambia por la lista sin recargar. #}
+<div data-region="destinos">
 {% if not cs %}
   <p class="tenue" style="max-width:62ch">
     No hay ninguna conexión declarada todavía. Esto recupera la intención de
@@ -137,5 +145,49 @@
 {% endfor %}
 </div>
 {% endif %}
+</div>
+
+{# Las llaves de esta máquina (C-0143). Bitwarden es el único llavero: aquí
+   sólo se ve dónde vive cada una y si se marcó como subida. «Marcada» y no
+   «está»: el hub no abre la caja para comprobarlo (regla 13). #}
+{# Marcar una llave repinta sólo esto, sin recargar ni moverte (C-0167). #}
+<div data-region="llaves">
+<h2 class="con-placa" id="llaves">{{ ui.placa('llave') }}<span>Llaves de esta máquina</span>
+  <span class="apunte">{{ llaves.sin_subir }} de {{ llaves.presentes }} sólo aquí</span></h2>
+<p class="tenue" style="max-width:68ch">
+  Si este disco muere, las que dicen «sólo en esta máquina» se pierden. Súbelas a tu
+  Bitwarden desde tu terminal, con la caja abierta:
+  <code>export BW_SESSION=$(bw unlock --raw)</code> y
+  <code>uv run python -m hub.llavero subir</code>. Van a la carpeta «hub», una nota por
+  archivo; el valor no pasa por el hub. Si ya la subiste a mano, márcala aquí.
+</p>
+<div class="panel">
+{% for f in llaves.filas %}
+  <div class="fila">
+    {{ ui.placa('llave', 'ok' if f.bitwarden else ('neutro' if f.sesion or not f.presente else 'espera')) }}
+    <span class="pila">
+      <span class="etiqueta">{{ f.nombre }}</span>
+      <span class="tenue">{{ f.para }}</span>
+      <span class="puntero">
+        {% if f.bitwarden %}<span class="insignia ok"><span class="glifo">✓</span>marcada en Bitwarden</span>
+        {% elif f.sesion %}<span class="insignia neutro">sesión: no se sube</span>
+        {% elif not f.presente %}<span class="insignia neutro">{{ f.estado }}</span>
+        {% else %}<span class="insignia espera"><span class="glifo">▲</span>sólo en esta máquina</span>{% endif %}
+        {% if f.donde %}<span class="mono">{{ f.donde }}</span>{% endif %}
+        {% if f.presente and f.estado.startswith('⚠') %}<span class="insignia riesgo">{{ f.estado[2:] }}</span>{% endif %}
+      </span>
+      {# Dentro de la pila y no a su lado: en el teléfono, al lado estrujaba el texto. #}
+      {% if f.presente and not f.sesion and not f.en_cola %}
+      <form method="post" action="/conexiones/llave" style="margin:6px 0 0" data-sin-recarga>
+        <input type="hidden" name="nombre" value="{{ f.nombre }}">
+        <input type="hidden" name="que" value="{{ 'desmarcar' if f.bitwarden else 'marcar' }}">
+        <button class="boton">{{ 'Quitar la marca' if f.bitwarden else 'Ya está en Bitwarden' }}</button>
+      </form>
+      {% endif %}
+    </span>
+  </div>
+{% endfor %}
+</div>
+</div>
 
 {% endblock %}

@@ -84,7 +84,7 @@
       pintarLista(datos.lienzos || [], !!q);
     } catch (e) {
       if (!lista.querySelector('.lienzo-item')) {
-        lista.innerHTML = '<p class="tenue">No se pudo consultar. Se reintenta solo.</p>';
+        ponerLista('<p class="tenue">No se pudo consultar. Se reintenta solo.</p>');
       }
     }
   }
@@ -105,14 +105,14 @@
     if (hayNuevo && !abierta) punto.classList.add('hay');
 
     if (!fichas.length) {
-      lista.innerHTML = `<p class="tenue">${buscando
+      ponerLista(`<p class="tenue">${buscando
         ? 'Ningún lienzo se llama así.'
-        : 'Aún no hay lienzos en este proyecto. Pídeselos a Claude.'}</p>`;
+        : 'Aún no hay lienzos en este proyecto. Pídeselos a Claude.'}</p>`);
       vista.innerHTML = '';
       return;
     }
 
-    lista.innerHTML = fichas.map(f => `
+    const html = fichas.map(f => `
       <div class="lienzo-item${f.id === elegido ? ' on' : ''}"
            data-id="${escapar(f.id)}" data-proyecto="${escapar(f.proyecto_id)}">
         <div class="tt"><b>${escapar(f.titulo)}</b>
@@ -129,6 +129,8 @@
           ${f.archivado_en ? '· archivado' : ''}</div>
       </div>`).join('');
 
+    // Igual que antes: no se repinta ni se engancha nada si no cambió (C-0167).
+    if (ponerLista(html)) {
     lista.querySelectorAll('.lienzo-item').forEach(it =>
       it.addEventListener('click', () => abrir(it.dataset.proyecto, it.dataset.id)));
 
@@ -139,8 +141,20 @@
         if (ev && ev.stopPropagation) ev.stopPropagation();
         await archivar(bt.dataset.proy, bt.dataset.arch, !bt.dataset.vuelve);
       }));
+    }
 
     if (!fichas.some(f => f.id === elegido)) abrir(fichas[0].proyecto_id, fichas[0].id);
+  }
+
+  /* La lista se escribe sólo si cambió (C-0167): repintarla igual cada diez
+   * segundos era un parpadeo por latido y se llevaba el elemento bajo el dedo.
+   * Devuelve si escribió, para enganchar los oyentes sólo entonces. */
+  let listaPintada = null;
+  function ponerLista(html) {
+    if (html === listaPintada) return false;
+    lista.innerHTML = html;
+    listaPintada = html;
+    return true;
   }
 
   async function archivar(proyecto, id, archivar_) {
@@ -149,13 +163,17 @@
         `/api/lienzo/${encodeURIComponent(proyecto)}/${encodeURIComponent(id)}/archivar`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ archivar: archivar_ }) });
-      if (!r || !r.ok) throw new Error('no se pudo');
+      if (!r || !r.ok) throw new Error(`el hub respondió ${r ? r.status : 'nada'}`);
       // El que estaba abierto desaparece de la lista: se suelta la selección
       // para no dejar el visor enseñando algo que ya no está listado.
       if (id === elegido) { elegido = null; vista.innerHTML = ''; }
       refrescar();
     } catch (e) {
-      if (window.HubUI) HubUI.avisar('No se pudo archivar. El lienzo sigue como estaba.');
+      // `{ titulo, mensaje }`, no una cadena: con una cadena el diálogo salía
+      // vacío, sólo con «Entendido» (C-0182).
+      if (window.HubUI) HubUI.avisar({
+        titulo: archivar_ ? 'No se pudo archivar' : 'No se pudo devolver a la lista',
+        mensaje: `El lienzo sigue como estaba (${e && e.message ? e.message : 'sin conexión'}).` });
     }
   }
 

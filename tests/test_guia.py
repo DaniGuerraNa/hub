@@ -28,8 +28,14 @@ def _por_id(pasos):
     return {p["id"]: p for p in pasos}
 
 
+def _pasos(con, paneles=(), niveles=None):
+    """Los pasos con lo que `api.guia` les pasaría de la base (C-0056)."""
+    return _por_id(guia.pasos(api.listar_proyectos(con, incluir_archivados=True), api.slots_activos(con),
+                              api.repos_de(con), list(paneles), niveles or {}))
+
+
 def test_en_un_hub_recien_instalado_nada_esta_hecho_y_el_siguiente_es_el_asistente(con):
-    pasos = _por_id(guia.pasos(con, [], {}))
+    pasos = _pasos(con)
 
     assert not any(p["hecho"] for p in pasos.values())
     assert pasos["asistente"]["siguiente"] is True
@@ -44,7 +50,7 @@ def test_los_pasos_se_marcan_por_lo_que_hay_de_verdad(con):
                 "VALUES ('mi-app', 'bug del login', 'activo', '2026-10-16')")
     con.commit()
 
-    pasos = _por_id(guia.pasos(con, [{"pane_id": "%3", "slot_id": None}], {"mi-app": "nada"}))
+    pasos = _pasos(con, [{"pane_id": "%3", "slot_id": None}], {"mi-app": "nada"})
 
     assert [k for k, p in pasos.items() if p["hecho"]] == ["asistente", "proyecto", "slot"]
     assert pasos["trabajo"]["siguiente"] is True
@@ -56,7 +62,7 @@ def test_los_pasos_se_marcan_por_lo_que_hay_de_verdad(con):
 def test_el_asistente_no_cuenta_como_tu_primer_proyecto(con):
     _proyecto(con, "asistente", "asistente")
 
-    assert _por_id(guia.pasos(con, [], {}))["proyecto"]["hecho"] is False
+    assert _pasos(con)["proyecto"]["hecho"] is False
 
 
 def test_cada_pantalla_del_mapa_existe_de_verdad():
@@ -143,3 +149,18 @@ def test_los_proyectos_de_ejemplo_del_registro_no_cuentan_como_tuyos(con, tmp_pa
     con.commit()
     assert _por_id(api.guia(con)["pasos"])["proyecto"]["hecho"] is True
     assert api.rail(con)["total_proyectos"] == 1
+
+
+def test_la_guia_cuenta_los_proyectos_como_el_rail_archivados_incluidos(con, tmp_path):
+    """La guía sale en la portada según lo que cuenta el raíl: si contaran
+    distinto, la portada la enseñaría con «registra tu primer proyecto» ya
+    hecho, o al revés. Al pasar la lectura a `api.py` (C-0056) no podía
+    perderse el archivado por el camino."""
+    viejo = tmp_path / "viejo"
+    viejo.mkdir()
+    con.execute("INSERT INTO proyecto (id, nombre, asiento, guardrail, status) VALUES ('viejo','V',?,'ask','archivado')",
+                (str(viejo),))
+    con.commit()
+
+    assert api.rail(con)["total_proyectos"] == 1
+    assert _por_id(api.guia(con)["pasos"])["proyecto"]["hecho"] is True

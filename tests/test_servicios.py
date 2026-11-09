@@ -143,3 +143,15 @@ def test_solo_se_permiten_arrancar_parar_y_reiniciar(accion):
 def test_un_nombre_de_contenedor_con_espacios_se_rechaza(nombre):
     with pytest.raises(servicios.AccionInvalida):
         servicios.accionar(nombre, "stop")
+
+
+@pytest.mark.parametrize("nombre", ["-a", "--time=0", "--help", "web;ls", "web\n"])
+def test_un_nombre_que_docker_leeria_como_opcion_se_rechaza_antes_de_llegar(nombre, monkeypatch):
+    """C-0122: sólo se miraban los espacios, y `-a` llegaba a `docker stop`
+    como opción. Se exige la forma de un nombre de contenedor de docker."""
+    lanzados = []
+    monkeypatch.setattr(servicios, "disponible", lambda: True)
+    monkeypatch.setattr(servicios.subprocess, "run", lambda orden, **kw: lanzados.append(orden))
+    with pytest.raises(servicios.AccionInvalida):
+        servicios.accionar(nombre, "stop")
+    assert not lanzados

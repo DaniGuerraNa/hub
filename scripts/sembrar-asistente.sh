@@ -151,9 +151,12 @@ printf '  ✗ no se pudo declarar solo. Hazlo a mano, abajo.\n' >&2
 # eso mismo no puede llevar backticks dentro: bash las ejecutaría. Pasó, y se vio
 # en la primera instalación: «line 32: tipo:: command not found», con la frase
 # saliendo mutilada. Se usan comillas «» para citar, que no ejecutan nada.
+# El mismo archivo que lee el hub (`config.projects_yml`): con HUB_HOME o
+# HUB_PROJECTS_YML movidos, la ruta fija mandaba a editar otro.
+REGISTRO=${HUB_PROJECTS_YML:-${HUB_HOME:-$HOME/.local/share/hub}/projects.yml}
 cat <<FIN
 
-Falta declararlo en tu registro (~/.local/share/hub/projects.yml). Añade, DENTRO
+Falta declararlo en tu registro ($REGISTRO). Añade, DENTRO
 de la lista «proyectos:» (no al final del archivo):
 
   - id: asistente

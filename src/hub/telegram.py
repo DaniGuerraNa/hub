@@ -308,15 +308,6 @@ class BotDeEncargos(Bot):
         except TelegramCaido:
             pass
 
-    def responder(self, chat_id: int, texto: str, a_mensaje: int) -> int | None:
-        """Un mensaje colgado de otro, para que se vea a qué contesta."""
-        r = self._llamar("sendMessage", {
-            "chat_id": chat_id, "text": texto, "reply_to_message_id": a_mensaje,
-        })
-        if not r.get("ok"):
-            raise TelegramCaido(str(r.get("description") or "sendMessage falló"))
-        return (r.get("result") or {}).get("message_id")
-
     def escribiendo(self, chat_id: int) -> None:
         """El «escribiendo…» de Telegram. Dura unos 5 s, así que se repite.
 

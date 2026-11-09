@@ -428,7 +428,7 @@ def test_la_pantalla_dice_a_quien_le_llegarian_los_avisos(cliente, con, monkeypa
     con.commit()
 
     html = cliente.get("/canal").text
-    assert "Los tres avisos van a ana" in html
+    assert "Los avisos van a ana" in html
     assert "a los 3 min" in html and "a los 10 min" in html
 
 

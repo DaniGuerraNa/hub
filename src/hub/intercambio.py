@@ -87,6 +87,18 @@ def nombre_seguro(nombre: str) -> str:
     return base[:120] or "archivo"
 
 
+def nombre_de_pegado(nombre: str) -> str:
+    """Cómo se llama lo pegado del portapapeles: `pegado-<fecha>-<hora>.png`.
+
+    Una captura pegada llega como «image.png» (o «blob») todas las veces: con
+    la hora se sabe cuál es cuál. La única forma de nombrarla, para la
+    terminal, el tablero y el chat del secretario (decisión 383): eran dos
+    copias y la tercera iba a divergir.
+    """
+    extension = Path(str(nombre or "")).suffix or ".png"
+    return f"pegado-{datetime.now().strftime('%Y%m%d-%H%M%S')}{extension}"
+
+
 def subcarpeta(proyecto_id: str = "", slot_id: int | None = None,
                slot_nombre: str = "") -> str:
     """Dónde va algo de ese proyecto y ese slot: `proyecto/12-back`.
@@ -151,6 +163,36 @@ def resolver(nombre: str) -> Path:
     if not destino.is_file():
         raise ValueError(f"no hay ningún «{destino.name}» ahí")
     return destino
+
+
+def relativa(ruta: str) -> str:
+    """La ruta, relativa a la carpeta, de un archivo que está dentro. Si no, `ValueError`.
+
+    Acepta la relativa (`alfa/foto.png`, la que guarda el hub) y la absoluta
+    (la que copia una sesión con `cp` y repite en su resumen, o la que ve el
+    secretario de lo adjunto). Lo que decide es `resolver`, que sigue los
+    enlaces: uno que apunte fuera se queda fuera. Un nombre que `resolver`
+    tendría que sanear se rechaza en vez de buscar otro archivo con el nombre
+    saneado: «Captura de pantalla.png» llevaría a otro sitio, o a ninguno, y
+    `/intercambio/ver/` tampoco lo serviría. Es la de los encargos que llevan
+    archivos y de lo que se enseña de ellos (decisión 384).
+    """
+    crudo = str(ruta or "").strip()
+    if not crudo:
+        raise ValueError("falta la ruta del archivo")
+    raiz = carpeta().resolve()
+    if Path(crudo).is_absolute():
+        real = Path(crudo).resolve()
+        if raiz not in real.parents:
+            raise ValueError(f"«{crudo}» no está en la carpeta de intercambio ({carpeta()})")
+        crudo = real.relative_to(raiz).as_posix()
+    tramos = [t for t in crudo.replace("\\", "/").split("/") if t not in ("", ".")]
+    if ".." in tramos:
+        raise ValueError(f"«{crudo}» sale de la carpeta de intercambio")
+    if ruta_segura(crudo) != "/".join(tramos):
+        raise ValueError(f"«{crudo}» no es un nombre que el hub sirva tal cual: renómbralo con sólo "
+                         f"letras, números, «.», «_» y «-», a no más de {PROFUNDIDAD} carpetas de hondo")
+    return resolver(crudo).relative_to(raiz).as_posix()
 
 
 def guardar(nombre: str, datos: bytes, dentro: str = "", de_paso: bool = False) -> Path:
@@ -229,8 +271,11 @@ def podar_de_paso(ahora: float | None = None) -> list[str]:
     return borrados
 
 
-def listar() -> list[dict]:
+def listar(dentro: str = "") -> list[dict]:
     """Lo que hay, lo más nuevo primero: se viene aquí a por lo último.
+
+    `dentro` limita a una subcarpeta (la de una idea del tablero, C-0149);
+    vacío, todo, como siempre.
 
     Entra en las subcarpetas (hasta `PROFUNDIDAD`): hasta el 29-sep sólo se
     listaba lo suelto, y la landing que una sesión dejó como carpeta el 25 no
@@ -239,7 +284,10 @@ def listar() -> list[dict]:
     raiz = carpeta().resolve()
     de_paso = _leer_de_paso()
     archivos = []
-    for hijo in carpeta().rglob("*"):
+    # Con `dentro`, sólo se recorre esa subcarpeta: el tablero lo pide por cada
+    # idea y recorrer el intercambio entero cada vez no escala (revisor C-0149).
+    origen = carpeta() / ruta_segura(dentro) if dentro else carpeta()
+    for hijo in origen.rglob("*"):
         relativa = hijo.relative_to(carpeta())
         if (len(relativa.parts) > PROFUNDIDAD
                 or any(p.startswith(".") for p in relativa.parts)
@@ -264,6 +312,9 @@ def listar() -> list[dict]:
             "tramos": list(relativa.parts[:-1]),
             "caduca": caduca_en(relativa.as_posix(), de_paso),
         })
+    if dentro:
+        prefijo = ruta_segura(dentro).rstrip("/") + "/"
+        archivos = [a for a in archivos if a["nombre"].startswith(prefijo)]
     return sorted(archivos, key=lambda a: a["mtime"], reverse=True)
 
 

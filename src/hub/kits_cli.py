@@ -202,7 +202,7 @@ def instalar(id_kit: str, version: str | None) -> int:
         print("\n  Este kit trae su propio instalador. Míralo y, si te convence:")
         print(f"      bash {destino / kit.instalar}")
     for b in kit.binarios:
-        if not _hay(b):
+        if not kits.hay_binario(b):
             print(f"  ⚠️ necesita `{b}` y no está en el PATH")
     return 0
 
@@ -433,16 +433,8 @@ def verificar(donde: str) -> int:
     if kit.instalar:
         print(f"  instalador propio: {kit.instalar}")
     for b in kit.binarios:
-        print(f"  necesita {b} — {'ok' if _hay(b) else '🔴 no está en el PATH'}")
+        print(f"  necesita {b} — {'ok' if kits.hay_binario(b) else '🔴 no está en el PATH'}")
     return 1 if faltan else 0
-
-
-def _hay(binario: str) -> bool:
-    """`shutil.which` y no `command -v`: éste resuelve también alias y funciones
-    del shell, que no existen para un subproceso. Ya mordió con `rg`."""
-    import shutil
-
-    return shutil.which(binario) is not None
 
 
 def _resolver(id_kit: str, version: str | None, proyectos: list):
@@ -450,6 +442,30 @@ def _resolver(id_kit: str, version: str | None, proyectos: list):
     if id_kit == kits.ID_BASE:
         return config.RAIZ_REPO / "semillas" / "base"
     return kits.resolver(id_kit, version) or kits.resolver_en_desarrollo(id_kit, proyectos)
+
+
+def plan_aplicar(id_kit: str, proyecto_id: str) -> tuple[str, Path | None]:
+    """El encargo para aplicar un kit y la carpeta donde se aplicaría. No escribe.
+
+    La puerta de `aplicar` y del secretario (C-0161): uno lo imprime y el otro
+    se lo cuenta al dueño o se lo encarga al orquestador."""
+    proyectos = registry.cargar()
+    p = next((x for x in proyectos if x.id == proyecto_id), None)
+    if not p:
+        raise ValueError(f"No hay ningún proyecto «{proyecto_id}» en el registro.")
+    declarado = next(
+        (d for d in kits.kits_declarados(p.todas_las_rutas()) if d["id"] == id_kit), None
+    )
+    raiz = _resolver(id_kit, (declarado or {}).get("version"), proyectos)
+    if not raiz:
+        raise ValueError(f"«{id_kit}» no está instalado. `instalar {id_kit}` lo trae.")
+    try:
+        kit = kits.leer_manifiesto(raiz)
+    except kits.KitInvalido as e:
+        raise ValueError(f"🔴 {e}") from e
+    plan = kits.plan_de_aplicacion(p.todas_las_rutas(), kit, declarado)
+    destino = kits.raiz_de(p.todas_las_rutas())
+    return kits.prompt_aplicar(p.nombre, str(destino), kit, plan), destino
 
 
 def aplicar(id_kit: str, proyecto_id: str) -> int:
@@ -464,29 +480,12 @@ def aplicar(id_kit: str, proyecto_id: str) -> int:
     otro proyecto es lo que la primera regla del hub prohíbe. Lo hace un agente
     que corre ahí, con el usuario mirando el diff.
     """
-    proyectos = registry.cargar()
-    p = next((x for x in proyectos if x.id == proyecto_id), None)
-    if not p:
-        print(f"No hay ningún proyecto «{proyecto_id}» en el registro.", file=sys.stderr)
-        return 1
-
-    declarado = next(
-        (d for d in kits.kits_declarados(p.todas_las_rutas()) if d["id"] == id_kit), None
-    )
-    raiz = _resolver(id_kit, (declarado or {}).get("version"), proyectos)
-    if not raiz:
-        print(f"«{id_kit}» no está instalado. `instalar {id_kit}` lo trae.",
-              file=sys.stderr)
-        return 1
     try:
-        kit = kits.leer_manifiesto(raiz)
-    except kits.KitInvalido as e:
-        print(f"🔴 {e}", file=sys.stderr)
+        encargo, destino = plan_aplicar(id_kit, proyecto_id)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
         return 1
-
-    plan = kits.plan_de_aplicacion(p.todas_las_rutas(), kit, declarado)
-    destino = kits.raiz_de(p.todas_las_rutas())
-    print(kits.prompt_aplicar(p.nombre, str(destino), kit, plan))
+    print(encargo)
     print("\n" + "─" * 70)
     print("Esto es una PROPUESTA: el hub no escribe en tu proyecto. Revísala,")
     print(f"abre Claude Code en {destino} y pásasela.")

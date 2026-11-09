@@ -110,12 +110,13 @@
       <div class="tenue">Márcate en Personas, aquí abajo. Sin eso el hub los
         apunta en el registro y no los manda a ninguna parte.</div>
     {% else %}
-      <strong>Los tres avisos van a {{ avisos.dueno.alias or avisos.dueno.username }},
+      <strong>Los avisos van a {{ avisos.dueno.alias or avisos.dueno.username }},
         y sólo a {{ avisos.dueno.alias or avisos.dueno.username }}.</strong>
       <div class="tenue">
         Una sesión esperando que le contestes, a los {{ avisos.umbrales.preguntando }} min ·
         una sesión quieta, a los {{ avisos.umbrales.quieta }} min ·
-        el hub sin latir, a los {{ avisos.umbrales['sin-latido'] }} min.
+        el hub sin latir, a los {{ avisos.umbrales['sin-latido'] }} min ·
+        el secretario sin latir (si lo tienes encendido), a los {{ avisos.umbrales['secretario-caido'] }} min.
         Sale el aviso, nunca lo que pone en la pantalla.
       </div>
     {% endif %}
@@ -152,7 +153,10 @@
 
 {% set pendientes = usuarios | selectattr('estado', 'equalto', 'pendiente') | list %}
 
-<div class="con-indice" id="taller-canal" data-secciones="canal">
+{# Una región (C-0167): conceder un permiso, guardar a una persona o entregar
+   una respuesta repinta esto sin recargar, con el plegado que abriste abierto
+   y en el mismo sitio. #}
+<div class="con-indice" id="taller-canal" data-secciones="canal" data-region="canal">
 <div class="columna-indice">
   <nav class="indice" id="indice-canal" data-indice-secciones>
     <a data-sec="personas" href="#personas">
@@ -169,6 +173,7 @@
       <span class="nom">Registro</span><span class="cuenta">{{ reg_total }}</span>
     </a>
   </nav>
+  {{ ui.seccion_previa() }}
 </div>
 
 <div>
@@ -201,7 +206,7 @@
 
   {# El alias no es cosmético: el @username lo cambia su dueño cuando quiere, y
      este nombre acaba dentro del marco de la respuesta que lee Claude. #}
-  <form method="post" action="/canal/usuario" class="fila" style="margin-top:8px;gap:6px">
+  <form method="post" action="/canal/usuario" class="fila" style="margin-top:8px;gap:6px" data-sin-recarga>
     <input type="hidden" name="user_id" value="{{ u.user_id }}">
     <input type="text" name="alias" value="{{ u.alias }}" placeholder="Cómo le llamas tú"
            style="max-width:220px">
@@ -228,7 +233,7 @@
      contestar: quien va a usar esto lo usa desde el móvil, así que el sitio
      donde se aprende tiene que ser el sitio donde se responde. #}
   {% if u.estado == 'activo' %}
-  <form method="post" action="/canal/tutorial" class="fila" style="margin-top:6px;gap:8px">
+  <form method="post" action="/canal/tutorial" class="fila" style="margin-top:6px;gap:8px" data-sin-recarga>
     <input type="hidden" name="user_id" value="{{ u.user_id }}">
     <button class="sutil">{{ 'Volver a mandar el tutorial' if u.tutorial and u.tutorial != 'pedido' else 'Mandarle el tutorial' }}</button>
     <span class="tenue" style="font-size:12px">
@@ -282,7 +287,7 @@
         <div class="permiso">
           {% for a in acciones %}
             {% set dado = suyos | selectattr('accion', 'equalto', a) | list %}
-            <form method="post" action="/canal/permiso">
+            <form method="post" action="/canal/permiso" data-sin-recarga>
               <input type="hidden" name="user_id" value="{{ u.user_id }}">
               <input type="hidden" name="proyecto_id" value="{{ p.id }}">
               <input type="hidden" name="accion" value="{{ a }}">
@@ -403,7 +408,7 @@
   </div>
   {% if paneles %}
   <form method="post" action="/canal/pregunta/{{ q.id }}/entregar"
-        class="fila" style="margin-top:6px;gap:6px">
+        class="fila" style="margin-top:6px;gap:6px" data-sin-recarga>
     <select name="pane_id" aria-label="A qué sesión">
       {% for p in paneles %}
       <option value="{{ p.pane_id }}">

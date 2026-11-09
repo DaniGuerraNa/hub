@@ -11,7 +11,7 @@
   .linea .quien { font-size:12px; font-weight:600; color:var(--texto-3); padding-top:2px; }
   .linea .dice.yo .quien { color:var(--acento); }
   .linea .foto { display:grid; grid-template-columns:70px minmax(0,1fr); gap:8px; }
-  .linea .foto img { max-width:min(100%, 520px); border-radius:10px; border:1px solid var(--borde); }
+  .linea .foto img { max-width:min(100%, 520px); border-radius:var(--r-input); border:1px solid var(--borde); }
   @media (max-width: 620px) { .linea .dice { grid-template-columns:60px minmax(0,1fr); }
                               .linea .dice .hora { grid-row:span 2; } }
   .marca { font-size:11px; padding:1px 8px; border-radius:999px; }
@@ -34,27 +34,33 @@
 </div>
 
 {% macro peso(b) %}{% if b >= 1e9 %}{{ '%.1f' | format(b / 1e9) }} GB{% else %}{{ (b / 1e6) | round | int }} MB{% endif %}{% endmacro %}
-<div class="reu" {% if d.procesado.estado == 'procesando' or d.comprimiendo %}data-refrescar="5"{% endif %}>
+{# Una región (C-0167): las acciones y el refresco solo cambian esto, sin
+   recargar la página. #}
+<div data-region="reunion" class="reu" {% if d.procesado.estado == 'procesando' or d.comprimiendo %}data-refrescar="5"{% endif %}>
   {% if d.meta.fin %}
-  <form class="tarjeta" method="post" action="/reuniones/accion" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+  <form data-sin-recarga class="tarjeta" method="post" action="/reuniones/accion" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <input type="hidden" name="id" value="{{ d.id }}">
     <span>Ocupa <strong>{{ peso(d.tamano) }}</strong>
       {% if d.comprimiendo %}· comprimiendo…
       {% elif d.comprimida %}· audio comprimido{% if d.compresion and d.compresion.antes %} (antes {{ peso(d.compresion.antes) }}){% endif %}
       {% else %}· audio sin comprimir{% if d.compresion and d.compresion.error %} <span class="tenue">(el último intento falló: {{ d.compresion.error }})</span>{% endif %}{% endif %}</span>
-    {% if not d.comprimida and not d.comprimiendo and d.procesado.estado != 'procesando' %}
+    {% if not d.comprimida and not d.comprimiendo and d.procesado.estado not in ('procesando', 'se cortó') %}
     <button class="boton" name="que" value="comprimir" style="margin-left:auto">Comprimir audio</button>{% endif %}
   </form>
   {% endif %}
   {% if d.procesado.estado == 'procesando' %}
   <div class="tarjeta"><span class="marca procesando">procesando</span>
     {% for k, v in (d.procesado.etapas or {}).items() %} {{ k }}: {{ v }}{{ ' ·' if not loop.last }}{% endfor %}</div>
-  {% elif d.procesado.estado == 'fallo' or not d.procesado %}
-  <form class="tarjeta" method="post" action="/reuniones/accion">
+  {% elif d.procesado.estado in ('fallo', 'se cortó') or not d.procesado %}
+  <form data-sin-recarga class="tarjeta" method="post" action="/reuniones/accion">
     {% if d.procesado.estado == 'fallo' %}<p><span class="marca fallo">falló</span> {{ d.procesado.error }}</p>
+    {# El proceso murió sin poder apuntar nada (decisión 344): lo hecho hasta
+       ahí está en sus etapas, y procesar de nuevo empieza desde el principio. #}
+    {% elif d.procesado.estado == 'se cortó' %}<p><span class="marca fallo">se cortó</span>
+      el proceso se detuvo a medias{% for k, v in (d.procesado.etapas or {}).items() %}{{ ' ·' if loop.first else ',' }} {{ k }}: {{ v }}{% endfor %}.</p>
     {% else %}<p class="tenue" style="margin-top:0">Sin procesar todavía.</p>{% endif %}
     <input type="hidden" name="id" value="{{ d.id }}">
-    <button class="boton principal" name="que" value="procesar">Procesar</button>
+    <button class="boton principal" name="que" value="procesar">{{ 'Reintentar' if d.procesado.estado == 'se cortó' else 'Procesar' }}</button>
   </form>
   {% endif %}
 
@@ -70,8 +76,8 @@
 
   {# Quién es quién. La pista de la aplicación mezcla a todos; se separan en
      Persona 1, 2… por la voz, y aquí se les pone nombre. #}
-  {% if d.voces and d.procesado.estado != 'procesando' %}
-  <form class="tarjeta" method="post" action="/reuniones/accion">
+  {% if d.voces and d.procesado.estado not in ('procesando', 'se cortó') %}
+  <form data-sin-recarga class="tarjeta" method="post" action="/reuniones/accion">
     <h2>Quién habla</h2>
     <p class="tenue" style="margin-top:0;font-size:13px">Ponles nombre mirando la transcripción
       de abajo. Tú eres siempre «Tú»: tu micro va aparte.</p>
@@ -89,8 +95,8 @@
       <button class="boton principal" name="que" value="nombres" style="margin-left:auto">Guardar nombres</button>
     </div>
   </form>
-  {% elif d.sin_separar and d.procesado.estado != 'procesando' %}
-  <form class="tarjeta" method="post" action="/reuniones/accion" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+  {% elif d.sin_separar and d.procesado.estado not in ('procesando', 'se cortó') %}
+  <form data-sin-recarga class="tarjeta" method="post" action="/reuniones/accion" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <input type="hidden" name="id" value="{{ d.id }}">
     <span>Los demás salen todos como «Reunión».{% if d.procesado.etapas and d.procesado.etapas.voces %}
       <span class="tenue">({{ d.procesado.etapas.voces }})</span>{% endif %}
@@ -124,9 +130,8 @@
 <script src="/static/navegante.js"></script>
 <script>
 (() => {
-  const boton = document.getElementById('copiar-ruta');
-  if (!boton) return;
-  const aviso = document.getElementById('copiada');
+  // Por delegación: la ficha se repinta sola sin recargar mientras se procesa
+  // (C-0167), y un oyente atado al botón se perdería con ella.
   /* El portapapeles moderno y, si el navegador lo niega (fuera de un contexto
    * seguro, o sin permiso), el de siempre con un textarea. Se dice qué pasó:
    * copiar y no copiar se ven igual, y así se pierde una referencia creyendo
@@ -142,7 +147,10 @@
     t.remove();
     return ok;
   };
-  boton.addEventListener('click', async () => {
+  document.addEventListener('click', async (e) => {
+    const boton = e.target.closest && e.target.closest('#copiar-ruta');
+    if (!boton) return;
+    const aviso = document.getElementById('copiada');
     const texto = boton.dataset.texto;
     let ok = false;
     try { await navigator.clipboard.writeText(texto); ok = true; }

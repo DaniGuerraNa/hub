@@ -480,6 +480,22 @@ def test_un_tag_que_no_existe_lo_dice_y_no_deja_basura(tmp_path, monkeypatch, ki
     assert not kits.instalados().get("demo")
 
 
+def test_un_origen_que_empieza_por_guion_es_un_repo_y_no_una_opcion_de_git(tmp_path, monkeypatch, kit_demo):
+    """C-0122: el `origen` del catálogo llegaba a `git clone` sin `--`, así que
+    un `-algo` se leía como opción (`--upload-pack=…` ejecuta lo que diga).
+    Con `--` es siempre un repositorio: un repo llamado `-kit` se clona."""
+    _git(kit_demo, "init", "-q", "-b", "main")
+    _git(kit_demo, "add", "-A")
+    _git(kit_demo, "commit", "-qm", "kit")
+    _git(kit_demo, "tag", "v1.0")
+    kit_demo.rename(tmp_path / "-kit")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "HUB_KITS", tmp_path / "repositorio")
+
+    destino = kits.instalar("demo", "1.0", "-kit")
+    assert (destino / "kit.yml").is_file()
+
+
 # ── kits de máquina ──────────────────────────────────────────────────────────
 #
 # Salieron de migrar uno real: instalaba dos comandos en

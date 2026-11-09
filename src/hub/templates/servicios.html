@@ -13,6 +13,8 @@
   {{ ui.filtro_proyecto('/servicios', s.proyectos, proyecto) }}
 {% endcall %}
 
+{# Arrancar, parar o reescanear repinta sólo esto, sin recargar (C-0167). #}
+<div data-region="servicios">
 <div class="cifras">
   <div class="cifra">{{ ui.placa('pilas', 'neutro') }}
     <b>{{ s.total }}</b><span>contenedores</span></div>
@@ -27,7 +29,7 @@
 <div class="barra" style="margin-bottom:6px">
   {# Reescanear pasa a secundario: se consulta a diario, se reescanea cuando has
      levantado algo. Lo que ocupa el primer plano debe ser lo que se lee. #}
-  <form method="post" action="/servicios/escanear" class="enlinea">
+  <form method="post" action="/servicios/escanear" class="enlinea" data-sin-recarga>
     <button class="sutil">Reescanear</button>
   </form>
   {% if s.medido_en %}<span class="tenue">Última lectura {{ s.medido_en[:19] | replace('T', ' ') }}</span>{% endif %}
@@ -112,6 +114,7 @@
 {% endfor %}
 </div>
 {% endif %}
+</div>
 
 <script>
 document.addEventListener('click', async (e) => {
@@ -146,7 +149,18 @@ document.addEventListener('click', async (e) => {
     boton.textContent = etiqueta;
     return HubUI.avisar({ titulo: 'No se pudo ' + verbo, mensaje: r.error || 'error desconocido' });
   }
-  location.reload();
+  // La lista y el raíl, sin recargar la página (C-0167): el raíl cuenta los
+  // contenedores en marcha y se quedaba con la cifra de antes (C-0187). Hecho
+  // ya, si el repintado falla se dice: el contenedor cambió y la pantalla no
+  // lo enseña.
+  try {
+    if (window.HubSinRecarga) await window.HubSinRecarga.refrescar(['servicios', 'rail']);
+    else location.reload();
+  } catch (err) {
+    boton.textContent = etiqueta;
+    HubUI.avisar({ titulo: 'Hecho, pero la lista no se actualizó',
+                   mensaje: `${err.message}. Recarga la página para verla.` });
+  }
 });
 </script>
 

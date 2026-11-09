@@ -23,7 +23,7 @@
          móvil. Se escribe sin Enter, para que añadas a mano qué quieres que
          haga con él. #}
       {% if paneles %}
-      <form method="post" action="/intercambio/a-la-sesion" class="barra"
+      <form method="post" action="/intercambio/a-la-sesion" data-sin-recarga class="barra"
             style="margin-top:8px;gap:6px;flex-wrap:wrap">
         <input type="hidden" name="nombre" value="{{ a.nombre }}">
         <select name="pane_id" aria-label="A qué sesión" style="width:auto;flex:1;min-width:170px">
@@ -38,7 +38,7 @@
       {% endif %}
       <div class="barra" style="margin-top:8px;gap:8px;align-items:flex-start">
         <p class="tenue mono" style="margin:0;font-size:12px;word-break:break-all;flex:1">{{ a.ruta }}</p>
-        <form method="post" action="/intercambio/borrar" class="enlinea"
+        <form method="post" action="/intercambio/borrar" class="enlinea" data-sin-recarga
               data-confirmar-titulo="Borrar «{{ a.archivo }}»"
               data-confirmar-ok="Borrarlo"
               data-confirmar="Se borra del disco de casa y no se puede recuperar.">
@@ -64,7 +64,7 @@
 
 <div class="tarjeta">
   <form method="post" action="/intercambio/subir" enctype="multipart/form-data"
-        class="barra" style="gap:10px;flex-wrap:wrap">
+        class="barra" style="gap:10px;flex-wrap:wrap" data-sin-recarga>
     <input type="file" name="archivo" required
            style="width:auto;flex:1;min-width:180px">
     <select name="destino" aria-label="De qué proyecto o slot es" style="width:auto;flex:1;min-width:170px">
@@ -140,6 +140,8 @@
 {# El grupo con lo más nuevo se abre solo: se viene aquí a por lo último. Los
    demás, plegados, para que la lista no crezca sin fin. Buscando, abiertos
    todos: si lo filtraste es que quieres verlo. #}
+{# Subir, borrar o pasarle la ruta a una sesión repinta sólo esto (C-0167). #}
+<div data-region="archivos">
 {% for g in i.grupos %}
 <details class="tarjeta inter-grupo" style="padding:0" {{ 'open' if loop.first or i.q or i.grupos | length == 1 }}>
   <summary>
@@ -174,6 +176,7 @@
   {% endif %}
 </div>
 {% endfor %}
+</div>
 
 <div class="aviso" style="margin-top:14px">
   <div>

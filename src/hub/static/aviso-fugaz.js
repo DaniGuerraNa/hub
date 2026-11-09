@@ -6,25 +6,44 @@
  * segundos si es de los que salieron bien (`fugaz`, lo decide `_volver`). Un
  * fallo no se desvanece nunca —regla dura 21: lo que falla se dice—; se cierra
  * a mano, y recargar ya no lo repite.
+ *
+ * Y flota (C-0167): entraba encima del contenido empujándolo hacia abajo y a
+ * los cinco segundos se iba subiéndolo otra vez — dos saltos por cada acción.
+ * Ahora se posa por encima (CSS de `base.html`) y lo de debajo no se mueve.
+ * Los que pinta `sin-recarga.js` sin recargar llegan con `hub:repintado`.
  */
 (() => {
-  const aviso = document.querySelector('[data-aviso-fugaz]');
-  if (!aviso) return;
+  function quitarDeLaDireccion() {
+    try {
+      const url = new URL(location.href);
+      if (url.searchParams.has('aviso')) {
+        url.searchParams.delete('aviso');
+        url.searchParams.delete('fugaz');
+        url.searchParams.delete('hecho');
+        history.replaceState(null, '', url.pathname + url.search + url.hash);
+      }
+    } catch (e) { /* sin History API, el aviso se queda: no pasa nada */ }
+  }
 
-  try {
-    const url = new URL(location.href);
-    if (url.searchParams.has('aviso')) {
-      url.searchParams.delete('aviso');
-      url.searchParams.delete('fugaz');
-      history.replaceState(null, '', url.pathname + url.search + url.hash);
-    }
-  } catch (e) { /* sin History API, el aviso se queda: no pasa nada */ }
+  function preparar(aviso) {
+    if (aviso.dataset.listo) return;
+    aviso.dataset.listo = '1';
+    const irse = () => {
+      aviso.classList.add('ido');
+      setTimeout(() => { aviso.hidden = true; }, 500);
+    };
+    const cerrar = aviso.querySelector('[data-cerrar-aviso]');
+    if (cerrar) cerrar.addEventListener('click', irse);
+    if (aviso.classList.contains('fugaz')) setTimeout(irse, 5000);
+  }
 
-  const irse = () => {
-    aviso.classList.add('ido');
-    setTimeout(() => { aviso.hidden = true; }, 500);
-  };
-  const cerrar = aviso.querySelector('[data-cerrar-aviso]');
-  if (cerrar) cerrar.addEventListener('click', irse);
-  if (aviso.classList.contains('fugaz')) setTimeout(irse, 5000);
+  function repasar() {
+    const avisos = document.querySelectorAll('[data-aviso-fugaz]');
+    if (!avisos.length) return;
+    quitarDeLaDireccion();
+    avisos.forEach(preparar);
+  }
+
+  repasar();
+  document.addEventListener('hub:repintado', repasar);
 })();

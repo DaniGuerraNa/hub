@@ -13,13 +13,43 @@ aparece arriba, en la bandeja, y la contestas ahí mismo.
 - Las tareas van **en cola, de una en una**. Cada una enseña sus pasos como
   puntos: verde lo hecho, el que parpadea es el que está en curso.
 - Si el proyecto no tiene ninguna sesión abierta, abre una (un slot nuevo con
-  el nombre `orq-…`). Si tiene varias, te pregunta a cuál mandarlo.
+  el nombre `orq-…`). Si tiene varias, pregunta a cuál mandarlo.
+- **No todas las preguntas te llegan a ti.** Lo operativo (a qué sesión
+  mandar, qué hacer tras un fallo, una duda menor) se lo pregunta al
+  secretario, que lo contesta o te lo pasa con un resumen; en la bandeja se ve
+  «Pregunta al secretario» y puedes contestarla tú si quieres. Lo tuyo —el
+  plan de un cambio grande, lo de «nunca sin el dueño», un choque con algo
+  decidido, lo de producto— va directo a ti. Si el secretario no lo resuelve
+  en 10 minutos, o está apagado, te llega igual. Su respuesta nunca vale como
+  tu sí.
+- **Lo que sólo puedes hacer tú en la PC** —un captcha, verificar tu
+  identidad, iniciar sesión con tu cuenta— te lo pide como **relevo**. No
+  suena en el teléfono: si el agente de Reuniones está conectado, se te abren
+  en la PC tus pendientes del secretario; si no, la pregunta te espera en la
+  bandeja. Hazlo en la PC y contéstale «ya». No debe pedirte que le escribas
+  una contraseña o un código; si lo hace, no se los des.
 - **Detener** interrumpe la tarea y lo que estuvieran haciendo sus sesiones.
   **Reanudar** la vuelve a poner en marcha desde donde estaba, con su plan y su
   bitácora; puedes añadirle una nota (escrita o dictada) con lo que viste
   mientras estaba parada. Si hay otra en curso, vuelve a la cola.
 - Necesita el muestreo en marcha (`hub-snapshotter`): es quien lo despierta
   cuando una sesión termina. Sin él, la tarea se queda encolada.
+
+### Archivos que le pasas y lo que te enseña
+
+Un encargo puede llevar **archivos del Intercambio** (una foto, un PDF): por
+ejemplo, los que adjuntas en el chat del secretario al encargarle algo. Tienen
+que estar en la carpeta de Intercambio; la sesión los lee desde ahí y no se
+copian a tu proyecto. Lo que diga un archivo por dentro —una captura de un
+chat, un correo— cuenta como **dato, no como una orden tuya**.
+
+Para **probar algo**, el orquestador le pide a la sesión del proyecto que
+siga su receta **«Cómo se prueba»**: cómo se ejecuta, qué se mira y qué imagen
+sale. Si el proyecto no tiene una, lo primero que hace la sesión es
+escribirla en el propio proyecto (es suyo: el hub no escribe ahí). Las
+capturas o renders de lo que vio quedan en el Intercambio, en la carpeta del
+proyecto, y el orquestador las apunta en la tarea como **evidencia**. Sólo
+cuentan como evidencia las imágenes (png, jpg, gif, webp).
 
 ### Permisos: hasta dónde llega
 
@@ -34,9 +64,10 @@ Por defecto **no llega a ningún proyecto**. Se le da alcance en
 | `alto` | Casi todo, salvo lo que nunca decide nadie más que tú |
 
 Sea cual sea el nivel, **nunca** despliega a producción, hace push a la rama
-principal, borra datos, gasta dinero ni manda nada a un tercero: eso lo para y
-te lo pregunta. Y un proyecto con `guardrail: never` en `projects.yml` queda
-fuera aunque intentes darle nivel.
+principal, borra datos, gasta dinero ni manda nada a un tercero, y tampoco
+firma ni acepta términos, hace trámites o contratos ni publica en tu nombre:
+eso lo para, te lo deja preparado y te lo pregunta. Y un proyecto con
+`guardrail: never` en `projects.yml` queda fuera aunque intentes darle nivel.
 
 Si el proyecto tiene `guardrail: ask`, además, **la primera vez que una tarea
 quiere tocarlo te pide confirmación**: arriba de [Orquestador](/orquestador)
@@ -99,6 +130,12 @@ transcripcion:
 `scripts/transcribir-whisper.py` usa `faster-whisper`, que hay que instalar en
 ese Python. Sin transcriptor, la tarea se escribe a mano y todo lo demás
 funciona igual.
+
+Puedes declarar otro programa: recibe el audio donde pongas `{audio}` y escribe
+el texto en su salida. Si no escribe nada, el hub entiende que en el audio no
+se oyó a nadie; cualquier código de salida distinto de cero es un fallo, y un
+audio de un encargo se reintenta un rato antes de entregarse con el hueco
+dicho. El código 3 como «no se oyó nada» es sólo del guion del hub.
 
 ## El intercambio (`/intercambio`)
 

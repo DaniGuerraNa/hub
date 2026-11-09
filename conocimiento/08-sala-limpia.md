@@ -90,7 +90,11 @@ que sólo dice «funciona» no se ha visto fallar.
 ## Cuándo pasar por aquí
 
 - Antes de promocionar el hub a `main`: `hub` entero. Es lo que la regla de
-  publicación llama «haberlo usado».
+  publicación llama «haberlo usado». Y las pantallas, en un navegador de
+  verdad: `HUB_EXIGIR_NAVEGADOR=1 uv run --group navegador pytest -m
+  navegador` sobre un hub sembrado, y `uv run --group navegador python -m
+  hub.recorrido` contra el hub que usas, con tus datos (sólo mira: no pulsa
+  nada). Con datos reales salen desbordes que la instalación vacía no tiene.
 - Antes de publicar una versión de un kit que otra persona instala.
 - Cuando alguien reporte «me hizo muchas preguntas» o «no me abrió X»: se
   reproduce aquí antes de tocar nada, porque desde tu máquina no se ve.

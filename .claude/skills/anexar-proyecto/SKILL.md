@@ -51,9 +51,10 @@ nombres exactos.
 
 ### 3. Declara en el registro
 
-**El caso simple —una carpeta, sin más rutas ni contenedores— no se edita a
-mano**: el hub tiene un alta que inserta el bloque sin reescribir el resto del
-archivo (decisión 113) y comprueba que el `estado_ref` existe:
+🔴 **El registro no se edita a mano: el alta la hace el hub.** Inserta el
+bloque sin reescribir el resto del archivo (decisión 113), con cerrojo, y
+comprueba que la carpeta, cada ruta y el `estado_ref` existen. Editar el YAML
+por tu cuenta se salta todo eso:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8787/api/proyecto/anexar \
@@ -63,12 +64,15 @@ curl -s -X POST http://127.0.0.1:8787/api/proyecto/anexar \
 ```
 
 Es lo mismo que hace el asistente con `hub anexar`. Contesta `{"ok": true, …}`
-o `{"ok": false, "error": "…"}` con el motivo.
+o `{"ok": false, "error": "…"}` con el motivo. Si hace falta más, va en el
+mismo alta:
 
-**Si hace falta más** —`rutas`, un `patron:`, `contenedores`— edita el registro
-a mano. Está en `$HUB_HOME/projects.yml` (por omisión
-`~/.local/share/hub/projects.yml`), salvo que `HUB_PROJECTS_YML` diga otra
-cosa: es `config.projects_yml()`. El archivo trae los campos comentados.
+- `"rutas": ["/abs/repo-a", "/abs/repo-b"]` — repos que viven fuera del
+  asiento. Tienen que existir: lo que se declara se mide.
+- `"patrones": ["*/repos/*"]` — ver el workspace, abajo.
+- `"contenedores": ["mi-proyecto-"]` — el **prefijo** de sus contenedores.
+
+Reglas para los campos:
 
 - El `id` es la identidad y **no cambia nunca**: los slots y las notas cuelgan
   de él. El `nombre` es sólo la etiqueta, y ése sí se cambia cuando quieras.
@@ -76,26 +80,20 @@ cosa: es `config.projects_yml()`. El archivo trae los campos comentados.
   para algo delicado, `never`.
 - **Si es un workspace que contiene repos** —una carpeta de trabajo con
   `{ambiente}/repos/{repo}` dentro, cada uno con su git— no le hagas `git init`
-  ni le crees un documento de estado. Declara los repos con un patrón y deja
-  `estado_ref` vacío:
-
-  ```yaml
-  rutas:
-    - patron: "*/repos/*"
-  ```
-
-  El hub lo resuelve al leer contra el disco y mide cada repo que encaje y tenga
-  `.git`. Un patrón sin coincidencias no es un error: el workspace acaba de
-  instalarse.
+  ni le crees un documento de estado. Declara los repos con un patrón
+  (`"patrones": ["*/repos/*"]`) y deja `estado_ref` vacío. El hub lo resuelve
+  al leer contra el disco y mide cada repo que encaje y tenga `.git`. Un patrón
+  sin coincidencias no es un error: el workspace acaba de instalarse.
 
 No hace falta reiniciar nada: el siguiente ciclo lo recoge.
 
 ### 3b. Si el registro aún trae los ejemplos de la semilla
 
 `projects.yml` nace con `mi-proyecto` y `otro-proyecto` de ejemplo, con rutas
-que no existen. Si siguen ahí al anexar el primero real, dilo y **ofrécete a
-quitarlos**: se pintarían como proyectos con todo en cero, y un cero se lee como
-«todo a salvo». Medido en la primera instalación en limpio (3-sep): quedaron.
+que no existen. Si siguen ahí al anexar el primero real, **dile que los quite**
+de `projects.yml`: se pintarían como proyectos con todo en cero, y un cero se lee
+como «todo a salvo». Medido en la primera instalación en limpio (3-sep):
+quedaron. Quitar no tiene aún puerta en el hub, y por eso lo hace él y no tú.
 
 ### 4. Ofrece la capa base
 
@@ -143,9 +141,11 @@ Con eso:
   siembra ahí porque `prompt_sembrar` usa el `asiento`.
 - Los repos declarados se siguen midiendo enteros —ramas, commits sin respaldar,
   worktrees, cambios sin commitear— sin que nadie escriba una línea en ellos.
-- Si el proyecto YA estaba anexado apuntando al repo, esto es **mover una línea**
-  en `projects.yml`: el repo baja de `asiento` a `rutas`, y arriba va la carpeta
-  nueva. El `id` no se toca — los slots y las notas cuelgan de él.
+- Si el proyecto YA estaba anexado apuntando al repo, hay que cambiar su
+  entrada: el repo baja de `asiento` a `rutas`, y arriba va la carpeta nueva.
+  El `id` no se toca — los slots y las notas cuelgan de él. El hub aún no tiene
+  una puerta para **editar** una entrada: díselo al usuario y que lo cambie él
+  en `projects.yml`, en vez de hacerlo tú.
 
 Dos cosas que comprobar antes de darlo por hecho:
 

@@ -86,6 +86,111 @@ def test_el_slot_cerrado_tampoco_pierde_nada(con, encargo):
     assert len(buzon.en_cola(con, encargo)) == 1
 
 
+def test_el_mismo_mensaje_reentregado_tras_un_reinicio_se_aparca_una_sola_vez(con, encargo):
+    """El relé guarda y muere antes del siguiente getUpdates: Telegram lo da
+    otra vez, y entraría dos veces al panel del agente (C-0184)."""
+    primero = buzon.aparcar(con, encargo, 77, "fío a los vecinos", message_id=9)
+    otra_vez = buzon.aparcar(con, encargo, 77, "fío a los vecinos", message_id=9)
+
+    assert otra_vez == primero
+    assert [m["texto"] for m in buzon.en_cola(con, encargo)] == ["fío a los vecinos"]
+
+
+def test_ya_entregado_tampoco_vuelve_a_la_cola_si_llega_repetido(con, encargo):
+    """Lo que cuenta es haberlo recibido, no que siga en cola: si ya salió al
+    panel, repetirlo sería repetirle la instrucción al agente."""
+    buzon.aparcar(con, encargo, 77, "fío a los vecinos", message_id=9)
+    con.execute("UPDATE encargo_mensaje SET estado = 'entregado'")
+
+    buzon.aparcar(con, encargo, 77, "fío a los vecinos", message_id=9)
+
+    assert buzon.en_cola(con, encargo) == []
+
+
+def test_un_audio_repetido_tampoco_se_aparca_dos_veces(con, encargo):
+    buzon.aparcar(con, encargo, 77, "", clase="audio", adjunto="tg:abc", message_id=12)
+    buzon.aparcar(con, encargo, 77, "", clase="audio", adjunto="tg:abc", message_id=12)
+
+    assert len(buzon.sin_transcribir(con)) == 1
+
+
+def test_el_mismo_numero_de_mensaje_de_otra_persona_no_es_un_repetido(con, encargo):
+    """🔴 El `message_id` de Telegram cuenta por conversación y el del chat web
+    es del servidor del chat (decisión 246): el 9 de Rosa en Telegram y el 9 de
+    alguien del chat web son mensajes distintos. Lo que los separa es quién
+    lo mandó, que en el chat web nace en otro rango de ids."""
+    encargos.anotar_persona(con, 900_000_001, "lupe", "Lupe")
+    encargos.editar_persona(con, 900_000_001, estado="activo", canal="web")
+    encargos.crear(con, "fonda-lupe", 900_000_001, "Fonda de Lupe")
+
+    buzon.aparcar(con, encargo, 77, "de Telegram", message_id=9)
+    buzon.aparcar(con, "fonda-lupe", 900_000_001, "del chat web", message_id=9)
+
+    assert [m["texto"] for m in buzon.en_cola(con, encargo)] == ["de Telegram"]
+    assert [m["texto"] for m in buzon.en_cola(con, "fonda-lupe")] == ["del chat web"]
+
+
+def test_el_mismo_numero_pasado_un_dia_ya_es_otro_mensaje(con, encargo):
+    """C-0186: si se rehace la base del servidor del chat web, sus números de
+    mensaje reempiezan, y un filtro sin fecha se tragaba lo nuevo por llevar
+    el número de algo viejo. Telegram no guarda un update sin confirmar más de
+    un día: pasado eso, el mismo número no puede ser una reentrega."""
+    viejo = buzon.aparcar(con, encargo, 77, "lo de anteayer", message_id=5)
+    con.execute("UPDATE encargo_mensaje SET recibido_en = ? WHERE id = ?", (t(hours=-25), viejo))
+
+    assert not buzon.ya_recibido(con, 77, 5)
+    nuevo = buzon.aparcar(con, encargo, 77, "lo de hoy", message_id=5)
+
+    assert nuevo != viejo
+    assert [m["texto"] for m in buzon.en_cola(con, encargo)] == ["lo de anteayer", "lo de hoy"]
+
+
+def test_ya_recibido_ve_lo_aparcado_y_lo_apuntado_sin_alta(con, encargo):
+    """La puerta del relé mira los dos sitios donde se guarda lo que entra: la
+    cola, y el registro para quien todavía no tenía alta (C-0186)."""
+    buzon.aparcar(con, encargo, 77, "fío a los vecinos", message_id=9)
+    encargos.anotar_persona(con, 99, "nueva", "Nueva")
+    encargos.registrar(con, "falla", encargos.marca_sin_alta(31), user_id=99, cuerpo="hola")
+
+    assert buzon.ya_recibido(con, 77, 9)
+    assert buzon.ya_recibido(con, 99, 31)
+    assert not buzon.ya_recibido(con, 99, 9)
+    assert not buzon.ya_recibido(con, 77, 31)
+    assert not buzon.ya_recibido(con, 77, None)
+
+
+def test_una_fecha_sin_zona_en_el_registro_no_rompe_la_puerta(con, encargo):
+    """Comparar una fecha sin zona con una con zona lanza, y la puerta corre en
+    mitad de tratar un mensaje: tres intentos y el relé lo saltaba."""
+    encargos.registrar(con, "falla", encargos.marca_sin_alta(31), user_id=99, cuerpo="hola")
+    sin_zona = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
+    con.execute("UPDATE encargo_registro SET momento = ?", (sin_zona,))
+
+    assert buzon.ya_recibido(con, 99, 31)
+    assert encargos.escrito_sin_alta(con, 99, buzon.VENTANA_REENTREGA) == ["hola"]
+
+
+def test_lo_que_no_trae_numero_de_mensaje_se_aparca_siempre(con, encargo):
+    """Un botón pulsado o lo que aparca el entrevistador no tienen `message_id`:
+    sin él no hay forma de saber si es el mismo, y perder uno es peor."""
+    buzon.aparcar(con, encargo, 77, "sí")
+    buzon.aparcar(con, encargo, 77, "sí")
+
+    assert len(buzon.en_cola(con, encargo)) == 2
+
+
+def test_lo_que_sale_con_ese_numero_no_cuenta_como_recibido(con, encargo):
+    """En el chat web un id de mensaje es único entre las dos direcciones, pero
+    la fila de lo que sale lleva el id que le dio el canal: que nunca tape lo
+    que entra."""
+    saliente = buzon.encolar_salida(con, encargo, "¿a qué hora abres?", user_id=77)
+    buzon.marcar_enviado(con, saliente, 9)
+
+    buzon.aparcar(con, encargo, 77, "a las siete", message_id=9)
+
+    assert [m["texto"] for m in buzon.en_cola(con, encargo)] == ["a las siete"]
+
+
 # ── Entregar en lote ────────────────────────────────────────────────────────
 
 
@@ -307,3 +412,131 @@ def test_a_partir_de_la_segunda_ronda_la_url_no_llega_como_primer_borrador(con):
     buzon.anunciar_publicacion(con, "encargo-1", "https://x.test")
     ultimo = [m for m in buzon.salientes(con) if m["user_id"] is None][-1]["texto"]
     assert "lo que pediste" in ultimo and "primer borrador" not in ultimo
+
+
+# ── Las puertas de la cola (C-0137) ─────────────────────────────────────────
+
+
+def _fila(con, mensaje_id: int) -> dict:
+    return dict(con.execute("SELECT * FROM encargo_mensaje WHERE id = ?", (mensaje_id,)).fetchone())
+
+
+def test_lo_que_sale_se_marca_enviado_y_su_secreto_se_tapa_en_el_mismo_paso(con, encargo):
+    """El tapado iba aparte, una línea debajo del UPDATE en el relé: quien
+    marcara enviado sin él dejaba la contraseña en la fila (regla 22, C-0127).
+    Ahora va en la misma sentencia que el estado (C-0186)."""
+    i = buzon.encolar_salida(con, encargo, f"tu clave es {buzon.secreto('Zq9-77')}", con_secreto=True)
+    buzon.anotar_detalle(con, i, "no salió: red")
+
+    buzon.marcar_enviado(con, i, 555)
+
+    fila = _fila(con, i)
+    assert (fila["estado"], fila["message_id"], fila["detalle"]) == ("enviado", 555, "")
+    assert fila["movido_en"] and "Zq9-77" not in fila["texto"] and buzon.TAPADO in fila["texto"]
+
+
+def test_lo_retirado_queda_a_la_vista_como_retirado_y_con_su_secreto_tapado(con, encargo):
+    uno = buzon.encolar_salida(con, encargo, "uno")
+    dos = buzon.encolar_salida(con, encargo, f"clave {buzon.secreto('s3creta')}", con_secreto=True)
+
+    buzon.retirar(con, [uno, dos])
+
+    for i in (uno, dos):
+        fila = _fila(con, i)
+        assert fila["estado"] == "descartado" and "retirado" in fila["detalle"] and fila["movido_en"]
+    assert "s3creta" not in _fila(con, dos)["texto"]
+    assert buzon.salientes(con) == []
+
+
+class _MuereTrasLaPrimeraEscritura:
+    """La conexión de un proceso que muere tras su primera escritura: lo que
+    `kill -9` o un apagón hacen entre dos sentencias en autocommit."""
+
+    def __init__(self, con):
+        self._con, self.escrituras = con, 0
+
+    def _escribe(self):
+        if self.escrituras:
+            raise SystemExit("el proceso muere aquí")
+        self.escrituras += 1
+
+    def execute(self, sql, *args):
+        if sql.lstrip().split(None, 1)[0].upper() in ("UPDATE", "INSERT", "DELETE"):
+            self._escribe()
+        return self._con.execute(sql, *args)
+
+    def executemany(self, sql, *args):
+        self._escribe()
+        return self._con.executemany(sql, *args)
+
+    def __getattr__(self, nombre):
+        return getattr(self._con, nombre)
+
+
+def _con_la_clave_en_claro(con, estado):
+    return con.execute("SELECT COUNT(*) FROM encargo_mensaje WHERE estado = ? AND texto LIKE '%Zq9-77%'",
+                       (estado,)).fetchone()[0]
+
+
+def test_morir_al_marcar_enviado_no_deja_la_clave_en_claro_en_lo_enviado(con, encargo):
+    """C-0186: eran dos UPDATE sueltos en autocommit —el estado y después el
+    tapado—, y un proceso que muriera entre los dos dejaba «enviado» con la
+    contraseña en la fila y en las copias diarias (regla 22, C-0127)."""
+    i = buzon.encolar_salida(con, encargo, f"tu clave es {buzon.secreto('Zq9-77')}", con_secreto=True)
+
+    try:
+        buzon.marcar_enviado(_MuereTrasLaPrimeraEscritura(con), i, 555)
+    except SystemExit:
+        pass
+
+    assert _con_la_clave_en_claro(con, "enviado") == 0
+
+
+def test_morir_al_retirar_no_deja_la_clave_en_claro_en_lo_retirado(con, encargo):
+    i = buzon.encolar_salida(con, encargo, f"tu clave es {buzon.secreto('Zq9-77')}", con_secreto=True)
+
+    try:
+        buzon.retirar(_MuereTrasLaPrimeraEscritura(con), [i])
+    except SystemExit:
+        pass
+
+    assert _con_la_clave_en_claro(con, "descartado") == 0
+
+
+def test_lo_que_ya_salio_no_se_retira_aunque_se_pida(con, encargo):
+    """C-0186: `encargo deshacer` lee la cola y retira; si entre las dos cosas
+    el relé lo mandó, lo marcaba «retirado antes de salir» sobre algo que ya
+    había llegado. Retirar sólo saca de la cola, y dice qué sacó."""
+    uno = buzon.encolar_salida(con, encargo, "uno")
+    dos = buzon.encolar_salida(con, encargo, "dos")
+    buzon.marcar_enviado(con, uno, 555)
+
+    assert buzon.retirar(con, [uno, dos]) == [dos]
+    assert _fila(con, uno)["estado"] == "enviado"
+    assert _fila(con, dos)["estado"] == "descartado"
+
+
+def test_lo_retirado_mientras_salia_sigue_retirado_y_dice_que_llego(con, encargo):
+    """C-0186: si se retira en el instante en que el relé lo está mandando, ya
+    no se puede deshacer. `marcar_enviado` sólo pasa de la cola a enviado: no
+    pisa el «descartado», pero la fila deja de decir que no salió."""
+    i = buzon.encolar_salida(con, encargo, "esto mejor no")
+    assert buzon.sigue_en_cola(con, i)
+    buzon.retirar(con, [i])
+    assert not buzon.sigue_en_cola(con, i)
+
+    assert buzon.marcar_enviado(con, i, 556) is False
+
+    fila = _fila(con, i)
+    assert fila["estado"] == "descartado" and fila["message_id"] == 556
+    assert "le llegó igual" in fila["detalle"]
+
+
+def test_el_motivo_y_el_adjunto_se_apuntan_por_la_cola(con, encargo):
+    i = buzon.aparcar(con, encargo, 77, "", clase="audio", adjunto="telegram:abc")
+    buzon.anotar_detalle(con, i, "no se pudo bajar el audio: red")
+    assert _fila(con, i)["detalle"] == "no se pudo bajar el audio: red"
+
+    buzon.apuntar_adjunto(con, i, "/tmp/a.webm")
+    fila = _fila(con, i)
+    assert (fila["adjunto"], fila["detalle"], fila["estado"]) == ("/tmp/a.webm", "", buzon.SIN_TRANSCRIBIR)

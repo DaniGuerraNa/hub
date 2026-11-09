@@ -461,6 +461,148 @@ def test_una_vuelta_entera_aparca_lo_que_llega(con, escena):
     assert [m["texto"] for m in buzon.en_cola(con, escena)] == ["abro a las siete"]
 
 
+def test_un_reinicio_del_rele_no_aparca_dos_veces_lo_que_telegram_reentrega(con, escena):
+    """El offset vive en memoria (C-0134): si el relé muere tras guardar y antes
+    del siguiente getUpdates, arranca con None y Telegram da lo mismo otra vez
+    (C-0184)."""
+    mismo = update(texto="abro a las siete", update_id=7, message_id=31)
+    rele_encargos.una_vuelta(con, BotFalso(updates=[mismo]), None, {})
+
+    rele_encargos.una_vuelta(con, BotFalso(updates=[mismo]), None, {})   # tras reiniciar
+
+    assert [m["texto"] for m in buzon.en_cola(con, escena)] == ["abro a las siete"]
+
+
+def test_un_comentario_al_plan_reentregado_tras_un_reinicio_se_contesta_una_vez(con, escena):
+    """C-0186: el filtro de `aparcar` (C-0184) no deja otra fila, pero el resto
+    de `procesar_mensaje` corría igual: dos líneas en el registro y DOS
+    «Anotado; se lo paso al entrevistador». La puerta va antes de todo."""
+    encargos.tocar(con, escena, estado="propuesta", plan_msg=600)
+    mismo = update(user_id=1, texto="mejor sin descuentos", update_id=8, message_id=40,
+                   responde_a=600)
+
+    rele_encargos.una_vuelta(con, BotFalso(updates=[mismo]), None, {})
+    rele_encargos.una_vuelta(con, BotFalso(updates=[mismo]), None, {})   # tras reiniciar
+
+    salidas = [m["texto"] for m in buzon.conversacion(con, escena) if m["direccion"] == "sale"]
+    assert sum(s.startswith("Anotado; se lo paso") for s in salidas) == 1
+    detalles = [r["detalle"] for r in encargos.registro(con, encargo_id=escena)]
+    assert sum(d.startswith("comentario del dueño") for d in detalles) == 1
+    assert sum(r["detalle"].startswith("repetido") for r in encargos.registro(con)) == 1
+
+
+def test_lo_que_escribe_alguien_sin_alta_y_se_reentrega_lo_lee_una_vez_el_entrevistador(con):
+    """C-0186: lo de quien no tiene alta no se aparca —va al registro— y el
+    filtro de C-0184 no lo veía. Reentregado, se apuntaba dos veces, y al darle
+    de alta `escrito_sin_alta` le daba al entrevistador sus primeras palabras
+    repetidas."""
+    mismo = update(user_id=99, texto="tengo una panadería", update_id=5, message_id=31)
+
+    rele_encargos.una_vuelta(con, BotFalso(updates=[mismo]), None, {})
+    rele_encargos.una_vuelta(con, BotFalso(updates=[mismo]), None, {})   # tras reiniciar
+
+    assert encargos.escrito_sin_alta(con, 99) == ["tengo una panadería"]
+    assert rele_encargos.procesar_mensaje(con, telegram.partes_con_voz(mismo)) == "repetido"
+
+
+def test_un_paso_que_falla_siempre_no_deja_al_rele_sordo(con, escena, monkeypatch):
+    """Regla dura 2 (C-0186): pedir lo nuevo es lo último de la vuelta, y un
+    paso de antes que fallaba siempre la cortaba: el relé seguía vivo y no leía
+    nada nunca. Ahora el fallo se apunta una vez y lo que llega se aparca."""
+    from hub import rele_base
+
+    monkeypatch.setattr(rele_encargos, "FALLANDO", {}, raising=False)
+    monkeypatch.setattr(rele_encargos, "desplegar_construidos", _levanta(RuntimeError("roto")))
+    bot = BotFalso(updates=[update(texto="abro a las siete", update_id=7)])
+
+    rele_base.correr("encargos", lambda: bot, lambda b, o: rele_encargos.una_vuelta(con, b, o, {}),
+                     lambda texto: None, dormir=lambda s: None, vueltas=3)
+
+    assert [m["texto"] for m in buzon.en_cola(con, escena)] == ["abro a las siete"]
+    rotos = [r for r in encargos.registro(con) if "desplegar_construidos" in r["detalle"]]
+    assert len(rotos) == 1
+
+
+def test_una_muestra_cuya_imagen_ya_no_esta_no_deja_al_chat_web_sin_leer(con, escena, monkeypatch):
+    """Reproducido (C-0186): `BotDeChat.enviar_foto` leía la imagen fuera del
+    `try` de la petición, el `FileNotFoundError` cortaba cada vuelta antes de
+    pedir lo nuevo y el relé no volvía a leer nada. Ahora es un
+    `TelegramCaido` más: el mensaje se queda con su motivo y la vuelta sigue."""
+    from hub import chatweb, rele_base
+
+    monkeypatch.setattr(rele_encargos, "FALLANDO", {}, raising=False)
+    encargos.editar_persona(con, 77, canal="web")
+    web = chatweb.BotDeChat("http://127.0.0.1:9", "tok")
+    leidas = []
+    monkeypatch.setattr(web, "actualizaciones", lambda desde=None: leidas.append(desde) or [])
+    monkeypatch.setattr(web, "_abrir", _levanta(AssertionError("no debería llegar a la red")))
+    bots = chatweb.Bots(con, {"web": web})
+    i = buzon.encolar_salida(con, escena, "1 · Clásico", clase="muestras", adjunto="/no/existe.png")
+
+    rele_base.correr("encargos", lambda: bots, lambda b, o: rele_encargos.una_vuelta(con, b, o, {}),
+                     lambda texto: None, dormir=lambda s: None, vueltas=3)
+
+    assert len(leidas) == 3
+    fila = [m for m in buzon.conversacion(con, escena) if m["id"] == i][0]
+    assert fila["estado"] == "en-cola" and "no existe la imagen" in fila["detalle"]
+
+
+def test_lo_que_no_sale_por_el_mismo_motivo_se_apunta_una_vez_y_no_en_cada_vuelta(con, escena):
+    """Una muestra cuya imagen ya no está no se arregla sola: sigue en cola con
+    su motivo, pero una línea «falla» por vuelta, cada pocos segundos, tapaba
+    el registro entero (arquitecto de C-0186)."""
+    buzon.encolar_salida(con, escena, "1 · Clásico", clase="muestras", adjunto="/no/existe.png")
+    bot = BotFalso(cae=True)
+
+    for _ in range(3):
+        rele_encargos.mandar_salientes(con, bot)
+
+    assert sum(r["detalle"].startswith("no salió un mensaje") for r in encargos.registro(con)) == 1
+    assert buzon.salientes(con)[0]["detalle"] == "no salió: la red no va"
+
+
+def test_lo_que_se_retira_mientras_sale_otro_no_sale(con, escena):
+    """C-0186: `encargo deshacer` mientras el relé manda un lote. Lo retirado
+    entre la lectura de la cola y su turno salía igual —y `marcar_enviado`
+    pisaba el «descartado»—. Justo antes de mandar cada uno se mira si sigue
+    en cola (`buzon.sigue_en_cola`)."""
+    primero = buzon.encolar_salida(con, escena, "uno de siete")
+    segundo = buzon.encolar_salida(con, escena, "esto mejor no")
+
+    class Bot(BotFalso):
+        def enviar(self, chat_id, texto):
+            if texto == "uno de siete":
+                buzon.retirar(con, [segundo])     # `encargo deshacer`, a la vez
+            return super().enviar(chat_id, texto)
+
+    bot = Bot()
+    rele_encargos.mandar_salientes(con, bot)
+
+    assert [t for _, t in bot.textos] == ["uno de siete"]
+    filas = {m["id"]: m for m in buzon.conversacion(con, escena)}
+    assert filas[primero]["estado"] == "enviado"
+    assert filas[segundo]["estado"] == "descartado" and "retirado antes de salir" in filas[segundo]["detalle"]
+
+
+def test_lo_retirado_mientras_se_manda_ese_mismo_queda_dicho_que_llego(con, escena):
+    """Reproducido (C-0186): retirado en el instante del envío ya no se puede
+    deshacer. No se finge: la fila y el registro dicen que le llegó."""
+    i = buzon.encolar_salida(con, escena, "esto mejor no")
+
+    class Bot(BotFalso):
+        def enviar(self, chat_id, texto):
+            buzon.retirar(con, [i])
+            return super().enviar(chat_id, texto)
+
+    bot = Bot()
+    rele_encargos.mandar_salientes(con, bot)
+
+    assert bot.textos
+    fila = [m for m in buzon.conversacion(con, escena) if m["id"] == i][0]
+    assert fila["estado"] == "descartado" and "le llegó igual" in fila["detalle"]
+    assert any("le llegó igual" in r["detalle"] for r in encargos.registro(con, encargo_id=escena))
+
+
 def _msg(user_id=77, texto="hola", **extra):
     return telegram.partes_con_voz(update(user_id=user_id, texto=texto, **extra))
 
@@ -751,8 +893,11 @@ def test_a_ella_se_le_dice_que_se_esta_construyendo_o_que_se_queda_en_pausa(con,
 
 def test_descartar_y_comentar_tambien_se_confirman(con, escena):
     plan_msg, _ = _con_plan(con, escena)
-    rele_encargos.procesar_mensaje(con, _msg(user_id=1, texto="quítale esto", responde_a=plan_msg))
-    rele_encargos.procesar_mensaje(con, _msg(user_id=1, texto="no", responde_a=plan_msg))
+    # Dos mensajes distintos, con dos números, como en Telegram: con el mismo,
+    # el segundo es una reentrega y no se trata (C-0186).
+    rele_encargos.procesar_mensaje(con, _msg(user_id=1, texto="quítale esto", responde_a=plan_msg,
+                                             message_id=9))
+    rele_encargos.procesar_mensaje(con, _msg(user_id=1, texto="no", responde_a=plan_msg, message_id=10))
 
     comentario, descarte = _al_dueno(con)
     assert "responde «aprobado» a ese mismo mensaje" in comentario
@@ -821,9 +966,9 @@ def _publicado(con, escena):
 def test_lo_que_dice_tras_ver_su_pagina_se_aparca_y_a_el_se_le_pregunta_una_vez(con, escena):
     _publicado(con, escena)
 
-    assert rele_encargos.procesar_mensaje(con, _msg(texto="¿se puede añadir un carrusel?")) == "cambios"
+    assert rele_encargos.procesar_mensaje(con, _msg(texto="¿se puede añadir un carrusel?", message_id=9)) == "cambios"
     rele_encargos.mandar_salientes(con, BotFalso())          # fija plan_msg
-    assert rele_encargos.procesar_mensaje(con, _msg(texto="con tres fotos")) == "cambios"
+    assert rele_encargos.procesar_mensaje(con, _msg(texto="con tres fotos", message_id=10)) == "cambios"
 
     assert [m["texto"] for m in buzon.en_cola(con, escena)] == [
         "¿se puede añadir un carrusel?", "con tres fotos"]
@@ -1089,7 +1234,15 @@ def test_al_publicar_un_sistema_va_la_app_y_la_contrasena_sale_una_sola_vez(con,
     # Regla dura 5: la contraseña no queda en la base ni en la carpeta.
     clave = next(t for t in a_ella if "contraseña «" in t).split("contraseña «")[1].split("»")[0]
     assert clave not in (encargos.carpeta(encargo_id) / implementador.ACCESO).read_text()
-    assert not con.execute("SELECT 1 FROM encargo WHERE nota LIKE ?", (f"%{clave}%",)).fetchone()
+    # En NINGUNA tabla (C-0127): antes se miraba sólo `encargo.nota`, y la
+    # clave seguía entera en `encargo_mensaje` y en `encargo_registro`, y con
+    # ellas en las 14 copias diarias de la base.
+    con.commit()
+    assert clave not in "\n".join(con.iterdump())
+    assert any(buzon.TAPADO in m["texto"] for m in buzon.conversacion(con, encargo_id))
+    # A quien la recibe le llega limpia, sin las marcas internas.
+    assert all("\ue000" not in t and "\ue001" not in t for _, t in bot.textos)
+    assert sum(clave in t for _, t in bot.textos) == 2, "a ella y al dueño, una vez cada uno"
 
     # Segundo despliegue (una ronda): mismo acceso, sin contraseña nueva.
     encargos.tocar(con, encargo_id, estado="construido"); con.commit()
@@ -1158,3 +1311,110 @@ def test_se_apunta_donde_quedo_el_audio_y_no_donde_se_pidio(con, escena):
     assert rele_encargos.bajar_audios(con, BotWebm()) == 1
     fila = con.execute("SELECT adjunto FROM encargo_mensaje WHERE clase = 'audio'").fetchone()
     assert fila["adjunto"].endswith(".webm") and Path(fila["adjunto"]).is_file()
+
+
+def test_la_contrasena_en_cola_no_la_ve_quien_lee_la_conversacion(con, escena):
+    """Entre encolarla y que salga, el agente puede leer la conversación
+    (`encargo conversacion`) y retirar lo encolado (`encargo deshacer`): en
+    ninguno de los dos se ve, y retirada se tapa en la fila (C-0127)."""
+    from hub import encargos_cli
+
+    encargos.tocar(con, escena, etapa="sistema"); con.commit()
+    buzon.anunciar_publicacion(con, escena, "https://x.test", clave="Zq9-secreta-77")
+    assert all("Zq9-secreta-77" not in m["texto"] for m in buzon.conversacion(con, escena))
+    args = encargos_cli.construir_parser().parse_args(["--encargo", escena, "deshacer", "5"])
+    encargos_cli.cmd_deshacer(con, args)
+    con.commit()
+    assert "Zq9-secreta-77" not in "\n".join(con.iterdump())
+
+
+def test_el_agente_no_puede_tapar_lo_que_el_mismo_dice(con, escena):
+    """Las marcas de secreto en un texto del agente se quitan al encolar: si
+    no, a ella le llegaría algo que en /encargos y en el registro sale tapado
+    (revisor de C-0127)."""
+    buzon.encolar_salida(con, escena, "te cobro el doble")
+    (m,) = [m for m in buzon.conversacion(con, escena) if m["direccion"] == "sale"]
+    assert m["texto"] == "te cobro el doble"
+
+
+def test_si_falla_algo_tras_abrir_el_constructor_el_reintento_no_abre_otro(con, escena, monkeypatch):
+    """Revisor de C-0130: con la transacción envolviendo también el efecto, el
+    rollback borraba el slot y el reintento abría un segundo constructor.
+    Desde C-0152 abrirlo va en `despues`, con el offset ya avanzado: si falla
+    lo de después, el mensaje no se repite."""
+    from hub import constructor
+
+    monkeypatch.setattr(rele_encargos, "FALLOS", {})
+    abiertos = []
+    # Como el de verdad: deja el encargo «construyendo».
+    monkeypatch.setattr(constructor, "abrir_agente",
+                        lambda c, e: abiertos.append(e) or encargos.tocar(c, e, estado="construyendo") or {"slot_id": 1})
+    encargos.tocar(con, escena, estado="propuesta")
+    plan_msg, _ = _con_plan(con, escena)
+    real, veces = buzon.encolar_salida, []
+
+    def encolar(*a, **k):
+        veces.append(1)
+        if len(veces) == 1:
+            raise RuntimeError("se cae justo después")
+        return real(*a, **k)
+
+    monkeypatch.setattr(rele_encargos.buzon, "encolar_salida", encolar)
+    pulsa = _pulsa(1, "aprobado", plan_msg, update_id=30)
+
+    class Reentrega(BotFalso):
+        def actualizaciones(self, offset=None):
+            return [pulsa] if offset is None or offset <= 30 else []
+
+    bot = Reentrega()
+    offset = rele_encargos.una_vuelta(con, bot, None, {})
+    assert offset == 31 and len(abiertos) == 1, "guardado: el fallo de después no lo repite"
+    rele_encargos.una_vuelta(con, bot, offset, {})
+    assert len(abiertos) == 1
+    assert any("lo de después falló" in r["detalle"] for r in encargos.registro(con, limite=20))
+
+
+def test_un_mensaje_que_falla_a_medias_no_deja_nada_guardado_ni_abre_nada(con, escena, monkeypatch):
+    """C-0152: lo que se guarda de un mensaje va entero o no va, y el efecto
+    (abrir el constructor) no corre si el mensaje no se guardó."""
+    from hub import constructor
+
+    monkeypatch.setattr(rele_encargos, "FALLOS", {})
+    abiertos = []
+    monkeypatch.setattr(constructor, "abrir_agente", lambda c, e: abiertos.append(e) or {"slot_id": 1})
+    encargos.tocar(con, escena, estado="propuesta")
+    plan_msg, _ = _con_plan(con, escena)
+    real = encargos.registrar
+
+    def registrar(c, tipo, texto, **k):
+        if "APROBADO" in texto:
+            raise RuntimeError("se cae a mitad del mensaje")
+        return real(c, tipo, texto, **k)
+
+    monkeypatch.setattr(rele_encargos.encargos, "registrar", registrar)
+    pulsa = _pulsa(1, "aprobado", plan_msg, update_id=40)
+
+    class Una(BotFalso):
+        def actualizaciones(self, offset=None):
+            return [pulsa]
+
+    assert rele_encargos.una_vuelta(con, Una(), None, {}) is None
+    assert encargos.ver(con, escena)["estado"] == "propuesta", "el «aprobado» se deshizo con el resto"
+    assert abiertos == []
+
+
+@pytest.mark.parametrize("modulo, nombre", [
+    ("canal", "archivar"), ("rele_encargos", "avisar_al_dueno"), ("rele_encargos", "SIN_ENCARGO"),
+    ("buzon", "sin_resolver"), ("rele", "dueno"),
+])
+def test_no_queda_lo_que_nadie_llama_en_el_canal_y_los_encargos(modulo, nombre):
+    """Sin llamadores (C-0140): cada uno era un sitio más donde arreglar algo
+    que no se usa. `rele.dueno` envolvía `canal.dueno` para una sola llamada."""
+    import importlib
+    assert not hasattr(importlib.import_module(f"hub.{modulo}"), nombre)
+
+
+def test_el_bot_de_encargos_no_lleva_el_responder_que_sustituyeron_los_botones():
+    """Aprobar es pulsar un botón atado al mensaje (237), no contestarlo con un
+    texto colgado: `BotDeEncargos.responder` sólo lo llamaba su test (C-0140)."""
+    assert not hasattr(telegram.BotDeEncargos, "responder")

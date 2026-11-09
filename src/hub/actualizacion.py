@@ -6,9 +6,9 @@ Actualizaciones en vez de copiado a una terminal. Lo que importa es DÓNDE corre
 🔴 **Fuera del grupo de procesos de `hub-web`.** `actualizar.sh` reinicia
 `hub-web`, y systemd mata al reiniciar todo lo que cuelga de su cgroup: lanzado
 como hijo normal, la actualización moriría a medias justo al reiniciar el
-servicio que la lanzó —la decisión 153 cuenta lo mismo con tmux—. Por eso va en
-una unidad transitoria propia (`systemd-run --user`), que sobrevive al
-reinicio. Sin systemd, en una sesión nueva (`setsid`), y detrás se rearranca el
+servicio que la lanzó —la decisión 153 cuenta lo mismo con tmux—. Por eso se
+lanza con `procesos.desasir`, en un scope propio que sobrevive al reinicio
+(decisión 344). Sin systemd, en una sesión nueva, y detrás se rearranca el
 hub con `arrancar.sh`, que es lo que ahí hace las veces de servicio.
 
 Lo que pasa se escribe en `HUB_HOME/actualizacion/`: el registro entero y el
@@ -28,9 +28,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import config
-
-UNIDAD = "hub-actualizar"
+from . import config, procesos
 
 
 def carpeta() -> Path:
@@ -65,13 +63,11 @@ def cambios_locales(raiz: Path | None = None) -> list[str]:
 
 
 def _con_systemd() -> bool:
-    if not shutil.which("systemd-run"):
-        return False
-    try:
-        return subprocess.run(["systemctl", "--user", "show-environment"], capture_output=True,
-                              timeout=5).returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
+    """Si los servicios van con systemd de usuario: la pregunta es la de
+    `salud` (C-0115); aquí además hace falta `systemd-run` para lanzar fuera
+    del cgroup."""
+    from . import salud
+    return bool(shutil.which("systemd-run")) and salud.hay_systemd_de_usuario()
 
 
 def en_marcha() -> bool:
@@ -104,6 +100,11 @@ def lanzar(sin_bajar: bool = False) -> dict:
     if not guion.is_file():
         raise RuntimeError(f"no encuentro {guion}")
     con_systemd = _con_systemd()
+    # Fuera del cgroup de `hub-web` (decisión 344): `actualizar.sh` lo reinicia,
+    # y un hijo suyo moriría a mitad de la actualización.
+    if con_systemd and not procesos.puede_desasir():
+        raise RuntimeError("los servicios van con systemd pero no puedo lanzarla fuera de hub-web: "
+                           "moriría al reiniciarlo. Córrela en una terminal: bash scripts/actualizar.sh")
     orden = f"bash {shlex.quote(str(guion))}" + (" --sin-bajar" if sin_bajar else "")
     if not con_systemd:
         # Sin servicios, actualizar.sh no reinicia nada: lo hace arrancar.sh.
@@ -114,17 +115,13 @@ def lanzar(sin_bajar: bool = False) -> dict:
     entorno = {**os.environ, "PATH": tmux.path_de_usuario(), "HUB_HOME": str(config.HUB_HOME)}
     _registro().write_text("")
     _inicio().write_text(json.dumps({"t": int(time.time()), "sin_bajar": sin_bajar}))
-    if con_systemd:
-        cmd = ["systemd-run", "--user", "--quiet", "--collect", f"--unit={UNIDAD}-{int(time.time())}",
-               f"--setenv=PATH={entorno['PATH']}", f"--setenv=HUB_HOME={config.HUB_HOME}",
-               "bash", "-c", linea]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=20, env=entorno)
-        if r.returncode != 0:
-            _inicio().unlink(missing_ok=True)
-            raise RuntimeError((r.stderr or "systemd-run falló").strip()[:300])
-    else:
-        subprocess.Popen(["bash", "-c", linea], env=entorno, start_new_session=True,
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proceso = procesos.desasir(["bash", "-c", linea], env=entorno)
+    # Si systemd-run no monta el scope, la orden ni arranca y nunca dejaría su
+    # resultado: «en marcha» durante media hora. Se ve en el primer instante.
+    time.sleep(0.3)
+    if proceso.poll() not in (None, 0) and en_marcha():
+        _inicio().unlink(missing_ok=True)
+        raise RuntimeError("no se pudo lanzar la actualización fuera de hub-web")
     return {"systemd": con_systemd}
 
 

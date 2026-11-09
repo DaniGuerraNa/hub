@@ -10,13 +10,15 @@ Claude sin tener que contarlo a mano.
 
 ## Verla entera
 
-```
-http://127.0.0.1:8787/api/docs
+```bash
+curl -s localhost:8787/openapi.json | jq '.paths | keys'
 ```
 
-Es la documentación que FastAPI genera del código, así que **no puede quedarse
-desactualizada**: si un endpoint cambia, cambia ahí. Empieza por ahí antes que
-por esta lista, que es un resumen.
+Es el esquema que FastAPI genera del código, así que **no puede quedarse
+desactualizado**: si un endpoint cambia, cambia ahí. Empieza por ahí antes que
+por esta lista, que es un resumen. No hay página de documentación
+(`/api/docs`): FastAPI la sirve cargando Swagger de internet, y el hub no
+carga nada de fuera.
 
 ## Lo que más se usa
 

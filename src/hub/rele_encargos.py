@@ -29,12 +29,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-from . import buzon, config, db, encargos, telegram, transcribir
-
-PAUSA = 2
-PAUSA_TRAS_FALLO = 30
+from . import buzon, config, db, encargos, llavero, rele_base, telegram, transcribir
+from .reloj import instante
 
 # Cuánto se insiste con un audio que no se puede transcribir antes de entregarlo
 # con el hueco declarado. Diez minutos cubren un modelo que se está descargando;
@@ -54,11 +50,6 @@ SALUDO_SIN_ALTA = (
     "momento seguimos."
 )
 
-SIN_ENCARGO = (
-    "Hola. Tengo tu alta, pero todavía no hay ningún trabajo abierto a tu "
-    "nombre. Ya avisé; en cuanto esté, te escribo y empezamos."
-)
-
 # Qué se admite como aprobación de un plan. Corta y cerrada a propósito
 # (decisión 281): es la acción más privilegiada del sistema —autoriza gasto y un
 # despliegue público— y lo que la dispara tiene que ser inequívoco. Todo lo demás
@@ -70,33 +61,26 @@ IMPLEMENTAN = frozenset({"implementar", "implementalo", "impleméntalo", "sistem
 RETOMAN = {"otra ronda", "ronda", "retomar", "seguimos", "sí", "si"}
 # Resultados de `procesar_mensaje` que cierran una pregunta con botones.
 DECIDIDOS = {"aprobado", "descartado", "otra-ronda", "sin-ronda", "ya-resuelto"}
+# Con esto se apunta el fallo al abrir el constructor y con esto se busca para
+# no reintentar antes de `PLAZO_TRAS_FALLO`: dos cadenas en dos sitios harían
+# que, cambiada una, se reintentara en cada vuelta.
+MARCA_SIN_CONSTRUCTOR = "no se pudo abrir el constructor"
 # Estados en los que un plan ya no admite decisión: volver a «aprobar» no es
 # aprobar, es un toque de más.
 YA_DECIDIDOS = ("aprobado", "construyendo", "implementando", "construido", "descartado")
 
 
-def ahora() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def _momento(valor: str | None) -> datetime:
-    fecha = datetime.fromisoformat(valor or ahora())
-    return fecha if fecha.tzinfo else fecha.replace(tzinfo=timezone.utc)
-
-
 def ajustes() -> dict:
     """Lee `encargos.yml`. Sin configurar no es un error: es lo normal al llegar."""
-    ruta = config.encargos_yml()
-    if not ruta.is_file():
-        return {}
-    try:
-        return yaml.safe_load(ruta.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as exc:
-        raise ValueError(f"{ruta} no es YAML válido: {exc}") from exc
+    return config.leer_ajustes(config.encargos_yml())
 
 
 def token_configurado() -> str:
     return str(ajustes().get("token_ref") or "").strip()
+
+
+#: Para el inventario del llavero (C-0143): dónde vive, nunca el valor.
+LLAVES = (llavero.Llave("telegram-encargos", "el bot de encargos (hub-encargos)", token_configurado),)
 
 
 def bot(con: sqlite3.Connection | None = None):
@@ -104,7 +88,14 @@ def bot(con: sqlite3.Connection | None = None):
     entre los dos por el canal de cada persona (decisión 246)."""
     from . import chatweb
 
-    de_telegram = telegram.BotDeEncargos(telegram.leer_token(token_configurado()))
+    referencia = token_configurado()
+    try:
+        token = telegram.leer_token(referencia)
+    except telegram.SinToken as exc:
+        rele_base.anotar_token("encargos", referencia, str(exc))
+        raise
+    rele_base.anotar_token("encargos", referencia, None)
+    de_telegram = telegram.BotDeEncargos(token)
     chat = chatweb.bot(ajustes())
     if chat is None or con is None:
         return de_telegram
@@ -116,11 +107,11 @@ def estado() -> dict[str, Any]:
     referencia = token_configurado()
     if not referencia:
         return {"configurado": False, "detalle": "no hay `token_ref` en encargos.yml"}
-    try:
-        telegram.leer_token(referencia)
-    except telegram.SinToken as exc:
-        return {"configurado": False, "referencia": referencia, "detalle": str(exc)}
-    detalle = "el puntero lleva a un token"
+    # 🔴 Sin abrir el token: `hub-web` no lo toca (C-0144). Lo dice el relé.
+    token = rele_base.estado_token("encargos", referencia, "hub-encargos")
+    if not token["configurado"]:
+        return token
+    detalle = token["detalle"]
     try:
         transcribir.comando(ajustes())
     except transcribir.SinTranscriptor as exc:
@@ -158,10 +149,20 @@ def procesar_mensaje(con: sqlite3.Connection, msg: dict) -> str:
         con, msg["user_id"], msg.get("username", ""), msg.get("nombre", "")
     )
 
+    # 🔴 Lo que el canal vuelve a dar tras un reinicio del relé (C-0186): ni se
+    # aparca ni se contesta otra vez. Antes de todo lo demás, porque cada rama
+    # de abajo deja algo —una línea, un «Anotado…»— que la segunda vez sobra.
+    if buzon.ya_recibido(con, msg["user_id"], msg.get("message_id")):
+        encargos.registrar(
+            con, "entra", f"repetido: el canal volvió a dar el mensaje #{msg['message_id']}, "
+            "que ya estaba recibido", user_id=msg["user_id"], cuerpo=msg.get("texto", ""),
+        )
+        return "repetido"
+
     if persona["estado"] != "activo":
         encargos.registrar(
-            con, "falla", "mensaje de alguien sin alta", user_id=msg["user_id"],
-            cuerpo=msg.get("texto", ""),
+            con, "falla", encargos.marca_sin_alta(msg.get("message_id")),
+            user_id=msg["user_id"], cuerpo=msg.get("texto", ""),
         )
         return "sin-alta"
 
@@ -248,19 +249,25 @@ def _resolver_plan(con: sqlite3.Connection, encargo: dict, msg: dict) -> str:
             con, "entra", "plan APROBADO por el dueño", user_id=msg["user_id"],
             encargo_id=encargo["id"], cuerpo=msg.get("texto", ""),
         )
-        resultado = empezar_a_construir(con, encargo["id"])
-        # 🔴 Cada acción suya recibe una confirmación (decisión 231). Aprobó, y
-        # durante veinte minutos no supo si había servido: la primera vez lo
-        # escribió suelto y no pasó nada; la segunda arrancó un constructor
-        # que murió al instante, y tampoco. Un canal que calla tras un permiso
-        # se lee como que no funcionó, y entonces se repite el permiso.
-        buzon.encolar_salida(con, encargo["id"], CONFIRMACION[resultado].format(
-            encargo=encargo["id"]), user_id=dueno)
-        # Y a ella, que es quien está esperando (decisión 233).
-        buzon.encolar_salida(
-            con, encargo["id"],
-            "Ya está aprobado y se está construyendo. Te aviso en cuanto esté "
-            "listo para que lo veas.")
+        encargo_id = encargo["id"]
+
+        def construir() -> None:
+            # Abre un constructor en tmux: fuera de la transacción (C-0152).
+            resultado = empezar_a_construir(con, encargo_id)
+            # 🔴 Cada acción suya recibe una confirmación (decisión 231). Aprobó, y
+            # durante veinte minutos no supo si había servido: la primera vez lo
+            # escribió suelto y no pasó nada; la segunda arrancó un constructor
+            # que murió al instante, y tampoco. Un canal que calla tras un permiso
+            # se lee como que no funcionó, y entonces se repite el permiso.
+            buzon.encolar_salida(con, encargo_id, CONFIRMACION[resultado].format(
+                encargo=encargo_id), user_id=dueno)
+            # Y a ella, que es quien está esperando (decisión 233).
+            buzon.encolar_salida(
+                con, encargo_id,
+                "Ya está aprobado y se está construyendo. Te aviso en cuanto esté "
+                "listo para que lo veas.")
+
+        rele_base.efecto(construir)
         return "aprobado"
     if dicho in DESCARTAN:
         encargos.tocar(con, encargo["id"], estado="descartado")
@@ -365,22 +372,30 @@ def _abrir_ronda_sola(con: sqlite3.Connection, encargo: dict, user_id: int, resu
     from . import entrevistador
 
     encargo_id = encargo["id"]
-    try:
-        hecho = entrevistador.abrir_otra_ronda(con, encargo_id)
-    except Exception as exc:  # noqa: BLE001 - el relé no puede morir por esto
-        encargos.registrar(con, "falla", f"no se pudo abrir otra ronda sola: {exc!r}",
-                           encargo_id=encargo_id)
-        return False
-    buzon.anotar_aviso_de_espera(con, encargo_id)
-    persona = encargos.ver_persona(con, user_id) or {}
-    if quien := encargos.dueno(con):
-        buzon.encolar_salida(
-            con, encargo_id,
-            f"{encargos.nombre_visible(persona)} vio «{encargo_id}» y dice:\n"
-            f"«{(resumen or '').strip()[:600]}»\n\n"
-            f"Es de confianza, así que la ronda {hecho['ronda']} se abrió sola. Te aviso "
-            "cuando esté.", user_id=int(quien["user_id"]))
-    return True
+
+    def abrir() -> bool:
+        # Mata y abre agentes: fuera de la transacción del mensaje (C-0152).
+        # Si el relé muere entre guardar y esto, esta ronda no se recupera
+        # sola (decisión 352): se acepta, y el dueño lo ve en /encargos.
+        try:
+            hecho = entrevistador.abrir_otra_ronda(con, encargo_id)
+        except Exception as exc:  # noqa: BLE001 - el relé no puede morir por esto
+            encargos.registrar(con, "falla", f"no se pudo abrir otra ronda sola: {exc!r}",
+                               encargo_id=encargo_id)
+            return False
+        buzon.anotar_aviso_de_espera(con, encargo_id)
+        persona = encargos.ver_persona(con, user_id) or {}
+        if quien := encargos.dueno(con):
+            buzon.encolar_salida(
+                con, encargo_id,
+                f"{encargos.nombre_visible(persona)} vio «{encargo_id}» y dice:\n"
+                f"«{(resumen or '').strip()[:600]}»\n\n"
+                f"Es de confianza, así que la ronda {hecho['ronda']} se abrió sola. Te aviso "
+                "cuando esté.", user_id=int(quien["user_id"]))
+        return True
+
+    hecho = rele_base.efecto(abrir)
+    return True if hecho is None else hecho
 
 
 def _boton_de_ella(con: sqlite3.Connection, persona: dict, msg: dict) -> str:
@@ -390,8 +405,6 @@ def _boton_de_ella(con: sqlite3.Connection, persona: dict, msg: dict) -> str:
     implementamos?»: la decisión de que está lista es de quien la usa, y la de
     gastar en implementarla sigue siendo de quien aprueba.
     """
-    from . import implementador  # noqa: F401 - por simetría con el resto
-
     dato = msg.get("texto", "")
     encargo = encargos.publicado_de(con, msg["user_id"])
     if not encargo:
@@ -443,45 +456,53 @@ def _resolver_otra_ronda(con: sqlite3.Connection, encargo: dict, msg: dict) -> s
         # 🔴 Decisión 244: la maqueta ya está como quiere; ahora el sistema.
         from . import implementador
 
-        try:
-            hecho = implementador.empezar(con, encargo_id)
-        except Exception as exc:  # noqa: BLE001 - el relé no puede morir por esto
-            encargos.registrar(con, "falla", f"no se pudo empezar a implementar: {exc!r}",
-                               encargo_id=encargo_id)
+        def implementar() -> str:
+            # Mata paneles y abre el implementador: fuera de la transacción (C-0152).
+            try:
+                implementador.empezar(con, encargo_id)
+            except Exception as exc:  # noqa: BLE001 - el relé no puede morir por esto
+                encargos.registrar(con, "falla", f"no se pudo empezar a implementar: {exc!r}",
+                                   encargo_id=encargo_id)
+                buzon.encolar_salida(con, encargo_id,
+                                     f"No pude empezar a implementar «{encargo_id}»: {exc}",
+                                     user_id=dueno)
+                return "no-se-pudo"
             buzon.encolar_salida(con, encargo_id,
-                                 f"No pude empezar a implementar «{encargo_id}»: {exc}",
-                                 user_id=dueno)
-            return "no-se-pudo"
-        buzon.encolar_salida(con, encargo_id,
-                             f"«{encargo_id}» pasa a sistema: el implementador ya está "
-                             "trabajando sobre la maqueta. Cuando esté, se publica en la "
-                             "misma dirección y os llega el acceso a los dos.", user_id=dueno)
-        buzon.encolar_salida(con, encargo_id,
-                             "Tu maqueta ya está como la quieres, así que ahora la "
-                             "convertimos en el sistema de verdad: lo que apuntes se "
-                             "queda guardado y entras con tu contraseña. Te aviso cuando "
-                             "esté, con la dirección y tu acceso.")
-        return "implementando"
+                                 f"«{encargo_id}» pasa a sistema: el implementador ya está "
+                                 "trabajando sobre la maqueta. Cuando esté, se publica en la "
+                                 "misma dirección y os llega el acceso a los dos.", user_id=dueno)
+            buzon.encolar_salida(con, encargo_id,
+                                 "Tu maqueta ya está como la quieres, así que ahora la "
+                                 "convertimos en el sistema de verdad: lo que apuntes se "
+                                 "queda guardado y entras con tu contraseña. Te aviso cuando "
+                                 "esté, con la dirección y tu acceso.")
+            return "implementando"
+
+        return rele_base.efecto(implementar) or "implementando"
     if dicho in APRUEBAN | RETOMAN:
-        try:
-            hecho = entrevistador.abrir_otra_ronda(con, encargo_id)
-        except Exception as exc:  # noqa: BLE001 - el relé no puede morir por esto
-            encargos.registrar(con, "falla", f"no se pudo abrir otra ronda: {exc!r}",
-                               encargo_id=encargo_id)
+        def ronda() -> str:
+            # Mata y abre agentes: fuera de la transacción (C-0152).
+            try:
+                hecho = entrevistador.abrir_otra_ronda(con, encargo_id)
+            except Exception as exc:  # noqa: BLE001 - el relé no puede morir por esto
+                encargos.registrar(con, "falla", f"no se pudo abrir otra ronda: {exc!r}",
+                                   encargo_id=encargo_id)
+                buzon.encolar_salida(con, encargo_id,
+                                     f"No pude abrir otra ronda de «{encargo_id}». El motivo "
+                                     "está en el registro de /encargos.", user_id=dueno)
+                return "no-se-pudo"
             buzon.encolar_salida(con, encargo_id,
-                                 f"No pude abrir otra ronda de «{encargo_id}». El motivo "
-                                 "está en el registro de /encargos.", user_id=dueno)
-            return "no-se-pudo"
-        buzon.encolar_salida(con, encargo_id,
-                             f"Ronda {hecho['ronda']} de «{encargo_id}» abierta: el "
-                             "entrevistador ya tiene lo que pidió.", user_id=dueno)
-        buzon.encolar_salida(con, encargo_id,
-                             "Vale, le entramos. Te escribo en un momento con alguna pregunta.")
-        # Lo que dijo llevaba aparcado desde que él tardó en pulsar: sin esto, la
-        # misma vuelta le pedía paciencia ANTES del «vale, le entramos». Esta
-        # línea ya es el acuse; la de espera empieza a contar desde aquí.
-        buzon.anotar_aviso_de_espera(con, encargo_id)
-        return "otra-ronda"
+                                 f"Ronda {hecho['ronda']} de «{encargo_id}» abierta: el "
+                                 "entrevistador ya tiene lo que pidió.", user_id=dueno)
+            buzon.encolar_salida(con, encargo_id,
+                                 "Vale, le entramos. Te escribo en un momento con alguna pregunta.")
+            # Lo que dijo llevaba aparcado desde que él tardó en pulsar: sin esto, la
+            # misma vuelta le pedía paciencia ANTES del «vale, le entramos». Esta
+            # línea ya es el acuse; la de espera empieza a contar desde aquí.
+            buzon.anotar_aviso_de_espera(con, encargo_id)
+            return "otra-ronda"
+
+        return rele_base.efecto(ronda) or "otra-ronda"
     if dicho in DESCARTAN:
         encargos.tocar(con, encargo_id, plan_msg=None)
         encargos.registrar(con, "entra", "sin otra ronda por ahora", user_id=dueno,
@@ -535,8 +556,8 @@ def construir_lo_aprobado(con: sqlite3.Connection, ajustes_: dict | None = None)
     # Tras un fallo se espera el mismo plazo que el despliegue: reintentar cada
     # cinco segundos contra un tmux que no está no lo trae antes.
     encargo_id = aprobados[0]["id"]
-    if _ya_apuntado(con, encargo_id, "no se pudo abrir el constructor",
-                    desde=datetime.now(timezone.utc) - PLAZO_TRAS_FALLO):
+    if encargos.ya_registrado(con, encargo_id, MARCA_SIN_CONSTRUCTOR,
+                              desde=datetime.now(timezone.utc) - PLAZO_TRAS_FALLO):
         return None
     return empezar_a_construir(con, encargo_id)
 
@@ -596,7 +617,7 @@ def empezar_a_construir(con: sqlite3.Connection, encargo_id: str) -> str:
         constructor.abrir_agente(con, encargo_id)
     except Exception as exc:  # noqa: BLE001 - el relé no puede morir por esto
         encargos.registrar(
-            con, "falla", f"no se pudo abrir el constructor: {exc!r}",
+            con, "falla", f"{MARCA_SIN_CONSTRUCTOR}: {exc!r}",
             encargo_id=encargo_id)
         return "no-se-pudo"
     return "construyendo"
@@ -628,17 +649,6 @@ def despliegue_configurado(ajustes_: dict | None = None) -> dict | None:
     if not all(str(bloque.get(k) or "").strip() for k in ("servidor", "caddy", "dominio")):
         return None
     return {k: str(bloque[k]).strip() for k in ("servidor", "caddy", "dominio")}
-
-
-def _ya_apuntado(con: sqlite3.Connection, encargo_id: str, detalle: str,
-                 desde: datetime | None = None) -> bool:
-    sql = "SELECT momento FROM encargo_registro WHERE encargo_id = ? AND detalle LIKE ?"
-    filas = con.execute(sql, (encargo_id, detalle + "%")).fetchall()
-    if not filas:
-        return False
-    if desde is None:
-        return True
-    return any(datetime.fromisoformat(f["momento"]) >= desde for f in filas)
 
 
 def desplegar_construidos(con: sqlite3.Connection,
@@ -685,8 +695,8 @@ def desplegar_construidos(con: sqlite3.Connection,
                 encargos.registrar(con, "sale", f"nombrado «{nombre}» a partir de la ficha",
                                    encargo_id=nombre)
                 encargo_id = nombre
-        if _ya_apuntado(con, encargo_id, MARCA_FALLO,
-                        desde=datetime.now(timezone.utc) - PLAZO_TRAS_FALLO):
+        if encargos.ya_registrado(con, encargo_id, MARCA_FALLO,
+                                  desde=datetime.now(timezone.utc) - PLAZO_TRAS_FALLO):
             continue
 
         fila = encargos.ver(con, encargo_id)
@@ -713,7 +723,7 @@ def desplegar_construidos(con: sqlite3.Connection,
             salida, codigo = repr(exc), -1
 
         if codigo != 0:
-            primera_vez = not _ya_apuntado(con, encargo_id, MARCA_FALLO)
+            primera_vez = not encargos.ya_registrado(con, encargo_id, MARCA_FALLO)
             encargos.registrar(
                 con, "falla", f"{MARCA_FALLO} (código {codigo})",
                 encargo_id=encargo_id, cuerpo=salida[-2000:])
@@ -755,14 +765,12 @@ def bajar_audios(con: sqlite3.Connection, bot_: telegram.BotDeEncargos) -> int:
         try:
             guardado = bot_.descargar(adjunto[len(EN_TELEGRAM):], destino)
         except telegram.TelegramCaido as exc:
-            con.execute("UPDATE encargo_mensaje SET detalle = ? WHERE id = ?",
-                        (f"no se pudo bajar el audio: {exc}", mensaje["id"]))
+            buzon.anotar_detalle(con, mensaje["id"], f"no se pudo bajar el audio: {exc}")
             continue
         # Lo que se apunta es donde QUEDÓ, que no siempre es donde se pidió: el
         # chat web guarda webm y corrige la extensión (246). Apuntar el .ogg
         # pedido dejó un audio real «inexistente» para el transcriptor.
-        con.execute("UPDATE encargo_mensaje SET adjunto = ?, detalle = '' WHERE id = ?",
-                    (str(guardado or destino), mensaje["id"]))
+        buzon.apuntar_adjunto(con, mensaje["id"], str(guardado or destino))
         bajados += 1
     return bajados
 
@@ -798,9 +806,8 @@ def transcribir_pendientes(con: sqlite3.Connection,
             resueltos += 1
             continue
         except transcribir.SinTranscriptor as exc:
-            con.execute("UPDATE encargo_mensaje SET detalle = ? WHERE id = ?",
-                        (str(exc), mensaje["id"]))
-            if _momento(mensaje["recibido_en"]) + PLAZO_TRANSCRIPCION < _momento(None):
+            buzon.anotar_detalle(con, mensaje["id"], str(exc))
+            if instante(mensaje["recibido_en"]) + PLAZO_TRANSCRIPCION < instante(None):
                 buzon.rendirse_con_el_audio(con, mensaje["id"], str(exc))
                 encargos.registrar(
                     con, "falla", f"audio entregado sin transcribir: {exc}",
@@ -838,6 +845,10 @@ def mandar_salientes(con: sqlite3.Connection, bot_: telegram.BotDeEncargos) -> i
     """
     salidos = 0
     for mensaje in buzon.salientes(con):
+        # La cola se leyó de golpe y se manda de uno en uno: lo que `encargo
+        # deshacer` retiró entre medias ya no sale (C-0186).
+        if not buzon.sigue_en_cola(con, mensaje["id"]):
+            continue
         encargo = encargos.ver(con, mensaje["encargo_id"])
         if not encargo:
             continue
@@ -845,31 +856,39 @@ def mandar_salientes(con: sqlite3.Connection, bot_: telegram.BotDeEncargos) -> i
         try:
             if mensaje["clase"] == "muestras" and mensaje["adjunto"]:
                 message_id = bot_.enviar_foto(
-                    int(destino), Path(mensaje["adjunto"]), mensaje["texto"])
+                    int(destino), Path(mensaje["adjunto"]), buzon.para_enviar(mensaje["texto"]))
             elif mensaje.get("botones"):
                 message_id = bot_.enviar_con_botones(
-                    int(destino), mensaje["texto"],
+                    int(destino), buzon.para_enviar(mensaje["texto"]),
                     [tuple(b) for b in json.loads(mensaje["botones"])])
             else:
-                message_id = bot_.enviar(int(destino), mensaje["texto"])
+                message_id = bot_.enviar(int(destino), buzon.para_enviar(mensaje["texto"]))
         except telegram.TelegramCaido as exc:
-            con.execute("UPDATE encargo_mensaje SET detalle = ? WHERE id = ?",
-                        (f"no salió: {exc}", mensaje["id"]))
-            encargos.registrar(
-                con, "falla", f"no salió un mensaje: {exc}",
-                user_id=destino, encargo_id=mensaje["encargo_id"])
+            # Al registro, sólo cuando cambia el motivo (C-0186): una imagen
+            # que ya no está no se arregla sola, y una línea por vuelta, cada
+            # pocos segundos, tapaba el resto del registro.
+            motivo = f"no salió: {exc}"
+            if mensaje.get("detalle") != motivo:
+                buzon.anotar_detalle(con, mensaje["id"], motivo)
+                encargos.registrar(
+                    con, "falla", f"no salió un mensaje: {exc}",
+                    user_id=destino, encargo_id=mensaje["encargo_id"])
             continue
 
         if not mensaje["user_id"]:
             # Le contestaron: si se le había pedido paciencia, la espera acaba
             # aquí y sin narrarla — la contestación ya lo dice (235).
             buzon.cerrar_espera(con, mensaje["encargo_id"])
-        con.execute(
-            """UPDATE encargo_mensaje
-               SET estado = 'enviado', message_id = ?, movido_en = ?, detalle = ''
-               WHERE id = ?""",
-            (message_id, ahora(), mensaje["id"]),
-        )
+        if not buzon.marcar_enviado(con, mensaje["id"], message_id):
+            # Se retiró mientras se mandaba: ya había salido y no se finge
+            # (C-0186). Un plan así no se ata a su mensaje: aprobar autoriza
+            # gasto (281), y quien lo encoló dijo que no lo quería.
+            encargos.registrar(
+                con, "sale", f"mensaje del agente ({mensaje['clase']}): {buzon.SALIO_AUNQUE_RETIRADO}",
+                user_id=destino, encargo_id=mensaje["encargo_id"],
+                cuerpo=buzon.tapado(mensaje["texto"]))
+            salidos += 1
+            continue
         # 🔴 El plan se recuerda por su `message_id`: aprobarlo es responder a
         # ESE mensaje (decisión 281). Sin esto, la aprobación no tendría a qué
         # atarse y un «sí» escrito en cualquier otro momento la dispararía.
@@ -878,7 +897,7 @@ def mandar_salientes(con: sqlite3.Connection, bot_: telegram.BotDeEncargos) -> i
         encargos.registrar(
             con, "sale", f"mensaje del agente ({mensaje['clase']})",
             user_id=destino, encargo_id=mensaje["encargo_id"],
-            cuerpo=mensaje["texto"])
+            cuerpo=buzon.tapado(mensaje["texto"]))
         salidos += 1
     return salidos
 
@@ -951,23 +970,15 @@ def saludar_a_los_que_no_pueden(con: sqlite3.Connection,
     return salidos
 
 
-def avisar_al_dueno(con: sqlite3.Connection, bot_: telegram.BotDeEncargos,
-                    texto: str) -> bool:
-    quien = encargos.dueno(con)
-    if not quien:
-        encargos.registrar(
-            con, "falla", "hay algo que avisar y nadie está marcado como dueño")
-        return False
-    try:
-        bot_.enviar(int(quien["user_id"]), texto)
-    except telegram.TelegramCaido:
-        return False
-    return True
-
-
 # --------------------------------------------------------------------------- #
 # El bucle
 # --------------------------------------------------------------------------- #
+
+
+#: Cuántas veces ha fallado cada update, entre vuelta y vuelta (`rele_base`).
+FALLOS: dict = {}
+#: Qué paso de la vuelta está fallando y con qué, para apuntarlo una vez (`rele_base.pasos`).
+FALLANDO: dict = {}
 
 
 def una_vuelta(con: sqlite3.Connection, bot_: telegram.BotDeEncargos,
@@ -978,77 +989,71 @@ def una_vuelta(con: sqlite3.Connection, bot_: telegram.BotDeEncargos,
     lo que ya llegó —bajar, transcribir, entregar—, después sale lo que el
     agente tenga que decir, y sólo al final se mira si hay que disculparse por
     la espera. Al revés, se le pediría paciencia por algo que ya se contestó.
-    """
-    bajar_audios(con, bot_)
-    transcribir_pendientes(con, ajustes_)
-    buzon.drenar_todos(con)
-    # Antes de mandar lo saliente, para que el «se publica solo en un momento»
-    # y la URL no vayan en vueltas distintas cuando el despliegue es rápido.
-    desplegar_construidos(con, ajustes_)
-    construir_lo_aprobado(con, ajustes_)
-    mandar_salientes(con, bot_)
-    atender_esperas(con, bot_)
-    saludar_a_los_que_no_pueden(con, bot_)
 
-    for update in bot_.actualizaciones(offset):
-        # El offset avanza SIEMPRE, incluso si el mensaje se descarta: si sólo
-        # avanzara al procesar bien, un mensaje que no se puede tratar volvería
-        # en cada vuelta para siempre y el canal se quedaría atascado en él.
-        # Es el de Telegram: lo que llega del chat web lleva su cursor dentro
-        # de `chatweb.Bots` y viene marcado con `canal` (decisión 246).
-        if not update.get("canal"):
-            offset = int(update.get("update_id", 0)) + 1
+    Cada paso en su `try` (`rele_base.pasos`, C-0186): uno que falla siempre
+    no puede impedir que se pida lo nuevo, que va el último.
+    """
+    rele_base.pasos("encargos", [
+        ("bajar_audios", lambda: bajar_audios(con, bot_)),
+        ("transcribir_pendientes", lambda: transcribir_pendientes(con, ajustes_)),
+        ("drenar", lambda: buzon.drenar_todos(con)),
+        # Antes de mandar lo saliente, para que el «se publica solo en un
+        # momento» y la URL no vayan en vueltas distintas cuando el despliegue
+        # es rápido.
+        ("desplegar_construidos", lambda: desplegar_construidos(con, ajustes_)),
+        ("construir_lo_aprobado", lambda: construir_lo_aprobado(con, ajustes_)),
+        ("mandar_salientes", lambda: mandar_salientes(con, bot_)),
+        ("atender_esperas", lambda: atender_esperas(con, bot_)),
+        ("saludar", lambda: saludar_a_los_que_no_pueden(con, bot_)),
+    ], registrar=lambda texto: encargos.registrar(con, "falla", texto), fallando=FALLANDO)
+
+    # El offset (o el cursor del chat web) avanza mensaje a mensaje (345). Lo que llega del chat web viene marcado con
+    # `canal` y no mueve el offset de Telegram (decisión 246).
+    def tratar(update: dict) -> tuple[dict, str, list] | None:
         msg = telegram.boton_pulsado(update) or telegram.partes_con_voz(update)
-        if msg:
+        if not msg:
+            return None
+        # Atómico: lo que se guarda de un mensaje, o todo o nada; abrir o
+        # matar agentes queda para `despues` (C-0152).
+        with rele_base.diferidos() as efectos, db.transaccion(con):
             resultado = procesar_mensaje(con, msg)
+        return msg, resultado, efectos
+
+    def despues(_update: dict, hecho: tuple[dict, str, list]) -> None:
+        msg, resultado, efectos = hecho
+        # Antes que los botones: si el efecto falla («no-se-pudo»), los botones
+        # se quedan y él puede volver a pulsar.
+        try:
+            final = rele_base.ejecutar(efectos)
+        finally:
+            # El «cargando…» del botón se cierra aunque el efecto falle.
             if msg.get("boton"):
-                # Cerrar el «cargando…» del botón, y si decidió algo, retirar
-                # los botones: un «Aprobar» que sigue ahí invita a pulsarlo
-                # dos veces (237).
                 bot_.pulsado(msg["callback_id"], "Recibido")
-                if resultado in DECIDIDOS or resultado == "maqueta-lista":
-                    bot_.quitar_botones(msg["chat_id"], msg["responde_a"])
-        con.commit()
-    con.commit()
-    return offset
+        if isinstance(final, str):
+            resultado = final
+        if msg.get("boton"):
+            # Si decidió algo, retirar los botones: un «Aprobar» que sigue
+            # ahí invita a pulsarlo dos veces (237). Ya guardado: si la red
+            # falla, no se repite.
+            if resultado in DECIDIDOS or resultado == "maqueta-lista":
+                bot_.quitar_botones(msg["chat_id"], msg["responde_a"])
+
+    return rele_base.recorrer(con, bot_.actualizaciones(offset), offset, tratar, despues=despues,
+                              confirmar=getattr(bot_, "confirmar", None),
+                              registrar=lambda texto: encargos.registrar(con, "falla", texto), fallos=FALLOS)
 
 
-def correr() -> None:  # pragma: no cover - es el bucle del servicio
-    """El proceso. Aísla cada fallo para que el relé no muera por una vuelta mala.
-
-    Mismo criterio que el snapshotter y que el relé del canal (regla dura 2): un
-    canal que se cae solo es peor que uno lento, porque su ausencia no se nota
-    hasta que alguien llevaba media hora esperando una respuesta.
-    """
+def correr() -> None:
+    """El proceso: el bucle común de los relés (`rele_base.correr`, regla dura 2)."""
     con = db.conectar(config.DB_PATH)
     db.inicializar(con)
-    offset: int | None = None
-    bot_: telegram.BotDeEncargos | None = None
 
-    while True:
-        try:
-            if bot_ is None:
-                bot_ = bot(con)
-            offset = una_vuelta(con, bot_, offset)
-            time.sleep(PAUSA)
-        except telegram.DosPollers as exc:
-            encargos.registrar(
-                con, "falla", f"409, hay otro poller con el mismo token: {exc}")
-            con.commit()
-            time.sleep(PAUSA_TRAS_FALLO)
-        except telegram.SinToken as exc:
-            encargos.registrar(con, "falla", f"sin token utilizable: {exc}")
-            con.commit()
-            bot_ = None
-            time.sleep(PAUSA_TRAS_FALLO)
-        except telegram.TelegramCaido as exc:
-            encargos.registrar(con, "falla", f"telegram no responde: {exc}")
-            con.commit()
-            time.sleep(PAUSA_TRAS_FALLO)
-        except Exception as exc:  # noqa: BLE001 - el bucle no puede morir
-            encargos.registrar(con, "falla", f"vuelta fallida: {exc!r}")
-            con.commit()
-            time.sleep(PAUSA_TRAS_FALLO)
+    def apuntar(texto: str) -> None:
+        encargos.registrar(con, "falla", texto)
+        con.commit()
+
+    rele_base.correr("encargos", lambda: bot(con), lambda bot_, offset: una_vuelta(con, bot_, offset),
+                     apuntar, dormir=time.sleep)
 
 
 if __name__ == "__main__":  # pragma: no cover

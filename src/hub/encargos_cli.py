@@ -25,10 +25,11 @@ Se usa así, desde el panel del agente:
     encargo anota "<texto>"           guarda lo que contó, aunque no toque
     encargo decir "<texto>"           le dice algo con tus palabras
     encargo muestras [estilos|pantallas]   le manda el catálogo para que elija
-    encargo mirar [url]               pinta lo construido (o una URL local) para poder juzgarlo
+    encargo mirar [/ruta]             pinta lo construido (o una página de su app encerrada) para juzgarlo
     encargo quitar <archivo>          borra un archivo del sitio o de la app, y sólo de ahí
     encargo servir                    arranca la app en local con una base de prueba
     encargo parar                     apaga la app que arrancó `servir`
+    encargo api <MÉTODO> <ruta> [json] llama a la API de esa app, y sólo a ella
     encargo deshacer [n]              retira lo que encolaste y aún no ha salido
     encargo rendirse <fase>           agotado el tope, el hueco se declara
     encargo nombrar <id>              apunta el nombre que ella quiere (se aplica al publicar)
@@ -49,7 +50,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from . import buzon, config, db, encargos, estilos, mirar
+from . import buzon, config, db, encargos, encierro, estilos, mirar, procesos
 
 # Cuántas muestras van en una tanda. Más de esto y la persona deja de comparar y
 # empieza a elegir la última que vio; en un móvil, además, seis fotos seguidas
@@ -437,16 +438,29 @@ def cmd_mirar(con, args) -> int:
     encargo_id = _encargo_actual(con, args.encargo)
     destino = encargos.carpeta(encargo_id) / "vistas"
     if args.url:
-        # La app corriendo en local (decisión 244): se mira por HTTP, que es
-        # como la verá ella, y sólo en esta máquina.
-        if not args.url.startswith(("http://127.0.0.1", "http://localhost")):
-            return _salir("sólo se mira una URL local (http://127.0.0.1:…): lo demás no es tuyo")
+        # La app corriendo en local (decisión 244), encerrada: se mira por
+        # HTTP, como la verá ella, con el navegador también encerrado y sin
+        # red (`encierro.fotografiar`, C-0145). De lo que se pida se toma sólo
+        # la ruta: el destino es siempre su app, nunca otro sitio.
+        from urllib.parse import urlsplit
+
+        servidor = _servidor(encargo_id)
+        if not servidor:
+            return _salir("tu app no está corriendo: ./encargo servir")
+        partes = urlsplit(args.url)
+        if args.url.startswith("/") and not args.url.startswith("//"):
+            camino = args.url
+        elif partes.scheme == "http" and partes.hostname in ("127.0.0.1", "localhost"):
+            camino = (partes.path or "/") + (f"?{partes.query}" if partes.query else "")
+        else:
+            return _salir("sólo se mira tu app: ./encargo mirar /ruta")
+        destino.mkdir(parents=True, exist_ok=True)
         try:
             for ancho, nombre in ANCHOS:
-                salida = mirar.captura(args.url, destino / f"url-{nombre}.png",
-                                       ancho=ancho, alto=args.alto)
+                salida = encierro.fotografiar(servidor["socket"], camino, destino / f"url-{nombre}.png",
+                                              ancho=ancho, alto=args.alto)
                 print(f"  {ancho:>4} px  {salida}")
-        except mirar.SinNavegador as exc:
+        except (mirar.SinNavegador, encierro.NoDisponible, ValueError) as exc:
             return _salir(str(exc))
         print("\nÁbrelas y míralas de verdad.")
         return 0
@@ -474,104 +488,182 @@ def cmd_mirar(con, args) -> int:
 
 # ── La app en local, para que el implementador la pruebe (decisión 244) ──────
 
-PID_SERVIDOR = ".servir.pid"
-PUERTO_SERVIDOR = ".servir.puerto"
+def _estado_servir(encargo_id: str) -> Path:
+    """Dónde apunta `servir` el pid y el puerto de la app: **fuera** de la
+    carpeta del encargo, que el agente puede editar entera (C-0128). Dentro,
+    cambiando el puerto a 8787 `./encargo api` llegaba al hub desde loopback, y
+    cambiando el pid `servir` mataba el proceso que él eligiera."""
+    return encargos.raiz() / ".servir" / f"{encargos.valido(encargo_id)}.json"
 
 
-def _servidor_vivo(encargo_id: str) -> int | None:
-    """El pid de la app en local si sigue corriendo, o None."""
+def _mesa(encargo_id: str) -> Path:
+    """La carpeta de `servir` para un encargo: el socket, la base de prueba, el
+    registro y el punto de montaje del encierro. Fuera de la carpeta del
+    encargo (C-0128): nada de aquí lo prepara ni lo toca el agente."""
+    return encargos.raiz() / ".servir" / encargos.valido(encargo_id)
+
+
+def _servidor(encargo_id: str) -> dict | None:
+    """`{"huella", "socket"}` de la app encerrada si sigue corriendo, o None.
+
+    Por la huella y no por el pid (C-0145): un pid reutilizado por otro
+    proceso no cuenta como la app, y `parar` no lo mata.
+    """
+    import json
+
+    archivo = _estado_servir(encargo_id)
+    try:
+        estado = json.loads(archivo.read_text())
+        if "huella" not in estado:
+            _parar_la_de_antes(encargo_id, estado)
+        elif procesos.vivo(estado["huella"]):
+            return {"huella": estado["huella"], "socket": Path(estado["socket"])}
+    except FileNotFoundError:
+        return None
+    except (ValueError, KeyError, TypeError):
+        pass
+    archivo.unlink(missing_ok=True)
+    return None
+
+
+def _parar_la_de_antes(encargo_id: str, estado: dict) -> None:
+    """Una app arrancada antes de C-0145 (`pid`/`puerto`) corre sin aislar: se
+    para, pero sólo si ese pid es de verdad su uvicorn —el número pudo pasar a
+    otro proceso—."""
     import os
     import signal
 
-    archivo = encargos.carpeta(encargo_id) / PID_SERVIDOR
-    if not archivo.is_file():
-        return None
     try:
-        pid = int(archivo.read_text().strip())
-        os.kill(pid, 0)
-        return pid
-    except (ValueError, ProcessLookupError, PermissionError):
-        archivo.unlink(missing_ok=True)
-        return None
+        pid = int(estado["pid"])
+        linea = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+    except (KeyError, TypeError, ValueError, OSError):
+        return
+    if "uvicorn" in linea and str(encargos.carpeta(encargo_id) / "app") in linea:
+        os.kill(pid, signal.SIGTERM)
 
 
 def cmd_servir(con, args) -> int:
-    """Arranca la app del encargo en local, con una base de prueba vacía.
+    """Arranca la app del encargo en local, encerrada y con una base de prueba vacía.
 
     Existe por lo mismo que `mirar`: si no se le da la herramienta, el agente
-    se la fabrica saliéndose de su carpeta. Corre con el intérprete del hub
-    —que ya trae FastAPI y uvicorn, lo mismo que la imagen del servidor— sólo
-    en 127.0.0.1, y con `DATOS` apuntando a una carpeta de prueba que cada
-    arranque vacía: lo que quede guardado entre pruebas confunde.
+    se la fabrica saliéndose de su carpeta. 🔴 **Corre encerrada** (C-0145,
+    decisión 350): sin el HOME, sin red y sin ver los procesos de la máquina;
+    lo escribió un agente guiado por lo que pidió alguien de fuera. Usa el
+    intérprete del hub —que ya trae FastAPI y uvicorn, lo mismo que la imagen
+    del servidor— y escucha en un socket que abre este proceso: sólo se le
+    habla con `./encargo api` y se le mira con `./encargo mirar`. La base de
+    prueba se vacía en cada arranque: lo que quede entre pruebas confunde.
     """
+    import json
     import shutil
-    import socket
-    import subprocess
     import time
-    import urllib.request
 
     encargo_id = _encargo_actual(con, args.encargo)
     carpeta = encargos.carpeta(encargo_id)
     app_ = carpeta / "app"
-    if not (app_ / "main.py").is_file():
+    if app_.is_symlink() or not (app_ / "main.py").is_file():
         return _salir(f"no hay «{app_ / 'main.py'}» que servir")
-    if pid := _servidor_vivo(encargo_id):
-        import os
-        import signal
-
-        os.kill(pid, signal.SIGTERM)
+    if not encierro.disponible():
+        return _salir("esta máquina no puede aislar la app (sin user namespaces): no se arranca sin aislar")
+    if previo := _servidor(encargo_id):
+        encierro.parar(previo["huella"])
         time.sleep(0.5)
-    datos = carpeta / "datos-prueba"
-    shutil.rmtree(datos, ignore_errors=True)
-    datos.mkdir()
-    with socket.socket() as s_:
-        s_.bind(("127.0.0.1", 0))
-        puerto = s_.getsockname()[1]
-    registro = carpeta / "servir.log"
-    with registro.open("w") as salida:
-        proceso = subprocess.Popen(
-            ["uv", "run", "--project", str(config.RAIZ_REPO), "python", "-m", "uvicorn",
-             "main:app", "--app-dir", str(app_), "--host", "127.0.0.1", "--port", str(puerto)],
-            cwd=str(app_), stdout=salida, stderr=subprocess.STDOUT,
-            env={**__import__("os").environ, "DATOS": str(datos)},
-            start_new_session=True,
-        )
-    (carpeta / PID_SERVIDOR).write_text(str(proceso.pid))
-    (carpeta / PUERTO_SERVIDOR).write_text(str(puerto))
-    url = f"http://127.0.0.1:{puerto}"
+    mesa = _mesa(encargo_id)
+    shutil.rmtree(mesa, ignore_errors=True)
+    for sub in ("raiz", "datos"):
+        (mesa / sub).mkdir(parents=True)
+    try:
+        enchufe = encierro.escuchar(mesa / "app.sock")
+    except ValueError as exc:
+        return _salir(f"no se arrancó: {exc}")
+    registro = mesa / "servir.log"
+    python = config.RAIZ_REPO / ".venv" / "bin" / "python"
+    try:
+        with registro.open("w") as salida:
+            proceso = encierro.lanzar(
+                [str(python), "-m", "uvicorn", "main:app", "--app-dir", str(app_), "--fd", str(enchufe.fileno())],
+                raiz=mesa / "raiz", leer=[app_, config.RAIZ_REPO / ".venv"], escribir=[mesa / "datos"],
+                cwd=app_, entorno={"DATOS": str(mesa / "datos"), "PYTHONDONTWRITEBYTECODE": "1"},
+                descriptores=(enchufe.fileno(),), salida=salida)
+    except (encierro.NoDisponible, ValueError) as exc:
+        return _salir(f"no se arrancó: {exc}")
+    finally:
+        enchufe.close()     # lo tiene ya el proceso de dentro
+    huella = procesos.huella(proceso.pid)
+    estado = _estado_servir(encargo_id)
+    estado.parent.mkdir(parents=True, exist_ok=True)
+    estado.write_text(json.dumps({"huella": huella, "socket": str(mesa / "app.sock")}))
     tope = time.monotonic() + 25
     while time.monotonic() < tope:
         if proceso.poll() is not None:
             break
         try:
-            with urllib.request.urlopen(url + "/salud", timeout=2) as r:
-                if r.status == 200:
-                    print(f"la app corre en {url} (base de prueba vacía en {datos})\n"
-                          f"  curl {url}/api/...   y   ./encargo mirar {url}/\n"
-                          "  ./encargo parar cuando termines")
-                    return 0
-        except Exception:  # noqa: BLE001 - arrancando todavía
-            time.sleep(0.5)
-    if proceso.poll() is None:
-        proceso.terminate()
-    (carpeta / PID_SERVIDOR).unlink(missing_ok=True)
+            if encierro.peticion(mesa / "app.sock", "GET", "/salud", timeout=2)[0] == 200:
+                print("la app corre encerrada en esta máquina, con una base de prueba vacía\n"
+                      "  ./encargo api GET /api/...   y   ./encargo mirar /\n"
+                      "  ./encargo parar cuando termines")
+                return 0
+        except OSError:
+            pass
+        time.sleep(0.5)
+    encierro.parar(huella)
+    estado.unlink(missing_ok=True)
     cola = registro.read_text(encoding="utf-8", errors="replace").splitlines()[-25:]
     return _salir("la app no arrancó o /salud no contesta. Lo último que escribió:\n  "
                   + "\n  ".join(cola))
 
 
 def cmd_parar(con, args) -> int:
-    import os
-    import signal
-
     encargo_id = _encargo_actual(con, args.encargo)
-    pid = _servidor_vivo(encargo_id)
-    if not pid:
+    servidor = _servidor(encargo_id)
+    if not servidor:
         print("no había ninguna app corriendo")
         return 0
-    os.kill(pid, signal.SIGTERM)
-    (encargos.carpeta(encargo_id) / PID_SERVIDOR).unlink(missing_ok=True)
+    encierro.parar(servidor["huella"])
+    _estado_servir(encargo_id).unlink(missing_ok=True)
     print("app parada")
+    return 0
+
+
+METODOS = ("GET", "POST", "PUT", "PATCH", "DELETE")
+
+
+def cmd_api(con, args) -> int:
+    """Una petición a la app que arrancó `servir`, y a nada más (C-0128).
+
+    Sustituye al `curl` libre que tenía el implementador: con `curl` se lee
+    cualquier archivo (`file:///…`, `-d @~/…`) y se manda a cualquier sitio, y
+    el agente trabaja sobre lo que escribió una persona de fuera (regla dura
+    22). Aquí el destino no lo elige él: es el socket que abrió `servir`
+    fuera de su carpeta (`_estado_servir`), y la ruta tiene que ser una ruta y
+    no una URL. Sin puerto, no hay nada que apuntar al hub (C-0145).
+    """
+    import http.client
+    import json
+
+    encargo_id = _encargo_actual(con, args.encargo)
+    metodo = args.metodo.upper()
+    if metodo not in METODOS:
+        return _salir(f"método «{args.metodo}»: usa uno de {', '.join(METODOS)}")
+    if (not args.ruta.startswith("/") or args.ruta.startswith("//") or "://" in args.ruta
+            or any(ord(c) <= 0x20 or c == "\x7f" for c in args.ruta)):
+        return _salir("la ruta empieza por «/», sin espacios (p.ej. /api/cosas): "
+                      "el servidor es siempre tu app en local")
+    servidor = _servidor(encargo_id)
+    if not servidor:
+        return _salir("tu app no está corriendo: ./encargo servir")
+    cuerpo = None
+    if args.json:
+        try:
+            cuerpo = json.dumps(json.loads(args.json)).encode()
+        except ValueError as exc:
+            return _salir(f"el cuerpo no es JSON: {exc}")
+    try:
+        estado, texto = encierro.peticion(servidor["socket"], metodo, args.ruta, cuerpo)
+    except (OSError, ValueError, http.client.HTTPException) as exc:
+        return _salir(f"no contesta: {exc}")
+    print(estado)
+    print(texto.decode("utf-8", errors="replace")[:20000])
     return 0
 
 
@@ -593,20 +685,28 @@ def cmd_deshacer(con, args) -> int:
         return _salir("no hay nada tuyo en la cola: o ya salió, o no encolaste nada")
 
     cuantos = min(args.cuantos, len(mios))
-    quitados = mios[-cuantos:]
-    con.executemany(
-        "UPDATE encargo_mensaje SET estado = 'descartado', movido_en = ?, "
-        "detalle = 'retirado antes de salir' WHERE id = ?",
-        [(encargos.ahora(), m["id"]) for m in quitados],
-    )
-    encargos.registrar(con, "sale", f"{cuantos} mensaje(s) retirados antes de salir",
-                       encargo_id=encargo_id)
-    print(f"retirados {cuantos}, que no habían salido:")
+    pedidos = mios[-cuantos:]
+    # 🔴 Lo que dice `retirar`, no lo que se pidió (C-0186): el relé puede
+    # haberlo mandado entre leer la cola y esto, y entonces ya llegó.
+    hechos = set(buzon.retirar(con, [m["id"] for m in pedidos]))
+    quitados = [m for m in pedidos if m["id"] in hechos]
+    salidos = [m for m in pedidos if m["id"] not in hechos]
+    if quitados:
+        encargos.registrar(con, "sale", f"{len(quitados)} mensaje(s) retirados antes de salir",
+                           encargo_id=encargo_id)
+    # «De la cola» y no «que no habían salido»: si el relé estaba mandando uno
+    # en este mismo instante, ya le llegó, y eso lo dice después la
+    # conversación («le llegó igual», C-0186); desde aquí no se puede saber.
+    print(f"retirados {len(quitados)} de la cola:")
     for m in quitados:
-        print(f"  — {m['clase']}: {(m['texto'] or m['adjunto'])[:70]}")
+        print(f"  — {m['clase']}: {(buzon.tapado(m['texto']) or m['adjunto'])[:70]}")
+    for m in salidos:
+        print(f"  ✗ ya había salido mientras lo retirabas: {(buzon.tapado(m['texto']) or m['adjunto'])[:70]}")
     if len(mios) > cuantos:
         print(f"  (quedan {len(mios) - cuantos} en cola)")
-    return 0
+    # Sin nada retirado no se deshizo nada: lo mismo que cuando la cola ya
+    # estaba vacía, aunque sí se diga qué pasó con cada uno.
+    return 0 if quitados else 2
 
 
 def cmd_rendirse(con, args) -> int:
@@ -777,7 +877,7 @@ def cmd_listo(con, args) -> int:
         app_ = encargos.carpeta(encargo_id) / "app"
         if not (app_ / "main.py").is_file() or not (app_ / "static" / "index.html").is_file():
             return _salir(f"faltan «{app_ / 'main.py'}» o «{app_ / 'static/index.html'}»: no habría nada que levantar")
-        if _servidor_vivo(encargo_id):
+        if _servidor(encargo_id):
             return _salir("la app sigue corriendo en local: `./encargo parar` primero")
     else:
         portada = encargos.carpeta(encargo_id) / "sitio" / "index.html"
@@ -797,11 +897,15 @@ def cmd_listo(con, args) -> int:
         aviso = (f"«{encargo_id}» está {'implementado' if fila['estado'] == 'implementando' else 'construido'}. "
                  "Se publica solo en un momento y os llega la URL a los dos.")
     else:
-        aviso = (f"«{encargo_id}» está construido y sin desplegar.\n\n"
+        # Lo que el guion exige, y la carpeta que publica: la app si se
+        # implementó (decisión 244), el sitio si se construyó (C-0141).
+        carpeta = encargos.carpeta(encargo_id) / ("app" if fila["estado"] == "implementando" else "sitio")
+        aviso = (f"«{encargo_id}» está {'implementado' if fila['estado'] == 'implementando' else 'construido'} "
+                 f"y sin desplegar.\n\n"
                  f"Míralo antes de publicarlo:\n"
-                 f"  bash scripts/desplegar-encargo.sh {encargo_id} "
-                 f"{encargos.carpeta(encargo_id) / 'sitio'}\n\n"
-                 "Eso es un ensayo; añade --va cuando lo hayas visto.")
+                 f"  HUB_DOMINIO_ENCARGOS=<tu dominio> bash scripts/desplegar-encargo.sh {encargo_id} "
+                 f"{carpeta} <alias-ssh>\n\n"
+                 "Eso es un ensayo; añade --va (y HUB_CADDY=<contenedor de Caddy>) cuando lo hayas visto.")
     buzon.encolar_salida(con, encargo_id, aviso, user_id=int(quien["user_id"]))
     print(f"«{encargo_id}» queda en «construido» y se avisa a "
           f"{encargos.nombre_visible(quien)}.")
@@ -841,6 +945,7 @@ ORDENES = {
     "nombrar": cmd_nombrar,
     "servir": cmd_servir,
     "parar": cmd_parar,
+    "api": cmd_api,
     "proponer": cmd_proponer,
     "listo": cmd_listo,
     "publicado": cmd_publicado,
@@ -893,6 +998,11 @@ def construir_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("servir", help="arranca la app en local con una base de prueba")
     sub.add_parser("parar", help="apaga la app que arrancó servir")
+
+    p = sub.add_parser("api", help="llama a la API de la app que arrancó servir")
+    p.add_argument("metodo", help="GET, POST, PUT, PATCH o DELETE")
+    p.add_argument("ruta", help="empieza por /, p.ej. /api/cosas")
+    p.add_argument("json", nargs="?", default="", help="el cuerpo, en JSON")
 
     p = sub.add_parser("deshacer", help="retira de la cola lo que aún no ha salido")
     p.add_argument("cuantos", nargs="?", type=int, default=1)

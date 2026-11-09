@@ -96,6 +96,18 @@ def test_la_nota_sobrevive_al_cambio_de_proyecto(escena):
     assert slot["nota"] == "contexto acumulado"
 
 
+def test_mover_a_un_proyecto_que_no_existe_se_niega_con_su_nombre(escena):
+    """La clave ajena lo frenaba con una `IntegrityError`, y la web la
+    enseñaba como «el índice del hub no se puede leer» (C-0103)."""
+    slot_id = slots.crear(escena, "demo", "investigación")
+
+    with pytest.raises(ValueError, match="no hay ningún proyecto «no-existe»"):
+        slots.editar(escena, slot_id, nombre="otro nombre", proyecto_id="no-existe")
+
+    slot = api.obtener_slot(escena, slot_id)
+    assert (slot["proyecto_id"], slot["nombre"]) == ("demo", "investigación")
+
+
 def test_borrar_es_definitivo(escena):
     slot_id = slots.crear(escena, "demo", "temporal")
     slots.borrar(escena, slot_id)
@@ -300,11 +312,12 @@ def test_abrir_crea_la_sesion_cuando_tmux_no_tiene_servidor(escena, monkeypatch)
     assert [l[0] for l in llamadas] == ["nueva"]
     _, args, kw = llamadas[0]
     assert args[1] == "/tmp/demo" and args[2] == "Primer slot"
-    # 🔴 El PATH va DENTRO del comando (regla 18, decisión 231): el `-e` de
-    # `new-session` no alcanza al primer panel, ni el de `new-window` al
-    # proceso. Se sigue pasando como entorno además, para la shell que quede.
-    assert args[3] == "env PATH=/usr/bin claude"
+    # 🔴 El PATH va DENTRO del comando (regla 18, decisiones 231 y 339), y lo
+    # pone la primitiva de tmux con `con_entorno`: aquí se pasa como entorno, y
+    # sólo una vez (antes salía `env PATH=… env PATH=…`, decisión 340).
+    assert args[3] == "claude"
     assert kw["entorno"]["PATH"] == "/usr/bin"
+    assert tmux.con_entorno(args[3], kw["entorno"]) == "env PATH=/usr/bin claude"
     assert escena.execute("SELECT slot_id FROM binding WHERE pane_id='%9'").fetchone()[0] == slot_id
 
 
@@ -317,3 +330,32 @@ def test_abrir_usa_el_asiento_del_proyecto_cuando_el_slot_no_tiene_ruta(escena, 
     slot_id = slots.crear(escena, "demo", "Sin ruta", None, "", None, False)
     assert slots.abrir(escena, slot_id) == "%5"
     assert abiertas == ["/tmp/demo"]
+
+
+def test_abrir_en_una_sesion_que_existe_pasa_el_path_a_la_ventana(escena, monkeypatch):
+    """La rama más común de «Lanzar». Sin el `entorno`, la ventana arrancaría
+    el `claude` del PATH de systemd (decisiones 231, 339 y 340)."""
+    llamadas = []
+    monkeypatch.setattr(tmux, "existe_sesion", lambda s: True)
+    monkeypatch.setattr(tmux, "path_de_usuario", lambda: "/usr/bin")
+    monkeypatch.setattr(tmux, "abrir_ventana", lambda *a, **k: llamadas.append((a, k)) or "%x")
+    monkeypatch.setattr(tmux, "escribir_titulo", lambda *a: None)
+    slot_id = slots.crear(escena, "demo", "Primer slot", "/tmp/demo", "", None, True)
+    assert slots.abrir(escena, slot_id, session="demo") == "%x"
+    (args, kw), = llamadas
+    assert args[2] == "claude" and kw["entorno"] == {"PATH": "/usr/bin"}
+
+
+def test_un_titulo_que_no_se_puede_poner_no_tumba_la_apertura_pero_se_dice(escena, monkeypatch, capsys):
+    """C-0085: el título es cosmético, pero un `except: pass` alrededor de
+    tmux esconde fallos que salen luego como bugs de UI (regla dura 21)."""
+    def explota(*a):
+        raise RuntimeError("no such pane")
+
+    monkeypatch.setattr(tmux, "existe_sesion", lambda s: True)
+    monkeypatch.setattr(tmux, "abrir_ventana", lambda *a, **k: "%5")
+    monkeypatch.setattr(tmux, "escribir_titulo", explota)
+    slot_id = slots.crear(escena, "demo", "Con título", "/tmp/demo", "", None, False)
+    assert slots.abrir(escena, slot_id) == "%5"
+    salida = capsys.readouterr().out
+    assert "Con título" in salida and "no such pane" in salida

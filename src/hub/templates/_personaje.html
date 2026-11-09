@@ -1,0 +1,331 @@
+{#
+  El personaje del secretario (C-0166, decisión 358): SVG propio, en línea.
+
+  Sale del icono del hub: el cuadrado grande es él, en el color de acento, y
+  los tres pequeños del logo son sus «satélites» —los pensamientos que suben
+  cuando piensa—. Nada de Clawd, del logo de Claude ni de Clippy.
+
+  En línea y no en <img>: así hereda los tokens del tema y el CSS de la página
+  (avatar-secretario.css) alcanza sus piezas, y `prefers-reduced-motion` se
+  aplica. El estado va en atributos de su raíz (`data-estado`, `data-gesto`,
+  `data-rol`); el JS (avatar-secretario.js) sólo los cambia.
+
+  - `defs()` una vez por página: los accesorios (uno por gesto de
+    `personaje.GESTOS`, más ondas y reloj de arena) y las skins de rol (una
+    por `personaje.ROLES`: sombrero, cara y lo que lleva en la mano), y la
+    plantilla de un acompañante.
+  - `figura(pj, gesto)` el personaje entero (`pj`, de `api.personaje_vista`); `acomp(rol, inicial)` uno pequeño.
+
+  Quién es lo elige el dueño (C-0188, decisión 377; `personaje.PERSONAJES`).
+  El cubo es este SVG. Los demás son dibujos: una capa por pose, todas con la
+  misma hoja (`static/personajes/<id>.webp`, una petición), y encima un SVG
+  con lo que el dibujo no dice —el objeto que usa, en una insignia, y los
+  globos de colores—. Qué capa se ve lo decide el CSS con el `data-estado`
+  y el `data-gesto` de siempre: el JS no sabe que hay dibujos.
+
+  Los símbolos llevan sus colores en `style` con tokens: el CSS de la página
+  no entra en lo que clona un <use>, pero las variables sí se heredan.
+  Todos los trazos son propios.
+#}
+
+{% macro defs() %}
+<svg class="pj-defs" width="0" height="0" aria-hidden="true" focusable="false"
+     style="position:absolute;width:0;height:0;overflow:hidden">
+  <defs>
+    {# ── accesorios: 16×16, trazo en currentColor ── #}
+    <symbol id="acc-leer" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3.5 1.5h6l3 3v10h-9z" style="fill:var(--texto)"/>
+      <path d="M9.5 1.5v3h3" style="stroke:var(--texto-3)"/>
+      <path d="M5.5 7.5h5M5.5 10h5M5.5 12.5h3" style="stroke:var(--lienzo)"/>
+    </symbol>
+    <symbol id="acc-buscar" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+      <circle cx="6.5" cy="6.5" r="4.5" style="fill:color-mix(in srgb, var(--acento) 30%, transparent)"/>
+      <path d="M10 10l4.5 4.5" stroke-width="2.4"/>
+      <path d="M4.6 5.2a2.4 2.4 0 0 1 1.9-1.4" style="stroke:var(--texto);opacity:.8" stroke-width="1.2"/>
+    </symbol>
+    <symbol id="acc-mensajes" viewBox="0 0 16 16" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="1" y="3" width="14" height="10.5" rx="1.8" style="fill:var(--texto)"/>
+      <path d="M1.8 4l6.2 5 6.2-5" style="stroke:var(--lienzo)" stroke-width="1.4"/>
+      <circle cx="13.2" cy="3.2" r="2.4" style="fill:var(--alerta)"/>
+    </symbol>
+    <symbol id="acc-agenda" viewBox="0 0 16 16" fill="none" stroke-linecap="round">
+      <rect x="1.5" y="2.5" width="13" height="12" rx="2" style="fill:var(--texto)"/>
+      <path d="M1.5 4.5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v2h-13z" style="fill:var(--alerta)"/>
+      <path d="M4.8 1v3M11.2 1v3" style="stroke:var(--texto)" stroke-width="1.6"/>
+      <rect x="9" y="9" width="3" height="3" rx=".8" style="fill:var(--lienzo)"/>
+      <path d="M4 9.5h2.5M4 12h2.5" style="stroke:var(--texto-3)" stroke-width="1.3"/>
+    </symbol>
+    <symbol id="acc-compromisos" viewBox="0 0 16 16" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2.5" y="1.5" width="11" height="13" rx="1.8" style="fill:var(--texto)"/>
+      <rect x="5.5" y=".5" width="5" height="2.5" rx="1" style="fill:var(--texto-3)"/>
+      <path d="M5 8.2l2 2 4-4.2" style="stroke:var(--ok)" stroke-width="2"/>
+    </symbol>
+    <symbol id="acc-mirar" viewBox="0 0 16 16" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="1" y="2" width="14" height="9.5" rx="1.6" style="fill:var(--lienzo);stroke:var(--texto)" stroke-width="1.4"/>
+      <path d="M6 14.5h4M8 11.5v3" style="stroke:var(--texto)" stroke-width="1.4"/>
+      <path d="M3.6 6.8c1.2-1.7 2.7-2.5 4.4-2.5s3.2.8 4.4 2.5c-1.2 1.7-2.7 2.5-4.4 2.5S4.8 8.5 3.6 6.8z" style="fill:var(--texto)"/>
+      <circle cx="8" cy="6.8" r="1.6" style="fill:var(--acento)"/>
+    </symbol>
+    <symbol id="acc-maquina" viewBox="0 0 16 16" fill="none" stroke-linecap="round">
+      <path d="M1.5 12.5a6.5 6.5 0 0 1 13 0z" style="fill:var(--texto)"/>
+      <path d="M3.4 9.6l1 .6M8 5.5v1.2M12.6 9.6l-1 .6" style="stroke:var(--texto-3)" stroke-width="1.3"/>
+      <path d="M8 12l3-3.6" style="stroke:var(--alerta)" stroke-width="1.8"/>
+      <circle cx="8" cy="12" r="1.4" style="fill:var(--lienzo)"/>
+    </symbol>
+    <symbol id="acc-carpeta" viewBox="0 0 16 16" stroke-linejoin="round">
+      <path d="M1 3.8a1.3 1.3 0 0 1 1.3-1.3h3.4l1.6 1.6h6.4a1.3 1.3 0 0 1 1.3 1.3v1.1H1z" style="fill:var(--t-script)"/>
+      <path d="M1 6h14v6.9a1.3 1.3 0 0 1-1.3 1.3H2.3A1.3 1.3 0 0 1 1 12.9z" style="fill:var(--espera)"/>
+    </symbol>
+    <symbol id="acc-anotar" viewBox="0 0 16 16" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2.5 13.5l.8-3.3 8-8 2.5 2.5-8 8z" style="fill:var(--espera);stroke:var(--lienzo)" stroke-width="1"/>
+      <path d="M11.3 2.2l2.5 2.5" style="stroke:var(--alerta)" stroke-width="2.2"/>
+      <path d="M2.5 13.5l.8-3.3 2.5 2.5z" style="fill:var(--texto)"/>
+    </symbol>
+    <symbol id="acc-idea" viewBox="0 0 16 16" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5.4 10.6A5 5 0 1 1 10.6 10.6V12H5.4z" style="fill:var(--espera)"/>
+      <path d="M5.8 13.6h4.4" style="stroke:var(--texto)" stroke-width="1.6"/>
+      <path d="M6.4 7.2c.5-1.5 1.6-2.2 2.8-2.1" style="stroke:var(--texto)" stroke-width="1.2"/>
+    </symbol>
+    <symbol id="acc-mostrar" viewBox="0 0 16 16" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="1" y="1.5" width="14" height="9.5" rx="1.4" style="fill:var(--texto)"/>
+      <path d="M4 8.5v-2M7 8.5V4.5M10 8.5V6M12.5 8.5V3.8" style="stroke:var(--acento)" stroke-width="1.6"/>
+      <path d="M4.5 15l3.5-4 3.5 4" style="stroke:var(--texto-3)" stroke-width="1.4"/>
+    </symbol>
+    <symbol id="acc-avisar" viewBox="0 0 16 16" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3.5 11.5V7.5a4.5 4.5 0 0 1 9 0v4l1.3 1.5H2.2z" style="fill:var(--espera)"/>
+      <circle cx="8" cy="14.3" r="1.4" style="fill:var(--texto)"/>
+      <path d="M8 1.5v1.4" style="stroke:var(--espera)" stroke-width="1.6"/>
+    </symbol>
+    <symbol id="acc-pc" viewBox="0 0 16 16" fill="none" stroke-linecap="round">
+      <rect x="1" y="2" width="14" height="12" rx="1.8" style="fill:var(--texto)"/>
+      <path d="M1 4.2a2.2 2.2 0 0 1 2.2-2.2h9.6A2.2 2.2 0 0 1 15 4.2v1.3H1z" style="fill:var(--acento)"/>
+      <circle cx="3.3" cy="3.8" r=".7" style="fill:var(--lienzo)"/>
+      <circle cx="5.5" cy="3.8" r=".7" style="fill:var(--lienzo)"/>
+      <path d="M4 8.5h8M4 11h5" style="stroke:var(--texto-3)" stroke-width="1.3"/>
+    </symbol>
+    <symbol id="acc-grabar" viewBox="0 0 16 16">
+      {# Un punto fijo: REC nunca parpadea (WCAG 2.3.1). #}
+      <circle cx="8" cy="8" r="6.8" style="fill:var(--texto)"/>
+      <circle cx="8" cy="8" r="3.6" style="fill:var(--riesgo)"/>
+    </symbol>
+    <symbol id="acc-tele" viewBox="0 0 16 16" fill="none" stroke-linecap="round">
+      <rect x="4.5" y="1" width="7" height="14" rx="2.4" style="fill:var(--texto-2)"/>
+      <circle cx="8" cy="4.5" r="1.5" style="fill:var(--riesgo)"/>
+      <path d="M6.6 8.2h2.8M6.6 10.5h2.8M6.6 12.8h2.8" style="stroke:var(--lienzo)" stroke-width="1.3"/>
+    </symbol>
+    <symbol id="acc-hacer" viewBox="0 0 16 16" fill="none" stroke-linecap="round">
+      <path d="M8 .9l1.3 1.7 2.1-.5.4 2.1 2.1.6-.6 2 1.6 1.4-1.6 1.4.6 2-2.1.6-.4 2.1-2.1-.5L8 15.1l-1.3-1.7-2.1.5-.4-2.1-2.1-.6.6-2L1.1 8l1.6-1.4-.6-2 2.1-.6.4-2.1 2.1.5z" style="fill:var(--texto-2)"/>
+      <circle cx="8" cy="8" r="2.6" style="fill:var(--lienzo)"/>
+    </symbol>
+    <symbol id="acc-delegar" viewBox="0 0 16 16" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M1.5 4.8L8 1.6l6.5 3.2v6.6L8 14.6l-6.5-3.2z" style="fill:var(--t-script)"/>
+      <path d="M1.5 4.8L8 8l6.5-3.2M8 8v6.6" style="stroke:var(--lienzo)" stroke-width="1.1"/>
+      <path d="M4.8 3.2l6.5 3.2" style="stroke:var(--texto)" stroke-width="1.3"/>
+    </symbol>
+    <symbol id="acc-escalar" viewBox="0 0 16 16" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="8" cy="8" r="7" style="fill:var(--t-metodo)"/>
+      <path d="M8 12V4.5M4.8 7.5L8 4.3l3.2 3.2" style="stroke:var(--texto)" stroke-width="1.9"/>
+    </symbol>
+    <symbol id="acc-hora" viewBox="0 0 16 16" fill="none" stroke-linecap="round">
+      <circle cx="8" cy="8" r="6.8" style="fill:var(--texto)"/>
+      <path d="M8 4.2V8l2.6 1.6" style="stroke:var(--lienzo)" stroke-width="1.6"/>
+      <circle cx="8" cy="8" r=".9" style="fill:var(--alerta)"/>
+    </symbol>
+    <symbol id="acc-ondas" viewBox="0 0 16 16" fill="none" stroke-linecap="round" stroke-width="1.9">
+      <path d="M1.5 8h1M4.5 5.5v5M7.5 3v10M10.5 5v6M13.5 7v2" style="stroke:var(--acento)"/>
+    </symbol>
+    <symbol id="acc-arena" viewBox="0 0 16 16" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3.5 1.5h9M3.5 14.5h9" style="stroke:var(--texto)" stroke-width="1.6"/>
+      <path d="M4.5 1.5c0 3.4 7 3.4 7 6.5s-7 3.1-7 6.5M11.5 1.5c0 3.4-7 3.4-7 6.5s7 3.1 7 6.5" style="stroke:var(--texto-2)" stroke-width="1.2"/>
+      <path d="M6 4h4l-2 2.4z M5.8 14l2.2-2.2 2.2 2.2z" style="fill:var(--espera)"/>
+    </symbol>
+
+    {# ── skins de rol: 64×64, encima del cuerpo (sombrero, cara, mano) ── #}
+    <symbol id="rol-orquestador" viewBox="0 0 64 64" stroke-linecap="round" stroke-linejoin="round">
+      {# Auriculares con micrófono y batuta: coordina. #}
+      <path d="M13 32a18 18 0 0 1 36 0" fill="none" style="stroke:var(--lienzo)" stroke-width="3.2"/>
+      <rect x="9.5" y="29" width="7" height="11" rx="3" style="fill:var(--lienzo)"/>
+      <rect x="45.5" y="29" width="7" height="11" rx="3" style="fill:var(--lienzo)"/>
+      <path d="M13 39c0 5 4 7 10 6.5" fill="none" style="stroke:var(--lienzo)" stroke-width="1.8"/>
+      <circle cx="24" cy="45.5" r="1.8" style="fill:var(--alerta)"/>
+      <path d="M49 42l12-14" style="stroke:var(--texto)" stroke-width="2.2"/>
+      <circle cx="61" cy="28" r="1.8" style="fill:var(--espera)"/>
+    </symbol>
+    <symbol id="rol-obrero" viewBox="0 0 64 64" stroke-linecap="round" stroke-linejoin="round">
+      {# Gorra y martillo: la sesión del proyecto que hace el trabajo. #}
+      <path d="M15 20a16 12 0 0 1 32 0z" style="fill:var(--t-agente)"/>
+      <path d="M40 19.5h13a2 2 0 0 1 0 4H40z" style="fill:var(--t-agente)"/>
+      <circle cx="31" cy="9" r="2" style="fill:var(--texto)"/>
+      <path d="M50 45l9-13" style="stroke:var(--t-script)" stroke-width="3"/>
+      <path d="M53.5 28.5l9.5 6.5-2.4 3.4-9.5-6.5z" style="fill:var(--texto-2)"/>
+    </symbol>
+    <symbol id="rol-arquitecto" viewBox="0 0 64 64" stroke-linecap="round" stroke-linejoin="round">
+      {# Casco de obra y plano enrollado. #}
+      <path d="M14 21a17 15 0 0 1 34 0z" style="fill:var(--espera)"/>
+      <rect x="10" y="19" width="42" height="4.5" rx="2.2" style="fill:var(--espera)"/>
+      <path d="M31 7.5v11" fill="none" style="stroke:var(--texto)" stroke-width="2.6" opacity=".7"/>
+      <rect x="47" y="26" width="7" height="20" rx="3.5" transform="rotate(-20 50.5 36)" style="fill:var(--t-agente)"/>
+      <path d="M48.5 30.5l5 13.5" fill="none" style="stroke:var(--texto)" stroke-width="1" opacity=".8" transform="rotate(-20 50.5 36)"/>
+    </symbol>
+    <symbol id="rol-revisor" viewBox="0 0 64 64" stroke-linecap="round" stroke-linejoin="round">
+      {# Gafas redondas y un sello con su visto bueno. #}
+      <circle cx="24.5" cy="33.5" r="6" fill="none" style="stroke:var(--lienzo)" stroke-width="2.2"/>
+      <circle cx="37.5" cy="33.5" r="6" fill="none" style="stroke:var(--lienzo)" stroke-width="2.2"/>
+      <path d="M30.5 33.5h1" style="stroke:var(--lienzo)" stroke-width="2.2"/>
+      <rect x="47" y="25" width="8" height="9" rx="2" style="fill:var(--t-script)"/>
+      <rect x="44" y="34" width="14" height="5" rx="1.5" style="fill:var(--texto-2)"/>
+      <path d="M46 43.5l3 3 6-6.5" fill="none" style="stroke:var(--ok)" stroke-width="2.4"/>
+    </symbol>
+    <symbol id="rol-disenador" viewBox="0 0 64 64" stroke-linecap="round" stroke-linejoin="round">
+      {# Boina y pincel. #}
+      <ellipse cx="29" cy="19.5" rx="17" ry="6" transform="rotate(-8 29 19.5)" style="fill:var(--lienzo)"/>
+      <circle cx="27" cy="12.5" r="2.2" style="fill:var(--lienzo)"/>
+      <path d="M50 46l8-17" style="stroke:var(--t-script)" stroke-width="2.6"/>
+      <path d="M57 27.5c1.5-3.5 4.5-4.5 5.5-3.5s-.5 4-4 5.5z" style="fill:var(--t-skill)"/>
+    </symbol>
+    <symbol id="rol-explorador" viewBox="0 0 64 64" stroke-linecap="round" stroke-linejoin="round">
+      {# Sombrero de ala y linterna encendida. #}
+      <path d="M19 19c0-7 5-11 12-11s12 4 12 11z" style="fill:var(--t-script)"/>
+      <ellipse cx="31" cy="20" rx="22" ry="4" style="fill:var(--t-script)"/>
+      <path d="M19.5 16.5h23" fill="none" style="stroke:var(--lienzo)" stroke-width="2.4" opacity=".55"/>
+      <path d="M56 26l8-4v16l-8-4z" style="fill:var(--espera);opacity:.45"/>
+      <rect x="45" y="27" width="12" height="7" rx="2" style="fill:var(--texto-2)"/>
+    </symbol>
+    <symbol id="rol-investigador" viewBox="0 0 64 64" stroke-linecap="round" stroke-linejoin="round">
+      {# Sombrero de detective y lupa grande. #}
+      <path d="M19 19.5c0-7 3.5-11.5 12-11.5s12 4.5 12 11.5z" style="fill:var(--lienzo)"/>
+      <path d="M26 9.5q5 3 10 0" fill="none" style="stroke:var(--superficie2)" stroke-width="1.6"/>
+      <path d="M19.2 16.5h23.6v3H19.2z" style="fill:var(--t-script)"/>
+      <ellipse cx="31" cy="20.5" rx="20" ry="3.4" style="fill:var(--lienzo)"/>
+      <circle cx="53" cy="31" r="7" style="fill:color-mix(in srgb, var(--acento) 30%, transparent);stroke:var(--texto)" stroke-width="2.2"/>
+      <path d="M49 37l-4.5 6" style="stroke:var(--texto)" stroke-width="3"/>
+    </symbol>
+    <symbol id="rol-planificador" viewBox="0 0 64 64" stroke-linecap="round" stroke-linejoin="round">
+      {# Lápiz tras la oreja y portapapeles con su lista. #}
+      <path d="M45 14l7-7 3 3-7 7z" style="fill:var(--espera)"/>
+      <path d="M45 14l-1.5 4.5L48 17z" style="fill:var(--texto)"/>
+      <rect x="46" y="25" width="15" height="20" rx="2" style="fill:var(--texto)"/>
+      <rect x="50" y="23.5" width="7" height="3.5" rx="1.2" style="fill:var(--t-script)"/>
+      <path d="M49.5 31.5h8M49.5 35.5h8M49.5 39.5h5" fill="none" style="stroke:var(--t-skill)" stroke-width="1.6"/>
+    </symbol>
+    <symbol id="rol-ayudante" viewBox="0 0 64 64" stroke-linecap="round" stroke-linejoin="round">
+      {# Una antena pequeña y la llave inglesa: hace un poco de todo. #}
+      <path d="M31 18V10" fill="none" style="stroke:var(--texto-2)" stroke-width="2"/>
+      <circle cx="31" cy="8.5" r="3" style="fill:var(--acento)"/>
+      <path d="M48 45l8-11" style="stroke:var(--texto-2)" stroke-width="3.2"/>
+      <path d="M54.5 30.5a5 5 0 1 0 6.5 4.5l-3 .5-1.5-2.5 1.5-2.6z" style="fill:var(--texto-2)"/>
+    </symbol>
+    <symbol id="rol-resumidor" viewBox="0 0 64 64" stroke-linecap="round" stroke-linejoin="round">
+      {# Visera de contable y un pergamino. #}
+      <path d="M12 17.5h38v3.6H12z" style="fill:var(--lienzo)"/>
+      <path d="M14 21h34l5 7H9z" style="fill:color-mix(in srgb, var(--ok) 75%, transparent)"/>
+      <rect x="46" y="24" width="14" height="20" rx="1.5" style="fill:var(--texto)"/>
+      <rect x="44.5" y="22" width="17" height="4" rx="2" style="fill:var(--t-script)"/>
+      <rect x="44.5" y="42" width="17" height="4" rx="2" style="fill:var(--t-script)"/>
+      <path d="M49 30.5h8M49 34h8M49 37.5h5" fill="none" style="stroke:var(--texto-3)" stroke-width="1.4"/>
+    </symbol>
+    <symbol id="rol-experto" viewBox="0 0 64 64" stroke-linecap="round" stroke-linejoin="round">
+      {# Birrete, gafas gruesas y libro: el modelo mayor. #}
+      <path d="M31 6l20 7-20 7-20-7z" style="fill:var(--lienzo)"/>
+      <path d="M19 16v4.5c3 2.5 21 2.5 24 0V16l-12 4.2z" style="fill:var(--lienzo)"/>
+      <path d="M51 13v8" fill="none" style="stroke:var(--espera)" stroke-width="1.6"/>
+      <circle cx="51" cy="22" r="1.8" style="fill:var(--espera)"/>
+      <rect x="18.5" y="28.5" width="12" height="10" rx="4" fill="none" style="stroke:var(--lienzo)" stroke-width="2.8"/>
+      <rect x="31.5" y="28.5" width="12" height="10" rx="4" fill="none" style="stroke:var(--lienzo)" stroke-width="2.8"/>
+      <path d="M45 27h14v17H45z" style="fill:var(--alerta)"/>
+      <path d="M47.5 27v17" fill="none" style="stroke:var(--lienzo)" stroke-width="1.4" opacity=".5"/>
+    </symbol>
+    <symbol id="rol-otro" viewBox="0 0 64 64">
+      {# Sin skin propia: el cuerpo neutro y su inicial (la pinta `.pj-inicial`). #}
+    </symbol>
+  </defs>
+</svg>
+{# La plantilla de un acompañante: el JS la copia cambiando __ROL__ e __INICIAL__. #}
+<template id="pj-plantilla-acomp">{{ acomp('__ROL__', '__INICIAL__') }}</template>
+{% endmacro %}
+
+
+{# Las piezas comunes del cuerpo. `principal` añade lo que sólo tiene él:
+   satélites, globos, ondas, gafas de pensar a fondo y el hueco de la mano. #}
+{% macro _cuerpo(principal) %}
+  <g class="pj-figura">
+    <g class="pj-ondas">
+      <path d="M9.5 28.5a9 9 0 0 0 0 13"/>
+      <path d="M4.5 24.5a14 14 0 0 0 0 21"/>
+    </g>
+    <rect class="pj-pie" x="20" y="49" width="8" height="7" rx="3.5"/>
+    <rect class="pj-pie" x="34" y="49" width="8" height="7" rx="3.5"/>
+    <rect class="pj-cuerpo" x="13" y="17" width="36" height="36" rx="11"/>
+    <rect class="pj-reflejo" x="17" y="20.5" width="9" height="3.2" rx="1.6"/>
+    <circle class="pj-mejilla" cx="19" cy="41.5" r="2.6"/>
+    <circle class="pj-mejilla" cx="43" cy="41.5" r="2.6"/>
+    <g class="pj-ojos">
+      <g class="pj-parpados">
+        <rect class="pj-ojo" x="21.8" y="28.5" width="5.4" height="9" rx="2.7"/>
+        <rect class="pj-ojo" x="34.8" y="28.5" width="5.4" height="9" rx="2.7"/>
+        <circle class="pj-brillo" cx="25.6" cy="30.6" r="1.15"/>
+        <circle class="pj-brillo" cx="38.6" cy="30.6" r="1.15"/>
+      </g>
+    </g>
+    <path class="pj-boca" d="M28 42.6q3 2.4 6 0"/>
+    <g class="pj-boca-g"><ellipse class="pj-boca-abierta" cx="31" cy="43.6" rx="3.8" ry="3"/></g>
+    {% if principal %}
+    <g class="pj-gafas">
+      <rect x="18.5" y="28" width="12.5" height="11" rx="4.2"/>
+      <rect x="31" y="28" width="12.5" height="11" rx="4.2"/>
+    </g>
+    {% endif %}
+    <rect class="pj-mano" x="42" y="37" width="8" height="8" rx="4"/>
+  </g>
+{% endmacro %}
+
+{# Los globos: iguales en el cubo y encima de un dibujo, que también los pinta
+   a su manera pero en pequeño no se leen; el de colores es la señal. #}
+{% macro _globos() %}
+  <g class="pj-globo pj-globo-si"><rect x="0" y="2" width="15" height="15" rx="5"/><text x="7.5" y="13.6">?</text></g>
+  <g class="pj-globo pj-globo-hecho"><rect x="0" y="2" width="15" height="15" rx="5"/><path d="M4 9.6l2.6 2.6 4.6-5"/></g>
+  <g class="pj-globo pj-globo-error"><rect x="0" y="2" width="15" height="15" rx="5"/><text x="7.5" y="13.6">!</text></g>
+{% endmacro %}
+
+{# `pj`: la vista de un personaje (`api.personaje_vista`: id y hoja). Sin
+   hoja, o sin `pj`, es el cubo: la ruta de la hoja sólo la sabe `personaje.hoja`. #}
+{% macro figura(pj=none, gesto='hacer', clase='') %}
+{% if pj and pj.hoja %}
+<span class="pj pj-dibujo {{ clase }}" data-pj="{{ pj.id }}" style="--pj-hoja:url('{{ pj.hoja }}')" aria-hidden="true">
+  {# = `personaje.POSES`, en su orden (lo comprueba un test). #}
+  <span class="pj-poses">
+    {%- for pose in ['base', 'escuchando', 'pensando', 'buscando', 'anotando', 'hablando', 'esperando', 'listo', 'dormido'] -%}
+    <span class="pj-capa" data-pose="{{ pose }}"></span>
+    {%- endfor -%}
+  </span>
+  <svg class="pj-encima" viewBox="0 0 64 64" focusable="false">
+    {# El objeto que usa, en una insignia: el dibujo sólo tiene dos poses de trabajo. #}
+    <g class="pj-accesorio"><circle class="pj-insignia" cx="53" cy="53" r="11"/><use href="#acc-{{ gesto }}" x="45" y="45" width="16" height="16"/></g>
+    {{ _globos() }}
+  </svg>
+</span>
+{% else %}
+<svg class="pj {{ clase }}" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+  <g class="pj-satelites">
+    <rect class="pj-sat pj-sat-1" x="45" y="12.5" width="4.5" height="4.5" rx="1.4"/>
+    <rect class="pj-sat pj-sat-2" x="50.5" y="6" width="5.5" height="5.5" rx="1.7"/>
+    <rect class="pj-sat pj-sat-3" x="57" y="-.5" width="6.5" height="6.5" rx="2"/>
+  </g>
+  {{ _cuerpo(true) }}
+  {# En un <g>: el x/y de un <use> se aplica después de su transform, y
+     girarlo directamente lo sacaba volando del dibujo. #}
+  <g class="pj-accesorio"><use href="#acc-{{ gesto }}" x="43" y="23" width="20" height="20"/></g>
+  {{ _globos() }}
+  {# Las zetas, sólo en el cubo: el dibujo dormido ya las lleva, y dos veces «z» se lee doble. #}
+  <g class="pj-zzz"><text x="4" y="14">z</text><text x="9" y="8">z</text></g>
+</svg>
+{% endif %}
+{% endmacro %}
+
+{% macro acomp(rol, inicial='') %}
+<svg class="pj pj-mini" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+  {{ _cuerpo(false) }}
+  <text class="pj-inicial" x="31" y="47.5">{{ inicial }}</text>
+  <use class="pj-rol" href="#rol-{{ rol }}" x="0" y="0" width="64" height="64"/>
+</svg>
+{% endmacro %}

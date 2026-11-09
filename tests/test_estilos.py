@@ -233,8 +233,28 @@ def test_la_lista_cede_sitio_para_que_el_pie_siempre_quepa():
 def test_la_ruta_se_traduce_solo_para_el_chrome_de_windows():
     """🔴 El Chrome de Windows no entiende una ruta de Linux: la acepta,
     sale con código 0 y no escribe nada. El fallo no se ve — el síntoma es una
-    captura que no existe."""
-    assert estilos._para_el_navegador("/usr/bin/chromium", __import__("pathlib").Path("/tmp/x.png")) == "/tmp/x.png"
+    captura que no existe. Lo hace `mirar`, por donde pasa la captura."""
+    from hub import mirar
+    assert mirar.para("/usr/bin/chromium", __import__("pathlib").Path("/tmp/x.png")) == "/tmp/x.png"
+
+
+def test_la_muestra_se_pinta_con_la_captura_de_mirar(monkeypatch, tmp_path):
+    """`capturar` armaba la orden de Chrome a mano (C-0139): la captura es
+    `mirar.captura`, que traduce rutas para el Chrome de Windows y avisa de
+    los anchos que ese navegador no da."""
+    from hub import mirar
+    pedidas = []
+
+    def captura(fuente, destino, ancho=1000, alto=900, escala=1, espera_ms=2500, chrome=None):
+        pedidas.append((ancho, alto, escala, chrome))
+        destino.write_bytes(b"png")
+        return destino
+
+    monkeypatch.setattr(estilos, "_navegador", lambda: "/usr/bin/un-chromium-que-no-existe")
+    monkeypatch.setattr(mirar, "captura", captura)
+    png = estilos.capturar(estilos.ESTILOS[0], destino=tmp_path)
+    assert png.is_file() and pedidas == [(720, 1000, 2, "/usr/bin/un-chromium-que-no-existe")]
+    assert not list(tmp_path.glob("*.html")), "la página temporal se borra"
 
 
 def test_sin_navegador_se_dice_que_solo_hace_falta_para_generar(monkeypatch):

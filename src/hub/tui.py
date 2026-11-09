@@ -83,14 +83,15 @@ CONOCIDOS = (CLAUDE, CODEX)
 SHELLS = frozenset({"bash", "sh", "zsh", "fish", "dash", "ksh", "tcsh", "csh"})
 
 
-def detectar(pane_id: str) -> Agente | None:
-    """Qué agente corre AHORA en ese panel. `None` si no se puede afirmar.
+def reconocer(comando: str, titulo: str = "") -> Agente | None:
+    """Qué agente dicen el comando y el título de un panel. `None` si no se
+    puede afirmar.
 
-    🔴 Se llama en el instante de escribir, nunca antes. Es la comprobación
-    entera de la regla 15: entre abrir un panel y escribirle pueden pasar horas,
-    y en ese rato el usuario puede haber salido del agente a una shell.
+    La regla entera, en un sitio: `detectar` la aplica a tmux en vivo para
+    escribir, y los talleres (C-0220) al último muestreo para pintar. Una
+    shell en primer plano niega aunque el título lleve el glifo (261), y el
+    comando afirma antes que el glifo porque es la señal fuerte.
     """
-    comando = tmux.comando_de_panel(pane_id)
     if comando in SHELLS:
         return None
     for agente in CONOCIDOS:
@@ -99,10 +100,24 @@ def detectar(pane_id: str) -> Agente | None:
 
     # Y el glifo, que cubre a Claude Code arrancado por un envoltorio. Va
     # DESPUÉS: cuando las dos señales están, manda la fuerte.
-    titulo = tmux.titulo_panel(pane_id)
     if titulo and tmux.tiene_glifo_estado(titulo):
         return CLAUDE
     return None
+
+
+def detectar(pane_id: str) -> Agente | None:
+    """Qué agente corre AHORA en ese panel. `None` si no se puede afirmar.
+
+    🔴 Se llama en el instante de escribir, nunca antes. Es la comprobación
+    entera de la regla 15: entre abrir un panel y escribirle pueden pasar horas,
+    y en ese rato el usuario puede haber salido del agente a una shell.
+    """
+    comando = tmux.comando_de_panel(pane_id)
+    agente = reconocer(comando)
+    if agente or comando in SHELLS:
+        return agente
+    # El título sólo si el comando no basta: es otra llamada a tmux.
+    return reconocer(comando, tmux.titulo_panel(pane_id))
 
 
 def cuadro(agente: Agente, pane_id: str) -> str:

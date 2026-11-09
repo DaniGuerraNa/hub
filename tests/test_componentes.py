@@ -73,6 +73,51 @@ def test_xvfb_es_opcional_y_no_impide_estar_listo(tmp_path, monkeypatch):
     assert componentes.listo(list(pasos.values()))
 
 
+def test_el_chrome_se_busca_por_la_puerta_de_mirar(tmp_path, monkeypatch):
+    """C-0052: el paso «Hay un Chrome» buscaba el navegador a mano, con su
+    propia lista y su propia mirada a la caché de Playwright (donde bastaba una
+    carpeta `chromium-*`, aunque la descarga se hubiera quedado a medias).
+    Elegirlo es de `mirar.cual_linux`; `NAV_CHROME` sigue mandando."""
+    from hub import mirar
+
+    monkeypatch.delenv("NAV_CHROME", raising=False)
+    monkeypatch.setattr(componentes.shutil, "which", lambda c: None)
+    monkeypatch.setattr(componentes.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(mirar, "cual_linux", lambda: "/opt/chromium/chrome")
+    assert componentes._hay_chrome()
+    monkeypatch.setattr(mirar, "cual_linux", lambda: None)
+    (tmp_path / ".cache" / "ms-playwright" / "chromium-1").mkdir(parents=True)
+    assert not componentes._hay_chrome()
+    monkeypatch.setenv("NAV_CHROME", "/usr/bin/chrome-de-mentira")
+    assert componentes._hay_chrome()
+
+
+def test_la_gpu_se_encuentra_aunque_el_path_del_servicio_no_traiga_su_carpeta(tmp_path, monkeypatch):
+    """C-0119: en WSL `nvidia-smi` vive en `/usr/lib/wsl/lib`, fuera del PATH
+    de la unit de `hub-web`, y /reuniones decía «sin GPU» teniéndola. Es la
+    decisión 81 otra vez: se resuelve como en `maquina` (sus respaldos)."""
+    from hub import maquina
+
+    falso = tmp_path / "wsl-lib" / "nvidia-smi"
+    falso.parent.mkdir()
+    falso.write_text("#!/bin/sh\n")
+    falso.chmod(0o755)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setitem(maquina.RESPALDOS, "nvidia-smi", str(falso))
+
+    pasos = {p["id"]: p for p in componentes.pasos_reuniones_wsl()}
+    assert pasos["gpu"]["hecho"]
+
+
+def test_sin_gpu_en_ningun_sitio_se_dice_que_no_hay(tmp_path, monkeypatch):
+    from hub import maquina
+
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setitem(maquina.RESPALDOS, "nvidia-smi", str(tmp_path / "no-esta"))
+    pasos = {p["id"]: p for p in componentes.pasos_reuniones_wsl()}
+    assert not pasos["gpu"]["hecho"] and pasos["gpu"]["opcional"]
+
+
 # ───────────────────────────── la carpeta del agente ─────────────────────────────
 
 
@@ -246,10 +291,12 @@ def test_copiar_ruta_para_claude_copia_las_rutas_y_lo_dice(cliente, tmp_path, mo
 
     html = cliente.get(f"/reuniones/{d.name}").text
     guion = re.findall(r"<script>\s*(.*?)\s*</script>", html, re.S)[-1]
+    # Por delegación en el documento (C-0167): la ficha se repinta sola sin
+    # recargar mientras se procesa, y un oyente atado al botón se perdería.
     salida = ejecutar(guion, tmp_path, accion="""
       const b = nodo('copiar-ruta');
       b.dataset = { texto: 'Reunión «Revisión»' };
-      b.disparar('click');
+      DOC_OYENTES.click.forEach((f) => f({ target: { closest: (s) => s === '#copiar-ruta' ? b : null } }));
       setTimeout(() => registro.valores.push(['aviso', nodo('copiada').textContent]), 5);
     """)
     assert salida["portapapeles"] == ["Reunión «Revisión»"]

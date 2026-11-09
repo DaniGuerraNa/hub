@@ -229,6 +229,33 @@ def test_el_comando_se_manda_con_su_barra_y_su_argumento(tmux_falso):
     assert tmux_falso["pegado"][1][1] == "/clear"
 
 
+@pytest.mark.parametrize("cmd", ["clear", "compact"])
+def test_con_un_permiso_abierto_ningun_comando_pulsa_enter(tmux_falso, monkeypatch, cmd):
+    """C-0079. El pegado no entra en un menú, y el Enter de `despachar` elige
+    la opción marcada, «1. Yes»: «Limpiar» habría autorizado lo que el
+    asistente pedía. `enviar` ya se negaba (`listo` ve el menú); el comando no."""
+    enters = []
+    monkeypatch.setattr(tmux, "capturar_panel", lambda p: (
+        "─" * 40 + "\n Bash command\n\n   rm -rf build\n\n"
+        " Do you want to proceed?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel\n"
+    ))
+    monkeypatch.setattr(tmux, "enter_en_panel", lambda p: enters.append(p))
+    with pytest.raises(asistente.AsistenteNoListo, match="permiso"):
+        asistente.enviar_comando(cmd)
+    assert tmux_falso["pegado"] == [] and enters == []
+
+
+def test_un_comando_con_el_asistente_arrancando_o_trabajando_no_se_pega(tmux_falso):
+    tmux_falso["arrancando"].add("%9")
+    with pytest.raises(asistente.AsistenteNoListo, match="arrancando"):
+        asistente.enviar_comando("clear")
+    tmux_falso["arrancando"].discard("%9")
+    tmux_falso["titulos"]["%9"] = "⠸ Revisando la sesión"
+    with pytest.raises(asistente.AsistenteNoListo, match="trabajando"):
+        asistente.enviar_comando("clear")
+    assert tmux_falso["pegado"] == []
+
+
 # --------------------------------------------------------------------------- #
 # Ocupado
 # --------------------------------------------------------------------------- #
@@ -294,9 +321,9 @@ def test_el_asistente_arranca_con_su_bin_en_el_path(proyectos):
     El asistente no encontraba su propio comando `hub` y contestaba, muy seguro,
     que «no está en el PATH de esta sesión»."""
     proyecto = asistente.proyecto_asistente(proyectos)
-    comando = asistente.comando_de_arranque(proyecto)
+    comando = tmux.con_entorno(asistente.comando_de_arranque(), asistente._entorno(proyecto))
 
-    assert comando.startswith("env PATH=")
+    assert comando.startswith("env PATH=") and comando.count("env ") == 1
     assert f"{proyecto.asiento}/bin" in comando
     # `env` se sustituye por `claude`, así que `localizar()` lo sigue viendo.
     assert comando.endswith("claude --model claude-sonnet-5")
@@ -308,8 +335,7 @@ def test_el_asistente_arranca_sabiendo_donde_escribir_su_contexto(proyectos, mon
     porcentaje del chat desaparecía sin aviso. Ahora se le dice al arrancar."""
     archivo = tmp_path / "otro-sitio" / "contexto.json"
     monkeypatch.setattr(asistente, "ARCHIVO_CONTEXTO", archivo)
-    comando = asistente.comando_de_arranque(asistente.proyecto_asistente(proyectos))
-    assert f"HUB_CONTEXTO_FICHERO={archivo}" in comando
+    assert asistente._entorno(asistente.proyecto_asistente(proyectos))["HUB_CONTEXTO_FICHERO"] == str(archivo)
 
 
 def test_la_variable_del_contexto_la_lee_tambien_el_hub(monkeypatch, tmp_path):
@@ -568,6 +594,64 @@ def test_se_extrae_que_permiso_esta_pidiendo(tmux_falso, monkeypatch):
     assert sorted(c["respuestas"]) == ["no", "si"]
 
 
+# Los cuadros de crear y editar un archivo, tal cual los pinta Claude Code
+# 2.1.280 (medidos el 9-nov en un panel de verdad, C-0223). Sólo se cambió la
+# carpeta de la cabecera, que era la de esta máquina.
+_SEPARADOR = "╌" * 60
+CUADRO_CREAR = (
+    "❯ Crea un archivo nota.txt con la palabra hola. Usa la herramienta Write, nada más.\n"
+    "● Write(nota.txt)\n" + "─" * 60 + "\n Create file\n nota.txt\n" + _SEPARADOR + "\n"
+    "  1 hola\n" + _SEPARADOR + "\n Do you want to create nota.txt?\n ❯ 1. Yes\n"
+    "   2. Yes, and allow Claude to edit files in its ~/.claude folder for this session\n"
+    "   3. No\n\n Esc to cancel · Tab to amend\n"
+)
+CUADRO_EDITAR = (
+    "● Update(nota.txt)\n" + "─" * 60 + "\n Edit file\n nota.txt\n" + _SEPARADOR + "\n"
+    " 1 -hola\n 1   No newline at end of file\n 2 +adios\n 3   No newline at end of file\n"
+    + _SEPARADOR + "\n Do you want to make this edit to nota.txt?\n ❯ 1. Yes\n"
+    "   2. Yes, and allow Claude to edit files in its ~/.claude folder for this session\n"
+    "   3. No\n\n Esc to cancel · Tab to amend\n"
+)
+
+
+@pytest.mark.parametrize("pantalla", [CUADRO_CREAR, CUADRO_EDITAR], ids=["crear", "editar"])
+def test_crear_o_editar_un_archivo_tambien_es_pedir_permiso(tmux_falso, monkeypatch, pantalla):
+    """C-0223: sólo se conocía «Do you want to proceed?», y una sesión
+    esperando que aprobaras crear un archivo salía quieta y no preguntando:
+    ni el punto ni el aviso al teléfono lo decían."""
+    monkeypatch.setattr(tmux, "capturar_panel", lambda p: pantalla)
+    assert asistente.esperando_confirmacion("%9") is True
+    c = asistente.confirmacion_pendiente("%9")
+    assert c["peticion"][:2] in (["Create file", "nota.txt"], ["Edit file", "nota.txt"])
+    assert not any(set(l) <= set("╌ ") for l in c["peticion"])
+    assert "Do you want" not in " ".join(c["peticion"])
+
+
+def test_un_nombre_largo_que_parte_la_pregunta_sigue_siendo_el_cuadro(tmux_falso, monkeypatch):
+    """La pantalla se lee sin unir líneas: con un nombre que no cabe, el «?»
+    cae en la línea siguiente (revisor)."""
+    monkeypatch.setattr(tmux, "capturar_panel", lambda p: CUADRO_CREAR.replace(
+        " Do you want to create nota.txt?\n",
+        " Do you want to create src/una/carpeta/muy/larga/con/un/nombre/de/archivo/que/no/cabe/\nentero.txt?\n"))
+    assert asistente.esperando_confirmacion("%9") is True
+
+
+def test_una_pregunta_del_agente_con_opciones_no_es_el_cuadro(tmux_falso, monkeypatch):
+    """Un agente que pregunta «Do you want to create the config file?» con su
+    propia lista «1. Yes» no tiene el pie del cuadro («Esc to cancel»)."""
+    monkeypatch.setattr(tmux, "capturar_panel", lambda p: (
+        "● Do you want to create the config file?\n  1. Yes\n  2. No\n❯ \n"))
+    assert asistente.esperando_confirmacion("%9") is False
+
+
+def test_citar_la_pregunta_en_una_respuesta_no_es_el_cuadro(tmux_falso, monkeypatch):
+    """Sin el menú debajo («1. Yes») es texto de la conversación, no un cuadro:
+    una falsa alarma es peor que no avisar."""
+    monkeypatch.setattr(tmux, "capturar_panel", lambda p: (
+        "● Te preguntará «Do you want to create nota.txt?» y eliges Yes.\n❯ \n"))
+    assert asistente.esperando_confirmacion("%9") is False
+
+
 def test_la_via_del_transcript_tambien_da_porcentaje(tmp_path, monkeypatch):
     """El tamaño de la ventana NO caduca aunque el dato sí: es del modelo, no de
     la sesión. Reaprovecharlo deja que la vía de respaldo dé el porcentaje, que
@@ -753,7 +837,7 @@ def test_abrir_el_asistente_acepta_antes_su_carpeta(tmux_falso, proyectos, monke
     """La carpeta la sembró el hub: no hay nada que preguntarle a nadie."""
     from hub import agentes
     confiadas = []
-    monkeypatch.setattr(agentes, "_confiar", lambda d: confiadas.append(str(d)))
+    monkeypatch.setattr(agentes, "confiar", lambda d: confiadas.append(str(d)))
     tmux_falso["sesiones"].clear()
     tmux_falso["paneles"] = []
     monkeypatch.setattr(tmux, "nueva_sesion", lambda *a, **k: None)

@@ -160,7 +160,7 @@ def test_lo_que_dijo_antes_del_alta_entra_en_su_encargo(cliente):
     _escribe_al_bot()
     con = web.conexion()
     try:
-        encargos.registrar(con, "falla", "mensaje de alguien sin alta",
+        encargos.registrar(con, "falla", encargos.MARCA_SIN_ALTA,
                            user_id=777, cuerpo="Hola, tengo una panadería")
         con.commit()
     finally:
@@ -211,6 +211,48 @@ def test_si_no_se_puede_abrir_la_entrevista_el_alta_se_queda_y_se_dice(cliente, 
     con = web.conexion()
     try:
         assert encargos.puede_hablar(con, 777) is True
+    finally:
+        con.close()
+
+
+def test_dar_de_alta_es_una_sola_funcion_que_activa_y_empieza(cliente):
+    """C-0106: el alta estaba escrita dos veces en la web (la de siempre y la
+    del chat web). Ahora es `entrevistador.dar_de_alta`, y se prueba sin HTTP."""
+    _escribe_al_bot()
+    con = web.conexion()
+    try:
+        alta = entrevistador.dar_de_alta(con, 777)
+        con.commit()
+        assert encargos.puede_hablar(con, 777) and "error" not in alta
+        assert cliente.agentes_abiertos == [alta["encargo_id"]]
+        assert encargos.abierto_de(con, 777)["id"] == alta["encargo_id"]
+    finally:
+        con.close()
+
+
+def test_al_dueno_no_se_le_da_de_alta_como_a_quien_encarga(cliente):
+    _escribe_al_bot(user_id=1, username="dueno", nombre="El Dueño")
+    con = web.conexion()
+    try:
+        encargos.marcar_dueno(con, 1)
+        with pytest.raises(ValueError, match="dueño"):
+            entrevistador.dar_de_alta(con, 1)
+        assert encargos.listar(con) == [] and cliente.agentes_abiertos == []
+    finally:
+        con.close()
+
+
+def test_si_la_entrevista_no_abre_el_alta_y_su_encargo_se_quedan_y_vuelve_el_motivo(cliente, monkeypatch):
+    def no_puede(con, encargo_id):
+        raise RuntimeError("no hay servidor de tmux")
+
+    monkeypatch.setattr(entrevistador, "abrir_agente", no_puede)
+    _escribe_al_bot()
+    con = web.conexion()
+    try:
+        assert entrevistador.dar_de_alta(con, 777) == {"error": "no hay servidor de tmux"}
+        con.commit()
+        assert encargos.puede_hablar(con, 777) and encargos.abierto_de(con, 777)
     finally:
         con.close()
 
@@ -660,9 +702,70 @@ def test_dar_de_alta_por_el_chat_web_ensena_el_acceso_una_vez_y_abre_el_encargo(
     assert abiertos == [900000001]
 
 
+def test_si_el_entrevistador_no_abre_el_alta_por_el_chat_web_lo_dice_y_guarda_su_encargo(
+    cliente, monkeypatch
+):
+    """Igual que el alta de siempre (C-0106): antes, aquí el encargo que
+    alcanzó a crearse se deshacía y sólo quedaba el alta."""
+    from hub import chatweb, rele_encargos
+
+    class ChatFalso:
+        def crear_persona(self, usuario, nombre):
+            return 900000003, "clave-una-vez"
+
+    def no_puede(con, encargo_id):
+        raise RuntimeError("no hay servidor de tmux")
+
+    monkeypatch.setattr(rele_encargos, "ajustes", lambda: {"chat_web": {"url": "https://chat.test/", "token_ref": "x"}})
+    monkeypatch.setattr(chatweb, "bot", lambda ajustes: ChatFalso())
+    monkeypatch.setattr(entrevistador, "abrir_agente", no_puede)
+
+    r = cliente.post("/encargos/persona-web", data={"nombre": "Rosa"})
+
+    assert r.status_code == 200 and "el entrevistador no se abrió: no hay servidor de tmux" in r.text
+    con = web.conexion()
+    try:
+        assert encargos.puede_hablar(con, 900000003) and encargos.abierto_de(con, 900000003)
+    finally:
+        con.close()
+
+
 def test_sin_chat_web_configurado_el_alta_lo_dice(cliente, monkeypatch):
     from hub import rele_encargos
 
     monkeypatch.setattr(rele_encargos, "ajustes", lambda: {})
     r = cliente.post("/encargos/persona-web", data={"nombre": "Rosa"}, follow_redirects=False)
     assert r.status_code in (302, 303) and "chat_web" in r.headers["location"]
+
+
+def test_con_la_llave_del_chat_web_la_vista_solo_da_de_alta_y_renombra(cliente, monkeypatch):
+    """🔴 C-0054, pendiente del dueño. `hub-web` abre hoy la llave del chat web
+    para el alta y el nombre (decisión 246), y es la MISMA llave con la que el
+    relé lee y manda los mensajes: justo lo que la regla dura 22 le niega a
+    `hub-web`. Mientras se decide si es una excepción o se mueve, esto vigila
+    que no pase de ahí: todo lo que sale de la vista con ella va a
+    `/hub/personas…`, nunca a `/hub/actualizaciones`, `/hub/mensajes` ni a
+    los medios. Se ejecuta el `BotDeChat` de verdad; sólo se corta la red."""
+    from hub import chatweb, entrevistador, rele_encargos
+
+    pedidas: list[str] = []
+
+    class Respuesta:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return json.dumps({"user_id": 900000002}).encode("utf-8")
+
+    def abrir(self, peticion):
+        pedidas.append(peticion.full_url.removeprefix("https://chat.test"))
+        return Respuesta()
+
+    monkeypatch.setattr(rele_encargos, "ajustes",
+                        lambda: {"chat_web": {"url": "https://chat.test/", "token_ref": "x"}})
+    monkeypatch.setattr(telegram, "leer_token", lambda ref: "llave-del-chat")
+    monkeypatch.setattr(chatweb.BotDeChat, "_abrir", abrir)
+    monkeypatch.setattr(entrevistador, "empezar_con", lambda con, uid: {})
+
+    assert cliente.post("/encargos/persona-web", data={"nombre": "Rosa"}).status_code == 200
+    cliente.post("/encargos/persona", data={"user_id": 900000002, "alias": "Rosa P.", "estado": "activo"})
+
+    assert pedidas == ["/hub/personas", "/hub/personas/900000002/nombre"]

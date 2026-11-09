@@ -90,25 +90,6 @@ def test_si_systemd_run_falla_se_reintenta_a_pelo(monkeypatch):
     assert ordenes[1] == [*tmux.orden_base(), "new-session", "-d", "-s", "demo"]
 
 
-def test_la_sonda_de_systemd_no_se_repite(monkeypatch):
-    """Se pregunta una vez por proceso, no en cada llamada."""
-    monkeypatch.setattr(tmux, "_puede_desasir", None)
-    monkeypatch.setattr(tmux.shutil, "which", lambda _: "/usr/bin/systemd-run")
-    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
-
-    sondas = []
-
-    def falso_run(orden, **kw):
-        sondas.append(orden)
-        return subprocess.CompletedProcess(orden, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(tmux.subprocess, "run", falso_run)
-
-    assert tmux._hay_donde_desasir() is True
-    assert tmux._hay_donde_desasir() is True
-    assert len(sondas) == 1
-
-
 def test_el_servidor_aparte_no_lee_la_configuracion_de_quien_ejecuta(monkeypatch):
     """🔴 Decisión 264: con tmux-continuum en el `~/.tmux.conf`, el servidor de
     pruebas restauraba las sesiones reales del usuario y los tests se

@@ -14,24 +14,25 @@ sigue escribiendo en el MISMO archivo, así que retomar no crea otra entrada.
 """
 from __future__ import annotations
 
-import re
 import sqlite3
 from pathlib import Path
 from typing import Any
 
-from . import api, transcripts
+from . import api, modelos, transcripts
 
 # Cuántas se enseñan por slot: las de hace semanas se buscan desde la sesión
 # misma (`/resume`), no aquí, y cada una cuesta leer su archivo entero.
 LIMITE = 8
-_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 # `resumir_sesion` lee el archivo entero, y una sesión larga pesa megas. Se
 # guarda la ficha mientras el archivo no cambie (misma fecha y tamaño).
 _FICHAS: dict[str, tuple[float, int, dict | None]] = {}
 
 
-def _ficha(ruta: Path) -> dict | None:
+def ficha(ruta: Path) -> dict | None:
+    """Lo que se enseña de una conversación de Claude Code, guardado mientras
+    su archivo no cambie. `None` si el archivo ya no está. La usan los slots y
+    el asistente (`asistente.conversaciones_anteriores`)."""
     try:
         st = ruta.stat()
     except OSError:
@@ -39,9 +40,9 @@ def _ficha(ruta: Path) -> dict | None:
     previa = _FICHAS.get(str(ruta))
     if previa and previa[0] == st.st_mtime and previa[1] == st.st_size:
         return previa[2]
-    ficha = transcripts.resumir_sesion(ruta)
-    _FICHAS[str(ruta)] = (st.st_mtime, st.st_size, ficha)
-    return ficha
+    resumen = transcripts.resumir_sesion(ruta)
+    _FICHAS[str(ruta)] = (st.st_mtime, st.st_size, resumen)
+    return resumen
 
 
 def _rutas_del_slot(con: sqlite3.Connection, slot: dict) -> list[str]:
@@ -89,13 +90,13 @@ def de_slot(con: sqlite3.Connection, slot_id: int, limite: int = LIMITE) -> list
     vivas = _vivas(con)
     salida = []
     for archivo in sorted(archivos.values(), key=transcripts.mtime, reverse=True):
-        ficha = _ficha(archivo)
+        resumen = ficha(archivo)
         # Una sin ninguna petición suya es un arranque que no llegó a nada.
-        if not ficha or not ficha.get("turnos"):
+        if not resumen or not resumen.get("turnos"):
             continue
-        panel = vivas.get(ficha["id"])
-        salida.append({**ficha,
-                       "de_este_slot": ficha["id"] in propias,
+        panel = vivas.get(resumen["id"])
+        salida.append({**resumen,
+                       "de_este_slot": resumen["id"] in propias,
                        "viva": bool(panel),
                        "ventana": ({"session": panel["session"], "ventana": panel["window_idx"]}
                                    if panel else None)})
@@ -110,7 +111,7 @@ def retomable(con: sqlite3.Connection, slot_id: int, sesion: str) -> dict:
     Sólo una de las que la lista ofrece: el id viene de un formulario y no se
     reanuda cualquier conversación de la máquina en la carpeta de este slot.
     """
-    if not _UUID.match(sesion or ""):
+    if not modelos.es_sesion(sesion):
         raise ValueError("esa conversación no tiene un id válido")
     ficha = next((c for c in de_slot(con, slot_id, limite=50) if c["id"] == sesion), None)
     if not ficha:

@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Lector de WhatsApp para el hub",
+  "version": "0.1.0",
+  "description": "Lee los mensajes nuevos de WhatsApp Web y los deja para el secretario del hub. Sólo lee: no envía, no marca leído.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjrm4JtF9c9pl/HWFm8fQsFTL773vh4Wiv8YOdE/BgAAk3JE7px3x0CNKiud1OvNgeHlr2blC41h23H5Pg0pwEHO/Jw8NKjJcf3rgbjxsZq5rXoVzyQGHQfpJBYh035h1NKJ3cbTFgSGpfomAjtb1uL4q7yvZ0UWsAbxwJR1ijcy5F5pEpdJNMd9wXFW0yeItDqeMan0lgrDfFhoImrAc8szasCAHY+kFcO9FcWv7OJX2L/TLASGL5LVOT9QZuUNRtnS2zxiqniUgDMJGoCO1eBxNUqrjD25TcS/QjHCpDmgeUnMFFjIyNlpVHN7BlNLaL0Om0kL4111Fft8O/NLclwIDAQAB",
+  "permissions": ["nativeMessaging"],
+  "background": {"service_worker": "fondo.js"},
+  "content_scripts": [
+    {"matches": ["https://web.whatsapp.com/*"], "js": ["enlace.js", "pagina.js"], "world": "MAIN", "run_at": "document_idle"},
+    {"matches": ["https://web.whatsapp.com/*"], "js": ["puente.js"], "run_at": "document_idle"}
+  ]
+}

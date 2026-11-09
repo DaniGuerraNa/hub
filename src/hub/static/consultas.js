@@ -83,18 +83,27 @@
     return preguntas;
   }
 
+  // Sólo si cambió: repintar lo mismo cada diez segundos era un parpadeo por
+  // latido (C-0167).
+  let pintado = null;
+  function poner(html) {
+    if (html === pintado) return;
+    lista.innerHTML = html;
+    pintado = html;
+  }
+
   function pintar(todas, slot) {
     const preguntas = filtrar(todas);
     if (!preguntas.length) {
-      lista.innerHTML = '<p class="tenue">' + (
+      poner('<p class="tenue">' + (
         filtro === 'pendientes' ? 'Ninguna esperando respuesta.'
         : filtro === 'contestadas' ? 'Todavía no ha contestado nadie.'
         : 'Nada preguntado fuera en este proyecto. '
           + 'Lo que Claude consulte por el canal aparecerá aquí con su respuesta.'
-      ) + '</p>';
+      ) + '</p>');
       return;
     }
-    lista.innerHTML = preguntas.map(q => {
+    poner(preguntas.map(q => {
       // Las de OTRO slot del mismo proyecto se atenúan en vez de esconderse:
       // `--slot` es opcional al preguntar, así que filtrar por slot escondería
       // preguntas reales y el panel diría «no hay» sobre cosas que sí hay.
@@ -115,7 +124,7 @@
             + ' sin poder confirmar que saliera. No se reintenta.</div>'
           : ''}
       </div>`;
-    }).join('');
+    }).join(''));
   }
 
   async function refrescar() {
@@ -140,7 +149,7 @@
       pintar(preguntas, slotActual());
     } catch (e) {
       if (!lista.querySelector('.consulta')) {
-        lista.innerHTML = '<p class="tenue">No se pudo consultar. Se reintenta solo.</p>';
+        poner('<p class="tenue">No se pudo consultar. Se reintenta solo.</p>');
       }
     }
   }

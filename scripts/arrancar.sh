@@ -14,6 +14,9 @@ RAIZ=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 HUB_HOME=${HUB_HOME:-$HOME/.local/share/hub}
 HUB_HOST=${HUB_HOST:-127.0.0.1}
 HUB_PORT=${HUB_PORT:-8787}
+# shellcheck source=lib/loopback.sh
+. "$RAIZ/scripts/lib/loopback.sh"
+exigir_loopback "$HUB_HOST"
 LOGS="$HUB_HOME/logs"
 mkdir -p "$LOGS"
 

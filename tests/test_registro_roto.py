@@ -190,3 +190,14 @@ def test_a_una_pantalla_se_le_sigue_contestando_una_pagina(cliente_roto):
     assert r.status_code == 422
     assert "text/html" in r.headers["content-type"]
     assert "El registro no se puede leer" in r.text
+
+
+def test_la_pagina_dice_el_archivo_que_de_verdad_lee(cliente_roto, tmp_path):
+    """C-0052: la página escribía `~/.local/share/hub/projects.yml` a mano
+    mientras la API, dos líneas antes, contestaba con `config.projects_yml()`.
+    Con `HUB_PROJECTS_YML` o `HUB_HOME` movidos, mandaba a arreglar otro archivo."""
+    import html
+
+    r = cliente_roto.post("/refrescar")
+    assert html.escape(str(tmp_path / "projects.yml")) in r.text
+    assert "~/.local/share/hub/projects.yml" not in r.text

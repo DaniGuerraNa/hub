@@ -61,12 +61,25 @@ def test_crear_ventana_con_comando_lo_pone_al_final(registro):
     assert registro[-1][-1] == "claude 'hola'"
 
 
-def test_renombrar_y_cerrar_apuntan_a_la_sesion_real(registro):
+def test_renombrar_apunta_a_la_sesion_real(registro):
     tmux.renombrar_ventana("work", 1, "logs")
     assert registro[-1] == ["rename-window", "-t", "=work:1", "logs"]
 
-    tmux.cerrar_ventana("work", 1)
-    assert registro[-1] == ["kill-window", "-t", "=work:1"]
+
+def test_cerrar_apunta_al_panel_y_no_al_indice(registro, monkeypatch):
+    """Decisión 396: `kill-window -t %N` mata la ventana de ese panel."""
+    monkeypatch.setattr(tmux, "servidor_pid", lambda: 42)
+    assert tmux.cerrar_ventana_de("%7", 42) is True
+    assert registro[-1] == ["kill-window", "-t", "%7"]
+
+
+def test_con_el_servidor_de_otro_muestreo_no_se_cierra_nada(registro, monkeypatch):
+    """Los `%N` se reutilizan al reiniciar tmux."""
+    monkeypatch.setattr(tmux, "servidor_pid", lambda: 43)
+    for servidor in (42, None, "", "x"):
+        with pytest.raises(tmux.ServidorDistinto):
+            tmux.cerrar_ventana_de("%7", servidor)
+    assert registro == []
 
 
 @pytest.mark.parametrize("malicioso", ["work; kill-server", "$(whoami)", "a b", "../x"])
@@ -75,7 +88,7 @@ def test_ninguna_operacion_acepta_un_destino_inventado(malicioso, registro):
         lambda: tmux.listar_ventanas(malicioso),
         lambda: tmux.nueva_ventana(malicioso),
         lambda: tmux.renombrar_ventana(malicioso, 0, "x"),
-        lambda: tmux.cerrar_ventana(malicioso, 0),
+        lambda: tmux.cerrar_ventana_de(malicioso, 1),
         lambda: tmux.seleccionar_ventana(malicioso, 0),
     ):
         with pytest.raises(tmux.DestinoInvalido):
@@ -85,11 +98,11 @@ def test_ninguna_operacion_acepta_un_destino_inventado(malicioso, registro):
 
 def test_el_indice_siempre_se_convierte_a_entero(registro):
     """Aunque llegue como texto desde la URL, nunca se interpola en crudo."""
-    tmux.cerrar_ventana("work", "3")
-    assert registro[-1] == ["kill-window", "-t", "=work:3"]
+    tmux.renombrar_ventana("work", "3", "x")
+    assert registro[-1] == ["rename-window", "-t", "=work:3", "x"]
 
     with pytest.raises(ValueError):
-        tmux.cerrar_ventana("work", "3; kill-server")
+        tmux.renombrar_ventana("work", "3; kill-server", "x")
 
 
 # --------------------------------------------------------------------------- #
@@ -182,7 +195,7 @@ def test_una_ventana_nueva_va_detras_de_la_ultima_aunque_haya_un_hueco(tmp_path)
     try:
         tmux.nueva_ventana(sesion, str(tmp_path), "b")
         tmux.nueva_ventana(sesion, str(tmp_path), "c")
-        tmux.cerrar_ventana(sesion, 1)
+        tmux._correr(["kill-window", "-t", f"={sesion}:1"])
 
         tmux.nueva_ventana(sesion, str(tmp_path), "d")
         tmux.abrir_ventana(str(tmp_path), "e", None, sesion)
@@ -192,3 +205,58 @@ def test_una_ventana_nueva_va_detras_de_la_ultima_aunque_haya_un_hueco(tmp_path)
         assert [v["indice"] for v in tmux.listar_ventanas(sesion)][1:] == [2, 3, 4]
     finally:
         tmux._correr(["kill-session", "-t", f"={sesion}"])
+
+
+def test_cerrar_por_el_panel_con_tmux_de_verdad(tmp_path, monkeypatch):
+    """Con un servidor propio: la ventana del panel muere, las otras no, y el
+    segundo clic dice «ya estaba cerrada» en vez de matar otra (C-0227)."""
+    monkeypatch.setenv("HUB_TMUX_SOCKET", f"cerrar-panel-{tmp_path.name}"[:60])
+    sesion = "cerrar-prueba"
+    tmux._correr(["new-session", "-d", "-s", sesion, "-n", "a", "-c", str(tmp_path)])
+    try:
+        tmux.nueva_ventana(sesion, str(tmp_path), "b")
+        tmux.nueva_ventana(sesion, str(tmp_path), "c")
+        ventanas = tmux.listar_ventanas(sesion)
+        b = next(v for v in ventanas if v["nombre"] == "b")
+        assert b["pane_id"].startswith("%") and b["servidor"] == tmux.servidor_pid()
+
+        assert tmux.cerrar_ventana_de(b["pane_id"], b["servidor"]) is True
+        assert [v["nombre"] for v in tmux.listar_ventanas(sesion)] == ["a", "c"]
+
+        # tmux da a la siguiente el número libre: «b» ya no está, pero su `%N` no es de nadie.
+        tmux._correr(["new-window", "-d", "-t", f"={sesion}:{b['indice']}", "-n", "d"])
+        assert tmux.cerrar_ventana_de(b["pane_id"], b["servidor"]) is False
+        assert [v["nombre"] for v in tmux.listar_ventanas(sesion)] == ["a", "d", "c"]
+    finally:
+        tmux._correr(["kill-server"])
+
+
+def test_cerrar_la_ultima_ventana_no_se_anuncia_como_una_sesion_perdida(tmp_path, monkeypatch):
+    """La última ventana se lleva el servidor de tmux, y el muestreo lo toma
+    por una caída: «se perdió una sesión» por algo que se cerró a propósito
+    (arquitecto, C-0227). Con tmux de verdad en su propio servidor."""
+    from hub import api, snapshotter, web
+
+    monkeypatch.setenv("HUB_TMUX_SOCKET", f"cerrar-ultima-{tmp_path.name}"[:60])
+    tmux._correr(["new-session", "-d", "-s", "sola", "-c", str(tmp_path)])
+    try:
+        con = web.conexion()
+        snapshotter.un_ciclo(con)
+        panel = api.paneles_abiertos(con)[0]
+        servidor = api.snapshot_actual(con)["server_pid"]
+
+        assert web._cerrar_ventana(panel["pane_id"], servidor) == (True, "")
+
+        assert tmux.servidor_pid() is None
+        assert api.paneles_abiertos(con) == []
+        assert api.recuperacion_pendiente(con) is None
+        # Y sigue así en la vuelta siguiente del demonio, con tmux apagado: la
+        # volvía a marcar como perdida a los 20 s (revisor).
+        snapshotter.un_ciclo(con)
+        assert api.recuperacion_pendiente(con) is None
+        con.close()
+    finally:
+        try:
+            tmux._correr(["kill-server"])
+        except (tmux.TmuxNoDisponible, RuntimeError):
+            pass

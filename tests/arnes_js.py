@@ -194,6 +194,8 @@ global.removeEventListener = () => {};
 // En el navegador `window` ES el objeto global. Sin esto, un script que use
 // `window.addEventListener` —perfectamente válido— fallaba sólo en el arnés.
 global.window = global;
+// Todo navegador lo tiene; por omisión, ninguna consulta casa (no es una app instalada).
+global.matchMedia = () => ({ matches: false, addEventListener(){} });
 // Un `fetch` que puede contestar. La respuesta por defecto sigue siendo `[]`,
 // pero un test puede dar cuerpos por trozo de URL: sin eso sólo se comprobaba
 // a quién se le piden los datos, nunca qué se hace con ellos.
@@ -333,8 +335,15 @@ setTimeout(() => {
 """
 
 
-def script_de(plantilla: str, contexto: dict) -> str:
-    """Renderiza la plantilla y extrae su último `<script>` en línea."""
+def script_de(plantilla: str, contexto: dict, indice: int = -1) -> str:
+    """Renderiza la plantilla y extrae uno de sus `<script>` en línea; por
+    omisión, el último.
+
+    🔴 `indice` existe porque «el último» dejaba sin ejecutar los demás: en
+    `proyecto.html` y en `inventario.html` el primero —el que lanza agentes—
+    no lo corría ningún test, y uno se llamaba «engancha el botón de sembrar»
+    mientras miraba el script de borrar slots (C-0109).
+    """
     entorno = Environment(loader=FileSystemLoader(str(PLANTILLAS)))
     # El mismo registro que hace `web.py`, y por la misma razón: si el arnés
     # montara su entorno a mano, probaría plantillas que la app no sirve. Ya
@@ -342,9 +351,20 @@ def script_de(plantilla: str, contexto: dict) -> str:
     # `'insignia' is undefined` mientras la web funcionaba.
     insignias.registrar(entorno)
     html = entorno.get_template(plantilla).render(**contexto)
-    bloques = re.findall(r"<script>\s*(.*?)\s*</script>", html, re.S)
+    bloques = scripts_en_linea(html)
     assert bloques, f"{plantilla} debe traer su script en línea"
-    return bloques[-1]
+    return bloques[indice]
+
+
+def scripts_en_linea(html: str) -> list[str]:
+    """Los `<script>` en línea de un HTML, en orden. Sirve también para una
+    página servida de verdad por la app, cuando armar su contexto a mano sería
+    copiar la vista (la portada necesita el resumen y el raíl enteros).
+
+    Los `<script data-antes-de-pintar>` no salen: van en todas las páginas
+    (la marca de JS) o delante de las secciones, no son el script de la
+    vista, y se ejecutan en `test_sin_recarga.py` (C-0167)."""
+    return re.findall(r"<script>\s*(.*?)\s*</script>", html, re.S)
 
 
 def script_estatico(nombre: str) -> str:

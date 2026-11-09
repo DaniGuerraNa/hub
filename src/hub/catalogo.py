@@ -9,7 +9,6 @@ fuente de verdad siguen siendo los archivos de cada proyecto.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import shutil
@@ -20,9 +19,8 @@ from pathlib import Path
 
 import yaml
 
+from . import consumo
 from .models import Proyecto
-
-TRANSCRIPTS = Path.home() / ".claude" / "projects"
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
 _MAPA = re.compile(r"^MAPA:\s*(\S+)\s*->\s*(\S+)", re.M)
@@ -53,13 +51,6 @@ def leer_frontmatter(ruta: Path) -> dict:
         return datos if isinstance(datos, dict) else {}
     except yaml.YAMLError:
         return {}
-
-
-def _hash(ruta: Path) -> str | None:
-    try:
-        return hashlib.sha256(ruta.read_bytes()).hexdigest()
-    except OSError:
-        return None
 
 
 # ───────────────────────── descubrimiento ─────────────────────────
@@ -240,6 +231,8 @@ def dependencias_de_kit(kit: Proyecto, proyectos: list[Proyecto]) -> tuple[list[
     decisión aparte, y romper una medición que funciona para estrenar el
     mecanismo sería cambiar algo que funciona por algo que aún no.
     """
+    from . import kits as _kits
+
     raiz_kit = Path(kit.asiento or "")
     if (raiz_kit / "kit.yml").is_file():
         return _dependencias_por_manifiesto(kit, raiz_kit, proyectos)
@@ -275,7 +268,7 @@ def dependencias_de_kit(kit: Proyecto, proyectos: list[Proyecto]) -> tuple[list[
             elif not f_origen.exists():
                 estado = "sin-origen"
             else:
-                igual = _hash(f_origen) == _hash(f_destino)
+                igual = _kits.huella_de_archivo(f_origen) == _kits.huella_de_archivo(f_destino)
                 estado = "igual" if igual else "difiere"
                 if estado == "difiere" and destino in declaradas:
                     estado = "divergencia-declarada"
@@ -344,7 +337,11 @@ def medir_uso(capacidades: list[dict]) -> dict[str, str]:
     `mutar.py` y `mutar.sh` comparten nombre y no son lo mismo.
     """
     comando = buscador()
-    if not TRANSCRIPTS.is_dir() or not comando:
+    # La raíz la da `consumo.carpeta()`, que lee `HUB_TRANSCRIPTS` (C-0179): con
+    # una constante propia, medir recorría los transcripts reales de quien
+    # ejecuta aunque se le hubiera dicho otro sitio, también en los tests.
+    raiz = consumo.carpeta()
+    if not raiz.is_dir() or not comando:
         return {}
 
     cache: dict[str, str | None] = {}
@@ -358,7 +355,7 @@ def medir_uso(capacidades: list[dict]) -> dict[str, str]:
         if patron not in cache:
             try:
                 salida = subprocess.run(
-                    [*comando, patron, str(TRANSCRIPTS)],
+                    [*comando, patron, str(raiz)],
                     capture_output=True, text=True, timeout=60, check=False,
                 )
             except (OSError, subprocess.SubprocessError):

@@ -380,6 +380,27 @@ def test_sobre_una_sesion_viva_el_espejo_se_crea_igual_que_siempre():
                 pass
 
 
+def test_con_tmux_de_verdad_el_espejo_sabe_de_que_grupo_es():
+    """🔴 `display-message -t =sesión` devuelve una línea VACÍA para
+    `#{session_group}` (medido en tmux 3.4, con y sin cliente atacado), igual
+    que para `#{pane_id}` en `tmux.panel_de_sesion`. Con el grupo vacío,
+    `_hay_otro_espectador` contestaba siempre «nadie», y el hub encogía la
+    ventana aunque la terminal del dueño la estuviera mirando: lo que la
+    comprobación existía para impedir. Los dobles lo tapaban porque
+    contestaban lo que tmux debería decir (C-0087)."""
+    viva = f"grupo-{os.getpid()}"
+    tmux.nueva_sesion(viva, "/tmp")
+    try:
+        espejo = terminal.crear_espejo(viva)
+        assert tmux.grupo_de_sesion(espejo) == viva
+    finally:
+        for s in (viva, *(s for s in _sesiones_vivas() if s.startswith(f"{terminal.PREFIJO_ESPEJO}{viva}-"))):
+            try:
+                tmux.matar_sesion(s)
+            except (RuntimeError, tmux.TmuxNoDisponible):
+                pass
+
+
 def test_una_sesion_muerta_cierra_el_socket_diciendo_que_no_se_reintente(monkeypatch):
     """Sin un código propio, el cliente reintenta para siempre.
 
@@ -425,3 +446,36 @@ def test_un_fallo_de_tmux_cierra_sin_codigo_para_que_se_reintente(monkeypatch):
         with pytest.raises(WebSocketDisconnect) as info:
             ws.receive_bytes()
     assert info.value.code != web.CIERRE_SIN_SESION
+
+
+# --------------------------------------------------------------------------- #
+# C-0085: lo que falla en tmux se dice (regla dura 21), sin tumbar la terminal
+# --------------------------------------------------------------------------- #
+
+
+def _explota(*a, **k):
+    raise RuntimeError("tmux dice que no")
+
+
+def test_si_no_se_puede_ajustar_el_ancho_se_dice(monkeypatch, capsys):
+    """El síntoma de callarlo es el de la 93: letras que faltan, sin nada que
+    diga por qué."""
+    monkeypatch.setattr(terminal, "_hay_otro_espectador", lambda e: False)
+    monkeypatch.setattr(terminal.tmux, "listar_ventanas", lambda s: [{"indice": 0}])
+    monkeypatch.setattr(terminal.tmux, "_correr", _explota)
+    terminal.dimensionar_al_espectador("hub-work-abc123")
+    assert "hub-work-abc123" in capsys.readouterr().out
+
+
+def test_si_no_se_puede_ir_a_la_ventana_pedida_se_dice(monkeypatch, capsys):
+    monkeypatch.setattr(tmux, "_correr", lambda args, **k: "")
+    monkeypatch.setattr(tmux, "seleccionar_ventana", _explota)
+    nombre = terminal.crear_espejo("work", ventana=3)
+    salida = capsys.readouterr().out
+    assert nombre in salida and "ventana 3" in salida
+
+
+def test_si_no_se_puede_cerrar_un_espejo_se_dice(monkeypatch, capsys):
+    monkeypatch.setattr(tmux, "_correr", _explota)
+    terminal.destruir_espejo("hub-work-abc123")
+    assert "hub-work-abc123" in capsys.readouterr().out

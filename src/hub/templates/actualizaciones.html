@@ -12,7 +12,10 @@
   .act .cifra strong { font-size:18px; font-weight:600; font-variant-numeric:tabular-nums; }
   .act .acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px; }
   .act pre { background:var(--lienzo); border:1px solid var(--borde); border-radius:var(--r-input);
-             padding:10px 12px; overflow-x:auto; font-size:12.5px; white-space:pre-wrap; margin:0; }
+             padding:10px 12px; overflow-x:auto; font-size:12.5px; white-space:pre-wrap; margin:0;
+             /* Una ruta larga sin espacios (un cambio sin guardar) no se parte
+                con `pre-wrap` y sacaba la página de lado en el móvil. */
+             overflow-wrap:anywhere; }
   .act #registro { max-height:420px; overflow-y:auto; }
   .act .marca { font-size:11px; padding:1px 8px; border-radius:999px; }
   .act .marca.ok { color:var(--ok); background:color-mix(in srgb, var(--ok) 14%, transparent); }

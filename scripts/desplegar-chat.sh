@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Sube el chat web de encargos al servidor y lo pone bajo chat.<dominio>.
 #
-#   HUB_CADDY=caddy bash scripts/desplegar-chat.sh <alias-ssh> <ruta-del-token> [--va]
+#   HUB_CADDY=caddy bash scripts/desplegar-chat.sh <alias-ssh> <ruta#CLAVE> [--va]
 #
-# 🔴 El token del hub (el mismo que apunta `chat_web.token_ref` en encargos.yml)
+# 🔴 El token del hub se pasa con el MISMO puntero que `chat_web.token_ref` en
+# encargos.yml (`ruta#CLAVE`) y lo lee `telegram.leer_token`, como el hub:
+# con un `grep` propio, otra clave subía un token vacío (C-0141). El token
 # viaja como archivo con permisos 600 y entra al contenedor por `--env-file`:
 # nunca en la línea de comandos, nunca en `docker inspect` a la vista de otro
 # usuario. Igual que los encargos implementados: un contenedor por nombre
 # exacto, red `web`, volumen para la base y los medios, Caddy delante.
 set -euo pipefail
-ALIAS=${1:-vps-test}; TOKEN_ARCHIVO=${2:-}; MODO=${3:-}
+ALIAS=${1:-}; TOKEN_REF=${2:-}; MODO=${3:-}
 CADDY=${HUB_CADDY:-}
 # Sin valor por omisión, por lo mismo que Caddy: el dominio es de quien
 # instala. Con uno cableado, otra persona publicaba bajo el del autor.
@@ -26,8 +28,26 @@ AQUI=$(cd "$(dirname "$0")" && pwd)
 rojo() { printf '  ✗ %s\n' "$1" >&2; }
 bien() { printf '  ✓ %s\n' "$1"; }
 
-if [ -z "$TOKEN_ARCHIVO" ] || [ ! -f "$TOKEN_ARCHIVO" ]; then
-  rojo "falta el archivo del token (el que creó guardar-secreto.sh)"; exit 1
+if [ -z "$ALIAS" ]; then
+  rojo "falta el alias de ssh del servidor (el primer argumento)"; exit 1
+fi
+if [ -z "$TOKEN_REF" ]; then
+  rojo "falta el puntero al token: ruta#CLAVE, el mismo de chat_web.token_ref"; exit 1
+fi
+# El token se lee aquí, antes de tocar el servidor, y lo lee el hub por el
+# puntero (en la línea de órdenes va el puntero, nunca el valor). Un
+# `[ -f "${TOKEN_REF%%#*}" ]` propio no expandía `~`, y la forma documentada es
+# `~/.secretos/…#CLAVE`: se paraba con un puntero que `leer_token` lee bien
+# (C-0186). Ahora el diagnóstico es el suyo. Si no se puede leer, no se sube nada.
+if ! TOKEN_ENV=$(uv run --project "$AQUI/.." --quiet python -c '
+import sys
+from hub.telegram import SinToken, leer_token
+try:
+    print("CHAT_TOKEN=" + leer_token(sys.argv[1]))
+except SinToken as exc:
+    sys.exit(f"  ✗ {exc}")
+' "$TOKEN_REF"); then
+  rojo "no se pudo leer el token de «$TOKEN_REF»"; exit 1
 fi
 if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$ALIAS" true 2>/dev/null; then
   rojo "no se puede entrar en «$ALIAS» sin contraseña ni agente"; exit 1
@@ -52,10 +72,9 @@ if [ -z "$CADDY" ]; then rojo "falta HUB_CADDY: el nombre exacto del contenedor 
 ssh -o BatchMode=yes "$ALIAS" "mkdir -p $RAIZ/app $RAIZ/datos /opt/encargos/sites && chmod 700 $RAIZ"
 rsync -az --delete --exclude datos-local --exclude __pycache__ -e "ssh -o BatchMode=yes" "$AQUI/chat-web/" "$ALIAS:$RAIZ/app/"
 bien "código subido"
-# El token, como archivo de entorno: CHAT_TOKEN=<valor>. El archivo local es
-# `CLAVE=valor` (formato de guardar-secreto.sh); se toma la línea del token.
-grep -m1 '^CHAT_WEB_TOKEN=' "$TOKEN_ARCHIVO" | sed 's/^CHAT_WEB_TOKEN=/CHAT_TOKEN=/' \
-  | ssh -o BatchMode=yes "$ALIAS" "umask 077 && cat > $RAIZ/token.env"
+# El token, como archivo de entorno: CHAT_TOKEN=<valor>, leído arriba. Viaja
+# por la entrada de ssh.
+printf '%s\n' "$TOKEN_ENV" | ssh -o BatchMode=yes "$ALIAS" "umask 077 && cat > $RAIZ/token.env"
 bien "token colocado (600)"
 if ! ssh -o BatchMode=yes "$ALIAS" "docker build -q -t hub-chat $RAIZ/app" >/dev/null 2>&1; then
   rojo "no se pudo construir la imagen hub-chat"; exit 1

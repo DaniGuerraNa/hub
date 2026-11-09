@@ -24,6 +24,9 @@ RAIZ=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 HUB_HOME=${HUB_HOME:-$HOME/.local/share/hub}
 HUB_HOST=${HUB_HOST:-127.0.0.1}
 HUB_PORT=${HUB_PORT:-8787}
+# shellcheck source=lib/loopback.sh
+. "$RAIZ/scripts/lib/loopback.sh"
+exigir_loopback "$HUB_HOST"
 UNIDADES=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 CON_SERVICIOS=1
 [ "${1:-}" = "--sin-servicios" ] && CON_SERVICIOS=0
@@ -122,6 +125,9 @@ bien "hub-canal instalado y PARADO: arráncalo cuando configures canal.yml"
 # Y lo mismo, por lo mismo, con el relé de encargos: sin `encargos.yml` no tiene
 # token y sólo sabría apuntar fallos.
 bien "hub-encargos instalado y PARADO: arráncalo cuando configures encargos.yml"
+# El secretario, igual: llama a un modelo con la suscripción de quien lo usa, y
+# eso se decide, no se encuentra hecho al instalar.
+bien "hub-secretario instalado y PARADO: arráncalo cuando quieras usarlo (systemctl --user enable --now hub-secretario)"
 
 paso "5/5 · Comprobación"
 # Arrancar no es funcionar: se espera a que conteste de verdad. Dar por bueno un

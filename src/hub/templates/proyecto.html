@@ -14,8 +14,10 @@
      Antes era h1 + un párrafo tenue + rutas sueltas, y todo eso flotaba a la
      misma distancia del contenido de la sección: no se veía dónde acababa
      «este proyecto» y empezaba «esta sección de este proyecto». Ahora es un
-     bloque con línea de cierre, y sus datos van etiquetados. */
-  .ficha { padding-bottom:22px; margin-bottom:26px; border-bottom:1px solid var(--borde); }
+     bloque con línea de cierre, y sus datos van etiquetados.
+     Acotado a la página con `:where()`, que no le sube el peso: las tarjetas
+     de respuesta del panel del secretario también son `.ficha` (C-0187). */
+  :where(.envoltura) .ficha { padding-bottom:22px; margin-bottom:26px; border-bottom:1px solid var(--borde); }
   .ficha h1 { font-size:26px; font-weight:600; letter-spacing:-0.02em; margin:0 0 12px; }
   .ficha .campos { display:flex; flex-wrap:wrap; gap:8px 10px; margin-bottom:14px; }
   /* Etiqueta encima del valor: «laboral · activo · never» no dice qué es cada
@@ -62,7 +64,10 @@
 
 {% set en_riesgo = repos | selectattr('sin_push') | list | length %}
 
-<div class="con-indice" id="taller-proyecto" data-secciones="proyecto">
+{# Todo el taller es una región (C-0167): vincular, archivar, borrar, editar o
+   crear un slot lo repinta sin recargar —también las cuentas del índice— y
+   sin perder la sección ni el sitio. `secciones.js` lo vuelve a aplicar. #}
+<div class="con-indice" id="taller-proyecto" data-secciones="proyecto" data-region="proyecto">
   <div class="columna-indice">
   <h2>Secciones</h2>
   <nav class="indice" id="indice-proyecto" data-indice-secciones>
@@ -89,6 +94,7 @@
       <span class="cuenta">{{ slots | length }}</span>
     </a>
   </nav>
+  {{ ui.seccion_previa() }}
   </div>
 
   <div id="secciones-proyecto">
@@ -263,7 +269,7 @@
       {% if x.slot_nombre %}
         <span class="chip">{{ x.slot_nombre }}</span>
       {% elif slots %}
-        <form method="post" action="/panel/accion" class="barra">
+        <form method="post" action="/panel/accion" class="barra" data-sin-recarga>
           <input type="hidden" name="pane_id" value="{{ x.pane_id }}">
           <input type="hidden" name="accion" value="vincular">
           {# Con el hash, volver del POST te deja en la sección desde la que
@@ -309,7 +315,7 @@
         <button class="declinar" title="Abre una ventana nueva de tmux en la ruta del slot">Lanzar</button>
       </form>
       {% endif %}
-      <form method="post" action="/slot/{{ s.id }}/estado" class="barra">
+      <form method="post" action="/slot/{{ s.id }}/estado" class="barra" data-sin-recarga>
         <input type="hidden" name="proyecto_id" value="{{ p.id }}">
         {% if s.status == 'activo' %}
           <button class="declinar" name="accion" value="archivar">Archivar</button>
@@ -320,10 +326,15 @@
            borrado se lleva SU NOTA, que es lo único del hub que no se
            reconstruye escaneando —por eso `desinstalar.sh` no borra `HUB_HOME`
            sin que lo pidas—. Era un submit normal: un clic y la nota no
-           volvía. Archivar existe justo para no tener que borrar. #}
+           volvía. Archivar existe justo para no tener que borrar.
+           La pregunta va en el botón y no en el formulario, que archivar no
+           pregunta; la hace `hub-ui.js` y reenvía con este botón y su
+           `accion=borrar` (decisión 397, C-0233). Antes la hacía un `click`
+           propio de esta pantalla, aparte de la puerta común. #}
         <button name="accion" value="borrar" class="peligro"
-                data-borrar-slot="{{ s.nombre }}"
-                data-tiene-nota="{{ '1' if s.nota else '' }}">Borrar</button>
+                data-confirmar-titulo="Borrar el slot «{{ s.nombre }}»"
+                data-confirmar-ok="Borrar el slot"
+                data-confirmar="{% if s.nota %}Se borra también su NOTA, y eso no se puede deshacer: es lo único que no se reconstruye escaneando.&#10;&#10;{% endif %}Si sólo quieres quitarlo de en medio, «Archivar» lo conserva.">Borrar</button>
       </form>
     </div>
   </div>
@@ -332,7 +343,7 @@
 
   <details style="margin-top:10px">
     <summary>Editar</summary>
-    <form method="post" action="/slot/{{ s.id }}/editar">
+    <form method="post" action="/slot/{{ s.id }}/editar" data-sin-recarga>
       <input type="hidden" name="proyecto_id" value="{{ p.id }}">
       <label>Nombre</label>
       <input type="text" name="nombre" value="{{ s.nombre }}" required>
@@ -362,7 +373,7 @@
 
 <h2>Slot nuevo</h2>
 <div class="tarjeta">
-  <form method="post" action="/slot/nuevo">
+  <form method="post" action="/slot/nuevo" data-sin-recarga>
     <input type="hidden" name="proyecto_id" value="{{ p.id }}">
     <label>Nombre</label>
     <input type="text" name="nombre" placeholder="back, front, investigación…" required>
@@ -415,35 +426,6 @@ document.addEventListener('click', async (e) => {
     });
   }
   location.href = `/trabajo?session=${encodeURIComponent(r.session)}&ventana=${r.ventana}`;
-});
-</script>
-
-<script>
-// Borrar un slot se lleva su nota, y la nota es lo único del hub que no se
-// reconstruye escaneando. Era un submit normal: un clic y no volvía.
-//
-// Se engancha por delegación en el documento y no botón a botón: los slots se
-// pintan en bucle, y un `querySelectorAll` al cargar se pierde cualquiera que
-// aparezca después.
-document.addEventListener('click', async (e) => {
-  const boton = e.target.closest ? e.target.closest('[data-borrar-slot]') : null;
-  if (!boton) return;
-  e.preventDefault();
-
-  const nota = boton.dataset.tieneNota
-    ? '\n\nSe borra también su NOTA, y eso no se puede deshacer: es lo único que no se reconstruye escaneando.'
-    : '';
-  const ok = await HubUI.confirmar({
-    titulo: `Borrar el slot «${boton.dataset.borrarSlot}»`,
-    mensaje: `${nota}\n\nSi sólo quieres quitarlo de en medio, «Archivar» lo conserva.`.trim(),
-    aceptar: 'Borrar el slot',
-    peligro: true,
-  });
-  if (!ok) return;
-
-  // El botón lleva `name`/`value`, así que se envía él mismo para que el
-  // servidor reciba `accion=borrar`: un `form.submit()` a secas los perdería.
-  boton.form.requestSubmit ? boton.form.requestSubmit(boton) : boton.form.submit();
 });
 </script>
 

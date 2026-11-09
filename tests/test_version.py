@@ -271,20 +271,45 @@ def test_con_cambios_locales_no_se_ofrece_el_boton_y_se_dice_que_hacer(cliente, 
 
 def test_el_boton_lanza_actualizar_sh_fuera_del_proceso_del_hub(cliente, monkeypatch):
     """🔴 Fuera de su cgroup: `actualizar.sh` reinicia `hub-web`, y un hijo
-    normal moriría con él a mitad de la actualización."""
-    from hub import actualizacion
+    normal moriría con él a mitad de la actualización. La puerta es
+    `procesos.desasir` (344); que de verdad saca del cgroup lo prueba
+    `test_procesos`."""
+    from hub import actualizacion, procesos
     monkeypatch.setattr(actualizacion, "cambios_locales", lambda raiz=None: [])
     monkeypatch.setattr(actualizacion, "_con_systemd", lambda: True)
+    monkeypatch.setattr(procesos, "_puede", True)
     lanzadas = []
-    monkeypatch.setattr(actualizacion.subprocess, "run",
-                        lambda cmd, **k: lanzadas.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
+
+    def desasir(orden, **kw):
+        lanzadas.append(orden)
+        return subprocess.Popen(["sleep", "1"])
+    monkeypatch.setattr(procesos, "desasir", desasir)
     r = cliente.post("/actualizaciones/aplicar", headers={"origin": "http://127.0.0.1:8787"},
                      follow_redirects=False)
     assert r.headers["location"].startswith("/actualizaciones")
-    cmd = lanzadas[-1]
-    assert cmd[:2] == ["systemd-run", "--user"]
-    assert "scripts/actualizar.sh" in cmd[-1]
+    assert lanzadas[-1][:2] == ["bash", "-c"] and "scripts/actualizar.sh" in lanzadas[-1][-1]
     assert actualizacion.en_marcha()
+
+
+def test_si_el_scope_no_se_monta_no_se_queda_en_marcha(monkeypatch):
+    """Si `systemd-run` falla la orden ni arranca: sin esto, la pantalla diría
+    «en marcha» media hora (arquitecto de C-0148)."""
+    from hub import actualizacion, procesos
+    monkeypatch.setattr(actualizacion, "_con_systemd", lambda: True)
+    monkeypatch.setattr(procesos, "_puede", True)
+    monkeypatch.setattr(procesos, "desasir", lambda orden, **kw: subprocess.Popen(["false"]))
+    with pytest.raises(RuntimeError, match="no se pudo lanzar"):
+        actualizacion.lanzar()
+    assert not actualizacion.en_marcha()
+
+
+def test_con_servicios_y_sin_scope_no_se_lanza_a_ciegas(monkeypatch):
+    from hub import actualizacion, procesos
+    monkeypatch.setattr(actualizacion, "_con_systemd", lambda: True)
+    monkeypatch.setattr(procesos, "_puede", False)
+    with pytest.raises(RuntimeError, match="en una terminal"):
+        actualizacion.lanzar()
+    assert not actualizacion.en_marcha()
 
 
 def test_una_actualizacion_en_marcha_no_se_lanza_dos_veces(monkeypatch):
@@ -339,7 +364,7 @@ generar_unidades
     r = _correr(guion, {})
     assert r.returncode == 0, r.stderr
     assert "/datos/mios 127.0.0.1 8799" in r.stdout
-    for servicio in ("hub-web", "hub-snapshotter", "hub-canal", "hub-encargos"):
+    for servicio in ("hub-web", "hub-snapshotter", "hub-canal", "hub-encargos", "hub-secretario"):
         texto = (unidades / f"{servicio}.service").read_text()
         assert "Environment=HUB_PORT=8799" in texto
         assert not re.search(r"@[A-Z_]+@", texto), "queda un marcador sin sustituir"
@@ -451,6 +476,43 @@ def test_actualizar_no_pisa_cambios_sin_guardar(clon_desechable):
     assert "git restore ." in r.stderr
     assert "git switch -c mis-cambios-" in r.stderr
     assert not (casa / "version.json").exists()
+
+
+# ── C-0121: sin git no hay 500, y lo apuntado no se queda a medias ────────────
+
+
+def test_sin_git_comprobar_dice_que_no_pudo_mirar_en_vez_de_dar_500(cliente, tmp_path, monkeypatch):
+    """`git remote get-url` iba sin `try`: sin git en el PATH (o colgado),
+    «Comprobar ahora» daba un 500 en vez de decir qué pasó."""
+    vacio = tmp_path / "sin-git"
+    vacio.mkdir()
+    monkeypatch.setenv("HUB_BUSCAR_VERSIONES", "1")
+    monkeypatch.setenv("PATH", str(vacio))
+
+    datos = version.buscar_remota(forzar=True)
+    assert "git" in datos["error"]
+    r = cliente.post("/actualizaciones/comprobar", headers={"origin": "http://127.0.0.1:8787"},
+                     follow_redirects=False)
+    assert r.status_code == 303
+    assert "No%20se%20pudo%20mirar" in r.headers["location"]
+
+
+def test_lo_ultimo_que_se_supo_no_se_pierde_si_apuntar_lo_nuevo_falla(clon_con_remoto, monkeypatch):
+    """Se escribe aparte y se cambia de un golpe, como `registrar`: un corte a
+    mitad dejaba `version-remota.json` truncado y el hub olvidaba la publicada."""
+    clon, publicado = clon_con_remoto
+    ahora = datetime.now(timezone.utc)
+    version.buscar_remota(clon, ahora=ahora)
+    _git("tag", "v0.11.0", cwd=publicado)
+
+    def corte(*_a, **_k):
+        raise OSError("disco lleno")
+    monkeypatch.setattr(os, "replace", corte)
+    monkeypatch.setattr(Path, "replace", corte)
+    datos = version.buscar_remota(clon, ahora=ahora + timedelta(hours=2))
+
+    assert datos["ultima"] == "0.11.0"
+    assert version.remota()["ultima"] == "0.10.0"
 
 
 

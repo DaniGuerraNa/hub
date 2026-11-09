@@ -16,18 +16,21 @@ import contextlib
 import re
 import sqlite3
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from . import base
+from . import config
 from . import consumo as _consumo
 from . import copia_base
 from . import navegador
 from . import restauracion as _restauracion
 from . import registry
+from . import reloj
 from . import repos as _repos
 from . import tmux
+from . import transcripts
 from . import version as _version
 from .models import Proyecto, Ruta
 
@@ -85,8 +88,11 @@ def _a_modelo(datos: dict) -> Proyecto:
     )
 
 
-def listar_proyectos(con: sqlite3.Connection, dominio: str | None = None) -> list[dict]:
-    sql = "SELECT * FROM proyecto WHERE status != 'archivado'"
+def listar_proyectos(con: sqlite3.Connection, dominio: str | None = None,
+                     incluir_archivados: bool = False) -> list[dict]:
+    """El registro, sin los archivados salvo que se pidan: la guía cuenta como
+    el raíl, con ellos (C-0056)."""
+    sql = "SELECT * FROM proyecto WHERE " + ("1" if incluir_archivados else "status != 'archivado'")
     args: tuple = ()
     if dominio:
         sql += " AND dominio = ?"
@@ -225,11 +231,14 @@ def estado_de_panel(panel: dict | None) -> str:
     El dato es tan fresco como el snapshot, o sea hasta `INTERVALO_SEGUNDOS` de
     retraso. Es deliberado: leer tmux en vivo daría 3 segundos, pero el caso de
     uso es enterarse de que algo paró, no cronometrarlo.
+
+    «Trabajando» también si el muestreo lo vio en la pantalla (`panel.ocupado`,
+    decisión 393): con una herramienta larga el título se queda en reposo.
     """
     if panel is None:
         return "cerrado"
     titulo = panel.get("titulo") or ""
-    if tmux.es_spinner(titulo):
+    if panel.get("ocupado") or tmux.es_spinner(titulo):
         return "trabajando"
     if tmux.tiene_glifo_estado(titulo):
         return "detenido"
@@ -259,6 +268,17 @@ def slots_activos(con: sqlite3.Connection) -> list[dict]:
     return filas
 
 
+def notas_de_slots(con: sqlite3.Connection) -> list[dict]:
+    """Los slots con nota, sean del estado que sean, y su última actividad.
+
+    La lee el secretario como fuente (`secretario/fuentes/hub.py`): antes la
+    consultaba con su propio SQL, el camino paralelo que esta costura existe
+    para evitar."""
+    return [dict(f) for f in con.execute(
+        "SELECT s.id, s.nombre, s.nota, s.proyecto_id, COALESCE(s.ultima_actividad, s.creado_en) AS fecha"
+        "  FROM slot s WHERE s.nota != '' ORDER BY s.id")]
+
+
 def obtener_slot(con: sqlite3.Connection, slot_id: int) -> dict | None:
     fila = con.execute("SELECT * FROM slot WHERE id=?", (slot_id,)).fetchone()
     return _fila_a_dict(fila) if fila else None
@@ -282,6 +302,20 @@ def panel_de_slot(con: sqlite3.Connection, slot_id: int) -> dict | None:
     return _fila_a_dict(fila) if fila else None
 
 
+def paneles_de_slot(con: sqlite3.Connection, slot_id: int) -> list[dict]:
+    """Todas las ventanas de un slot en el último muestreo, en su orden.
+
+    `panel_de_slot` da sólo la primera, que basta para «dónde vive el slot»
+    pero no para escribirle a su agente: un slot puede tener un `claude` y
+    ocho `bash` restaurados, o dos agentes (C-0225)."""
+    actual = snapshot_actual(con)
+    if not actual:
+        return []
+    return [_fila_a_dict(f) for f in con.execute(
+        """SELECT * FROM panel WHERE snapshot_id = ? AND slot_id = ?
+           ORDER BY window_idx, pane_idx""", (actual["id"], slot_id))]
+
+
 def contexto_trabajo(
     con: sqlite3.Connection,
     slot_id: int | None = None,
@@ -294,7 +328,10 @@ def contexto_trabajo(
     directo a un panel suelto, que es el caso de la bandeja de entrada: todavía
     no es un slot pero quieres verlo ya.
     """
-    paneles = paneles_abiertos(con)
+    # Una sola muestra para los paneles y su servidor: de dos lecturas, un
+    # reinicio de tmux entre ellas casaba `%N` de un servidor con el otro (396).
+    actual = snapshot_actual(con)
+    paneles = paneles_de(con, actual["id"]) if actual else []
     por_proyecto: dict[str, int] = {}
     for panel in paneles:
         if panel["proyecto_id"]:
@@ -313,6 +350,7 @@ def contexto_trabajo(
     # ventana de tmux, no por panel: una ventana partida en dos es una sola.
     ventanas_por_slot: dict[int, list[dict]] = {}
     vistas: set[tuple[str, int]] = set()
+    panes = _paneles_por_ventana(paneles)
     for panel in paneles:
         clave = (panel["session"], panel["window_idx"])
         if not panel["slot_id"] or clave in vistas:
@@ -320,7 +358,7 @@ def contexto_trabajo(
         vistas.add(clave)
         ventanas_por_slot.setdefault(panel["slot_id"], []).append({
             "session": panel["session"], "ventana": panel["window_idx"],
-            "pane_id": panel["pane_id"],
+            "pane_id": panel["pane_id"], "panes": panes[clave],
             "etiqueta": panel.get("etiqueta") or f"{panel['session']}:{panel['window_idx']}",
             "estado": estado_de_panel(panel),
         })
@@ -368,6 +406,10 @@ def contexto_trabajo(
         "ventanas_estado": _estado_por_ventana(con, paneles, session),
         # La ventana concreta que se está mirando, para el primer pintado.
         "vinculable": _estado_de_ventana(con, paneles, session, ventana),
+        # El servidor de tmux del muestreo con el que se pinta: viaja con cada
+        # «Cerrar», porque los `%N` se reutilizan al reiniciarlo (396). El del
+        # muestreo y no el de ahora: lo que se ve es de ése.
+        "servidor": actual["server_pid"] if actual else None,
     }
 
 
@@ -421,14 +463,34 @@ def rail(con: sqlite3.Connection) -> dict:
     except Exception:  # noqa: BLE001
         muestreo = None
     from . import navegante as _nav
+    secretario_nombre = nombre_secretario()
+    # Quién te habla en todas las pantallas (C-0160): el secretario si lo
+    # pediste en `secretario.yml` (`en_todo_el_hub: true`) y está montado; si
+    # no, el asistente, como siempre. Nunca los dos.
+    voz, ingles, personaje = ("asistente" if hay_asistente else None), False, None
+    if secretario_en_todo_el_hub():
+        from .secretario import memoria as _mem, personaje as _pj
+        voz, ingles = "secretario", bool(_mem.leer_sin_abrir("modo_ingles"))
+        # Quién es (C-0188): lo elegido en su galería, en cualquier aparato.
+        personaje = _mem.leer_sin_abrir(_pj.CLAVE)
+    # Lo que espera y lo que delegó, para que el personaje salga ya bien
+    # pintado (C-0166), y sólo donde se pinta; la misma consulta da la cifra
+    # de pendientes. Sin él, la cuenta de siempre.
+    espera = secretario_espera(con) if voz == "secretario" else None
     return {
         "navegante_pendientes": _nav.pendientes() if _nav.instalado() else 0,
+        "secretario_pendientes": espera["solicitudes"] if espera else secretario_pendientes(),
+        "secretario_espera": espera,
         "version": version,
         "muestreo": muestreo,
         "sin_respaldo": sum(sin_push.values()),
         "servicios": corriendo,
         "paneles": len(paneles),
         "hay_asistente": hay_asistente,
+        "voz": voz,
+        "secretario_ingles": ingles,
+        "personaje": personaje_vista(personaje),
+        "secretario_nombre": secretario_nombre,
         "total_proyectos": total_proyectos,
     }
 
@@ -452,6 +514,17 @@ def ocultos(con: sqlite3.Connection) -> list[dict]:
 def _oculta(reglas: set, session: str, ventana: int | None) -> bool:
     """¿Tapa alguna regla a esta ventana? La de la sesión entera vale para todas."""
     return (session, None) in reglas or (session, ventana) in reglas
+
+
+def _paneles_por_ventana(paneles: list[dict]) -> dict[tuple[str, int], list[str]]:
+    """Todos los `pane_id` de cada ventana. Una fila del raíl o de la bandeja
+    es una ventana, y sigue viva mientras le quede alguno: con sólo el primero,
+    una ventana partida que perdiera ése se daría por muerta estando viva
+    (C-0234)."""
+    panes: dict[tuple[str, int], list[str]] = {}
+    for p in paneles:
+        panes.setdefault((p["session"], p["window_idx"]), []).append(p["pane_id"])
+    return panes
 
 
 def bandeja_de_ventanas(
@@ -478,6 +551,7 @@ def bandeja_de_ventanas(
     reglas = {(f["session"], f["window_idx"]) for f in ocultos(con)}
 
     # Panel representante de cada ventana y si alguno de ellos tiene slot.
+    panes = _paneles_por_ventana(paneles)
     primero: dict[tuple[str, int], dict] = {}
     con_slot: set[tuple[str, int]] = set()
     for p in paneles:
@@ -514,7 +588,7 @@ def bandeja_de_ventanas(
             fila = {
                 "session": nombre, "ventana": v,
                 "etiqueta": p["etiqueta"] or f"{nombre}:{v}",
-                "pane_id": p["pane_id"], "cwd": p["cwd"],
+                "pane_id": p["pane_id"], "panes": panes[(nombre, v)], "cwd": p["cwd"],
                 "ruta_corta": ruta_corta(p["cwd"]),
                 "proyecto_nombre": p["proyecto_nombre"], "desconocida": False,
                 "ultima": unica,
@@ -714,8 +788,16 @@ def pulso_trabajo(
     No incluye slots nuevos ni ventanas nuevas: eso cambia la forma de la
     página, no su contenido, y repintar el raíl entero cada 5 s por si acaso
     rompería el clic en curso igual que rompía el doble clic en las pestañas.
+    Sí trae los paneles del muestreo y su servidor (`paneles`, `servidor`),
+    para que la página **quite** las filas de las ventanas que ya no tienen
+    ninguno —las que murieron por dentro, con un `exit`— y nunca añade
+    (C-0234, decisión 398).
     """
-    paneles = paneles_abiertos(con)
+    # Una sola lectura del muestreo: los paneles y su servidor tienen que ser
+    # de la misma, o un reinicio de tmux entre dos casaría `%N` de uno con el
+    # otro (396).
+    actual = snapshot_actual(con)
+    paneles = paneles_de(con, actual["id"]) if actual else []
     panel_por_slot: dict[int, dict] = {}
     for panel in paneles:
         if panel["slot_id"] and panel["slot_id"] not in panel_por_slot:
@@ -732,7 +814,15 @@ def pulso_trabajo(
         if fila is not None:
             notas[slot_id] = fila["nota"] or ""
 
-    return {"slots": estados, "notas": notas}
+    # Sin muestra viva, `None` y no `[]`: una lista vacía haría que la página
+    # soltara todas sus filas (C-0234). `ventanas` son los sitios
+    # (`sesión:índice`) que siguen ocupados: una ventana partida después de
+    # pintar la página tiene paneles que su fila no conoce, y sin esto se
+    # soltaría estando viva (revisor).
+    return {"slots": estados, "notas": notas,
+            "paneles": [p["pane_id"] for p in paneles] if actual else None,
+            "ventanas": sorted({f"{p['session']}:{p['window_idx']}" for p in paneles}) if actual else None,
+            "servidor": actual["server_pid"] if actual else None}
 
 
 def bandeja(con: sqlite3.Connection) -> list[dict]:
@@ -1410,6 +1500,53 @@ def servicios(con: sqlite3.Connection, proyecto_id: str | None = None) -> dict:
     }
 
 
+def tablero(con: sqlite3.Connection, recientes: int = 15) -> dict:
+    """La bandeja de ideas (decisión 342): las nuevas, en el orden en que se
+    tomarán, y lo último tomado o descartado con dónde sigue."""
+    from . import ideas
+    hechas = sorted(ideas.listar(con, "tomada", limite=recientes) + ideas.listar(con, "descartada", limite=recientes),
+                    key=lambda i: i["movida"] or "", reverse=True)[:recientes]
+    nuevas = ideas.listar(con, "nueva")
+    from . import orquestador
+    for i in nuevas + hechas:
+        i["adjuntos"] = ideas.adjuntos(i["id"])
+    # Encargada al orquestador y aún sin tomar: la ficha la crea la sesión
+    # del Tablero, y hasta entonces se ve con qué tarea va (C-0151).
+    por_idea = orquestador.tareas_por_idea()
+    donde: dict[str, Any] = {}
+    for i in nuevas:
+        tarea = por_idea.get(i["id"])
+        i["tarea"] = {"id": tarea["id"], "estado": tarea["estado"]} if tarea else None
+        # Dónde se trabajaría, para que el botón diga lo que va a pasar: un
+        # proyecto con git y sin copia pide crearla (D1 de C-0151).
+        p = i["proyecto"] or "hub"
+        if p not in donde:
+            try:
+                donde[p] = orquestador.donde_trabajar(con, p)
+            except orquestador.FaltaCopia as exc:
+                donde[p] = {"falta_copia": exc.copia.name}
+            except ValueError as exc:
+                donde[p] = {"error": str(exc)}
+        i["donde"] = donde[p]
+    return {"nuevas": nuevas, "recientes": hechas, "max_adjuntos": ideas.MAX_ADJUNTOS,
+            "proyectos": sorted(p.id for p in registry.cargar())}
+
+
+def llaves() -> dict:
+    """Las llaves de esta máquina: dónde viven y si están marcadas en
+    Bitwarden. Nunca el valor: `llavero.inventario` sólo hace `stat` (C-0143)."""
+    from . import llavero
+
+    filas = llavero.inventario()
+    casa = str(Path.home())
+    for f in filas:
+        f["donde"] = f["puntero"].replace(casa, "~", 1)
+        f["presente"] = f["estado"] not in ("no existe", "sin configurar")
+    presentes = [f for f in filas if f["presente"] and not f["sesion"]]
+    return {"filas": filas, "sin_subir": sum(1 for f in presentes if not f["bitwarden"]),
+            "presentes": len(presentes)}
+
+
 def conexiones(con: sqlite3.Connection) -> list[dict]:
     salida = []
     for f in con.execute("SELECT * FROM conexion ORDER BY alias"):
@@ -1425,7 +1562,7 @@ def conexiones(con: sqlite3.Connection) -> list[dict]:
     return salida
 
 
-def _atribuidor(con: sqlite3.Connection) -> registry.Atribuidor:
+def atribuidor(con: sqlite3.Connection) -> registry.Atribuidor:
     """El mismo repartidor que usa el snapshotter, armado desde el índice.
 
     Reutilizarlo en vez de reescribir el criterio es lo que evita que un mismo
@@ -1461,7 +1598,7 @@ def conexiones_concedidas(con: sqlite3.Connection, ruta: str) -> dict:
     dura 8)—; lo que evita es el error honesto de una sesión que pide el
     servidor equivocado porque conoce su nombre.
     """
-    proyecto_id = _atribuidor(con).atribuir(ruta) if ruta else None
+    proyecto_id = atribuidor(con).atribuir(ruta) if ruta else None
     if not proyecto_id:
         return {"proyecto_id": None, "conexiones": []}
     return {
@@ -1495,11 +1632,11 @@ def plan_de_restauracion(con: sqlite3.Connection, muestra_id: int | None = None)
 # ───────────────────────── navegador de archivos ─────────────────────────
 
 
-def _confin(con: sqlite3.Connection) -> list[Path]:
+def confin(con: sqlite3.Connection) -> list[Path]:
     """Las raíces que el navegador puede servir: exactamente las que el hub indexa.
 
     Sale de `proyecto_ruta` y no de `projects.yml` a pelo porque es la misma
-    tabla de la que come `_atribuidor`. Dos listas de raíces distintas darían un
+    tabla de la que come `atribuidor`. Dos listas de raíces distintas darían un
     navegador que enseña una carpeta y un hub que dice que no es de nadie, y la
     discrepancia sólo se vería el día que importe.
     """
@@ -1539,22 +1676,22 @@ def explorar(con: sqlite3.Connection, ruta: str = "") -> dict:
     🔴 Ni contenido ni acciones: ver `navegador.py`. Esta función es la costura
     de lectura (`CLAUDE.md`, primera regla) y no hay otra.
     """
-    confin = _confin(con)
-    atribuidor = _atribuidor(con)
+    permitidas = confin(con)
+    por_ruta = atribuidor(con)
     medidos = _repos_medidos(con)
     nombres = {
         f["id"]: f["nombre"] for f in con.execute("SELECT id, nombre FROM proyecto")
     }
 
     def _adornar(entrada: dict) -> dict:
-        proyecto_id = atribuidor.atribuir(entrada["ruta"])
+        proyecto_id = por_ruta.atribuir(entrada["ruta"])
         entrada["proyecto_id"] = proyecto_id
         entrada["proyecto"] = nombres.get(proyecto_id or "", "")
         entrada.update(medidos.get(entrada["ruta"], {}))
         return entrada
 
     if not ruta:
-        raices = sorted(navegador.minimas(confin), key=lambda r: str(r).lower())
+        raices = sorted(navegador.minimas(permitidas), key=lambda r: str(r).lower())
         return {
             "ruta": "",
             "migas": [],
@@ -1575,9 +1712,9 @@ def explorar(con: sqlite3.Connection, ruta: str = "") -> dict:
             "proyecto_id": None,
         }
 
-    datos = navegador.listar(ruta, confin)
+    datos = navegador.listar(ruta, permitidas)
     datos["entradas"] = [_adornar(e) for e in datos["entradas"]]
-    datos["proyecto_id"] = atribuidor.atribuir(datos["ruta"])
+    datos["proyecto_id"] = por_ruta.atribuir(datos["ruta"])
     datos["proyecto"] = nombres.get(datos["proyecto_id"] or "", "")
     datos["ruta_corta"] = ruta_corta(datos["ruta"])
     return datos
@@ -1918,13 +2055,13 @@ def orquestador_permisos(con: sqlite3.Connection) -> dict[str, Any]:
 
 
 def _hora_local(iso: str | None) -> str:
-    """«22/09 14:41» en la hora de la casa. En UTC, leído en el móvil, engaña."""
-    if not iso:
-        return ""
-    try:
-        return datetime.fromisoformat(iso).astimezone().strftime("%d/%m %H:%M")
-    except ValueError:
-        return iso
+    """«22/09 14:41» en la hora de la casa. En UTC, leído en el móvil, engaña.
+
+    La zona es la de `reloj.zona`, la misma con que el secretario recuerda: con
+    la de la máquina por su cuenta, una hora podía salir distinta en dos
+    pantallas (C-0051).
+    """
+    return reloj.a_local(iso, "%d/%m %H:%M")
 
 
 def _intercambio_por_proyecto(con: sqlite3.Connection, archivos: list[dict]) -> list[dict]:
@@ -2032,7 +2169,7 @@ def intercambio(con: sqlite3.Connection, por: str = "proyecto", q: str = "") -> 
     for a in archivos:
         a["cuando_local"] = _hora_local(a["cuando"])
         a["nuevo"] = a["nombre"] in recien
-        a["caduca_local"] = (datetime.fromtimestamp(a["caduca"]).strftime("%d/%m")
+        a["caduca_local"] = (reloj.a_local(datetime.fromtimestamp(a["caduca"], timezone.utc).isoformat(), "%d/%m")
                              if a.get("caduca") else None)
     grupos = (_intercambio_por_proyecto(con, archivos) if por == "proyecto"
               else _intercambio.agrupar(archivos, por))
@@ -2055,8 +2192,241 @@ def intercambio(con: sqlite3.Connection, por: str = "proyecto", q: str = "") -> 
 
 def salud(con: sqlite3.Connection) -> list[dict]:
     """Las comprobaciones de `/maquina` (decisión 289)."""
+    from . import maquina as _maquina
     from . import salud as _salud
-    return _salud.revisar(con)
+    return _salud.revisar(slots_activos(con), _maquina.ultimas(con))
+
+
+def maquina(con: sqlite3.Connection) -> dict[str, Any]:
+    """Lo que pinta /maquina: cómo está el equipo cuando no hay nadie delante.
+
+    Lee lo que midió el ciclo lento y **no vuelve a medir**: la pantalla se
+    abre para mirar, y lanzar `nvidia-smi` y un `powershell` en cada visita
+    metería un segundo de espera en algo que se consulta desde el móvil (regla
+    dura 14). Por eso va la hora de la lectura (`medido_en`).
+    """
+    from . import avisos, canal, rele
+    from . import maquina as _maquina
+
+    medidas = _maquina.ultimas(con)
+    ajustes = rele.ajustes()
+    limites = avisos.limites_maquina(ajustes)
+    dueno = canal.dueno(con)
+    return {
+        "medidas": medidas,
+        "tarjetas": _tarjetas_de_maquina(medidas, limites),
+        "medido_en": max((m["medido_en"] for m in medidas.values()), default=""),
+        "limites": limites,
+        "armadas": bool(dueno) and avisos.activos(ajustes),
+        "dueno_nombre": canal.nombre_visible(dueno) if dueno else "",
+        "salud": salud(con),
+    }
+
+
+def _tarjetas_de_maquina(medidas: dict, limites: dict) -> list[dict]:
+    """Las cifras de arriba, en el orden en que se miran con prisa.
+
+    El orden no es decorativo: primero lo que puede matar la máquina estando
+    sola —calor y disco—, y después lo que sólo dice cómo va. `urge` se calcula
+    con el MISMO límite con el que avisa el relé: dos números distintos para la
+    misma cosa es cómo se aprende a no creerse ninguno.
+    """
+    from . import maquina as _maquina
+
+    def numero(clave: str) -> float | None:
+        medida = medidas.get(clave) or {}
+        return medida.get("valor")
+
+    filas = []
+    temperatura = numero("gpu.temperatura")
+    if temperatura is not None:
+        filas.append({
+            "nombre": "GPU", "valor": f"{temperatura:.0f}", "unidad": "°C",
+            "icono": "aviso" if temperatura >= limites["temperatura"] else "punto",
+            "urge": temperatura >= limites["temperatura"],
+            "pie": (medidas.get("gpu.nombre") or {}).get("texto", ""),
+        })
+    for clave, nombre in (
+        ("disco.windows", "Disco de Windows"), ("disco.wsl", "Disco de WSL"),
+    ):
+        libre, uso = numero(f"{clave}.libre"), numero(f"{clave}.uso")
+        if libre is None:
+            continue
+        filas.append({
+            "nombre": nombre, "valor": f"{libre:.0f}", "unidad": "GB libres",
+            "icono": "pilas",
+            "urge": libre <= limites["disco"],
+            "pie": f"{uso:.0f} % ocupado" if uso is not None else "",
+        })
+    # El SAI va justo después del calor y el disco: es el único dato que avisa
+    # de algo que está pasando AHORA en la casa, no de cómo va el equipo.
+    estado_ups = numero("ups.estado")
+    if estado_ups is not None:
+        sobre_bateria = estado_ups == _maquina.SOBRE_BATERIA
+        minutos, carga_ups = numero("ups.minutos"), numero("ups.carga")
+        filas.append({
+            "nombre": "SAI",
+            "valor": "sin luz" if sobre_bateria else "con luz",
+            "unidad": "",
+            "urge": sobre_bateria,
+            "icono": "aviso" if sobre_bateria else "escudo",
+            "pie": " · ".join(
+                p for p in (
+                    f"{carga_ups:.0f} % de batería" if carga_ups is not None else "",
+                    f"~{minutos:.0f} min de margen" if minutos is not None else "",
+                    (medidas.get("ups.nombre") or {}).get("texto", ""),
+                ) if p
+            ),
+        })
+
+    memoria, carga, uso_gpu = numero("memoria.libre"), numero("carga"), numero("gpu.uso")
+    if memoria is not None:
+        filas.append({"nombre": "Memoria de WSL", "valor": f"{memoria:.1f}",
+                      "unidad": "GB libres", "urge": False, "pie": "",
+                      "icono": "rejilla"})
+    if carga is not None:
+        filas.append({"nombre": "Carga", "valor": f"{carga:.2f}", "unidad": "",
+                      "urge": False, "pie": "media del último minuto",
+                      "icono": "lineas"})
+    if uso_gpu is not None:
+        filas.append({"nombre": "Uso de GPU", "valor": f"{uso_gpu:.0f}", "unidad": "%",
+                      "urge": False, "pie": "", "icono": "lineas"})
+    return filas
+
+
+# Cuántas entradas del registro del canal por página. 40 es lo que cabe sin
+# scroll infinito y sin obligar a paginar por todo: el registro crece y no se
+# poda nunca, porque es la auditoría de lo que sale de la máquina.
+CANAL_POR_PAGINA = 40
+
+
+def canal(con: sqlite3.Connection, *, direccion: str | None = None, quien: int | None = None,
+          proyecto: str | None = None, pagina: int = 1, situacion: str | None = None,
+          proyecto_preguntas: str | None = None) -> dict[str, Any]:
+    """Lo que pinta /canal: la matriz de permisos, las preguntas y el registro
+    de todo lo que entra y sale, con sus filtros (decisión 23: por la URL).
+
+    🔴 Aquí NO se manda nada (regla dura 22): preguntar es de `hub preguntar`
+    y del relé, y esto sólo lee. Los avisos los cuenta `avisos.panorama`, que
+    hoy abre también la memoria del secretario (C-0061).
+    """
+    from . import avisos, rele
+    from . import canal as _canal
+
+    pagina = max(1, int(pagina or 1))
+    filtros = {"direccion": direccion or None, "user_id": quien, "proyecto_id": proyecto or None}
+    total = _canal.cuenta_registro(con, **filtros)
+    vistas = _canal.preguntas(con, proyecto_preguntas or None, situacion=situacion or None)
+    return {
+        "usuarios": _canal.usuarios(con),
+        "proyectos": listar_proyectos(con),
+        "acciones": _canal.ACCIONES,
+        "preguntas": vistas[:30],
+        # Las dos cifras: sin la de arriba, un filtro que deja 30 y el tope
+        # que deja 30 se ven exactamente igual.
+        "preg_mostradas": len(vistas[:30]),
+        "preg_total": len(vistas),
+        "preg_todas": _canal.cuenta_preguntas(con),
+        "situaciones": tuple(_canal.SITUACIONES),
+        # Los paneles a los que se puede empujar a mano una respuesta que nació
+        # sin destino. Salen del último muestreo y no de preguntarle a tmux uno
+        # por uno: la comprobación de verdad la hace `entrega` en el instante
+        # de escribir (regla dura 15), y consultar veinte paneles para pintar
+        # un desplegable haría lenta una pantalla que se abre para leer.
+        "paneles": [p for p in paneles_abiertos(con) if p.get("slot_id")],
+        "registro": _canal.registro(con, CANAL_POR_PAGINA, desde=(pagina - 1) * CANAL_POR_PAGINA,
+                                    **filtros),
+        "reg_total": total,
+        "reg_pag": pagina,
+        "reg_paginas": max(1, -(-total // CANAL_POR_PAGINA)),
+        "direcciones": ("sale", "entra", "falla"),
+        "canal_estado": rele.estado(),
+        "avisos": avisos.panorama(con, rele.ajustes(), _canal.dueno(con)),
+    }
+
+
+# Cuántas líneas del registro de encargos se enseñan de una vez. Es un TOPE y
+# no una página: `encargos.registro` no acepta desplazamiento, al revés que el
+# del canal de consulta, así que aquí no se puede paginar sin tocar el dominio.
+ENCARGOS_EN_REGISTRO = 60
+
+
+def encargos(con: sqlite3.Connection, filtro: str = "") -> dict[str, Any]:
+    """Lo que pinta /encargos: quién puede mandarlos, los encargos y lo que ha
+    pasado por su bot (decisión 221). `filtro` deja el registro en un encargo.
+
+    🔴 Aquí NO se manda nada (regla dura 22): el token lo lee `hub-encargos`.
+    """
+    from . import buzon, rele_encargos
+    from . import encargos as _encargos
+
+    gente = _encargos.personas(con)
+    por_persona = {p["user_id"]: p for p in gente}
+    return {
+        "personas": gente,
+        # Sólo a alguien activo se le puede abrir un encargo, así que el
+        # desplegable de crear no puede ofrecer a los demás: una opción que
+        # siempre falla es una trampa, no un filtro.
+        "activas": [p for p in gente if p["estado"] == "activo"],
+        # La cuenta de sin entregar va aquí y no en la plantilla porque es lo
+        # único de la fila que pide una acción: un encargo con mensajes en cola
+        # y sin agente abierto es exactamente el caso que el buzón existe para
+        # que no se pierda. Una consulta por encargo: son pocos.
+        "encargos": [{**f, "quien": _encargos.nombre_visible(por_persona.get(f["user_id"])),
+                      "sin_entregar": len(buzon.en_cola(con, f["id"]))}
+                     for f in _encargos.listar(con)],
+        "propuesto": _encargos.siguiente_provisional(con),
+        "canal_estado": rele_encargos.estado(),
+        "registro": _encargos.registro(con, ENCARGOS_EN_REGISTRO, filtro),
+    }
+
+
+def encargo(con: sqlite3.Connection, encargo_id: str) -> dict[str, Any] | None:
+    """La ficha de un encargo y la conversación entera de la que salió, o
+    `None` si no existe.
+
+    Las dos cosas juntas a propósito: la ficha es el estado y la conversación
+    no (el porqué está en `encargos.py`), pero cuando algo de la ficha extraña,
+    lo primero que se quiere ver es qué dijo ella exactamente.
+
+    🔴 `conversacion` y `dicho` son texto de un tercero, tal como llegó. Para
+    pintarlo, la plantilla lo escapa; quien lo lleve a un panel lo enmarca antes
+    (`buzon.marcar`, regla dura 22): no es una instrucción del dueño.
+    """
+    from . import buzon, rele_encargos
+    from . import encargos as _encargos
+
+    fila = _encargos.ver(con, encargo_id)
+    if not fila:
+        return None
+    ficha = _encargos.cargar_ficha(con, encargo_id)
+    siguiente = ficha.siguiente()
+    return {
+        "enc": fila,
+        "quien": _encargos.nombre_visible(_encargos.ver_persona(con, fila["user_id"])),
+        # La ficha se aplana aquí y no en la plantilla: así la vista pinta y
+        # no razona, y lo que se enseña se puede afirmar sin renderizar nada.
+        "fases": [
+            {
+                "id": f.id, "titulo": f.titulo, "pregunta": f.pregunta,
+                "campo": f.campo, "minimo": f.minimo, "se_elige": f.se_elige,
+                "valor": ficha.campos.get(f.campo, ""),
+                "contestada": ficha.contestada(f.id),
+                "agotada": ficha.agotada(f.id),
+                "veces": ficha.preguntado.get(f.id, 0),
+                "tope": _encargos.TOPE_POR_FASE,
+            }
+            for f in _encargos.FASES
+        ],
+        "huecos": ficha.huecos(),
+        "suficiente": ficha.suficiente(),
+        "siguiente": siguiente.titulo if siguiente else "",
+        "dicho": ficha.dicho,
+        "conversacion": buzon.conversacion(con, encargo_id),
+        "sin_entregar": len(buzon.en_cola(con, encargo_id)),
+        "registro": _encargos.registro(con, ENCARGOS_EN_REGISTRO, encargo_id),
+        "canal_estado": rele_encargos.estado(),
+    }
 
 
 def guia(con: sqlite3.Connection) -> dict[str, Any]:
@@ -2067,13 +2437,67 @@ def guia(con: sqlite3.Connection) -> dict[str, Any]:
         niveles = orquestador.leer_permisos()
     except ValueError:
         niveles = {}
-    pasos = _guia.pasos(con, paneles_abiertos(con), niveles, _carpeta_existe)
+    pasos = _guia.pasos(listar_proyectos(con, incluir_archivados=True), slots_activos(con), repos_de(con),
+                        paneles_abiertos(con), niveles, _carpeta_existe)
     obligatorios = [p for p in pasos if not p["opcional"]]
     return {
         "pasos": pasos,
         "hechos": sum(1 for p in obligatorios if p["hecho"]),
         "total": len(obligatorios),
         "mapa": _guia.mapa(),
+    }
+
+
+def actualizacion() -> dict[str, Any]:
+    """La actualización en marcha o la última (decisión 296): lo que la
+    pantalla vuelve a preguntar cada dos segundos mientras dura, también al
+    volver del reinicio. Sólo lee sus archivos; lo que pregunta al repo va
+    aparte, en `actualizaciones`."""
+    from . import actualizacion as _actualizacion
+    return _actualizacion.estado()
+
+
+def actualizaciones() -> dict[str, Any]:
+    """Lo que pinta /actualizaciones: tu versión, la actualización y lo que la
+    pararía (C-0100). Mirar si hay una publicada nueva no va aquí: sale a la
+    red, y cuándo se mira lo decide quien abre la pantalla."""
+    from . import actualizacion as _actualizacion
+    return {
+        # `vers` y no `v`: base.html hace `{% set v = rail.version %}` y lo pisaría.
+        "vers": _version.para_la_guia(),
+        "a": actualizacion(),
+        "cambios": _actualizacion.cambios_locales(),
+    }
+
+
+def acceso(codigo: str | None = None) -> dict[str, Any]:
+    """Lo que pinta /acceso: por qué nombres se entra, qué aparatos están dados
+    de alta y si la terminal remota está encendida (decisiones 158-163).
+
+    `codigo` es un alta recién creada: si sigue esperando, sale en `pendiente`.
+    El enlace del QR no va aquí: el nombre por el que va a entrar el aparato
+    depende de por dónde se está mirando la pantalla, y eso es de la petición.
+    Un `acceso.yml` mal escrito no tumba la pantalla: se enseñan los nombres
+    locales y el motivo, para poder arreglarlo desde ella."""
+    from . import acceso as _acceso
+
+    error = None
+    try:
+        nombres = _acceso.hosts()
+    except _acceso.AccesoInvalido as exc:
+        nombres, error = _acceso.HOSTS_LOCALES, str(exc)
+    pendiente = next((p for p in _acceso.pendientes() if p["codigo"] == codigo), None) \
+        if codigo else None
+    return {
+        "hosts": nombres, "locales": _acceso.HOSTS_LOCALES,
+        # Sin la huella del testigo: no la pinta nadie, y lo que sale de `api`
+        # lo pueden leer el asistente y el MCP.
+        "dispositivos": [{k: v for k, v in d.items() if k != "hash"}
+                         for d in _acceso.dispositivos()],
+        "terminal_remota": _acceso.terminal_remota(),
+        "pendiente": pendiente,
+        "minutos": _acceso.MINUTOS_DE_ALTA,
+        "archivo": str(_acceso.archivo()), "error": error,
     }
 
 
@@ -2182,3 +2606,604 @@ def conversaciones(con: sqlite3.Connection, slot_id: int) -> list[dict]:
     """Las conversaciones de Claude de un slot, para retomarlas (decisión 290)."""
     from . import conversaciones as conv
     return conv.de_slot(con, slot_id)
+
+
+# ───────────────────────────── el secretario ─────────────────────────────
+
+
+def _memoria_secretario():
+    """La base del secretario, si existe. `None` en un hub que no lo usa: abrirla
+    la crearía, y una pantalla que sólo mira no debe dejar archivos."""
+    from .secretario import memoria as _mem
+    return _mem.conectar() if _mem.existe() else None
+
+
+def secretario_pendientes() -> int:
+    """Para el raíl: lo que espera el sí del dueño. Barato, una consulta.
+    Donde el personaje se pinta, la cifra sale de `secretario_espera` (C-0166)."""
+    try:
+        m = _memoria_secretario()
+    except sqlite3.Error:
+        return 0
+    if m is None:
+        return 0
+    try:
+        return m.execute("SELECT COUNT(*) FROM solicitud WHERE estado = 'pendiente'").fetchone()[0]
+    finally:
+        m.close()
+
+
+def _valor_legible(valor: Any) -> str:
+    """El valor de un parámetro como lo lee el dueño: «sí» o «no» en vez de
+    `True`, y una lista con cada elemento entre comillas en vez de `['a', 'b']`
+    (C-0231): unidos con comas a secas, «b, c.pdf» parecía dos archivos y no
+    se sabía cuántos eran (revisor)."""
+    if isinstance(valor, bool):
+        return "sí" if valor else "no"
+    if valor is None:
+        return "—"
+    if isinstance(valor, (list, tuple)):
+        return " · ".join(f"«{v}»" for v in valor) if valor else "(ninguno)"
+    return str(valor)
+
+
+def secretario(pestana: str = "conversacion") -> dict[str, Any]:
+    """Lo que pinta /secretario (`PLAN-SECRETARIO.md`, decisiones 298-305)."""
+    import json as _json
+
+    from .secretario import conversacion as _conv, disparadores as _disp, memoria as _mem, piezas as _p
+    from .secretario import personaje as _pj
+    from .secretario.avisos import webpush as _webpush
+    from .reloj import a_local
+
+    con = _mem.conectar()
+    try:
+        vivo, latido = _latido_secretario(con)
+        h = _conv.hilo_abierto(con)
+        turnos = _conv.turnos(con, h["id"]) if h else []
+        ajustes = _p.ajustes_fuentes()
+        estados = _mem.estados_fuentes(con)
+        fuentes = []
+        # Las conversaciones que ya se han leído, para elegirlas tocando en vez
+        # de teclear su nombre. De la memoria y no de `Fuente.conversaciones()`:
+        # ésa abre la cuenta (Telegram), y la web no ve llaves (decisión 298).
+        vistas: dict[str, list[str]] = {}
+        for c in _mem.conversaciones(con):
+            if c["conversacion"]:
+                vistas.setdefault(c["fuente"], []).append(c["conversacion"])
+        for fid, f in _p.fuentes().items():
+            e = estados.get(fid) or {}
+            a = ajustes.get(fid) or {}
+            fuentes.append({"id": fid, "nombre": f.nombre, "descripcion": f.descripcion,
+                            "activa": bool(a.get("activa")), "falta": f.disponible(),
+                            "incluir": ", ".join(a.get("incluir") or []),
+                            "excluir": ", ".join(a.get("excluir") or []),
+                            "leida": a_local(e.get("leida")), "error": e.get("error"), "eventos": e.get("eventos", 0),
+                            "vistas": vistas.get(fid, [])[:40]})
+        compromisos = _mem.compromisos(con, "abierto")
+        for c in compromisos:
+            c["vence_local"] = a_local(c.get("vence"))
+            c["recordar_local"] = a_local(c.get("recordar_en"))
+        solicitudes = []
+        # Las 30 últimas y, además, toda la que espera su sí: una pendiente más
+        # vieja contaba en el globo y no se pintaba (revisión cruzada del 7-nov).
+        for s in con.execute("SELECT * FROM solicitud WHERE estado = 'pendiente' OR id IN"
+                             " (SELECT id FROM solicitud ORDER BY id DESC LIMIT 30) ORDER BY id DESC"):
+            d = dict(s)
+            d["params"] = _json.loads(d["params"] or "{}")
+            d["creada_local"] = a_local(d["creada"])
+            # Lo que se pinta: con rótulo y sin `True` de Python (C-0231). `params`
+            # sigue tal cual, que es lo que se ejecuta.
+            d["datos"] = [(_p.rotulo_parametro(k), _valor_legible(v)) for k, v in d["params"].items()]
+            solicitudes.append(d)
+        acciones = [{"id": a.id, "nombre": a.nombre or a.id, "resumen": a.resumen or a.descripcion,
+                     "descripcion": a.descripcion, "riesgo": a.riesgo, "nivel": _p.nivel(a),
+                     "riesgo_rotulo": _p.ROTULOS_RIESGO.get(a.riesgo, a.riesgo.replace("-", " ")),
+                     "con_techo": a.riesgo in _p.CON_TECHO,
+                     "aprobadas": con.execute("SELECT COUNT(*) FROM bitacora WHERE accion = ? AND nivel = 'aprobada'"
+                                              " AND ok = 1", (a.id,)).fetchone()[0]}
+                    for a in _p.acciones().values()]
+        nombres_acciones = {a["id"]: a["nombre"] for a in acciones}
+        # El nombre, aquí y no en la plantilla: una sola regla para la
+        # solicitud, sus resueltas y la bitácora (revisor).
+        for d in solicitudes:
+            d["nombre"] = nombres_acciones.get(d["accion"]) or d["accion"].replace("_", " ")
+        bitacora = _mem.bitacora(con, 60)
+        for b in bitacora:
+            b["cuando_local"] = a_local(b["cuando"])
+            # Con el nombre que tiene en Confianza (C-0231). Lo que apunta el
+            # servicio sin ser una acción (un disparador, el triaje), al menos
+            # sin guiones bajos.
+            b["nombre"] = nombres_acciones.get(b["accion"]) or b["accion"].replace("_", " ")
+        notas = _mem.notas(con, 80)
+        for n in notas:
+            n["creada_local"] = a_local(n["creada"])
+        hilos = [dict(x) | {"cerrado_local": a_local(x["cerrado"])} for x in con.execute(
+            "SELECT id, titulo, resumen, cerrado FROM hilo WHERE cerrado IS NOT NULL ORDER BY id DESC LIMIT 15")]
+        # Lo que viene: lo que tiene fecha, lo más cercano primero.
+        proximos = sorted((c for c in compromisos if c.get("recordar_en") or c.get("vence")),
+                          key=lambda c: c.get("recordar_en") or c.get("vence"))[:6]
+        aparatos = _mem.suscripciones(con)
+        for a in aparatos:
+            a["creada_local"] = a_local(a["creada"])
+            a["ultimo_ok_local"] = a_local(a.get("ultimo_ok"))
+            a["huella"] = _mem.huella_de(a["endpoint"])
+        return {
+            "pestana": pestana,
+            "seccion": pestana if pestana in ("conversacion", "pendientes", "memoria") else "ajustes",
+            "proximos": proximos,
+            "push": {"publica": _webpush.publica(), "aparatos": aparatos, "canal_actual": _canal_actual()},
+            "avisos_error": _mem.leer(con, "avisos_error"),
+            "vivo": vivo, "latido": a_local(latido),
+            "hilo": dict(h) if h else None, "turnos": turnos,
+            "hilos": hilos,
+            "fuentes": fuentes,
+            "compromisos": compromisos,
+            "solicitudes": solicitudes,
+            "pendientes": sum(1 for s in solicitudes if s["estado"] == "pendiente"),
+            "acciones": acciones,
+            "nombres_acciones": nombres_acciones,
+            "bitacora": bitacora,
+            "notas": notas,
+            "disparadores": _disp.texto_crudo(),
+            "disparadores_lista": _disp.lista(),
+            "uso": _mem.uso(con),
+            **_mem.cuentas_triaje(con),
+            "triaje": _mem.leer(con, "triaje"),
+            "ingles": _conv.ingles(con),
+            # El de la cabecera y el marcado en la galería (C-0188): de la
+            # memoria abierta, también cuando el raíl no lo lee.
+            "personaje": personaje_vista(_mem.leer(con, _pj.CLAVE)),
+            "nombre": nombre_secretario(con),
+            # Para el personaje de la cabecera cuando el raíl no lo trae (sin
+            # `en_todo_el_hub`): sin las sesiones, que llegan con el sondeo.
+            "espera": secretario_espera(None, con),
+        }
+    finally:
+        con.close()
+
+
+def secretario_datos() -> dict[str, Any]:
+    """Lo que pinta Ajustes → Mis datos (decisión 382): cada campo de
+    `misdatos.CAMPOS`, con su valor, si está propuesto o confirmado, de dónde
+    salió y la propuesta que espera al lado de uno confirmado. Sólo lee: sin
+    ficha no crea ni la carpeta del secretario. Una ficha rota se dice."""
+    from .secretario import misdatos as _md
+    from .reloj import a_local
+
+    try:
+        ficha, error = _md.leer(), None
+    except _md.FichaIlegible as exc:
+        ficha, error = {}, str(exc)
+    filas = []
+    for campo, nombre in _md.CAMPOS.items():
+        d = ficha.get(campo) or {}
+        p = d.get("propuesta") or {}
+        filas.append({"campo": campo, "nombre": nombre, "valor": d.get("valor", ""), "estado": d.get("estado", ""),
+                      "fuente": d.get("fuente", ""), "cuando_local": a_local(d.get("cuando")) if d.get("cuando") else "",
+                      "propuesta": {"valor": p["valor"], "fuente": p.get("fuente", "")} if p else None})
+    return {"filas": filas, "error": error, "archivo": str(_md.ruta()),
+            "confirmados": sum(f["estado"] == "confirmado" for f in filas),
+            "propuestos": sum(f["estado"] == "propuesto" or bool(f["propuesta"]) for f in filas)}
+
+
+def _latido_secretario(con: sqlite3.Connection) -> tuple[bool, str | None]:
+    """Si `hub-secretario` está en marcha —latió hace menos de dos minutos;
+    su ciclo es de 30 s— y su último latido tal cual (UTC)."""
+    from .secretario import memoria as _mem
+    latido = _mem.leer(con, "latido")
+    return bool(latido) and _segundos_desde(latido) < 120, latido
+
+
+def secretario_monitor(hub: sqlite3.Connection | None = None) -> dict[str, Any]:
+    """Lo que pinta /secretario/monitor (C-0202, decisión 389): el secretario
+    para una pantalla dedicada.
+
+    Lo mismo que la conversación de /secretario —el hilo abierto, el modo
+    inglés, quién es, lo que espera— y el escenario: los puestos y en cuál se
+    pone con cada estado y gesto (`personaje.escenario`), que el JS sólo
+    aplica. Sin las fuentes, la bitácora ni las notas: aquí no se pintan.
+    Pintarla sin secretario no le crea la base: el chat sale vacío y él,
+    quieto (el chat, cuando pregunta por turnos, sí, como en /secretario)."""
+    from .secretario import conversacion as _conv, memoria as _mem, personaje as _pj
+    from .reloj import a_local
+
+    vista = {"puestos": [{"id": k, "nombre": n, "que": q, "accesorio": a} for k, (n, q, a) in _pj.PUESTOS.items()],
+             "escenario": _pj.escenario(), "vivo": False, "latido": None, "turnos": [], "ingles": False,
+             "personaje": personaje_vista(), "espera": None, "nombre": nombre_secretario()}
+    try:
+        con = _memoria_secretario()
+    except sqlite3.Error:
+        con = None
+    if con is None:
+        return vista
+    try:
+        vivo, latido = _latido_secretario(con)
+        h = _conv.hilo_abierto(con)
+        vista.update(vivo=vivo, latido=a_local(latido), turnos=_conv.turnos(con, h["id"]) if h else [],
+                     ingles=_conv.ingles(con), personaje=personaje_vista(_mem.leer(con, _pj.CLAVE)),
+                     nombre=nombre_secretario(con),
+                     espera=secretario_espera(hub, con))
+    finally:
+        con.close()
+    return vista
+
+
+def secretario_en_todo_el_hub() -> bool:
+    """Si el secretario es la voz del hub y el asistente está retirado (C-0160, C-0164).
+
+    Lo pide `en_todo_el_hub: true` en `secretario.yml`, y sólo vale si su
+    memoria existe. Nunca lanza: sin secretario, la respuesta es no."""
+    try:
+        from .secretario import conversacion as _conv, memoria as _mem
+        # `existe()` primero: `ajustes()` crea la carpeta del secretario.
+        return bool(_mem.existe() and _conv.ajustes().get("en_todo_el_hub"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _canal_actual() -> str:
+    """Por dónde saldría un aviso ahora mismo, dicho para el dueño."""
+    from .secretario import avisos as _avisos
+    try:
+        canales = _avisos.cadena()
+    except LookupError as exc:
+        return str(exc)
+    for c in canales:
+        if not c.disponible():
+            return c.nombre
+    return "ninguno (no hay canal listo)"
+
+
+def secretario_turnos(desde: int = 0, hub: sqlite3.Connection | None = None) -> dict[str, Any]:
+    """Lo nuevo del hilo abierto, para la pantalla que espera la respuesta.
+
+    Trae también `espera` (`secretario_espera`): es el mismo sondeo el que
+    mueve al personaje, sin otro que abrir (C-0166). `hub` es la conexión de
+    `hub.db`, para saber qué sesión trabaja lo que delegó."""
+    from .secretario import conversacion as _conv, memoria as _mem
+
+    con = _mem.conectar()
+    try:
+        espera = secretario_espera(hub, con)
+        h = _conv.hilo_abierto(con)
+        if not h:
+            return {"hilo": None, "turnos": [], "espera": espera}
+        return {"hilo": h["id"], "turnos": _conv.turnos(con, h["id"], desde), "espera": espera}
+    finally:
+        con.close()
+
+
+def _segundos_desde(iso: str | None) -> float:
+    from datetime import datetime as _dt, timezone as _tz
+    try:
+        return (_dt.now(_tz.utc) - _dt.fromisoformat(str(iso))).total_seconds()
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def secretario_espera(hub: sqlite3.Connection | None = None,
+                      mem: sqlite3.Connection | None = None) -> dict[str, Any] | None:
+    """Lo que el secretario espera o tiene delegado y sigue vivo (C-0166, decisión 358).
+
+    - `solicitudes`: las acciones que esperan el sí del dueño.
+    - `resumenes`: los resúmenes de sesión en cola o leyéndose ahora, y
+      `resumiendo` (0 o 1) el que se está leyendo.
+    - `investigaciones`: lo que investiga en la web, en cola o ahora (385), e
+      `investigando` (0 o 1) la que se está haciendo: comparten hilo con los
+      resúmenes, así que una en cola puede estar esperando a uno.
+    - `encargos`: sus tareas del orquestador (`origen == "secretario"`) en
+      cola o vivas, con la sesión que trabaja cada una y los subagentes vivos
+      de esa sesión, ya con su rol (`personaje.rol_de`).
+
+    Es lo único que el personaje pinta como acompañantes: el secretario no
+    tiene subagentes (301), y uno inventado sería una cifra indefendible
+    (regla 13). Las sesiones de /trabajo no son suyas: tienen su punto en el
+    raíl. `mem` es la memoria ya abierta (si no, se abre y se cierra aquí);
+    sin `hub` no se miran sesiones. `None` si no hay secretario. Nunca lanza:
+    lo pinta el raíl de todas las pantallas."""
+    from .secretario import asuntos as _as, investigar as _inv, memoria as _mem, motor as _motor, sesiones as _ses
+
+    propia = mem is None
+    try:
+        if propia:
+            mem = _memoria_secretario()
+        if mem is None:
+            return None
+        solicitudes = mem.execute("SELECT COUNT(*) FROM solicitud WHERE estado = 'pendiente'").fetchone()[0]
+        en_cola = len(_mem.leer(mem, _ses.CLAVE) or [])
+        en_curso = _mem.leer(mem, _ses.EN_CURSO)
+        resumiendo = int(isinstance(en_curso, dict)
+                         and _segundos_desde(en_curso.get("desde")) < _motor.TOPE_SEGUNDOS)
+        investigaciones = len(_mem.leer(mem, _inv.CLAVE) or [])
+        investigando = _mem.leer(mem, _inv.EN_CURSO)
+        investigando = int(isinstance(investigando, dict)
+                           and _segundos_desde(investigando.get("desde")) < _motor.TOPE_SEGUNDOS)
+        asuntos = _cuenta_de_asuntos(_mem.leer(mem, _as.CLAVE_ESTADO))
+    except sqlite3.Error:
+        return None
+    finally:
+        if propia and mem is not None:
+            mem.close()
+    try:
+        encargos = _encargos_del_secretario(hub)
+    except Exception:  # noqa: BLE001 — una tarea ilegible no deja la pantalla sin raíl
+        encargos = []
+    # `resumiendo`, el que se lee ahora: los de la cola esperan, no trabajan (revisor).
+    return {"solicitudes": int(solicitudes), "resumenes": en_cola + resumiendo, "resumiendo": resumiendo,
+            "encargos": encargos, "investigaciones": investigaciones + investigando, "investigando": investigando,
+            "asuntos": asuntos}
+
+
+def _cuenta_de_asuntos(cuenta: Any) -> dict[str, int]:
+    """`{nuevas, total}` de la instantánea que deja `asuntos.recalcular`. La
+    pantalla la sondea cada 6 s, así que no relee fuentes (380): sin
+    instantánea todavía, cero, y el globo no sale."""
+    if not isinstance(cuenta, dict):
+        return {"nuevas": 0, "total": 0}
+    try:
+        return {"nuevas": max(0, int(cuenta.get("nuevas") or 0)), "total": max(0, int(cuenta.get("total") or 0))}
+    except (TypeError, ValueError):
+        return {"nuevas": 0, "total": 0}
+
+
+# ─────────────────────── «Te espera»: los asuntos en pantalla ───────────────────────
+
+#: Lo que se puede hacer con cada asunto desde su botón (decisión 381). Lo que
+#: no está aquí se contesta por la puerta de su dueño, que la plantilla enlaza:
+#: el permiso, en su solicitud; el orquestador, en `/orquestador/*`.
+COMO_ASUNTO = ("anotar", "delegar", "preparar", "callar", "hecho", "reabrir", "contestar")
+
+_TESTIGO = re.compile(r"[0-9a-f]{12}")
+
+
+def secretario_asuntos(hub: sqlite3.Connection | None = None) -> dict[str, Any]:
+    """El bloque «Te espera» de Pendientes (C-0201, decisiones 379-381).
+
+    Lee por `asuntos.reunir`, en vivo de cada dueño, y a cada asunto le pone
+    lo que se le ofrece (`como`): anotar, delegar o prepararlo, callarlo,
+    contestarlo. Lo callado va aparte (`callados`), para reabrirlo; lo
+    resuelto no sale. `fallos`, las fuentes que no se pudieron leer, dichas.
+
+    Sin secretario, vacío y sin crear su carpeta (`_memoria_secretario`). Sin
+    carpeta de tareas no se lee el orquestador: `orquestador.listar` la
+    crearía, y una pantalla que sólo mira no deja carpetas."""
+    from .secretario import asuntos as _as
+
+    vacio: dict[str, Any] = {"asuntos": [], "fichas": [], "callados": [], "fallos": [], "nuevas": 0}
+    try:
+        mem = _memoria_secretario()
+    except sqlite3.Error as exc:
+        return {**vacio, "fallos": [f"No pude abrir la memoria del secretario: {exc}"]}
+    if mem is None:
+        return vacio
+    clases = tuple(c for c in _as.CLASES
+                   if c != "orquestador" or (config.HUB_HOME / "orquestador" / "tareas").is_dir())
+    try:
+        r = _as.reunir(mem, hub=hub, clases=clases, todos=True)
+    finally:
+        mem.close()
+    vivos = [a for a in r.asuntos if a.estado not in _as.APARTADAS]
+    # Primero lo que pide un gesto suyo aquí mismo, y las fichas aparte y
+    # plegadas: medido el 7-nov con su hub real, 51 fichas sin botones
+    # empujaban fuera de la vista los bloqueos que sí se delegan.
+    vivos.sort(key=lambda a: _ORDEN_ASUNTOS.index(a.clase) if a.clase in _ORDEN_ASUNTOS else len(_ORDEN_ASUNTOS))
+    return {"asuntos": [_vista_asunto(hub, a) for a in vivos if a.clase != "ficha"],
+            "fichas": [_vista_asunto(hub, a) for a in vivos if a.clase == "ficha"],
+            "callados": [_vista_asunto(hub, a) for a in r.asuntos if a.estado == "callada"],
+            "fallos": r.fallos, "nuevas": sum(a.estado == "nueva" for a in vivos)}
+
+
+#: En qué orden salen en «Te espera»: lo que sólo él resuelve y lo que se
+#: delega con un botón, antes que lo que sólo enlaza a otra pantalla.
+_ORDEN_ASUNTOS = ("relevo", "permiso", "orquestador", "dato", "proyecto", "bloqueo", "vence", "sesion", "canal",
+                  "ficha")
+
+
+def secretario_asunto(hub: sqlite3.Connection | None, clave: str) -> dict[str, Any] | None:
+    """Un asunto con lo que se le ofrece, como lo pinta «Te espera», si existe
+    ahora (callado o no). Lo pide la web antes de actuar: el botón que llega
+    tiene que ser uno que la pantalla ofrece hoy, no el de hace una hora.
+    `ValueError` si la clave no es la de un asunto; `RuntimeError` si su
+    fuente no se pudo leer."""
+    from .secretario import asuntos as _as
+
+    mem = _memoria_secretario()
+    if mem is None:
+        return None
+    try:
+        a = _as.buscar(mem, clave)
+    finally:
+        mem.close()
+    return _vista_asunto(hub, a) if a is not None else None
+
+
+def _vista_asunto(hub: sqlite3.Connection | None, a) -> dict[str, Any]:
+    """Lo que la plantilla necesita de un asunto, y lo que se le ofrece.
+
+    - permiso: la `solicitud` que pinta su macro de siempre;
+    - orquestador: la `tarea`, y el `testigo` de su pregunta o el `conf_id`
+      de su confirmación, para contestar por `/orquestador/*` sin aplicar la
+      respuesta a otra pregunta que llegó después;
+    - bloqueo: anotar, delegar o prepararlo (`asuntos.como_delegar`) y callar;
+    - proyecto: contestar (le vuelve al proyecto), darlo por hecho y callar;
+    - relevo: darlo por hecho (quien lo pidió no lee respuestas).
+
+    Un bloqueo se anota **o** se delega, una vez: el asunto guarda una sola
+    marca y una sola `ref`, y anotar después de delegar borraba la tarea de la
+    `ref` y volvía a ofrecer delegarlo —dos tareas para el mismo punto
+    (revisor)—. La `ref` sobrevive a callar y reabrir (`marcar` sólo la pisa
+    con otra), así que también tras reabrir se sabe qué se decidió."""
+    from dataclasses import asdict
+
+    from .secretario import asuntos as _as
+
+    d = asdict(a)
+    d.update(como=[], motivo="", solicitud=0, tarea="", testigo="", conf_id=0, proyecto="", que=a.texto,
+             decidido="", rotulo=_as.ROTULOS.get(a.clase, a.clase))
+    if a.estado == "callada":
+        d["como"] = ["reabrir"]
+        return d
+    if a.clase == "permiso":
+        d["solicitud"] = int(a.clave.split(":", 1)[1])
+    elif a.clase == "orquestador":
+        d["tarea"] = a.origen
+        resto = a.clave[len(f"orquestador:{a.origen}:"):]
+        if a.tipo == "confirmacion":
+            d["conf_id"] = int(resto.rsplit(":", 1)[1])
+        elif _TESTIGO.fullmatch(resto):
+            # Las preguntas de antes del testigo no lo llevan: sin él, se
+            # contesta la que haya, como desde /orquestador.
+            d["testigo"] = resto
+    elif a.clase == "bloqueo":
+        # La misma regla que el modelo (`asuntos.como_delegar`, 381): con dos,
+        # uno delegaba lo que el otro no.
+        dl = _as.como_delegar(a, hub=hub)
+        decidido = a.estado in _as.DECIDIDAS or bool(a.ref)
+        d.update(proyecto=dl.proyecto, nombre=dl.nombre, punto=dl.punto, que=f"{dl.nombre}: {dl.punto}",
+                 motivo="" if decidido else dl.motivo,
+                 como=[c for c in ("anotar", dl.como, "callar") if c and not (decidido and c == "anotar")])
+        if decidido:
+            d["decidido"] = ("delegado" if a.estado == "delegada" or a.ref.startswith("t-")
+                             or a.ref == _as.DELEGANDO else "anotado")
+    elif a.clase == "proyecto":
+        d["como"] = ["contestar", "hecho", "callar"]
+    elif a.clase == "relevo":
+        # Quien pidió el relevo no lee respuestas: lo que se hace es en la PC,
+        # y «Hecho» es lo que hay que decir (388).
+        d["como"] = ["hecho"]
+    return d
+
+
+def _encargos_del_secretario(hub: sqlite3.Connection | None) -> list[dict[str, Any]]:
+    from . import orquestador as _orq
+
+    # Sin carpeta de tareas no se crea una por mirar: `listar` la haría.
+    if not (config.HUB_HOME / "orquestador" / "tareas").is_dir():
+        return []
+    out = []
+    for t in _orq.listar():
+        if t.get("origen") != "secretario" or t.get("estado") not in (*_orq.VIVAS, _orq.EN_COLA):
+            continue
+        out.append({"id": t["id"], "estado": t["estado"], "pedido": " ".join(str(t.get("pedido") or "").split())[:90],
+                    "sesiones": _sesiones_del_encargo(hub, t) if hub is not None else []})
+    return out
+
+
+def _sesiones_del_encargo(hub: sqlite3.Connection, tarea: dict[str, Any]) -> list[dict[str, Any]]:
+    """Las sesiones a las que la tarea mandó trabajo y aún espera, con sus
+    subagentes vivos. Del último muestreo (qué conversación corre en cada
+    panel) y de los transcripts: nunca tmux en vivo desde la pantalla."""
+    paneles = {p["pane_id"]: p for p in paneles_abiertos(hub)}
+    out, vistos = [], set()
+    for e in tarea.get("esperas") or []:
+        panel = paneles.get(e.get("pane_id"))
+        if e.get("estado") != "esperando" or not panel or e["pane_id"] in vistos:
+            continue
+        vistos.add(e["pane_id"])
+        out.append({"proyecto": e.get("proyecto") or panel.get("proyecto_id") or "",
+                    "nombre": panel.get("slot_nombre") or panel.get("etiqueta") or e.get("proyecto") or "",
+                    "subagentes": _subagentes_de(panel)})
+    return out
+
+
+def _subagentes_de(panel: dict[str, Any]) -> list[dict[str, Any]]:
+    """Los subagentes vivos de la conversación que corre en un panel, con su
+    rol (358). Del último muestreo (qué conversación) y de los transcripts:
+    nunca tmux en vivo desde la pantalla. Lo usan los acompañantes del
+    secretario y los talleres (C-0220)."""
+    from .secretario import personaje as _pj
+
+    sesion = panel.get("claude_sesion") or ""
+    if not sesion:
+        return []
+    ruta = (transcripts.ruta_de_sesion(sesion, [transcripts.TRANSCRIPTS / transcripts.slug_de(panel.get("cwd") or "")])
+            or transcripts.ruta_de_sesion(sesion))
+    if not ruta:
+        return []
+    return [{"id": s["id"], "rol": _pj.rol_de(s["tipo"]), "tipo": s["tipo"], "inicial": _pj.inicial(s["tipo"]),
+             "que": s["que"]} for s in transcripts.subagentes_vivos(ruta)]
+
+
+#: Cómo se ordenan los talleres: lo que te espera, primero (C-0220).
+_ORDEN_TALLER = {"espera": 0, "trabajando": 1, "quieta": 2, "neutro": 3}
+
+
+def talleres(con: sqlite3.Connection) -> dict[str, Any]:
+    """Cada sesión con agente del último muestreo es un taller (C-0220, 391).
+
+    Sólo lectura y sólo de lo guardado: qué agente corre lo dice
+    `tui.reconocer` sobre el comando y el título del panel (una shell con el
+    glifo heredado no es un taller, 261), y su estado, `estado_de_panel`
+    —trabajando, por el título o por la pantalla (393), o detenido, que aquí
+    es «quieta»— más `avisos.preguntando` cuando el relé midió un cuadro de
+    permisos («espera»). Codex no pinta estado en el título: trabajando lo
+    dice su pantalla y, si no, va «neutro», porque no se distingue parado de
+    esperando (regla 13).
+
+    Cada taller lleva `clave` (`pane_id` + conversación: tmux recicla los
+    ids) y sus subagentes con su estación (`talleres.estacion_de`).
+    `tomado_en` es la hora de la muestra: la página no pinta como de ahora
+    una muestra vieja. `escena` es la tabla del dibujo (`talleres.escena`)."""
+    from . import avisos as _avisos, talleres as _talleres, tui
+
+    actual = snapshot_actual(con)
+    escena = _talleres.escena()
+    if not actual:
+        return {"talleres": [], "tomado_en": None, "escena": escena}
+    try:
+        piden = _avisos.preguntando(con)
+    except sqlite3.Error:
+        piden = set()
+    out = []
+    for p in paneles_de(con, actual["id"]):
+        agente = tui.reconocer(p.get("comando") or "", p.get("titulo") or "")
+        if agente is None:
+            continue
+        estado = {"trabajando": "trabajando", "detenido": "quieta"}.get(estado_de_panel(p), "neutro")
+        if estado == "quieta" and p["pane_id"] in piden:
+            estado = "espera"
+        subagentes = [{**s, "estacion": _talleres.estacion_de(s["rol"])} for s in _subagentes_de(p)]
+        out.append({
+            "clave": f"{p['pane_id']}:{p.get('claude_sesion') or ''}",
+            "agente": agente.nombre,
+            "proyecto": p.get("proyecto_nombre") or p.get("proyecto_id") or "",
+            "nombre": p.get("slot_nombre") or p.get("etiqueta") or f"{p['session']}:{p['window_idx']}",
+            "estado": estado,
+            "subagentes": subagentes,
+        })
+    out.sort(key=lambda x: (_ORDEN_TALLER[x["estado"]], x["proyecto"], x["nombre"]))
+    return {"talleres": out, "tomado_en": actual["tomado_en"], "escena": escena}
+
+
+def personaje_catalogo() -> dict[str, Any]:
+    """Todo lo que el personaje sabe enseñar, para su galería (C-0166), y
+    entre quiénes se elige (C-0188). Cuál está elegido lo trae `secretario()`."""
+    from .secretario import personaje as _pj
+    return {"estados": [{"id": k, "nombre": n, "cuando": c} for k, (n, c) in _pj.ESTADOS.items()],
+            "gestos": [{"id": k, "nombre": n} for k, n in _pj.GESTOS.items()],
+            "roles": [{"id": k, "nombre": n, "que": q} for k, (n, q) in _pj.ROLES.items()],
+            "personajes": [personaje_vista(k) for k in _pj.PERSONAJES]}
+
+
+def nombre_secretario(con: sqlite3.Connection | None = None) -> str:
+    """Cómo se llama el secretario (C-0226): lo puesto en Ajustes → Personaje,
+    o «Secretario». Con su memoria abierta, de ahí; sin ella —el raíl, el
+    manifiesto—, en sólo lectura y sin crearla (C-0099): una instalación sin
+    secretario todavía no tiene memoria, y eso es «Secretario», no un error."""
+    from .secretario import memoria as _mem, personaje as _pj
+    if con is not None:
+        return _pj.nombre_de(_mem.leer(con, _pj.CLAVE_NOMBRE))
+    try:
+        return _pj.nombre_de(_mem.leer_sin_abrir(_pj.CLAVE_NOMBRE))
+    except sqlite3.Error:
+        return _pj.NOMBRE_POR_OMISION
+
+
+def personaje_vista(valor: Any = None) -> dict[str, str]:
+    """Lo que la plantilla necesita de un personaje: su id (lo que no está en
+    el catálogo es el de por omisión), su nombre, su familia y su hoja."""
+    from .secretario import personaje as _pj
+    pid = _pj.elegido(valor)
+    nombre, familia = _pj.PERSONAJES[pid]
+    return {"id": pid, "nombre": nombre, "familia": familia, "hoja": _pj.hoja(pid)}

@@ -261,6 +261,9 @@ def test_las_entradas_del_chat_no_mueven_el_offset_de_telegram(con):
     todos = bots.actualizaciones(400)
     assert len(todos) == 3
     assert [u.get("canal") for u in todos] == [None, "web", "web"]
+    assert bots.cursores["web"] is None, "bajarlas no es haberlas guardado (345)"
+    for u in todos[1:]:
+        bots.confirmar(u)
     assert bots.cursores["web"] == 5
     # La vuelta siguiente pide al chat desde su cursor, y a Telegram desde el suyo.
     bots.actualizaciones(501)
@@ -304,3 +307,20 @@ def test_un_relé_que_se_reinicia_solo_recibe_lo_que_no_había_confirmado(servid
     servidor.get("/hub/actualizaciones", params={"desde": u1["update_id"] + 1}, headers=_hub(servidor))
     tras_reinicio = servidor.get("/hub/actualizaciones", params={"desde": 0}, headers=_hub(servidor)).json()["result"]
     assert [u["message"]["text"] for u in tras_reinicio] == ["dos"]
+
+
+def test_con_el_chat_caido_escribiendo_y_quitar_botones_no_cortan_la_vuelta(monkeypatch):
+    """C-0129. El relé llama a las dos sin `try` (`atender_esperas`): si
+    lanzaban, la vuelta se cortaba antes de leer nada, también lo de Telegram.
+    Son de cortesía, como en `BotDeEncargos`, y se tragan el fallo; lo que
+    importa (`enviar`, `actualizaciones`) sigue avisando."""
+    from hub import chatweb, telegram
+
+    def caido(self, peticion):
+        raise OSError("connection refused")
+    monkeypatch.setattr(chatweb.BotDeChat, "_abrir", caido)
+    bot = chatweb.BotDeChat("http://127.0.0.1:9", "t")
+    bot.escribiendo(7)
+    bot.quitar_botones(7, 3)
+    with pytest.raises(telegram.TelegramCaido):
+        bot.enviar(7, "hola")

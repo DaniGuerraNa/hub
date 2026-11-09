@@ -12,28 +12,15 @@ from __future__ import annotations
 
 import json
 import re
-import shlex
 import shutil
 import sqlite3
 import subprocess
 from pathlib import Path
 
-from . import api, config, modelos, registry, tmux
-
-# Un nombre de sesión de tmux no admite cualquier cosa; se deriva del id.
-_NO_VALIDO = re.compile(r"[^\w.\-]+")
-
+from . import api, config, modelos, registry, slots, tmux
 
 class GuardrailBloqueado(PermissionError):
     """El proyecto declara `never`: no se lanza nada, aunque lo pida la UI."""
-
-
-def sesion_para(con: sqlite3.Connection, proyecto_id: str) -> str:
-    """Dónde abrir la ventana: donde ya vive ese proyecto, si es que vive."""
-    for panel in api.paneles_abiertos(con):
-        if panel["proyecto_id"] == proyecto_id:
-            return panel["session"]
-    return _NO_VALIDO.sub("-", proyecto_id) or "hub-agentes"
 
 
 def comando(prompt: str, sin_preguntar: bool = False, modo: str = "") -> str:
@@ -63,18 +50,17 @@ def comando(prompt: str, sin_preguntar: bool = False, modo: str = "") -> str:
     # El modelo va SIEMPRE explícito: sin `--model`, la ventana hereda el
     # `"model"` de `~/.claude/settings.json` —un ajuste suyo, para sus ventanas—
     # y el agente nace en lo que hubiera ahí. Ver `modelos.py`.
-    partes = ["claude", modelos.bandera(modelos.AGENTE)]
-    if modo:
-        partes.append(f"--permission-mode {shlex.quote(modo)}")
+    if modo and sin_preguntar:
+        raise ValueError("o un modo de permisos o sin preguntar, no los dos")
+    permisos = modo or ""
     if sin_preguntar:
         # `--permission-mode` y no `--dangerously-skip-permissions`: son
         # equivalentes, pero el segundo lleva el nombre puesto para que dé
         # miedo escribirlo, y el modo es lo que Claude Code muestra en su barra
         # («⏵⏵ bypass permissions on»). Que se vea en pantalla importa: el
         # usuario tiene que poder saber en qué modo corre lo que está mirando.
-        partes.append("--permission-mode bypassPermissions")
-    partes.append(shlex.quote(prompt))
-    return " ".join(partes)
+        permisos = "bypassPermissions"
+    return modelos.linea_claude(modelos.AGENTE, permisos=permisos, prompt=prompt).comando
 
 
 def lanzar(
@@ -107,12 +93,12 @@ def lanzar(
     if not destino:
         raise ValueError(f"«{proyecto['nombre']}» no tiene asiento donde abrir la ventana")
 
-    session = sesion_para(con, proyecto_id)
+    session = slots.sesion_para(con, proyecto_id)
     # El PATH de usuario, o el agente arranca sin las herramientas del usuario:
     # `hub-web` corre bajo systemd y su PATH no trae `~/.local/bin`.
     entorno = {"PATH": tmux.path_de_usuario()}
     if not tmux.existe_sesion(session):
-        tmux.nueva_sesion(session, destino, entorno=entorno)
+        tmux.nueva_sesion(session, destino)
 
     indice = tmux.nueva_ventana(session, destino, nombre_ventana[:40],
                                 comando(prompt, sin_preguntar), entorno)
@@ -205,10 +191,10 @@ def _acotar_permisos(destino: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    _confiar(destino)
+    confiar(destino)
 
 
-def _confiar(destino: Path) -> None:
+def confiar(destino: Path) -> None:
     """Marca la carpeta como de confianza en `~/.claude.json`.
 
     Sin esto Claude Code ignora las entradas de `allow` del proyecto —lo dice
@@ -235,6 +221,33 @@ def _confiar(destino: Path) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def _rutas_existentes(rutas: list[str] | None) -> list[str]:
+    """Las rutas declaradas, absolutas y comprobadas. Las usan crear y anexar.
+
+    🔴 Se comprueba que existan, y no es puntillismo: lo que se declara SE MIDE,
+    y medir sobre una carpeta inexistente no da error, da un cero. Un cero en
+    «commits sin respaldo» se lee como «está todo a salvo», así que una ruta
+    mal escrita aquí produce exactamente la tranquilidad falsa que el hub
+    existe para evitar.
+    """
+    apuntadas: list[str] = []
+    for cruda in (rutas or []):
+        cruda = str(cruda).strip()
+        if not cruda:
+            continue
+        camino = Path(cruda).expanduser()
+        if not camino.is_absolute():
+            raise ValueError(f"la ruta tiene que ser absoluta: «{cruda}»")
+        if not camino.is_dir():
+            raise ValueError(
+                f"«{camino}» no existe o no es una carpeta. Lo que se declara se"
+                " mide, y medir sobre algo que no está da un cero que parece"
+                " «no hay nada sin respaldar»."
+            )
+        apuntadas.append(str(camino))
+    return apuntadas
+
+
 def anexar_proyecto(
     con: sqlite3.Connection,
     id_proyecto: str,
@@ -243,6 +256,10 @@ def anexar_proyecto(
     dominio: str = "personal",
     guardrail: str = "ask",
     estado_ref: str = "",
+    rutas: list[str] | None = None,
+    patrones: list[str] | None = None,
+    contenedores: list[str] | None = None,
+    tipo: str = "proyecto",
 ) -> dict:
     """Da de alta en el registro un proyecto que YA existe. Sin tocarlo.
 
@@ -269,6 +286,11 @@ def anexar_proyecto(
         raise ValueError("el dominio es `personal` o `laboral`.")
     if guardrail not in ("auto", "ask", "never"):
         raise ValueError("el guardrail es `auto`, `ask` o `never`.")
+    if tipo not in ("proyecto", "kit"):
+        raise ValueError("el tipo es `proyecto` o `kit`.")
+    for campo, valor in (("rutas", rutas), ("patrones", patrones), ("contenedores", contenedores)):
+        if valor is not None and not isinstance(valor, list):
+            raise ValueError(f"`{campo}` es una lista, aunque sólo haya una: [{valor!r}]")
     carpeta = Path(ruta or "").expanduser()
     if not carpeta.is_absolute():
         raise ValueError(f"la ruta tiene que ser absoluta: «{ruta}»")
@@ -290,10 +312,14 @@ def anexar_proyecto(
         if otro.asiento and Path(otro.asiento).expanduser() == carpeta:
             raise ValueError(f"esa carpeta ya está registrada como «{otro.id}».")
 
+    # `rutas`, `patrones` y `contenedores` son lo que antes obligaba a editar
+    # el registro a mano desde la skill (C-0039): ahora todo alta pasa por aquí.
     registry.añadir_proyecto({
         "id": id_proyecto, "nombre": nombre, "dominio": dominio,
         "asiento": str(carpeta), "estado_ref": estado_ref,
         "guardrail": guardrail, "status": "activo",
+        "rutas": _rutas_existentes(rutas), "patrones": patrones or [],
+        "contenedores": contenedores or [], "tipo": "" if tipo == "proyecto" else tipo,
     })
     registry.sincronizar(con, registry.cargar())
     return {"id": id_proyecto, "ruta": str(carpeta), "estado_ref": estado_ref or None,
@@ -353,26 +379,7 @@ def crear_proyecto(
     if api.obtener_proyecto(con, id_proyecto):
         raise ValueError(f"ya hay un proyecto con el id «{id_proyecto}».")
 
-    # 🔴 Se comprueba que existan, y no es puntillismo: lo que se declara SE MIDE,
-    # y medir sobre una carpeta inexistente no da error, da un cero. Un cero en
-    # «commits sin respaldo» se lee como «está todo a salvo», así que una ruta
-    # mal escrita aquí produce exactamente la tranquilidad falsa que el hub
-    # existe para evitar.
-    apuntadas: list[str] = []
-    for cruda in (rutas or []):
-        cruda = str(cruda).strip()
-        if not cruda:
-            continue
-        camino = Path(cruda).expanduser()
-        if not camino.is_absolute():
-            raise ValueError(f"la ruta tiene que ser absoluta: «{cruda}»")
-        if not camino.is_dir():
-            raise ValueError(
-                f"«{camino}» no existe o no es una carpeta. Lo que se declara se"
-                " mide, y medir sobre algo que no está da un cero que parece"
-                " «no hay nada sin respaldar»."
-            )
-        apuntadas.append(str(camino))
+    apuntadas = _rutas_existentes(rutas)
 
     destino.mkdir(parents=True, exist_ok=True)
     # Con git desde el minuto uno: el hub mide commits sin respaldo, y un
@@ -515,7 +522,6 @@ y es a propósito.
 def preparar_kits(con: sqlite3.Connection, proyecto_id: str, ids: list[str]) -> dict:
     """Abre una ventana en el proyecto con el encargo de aplicar esos kits, sin Enter."""
     from . import kits as _kits
-    from . import slots
 
     proyecto = api.obtener_proyecto(con, proyecto_id)
     if not proyecto:

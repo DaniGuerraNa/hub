@@ -29,6 +29,21 @@ if [[ ! "$alias_" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
   echo "«$alias_» no sirve como alias: minúsculas, números, punto y guion" >&2
   exit 2
 fi
+# Los tres van tal cual a ~/.ssh/config: un salto de línea añadiría directivas
+# (`ProxyCommand` ejecuta lo que diga en cada conexión) y un guion delante se
+# leería como opción de ssh (C-0122). Se valida antes de crear nada.
+if [[ ! "$host" =~ ^[A-Za-z0-9_.:][A-Za-z0-9_.:-]*$ ]]; then
+  echo "«$host» no sirve como host: un nombre o una IP, sin espacios" >&2
+  exit 2
+fi
+if [[ ! "$usuario" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]]; then
+  echo "«$usuario» no sirve como usuario: letras, números, punto, guion y _" >&2
+  exit 2
+fi
+if [[ ! "$puerto" =~ ^[0-9]{1,5}$ ]] || (( 10#$puerto < 1 || 10#$puerto > 65535 )); then
+  echo "«$puerto» no es un puerto: un número entre 1 y 65535" >&2
+  exit 2
+fi
 
 config="$HOME/.ssh/config"
 clave="$HOME/.ssh/$alias_"

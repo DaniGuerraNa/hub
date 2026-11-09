@@ -65,7 +65,9 @@
 {% set nav_ = e.navegador or {} %}
 {% set gua = e.guardian or {} %}
 {% set refrescar = n.pendientes or e.grabando or (n.corridas | selectattr('estado', 'equalto', 'en-curso') | list) %}
-<div class="nav-v" {% if refrescar %}data-refrescar="5"{% endif %}>
+{# Una región (C-0167): las acciones y el refresco solo cambian esto, sin
+   recargar la página. #}
+<div data-region="navegante" class="nav-v" {% if refrescar %}data-refrescar="5"{% endif %}>
 <datalist id="pantallas-conocidas">{% for p in n.mapa.pantallas %}<option value="{{ p }}">{% endfor %}</datalist>
 
 {% if not n.listo %}
@@ -92,7 +94,7 @@
       <span class="destino">{{ p.metodo }} {{ p.url }}</span>
       <span class="tenue" style="font-size:12px">{{ p.hora }} · política {{ p.politica }}.
         La petición está en pausa hasta que contestes; sin respuesta, cuenta como no.</span>
-      <form method="post" action="/navegante/responder" class="acciones">
+      <form data-sin-recarga method="post" action="/navegante/responder" class="acciones">
         <input type="hidden" name="id" value="{{ p.id }}">
         <button class="boton principal" name="aprobar" value="si">Permitir una vez</button>
         <button class="boton" name="aprobar" value="no">No</button>
@@ -115,7 +117,7 @@
           {% for p in nav_.pestanas[:3] %}<br><span class="mono">{{ p.titulo[:50] or p.url[:60] }}</span>{% endfor %}
         {% else %}<span class="marca apagado">apagado</span> El perfil guarda tu sesión entre encendidos.{% endif %}
       </span>
-      <form method="post" action="/navegante/accion">
+      <form data-sin-recarga method="post" action="/navegante/accion">
         {% if nav_.vivo %}<button class="boton" name="que" value="cerrar">Cerrar</button>
         {% else %}<button class="boton principal" name="que" value="encender">Encender</button>{% endif %}
       </form>
@@ -127,7 +129,7 @@
         {% if gua.vivo %}<span class="marca encendido">vigilando</span> política <strong>{{ gua.politica }}</strong> · modo {{ gua.modo }}
         {% else %}<span class="marca apagado">parado</span> 🔴 Sin guardián nada frena una petición que modifique.{% endif %}
       </span>
-      <form method="post" action="/navegante/accion">
+      <form data-sin-recarga method="post" action="/navegante/accion">
         {% if gua.vivo %}<button class="boton" name="que" value="parar-guardian">Parar</button>
         {% else %}
           <select name="politica" aria-label="Política">
@@ -142,27 +144,27 @@
       <span class="que">Verlo y manejarlo</span>
       <span class="como">La vista en vivo: ves lo que hace Claude, inicias sesión tú y grabas los flujos con tu ratón.
         Se abre en <span class="mono">localhost:4848</span>, así que sólo desde esta PC.</span>
-      <form method="post" action="/navegante/accion">
+      <form data-sin-recarga method="post" action="/navegante/accion">
         <button class="boton {{ 'principal' if nav_.vivo }}" name="que" value="panel" {{ 'disabled' if not nav_.vivo }}>Preparar vista</button>
         {% if e.panel and e.panel.vivo %}<a class="boton" href="{{ e.panel.url }}" target="_blank" rel="noopener">Abrir ↗</a>{% endif %}
       </form>
     </div>
 
     <div class="fila-ctl" style="grid-template-columns:minmax(0,1fr)">
-      <form method="post" action="/navegante/accion" class="ir-a" style="justify-content:flex-start">
+      <form data-sin-recarga method="post" action="/navegante/accion" class="ir-a" style="justify-content:flex-start">
         <input type="hidden" name="que" value="ir">
         <input name="url" type="url" placeholder="https://… — abre una dirección en el navegador" aria-label="Dirección" required {{ 'disabled' if not nav_.vivo }}>
         <button class="boton" {{ 'disabled' if not nav_.vivo }}>Ir</button>
       </form>
       <details style="margin-top:8px"><summary class="tenue" style="font-size:12.5px;cursor:pointer">Accesos directos</summary>
-        <form method="post" action="/navegante/accion" class="ir-a" style="margin-top:8px">
+        <form data-sin-recarga method="post" action="/navegante/accion" class="ir-a" style="margin-top:8px">
           <input type="hidden" name="que" value="acceso">
           <input name="nombre" placeholder="Portal AWS trabajo" aria-label="Nombre del acceso" required style="max-width:200px;min-width:140px">
           <input name="url" type="url" placeholder="https://…awsapps.com/start" aria-label="Dirección del acceso" required>
           <button class="boton sutil">Guardar</button>
         </form>
         {% for a in n.accesos %}
-        <form method="post" action="/navegante/accion" style="display:flex;gap:8px;align-items:center;margin-top:6px">
+        <form data-sin-recarga method="post" action="/navegante/accion" style="display:flex;gap:8px;align-items:center;margin-top:6px">
           <input type="hidden" name="que" value="quitar-acceso"><input type="hidden" name="nombre" value="{{ a.nombre }}">
           <span style="font-size:13px">{{ a.nombre }}</span> <span class="mono tenue">{{ a.url }}</span>
           <button class="boton sutil" style="font-size:11px;padding:2px 8px">Quitar</button>
@@ -170,7 +172,7 @@
         {% endfor %}
       </details>
       {% if n.accesos %}
-      <form method="post" action="/navegante/accion" class="chips" style="justify-content:flex-start">
+      <form data-sin-recarga method="post" action="/navegante/accion" class="chips" style="justify-content:flex-start">
         <input type="hidden" name="que" value="ir">
         {% for a in n.accesos %}<button class="boton sutil" name="url" value="{{ a.url }}" {{ 'disabled' if not nav_.vivo }}>{{ a.nombre }}</button>{% endfor %}
       </form>
@@ -184,7 +186,7 @@
     <p class="ayuda">Graba <strong>fragmentos</strong>: un trozo que va de una pantalla a otra (o lee una sin
       salir de ella). Luego se unen abajo, en «Componer». Inicia sesión <strong>antes</strong> de grabar. Luego pulsa grabar, hazlo una vez en la vista en
       vivo y vuelve aquí a guardarlo. Lo que teclees en un campo de contraseña no se guarda.</p>
-    <form method="post" action="/navegante/accion" class="acciones">
+    <form data-sin-recarga method="post" action="/navegante/accion" class="acciones">
       <button class="boton principal" name="que" value="grabar" {{ 'disabled' if not nav_.vivo }}>Empezar a grabar</button>
       {% if not nav_.vivo %}<span class="tenue" style="font-size:12.5px">Enciende el navegador primero.</span>{% endif %}
     </form>
@@ -192,7 +194,7 @@
     <p class="ayuda"><span class="marca grabando">● grabando</span> Haz el flujo en la vista en vivo. Al terminar,
       ponle nombre. En «parámetros» escribe los valores que cambiarán la próxima vez, uno por línea:
       <span class="mono">grupo=/aws/lambda/pedidos-crear</span> — cada aparición se convierte en un hueco.</p>
-    <form method="post" action="/navegante/accion" class="formulario">
+    <form data-sin-recarga method="post" action="/navegante/accion" class="formulario">
       <input type="hidden" name="que" value="parar-grabacion">
       <label>Nombre<input name="nombre" required pattern="[a-z0-9][a-z0-9_-]*" placeholder="errores-pedidos"></label>
       <label>Para qué sirve<input name="descripcion" placeholder="Cuenta los errores de las Lambdas de pedidos"></label>
@@ -217,7 +219,7 @@
         <span class="tenue" style="font-size:12px">{{ f.pasos }} pasos{% if f.usa %} · une {{ f.usa | length }} fragmentos{% endif %} · {{ f.modo }}</span></summary>
       {% if f.error %}<p class="desc">No se puede leer: {{ f.error }}</p>{% else %}
       {% if f.descripcion %}<p class="desc">{{ f.descripcion }}</p>{% endif %}
-      <form method="post" action="/navegante/accion" class="formulario">
+      <form data-sin-recarga method="post" action="/navegante/accion" class="formulario">
         <input type="hidden" name="que" value="correr">
         <input type="hidden" name="flujo" value="{{ f.coleccion }}/{{ f.nombre }}">
         {% for k, d in f.parametros.items() if not (d or {}).secreto %}
@@ -229,7 +231,7 @@
           <span class="mono tenue">{{ f.ruta }}</span></div>
       </form>
       {% if f.usa %}<p class="desc">Une: {% for u in f.usa %}<span class="mono">{{ u }}</span>{{ ' → ' if not loop.last }}{% endfor %}</p>{% endif %}
-      <form method="post" action="/navegante/accion" class="acciones" style="margin-top:8px">
+      <form data-sin-recarga method="post" action="/navegante/accion" class="acciones" style="margin-top:8px">
         <input type="hidden" name="que" value="pantallas">
         <input type="hidden" name="flujo" value="{{ f.coleccion }}/{{ f.nombre }}">
         <input name="desde" list="pantallas-conocidas" value="{{ (f.pantallas or {}).desde or '' }}" placeholder="empieza en" aria-label="Empieza en" style="max-width:160px">
@@ -248,7 +250,7 @@
     <p class="ayuda">Une fragmentos en orden en un flujo nuevo. Los parámetros con el mismo nombre (región, base)
       se comparten. Si uno no termina en la pantalla donde empieza el siguiente, te avisa.</p>
     {% if n.flujos | length >= 2 %}
-    <form method="post" action="/navegante/accion" class="formulario">
+    <form data-sin-recarga method="post" action="/navegante/accion" class="formulario">
       <input type="hidden" name="que" value="componer">
       {% for i in range(1, 6) %}
       <label>{{ i }}.º

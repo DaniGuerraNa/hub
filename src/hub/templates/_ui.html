@@ -37,6 +37,8 @@
    (Los comentarios van aquí arriba: dentro del diccionario son parte de una
    expresión de Jinja y rompen la plantilla entera.) #}
 {% macro icono(nombre, px=16) %}
+{# `secretario` tiene el suyo y no el bocadillo: en el raíl de sólo iconos él y
+   Comunicación eran el mismo dibujo, y el dueño no lo encontraba (1-nov). #}
 {%- set trazos = {
   'actualizar': '<path d="M15 9a6 6 0 01-10.4 4.1M3 9a6 6 0 0110.4-4.1"/><path d="M13.5 2v3h-3M4.5 16v-3h3"/>',
   'casa': '<path d="M2.5 8L9 2.5 15.5 8v7a1 1 0 01-1 1h-3v-4.5h-3V16h-3a1 1 0 01-1-1z"/>',
@@ -46,6 +48,7 @@
   'pilas': '<rect x="2.5" y="3" width="13" height="4.5" rx="1.5"/><rect x="2.5" y="10.5" width="13" height="4.5" rx="1.5"/>',
   'enlace': '<path d="M7 11l4-4M5.5 8.5L4 10a2.8 2.8 0 004 4l1.5-1.5M12.5 9.5L14 8a2.8 2.8 0 00-4-4L8.5 5.5"/>',
   'documento': '<path d="M4 2.2h6.5l3.5 3.5v10.1H4z"/><path d="M6.5 8.5h5M6.5 11.4h3"/>',
+  'clip': '<path d="M14.5 8.4l-5.7 5.7a3.6 3.6 0 01-5.1-5.1l6-6a2.4 2.4 0 013.4 3.4l-6 6a1.2 1.2 0 01-1.7-1.7l5.6-5.6"/>',
   'bandeja': '<path d="M2.5 10.5h4l1 2h3l1-2h4"/><path d="M4 3.5h10l1.5 7v4a1 1 0 01-1 1h-11a1 1 0 01-1-1v-4z"/>',
   'rejilla': '<rect x="2.5" y="2.5" width="5.5" height="5.5" rx="1.8"/><rect x="10" y="2.5" width="5.5" height="5.5" rx="1.8"/><rect x="2.5" y="10" width="5.5" height="5.5" rx="1.8"/><rect x="10" y="10" width="5.5" height="5.5" rx="1.8"/>',
   'aviso': '<path d="M9 2.2l6.8 12.3H2.2z"/><path d="M9 7v3.2M9 12.6v.01"/>',
@@ -64,11 +67,18 @@
   'ajustes': '<path d="M7.55 2.2h2.9l.33 1.85 1.36.79 1.76-.65 1.45 2.51-1.42 1.24a5.4 5.4 0 010 1.57l1.42 1.24-1.45 2.51-1.76-.65-1.36.79-.33 1.85h-2.9l-.33-1.85-1.36-.79-1.76.65-1.45-2.51 1.42-1.24a5.4 5.4 0 010-1.57L2.35 6.7 3.8 4.19l1.76.65 1.36-.79z"/><circle cx="9" cy="9" r="2.45"/>',
   'filtro': '<path d="M2.5 3.5h13l-5 5.6v5.4l-3 1.5V9.1z"/>',
   'mas': '<path d="M9 3.5v11M3.5 9h11"/>',
+  'microfono': '<rect x="6.5" y="2" width="5" height="9" rx="2.5"/><path d="M3.8 8.6a5.2 5.2 0 0010.4 0M9 13.8V16"/>',
+  'campana': '<path d="M4.5 12.5V8a4.5 4.5 0 019 0v4.5l1.3 1.5H3.2z"/><path d="M7.5 16h3"/>',
+  'enviar': '<path d="M9 15V3.5M4.5 8L9 3.5 13.5 8"/>',
+  'memoria': '<path d="M4 2.5h8.5L15 5v10.5H4z"/><path d="M6.8 7.3h5M6.8 10h5M6.8 12.7h3"/>',
+  'atras': '<path d="M11 3.5L5.5 9l5.5 5.5"/>',
   'lupa': '<circle cx="8" cy="8" r="5"/><path d="M11.8 11.8l3.7 3.7"/>',
   'equipo': '<rect x="2.5" y="3" width="13" height="9" rx="1.5"/><path d="M6.5 15.5h5M9 12v3.5"/>',
   'navegador': '<rect x="2.5" y="3" width="13" height="12" rx="2"/><path d="M2.5 6.5h13"/><path d="M7.8 8.8l4.9 1.9-2 .8-.8 2z"/>',
   'reunion': '<rect x="2.2" y="5" width="9.5" height="8" rx="1.8"/><path d="M11.7 8.2l4.1-2.2v6l-4.1-2.2"/>',
   'intercambio': '<path d="M5 13.5V4.5M5 4.5L2.5 7M5 4.5L7.5 7"/><path d="M13 4.5v9M13 13.5l2.5-2.5M13 13.5L10.5 11"/>',
+  'ondas': '<path d="M3 7.5v3M6 5v8M9 3v12M12 5v8M15 7.5v3"/>',
+  'secretario': '<path d="M8 2.5l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z"/><path d="M14 11.5v4M12 13.5h4"/>',
 } -%}
 {%- set d = trazos.get(nombre) -%}
 {%- if d -%}
@@ -110,6 +120,39 @@
     </div>
     {% if caller %}<div class="acciones-vista">{{ caller() }}</div>{% endif %}
   </div>
+{% endmacro %}
+
+{# ── Qué sección se ve, antes del primer pintado (C-0167) ──────────────────
+   Va justo después del índice (`data-indice-secciones`) y antes de las
+   secciones. Lo decide igual que `secciones.js` —el hash y, si no, la última
+   mirada— y lo deja puesto con un estilo de una línea que ése quita al
+   arrancar. Sin esto se veían todas las secciones un instante y luego se
+   plegaban: `secciones.js` va al final y es un archivo que se revalida, así
+   que en el teléfono llega cuando la página ya está pintada. Sin JS no hace
+   nada y la página se ve entera, como siempre; y si `secciones.js` no llega
+   o revienta, al terminar de cargar se deshace: una página larga, nunca una
+   sección suelta con un índice que no responde. #}
+{% macro seccion_previa() %}
+<script data-antes-de-pintar>(function () {
+  var t = document.currentScript.closest('[data-secciones]');
+  var enlaces = t ? t.querySelectorAll('[data-indice-secciones] a[data-sec]') : [];
+  if (!enlaces.length) return;
+  var s = location.hash.slice(1);
+  if (!s) { try { s = sessionStorage.getItem('hub:seccion:' + t.dataset.secciones); } catch (e) { s = ''; } }
+  var vale = false;
+  for (var i = 0; i < enlaces.length; i++) if (enlaces[i].dataset.sec === s) vale = true;
+  if (!vale) s = enlaces[0].dataset.sec;
+  var e = document.createElement('style');
+  e.setAttribute('data-seccion-previa', '');
+  e.textContent = '#sec-' + s + '{display:block}';
+  document.head.appendChild(e);
+  t.classList.add('con-secciones');
+  addEventListener('load', function () {
+    if (t.dataset.seccionesListo) return;
+    t.classList.remove('con-secciones');
+    e.remove();
+  });
+})();</script>
 {% endmacro %}
 
 {# ── Menú de acciones ──────────────────────────────────────────────────────
@@ -170,12 +213,12 @@
    funciona sin JS (se ve el campo, se envía) y con JS se comporta como una
    edición en línea. #}
 {% macro nombre_editable(valor, accion, campo='nombre', destino=none, etiqueta='Renombrar',
-                         clase='', ocultos={}) %}
+                         clase='', ocultos={}, sin_recarga=false) %}
   <span class="editable {{ clase }}">
     <span class="valor">{{ valor }}</span>
     <button type="button" class="icono-solo lapiz" title="{{ etiqueta }}"
             aria-label="{{ etiqueta }}">{{ icono('lapiz', 14) }}</button>
-    <form method="post" action="{{ accion }}" class="edicion">
+    <form method="post" action="{{ accion }}" class="edicion" {% if sin_recarga %}data-sin-recarga{% endif %}>
       <input type="text" name="{{ campo }}" value="{{ valor }}" autocomplete="off"
              aria-label="{{ etiqueta }}">
       {% for k, v in ocultos.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}

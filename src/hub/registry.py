@@ -394,15 +394,25 @@ def añadir_proyecto(datos: dict, ruta: Path | None = None) -> None:
     # vive fuera del asiento sólo se podía declarar editando el YAML a mano: el
     # caso de quien orquesta desde una carpeta y tiene los repos en otras, que
     # es exactamente el que no puede tocar esos repos.
+    # 🔴 Un texto donde va una lista se recorrería letra a letra: «*/repos/*»
+    # saldría como nueve patrones y «mi-p» como los prefijos m, i, -, p, que
+    # atribuirían al proyecto contenedores ajenos (C-0039, regla 13).
+    for campo in ("rutas", "patrones", "contenedores"):
+        if isinstance(datos.get(campo), str):
+            raise YamlInvalido(
+                f"`{campo}` de «{id_}» es una lista, aunque sólo haya una: "
+                f"[{datos[campo]!r}]"
+            )
     rutas = datos.get("rutas") or []
-    if isinstance(rutas, str):
-        raise YamlInvalido(
-            f"Las `rutas` de «{id_}» son una lista, aunque sólo haya una:\n\n"
-            f"    rutas:\n      - ruta: {rutas}"
-        )
-    limpias = [str(r).strip() for r in rutas if str(r).strip()]
+    limpias = [{"ruta": str(r).strip()} for r in rutas if str(r).strip()]
+    # Los patrones (decisión 150) y los prefijos de contenedores, por la misma
+    # razón: eran lo único que obligaba a editar el YAML a mano (C-0039).
+    limpias += [{"patron": str(p).strip()} for p in (datos.get("patrones") or []) if str(p).strip()]
     if limpias:
-        limpio["rutas"] = [{"ruta": r} for r in limpias]
+        limpio["rutas"] = limpias
+    contenedores = [str(c).strip() for c in (datos.get("contenedores") or []) if str(c).strip()]
+    if contenedores:
+        limpio["contenedores"] = contenedores
 
     _insertar(ruta, "proyectos", limpio, "id", id_,
               duplicado=f"Ya hay un proyecto con el id «{id_}».")
@@ -564,12 +574,21 @@ def _expandir_patron(asiento: str | None, patron: str, id_: str) -> list[Ruta]:
             fijas.append(parte)
         raiz = Path(*fijas) if fijas else Path("/")
         relativo = str(Path(*partes[len(fijas):]))
-    if not raiz.is_dir():
+    try:
+        if not raiz.is_dir():
+            return []
+        encontradas = sorted(
+            str(c).rstrip("/") for c in raiz.glob(relativo)
+            if c.is_dir() and (c / ".git").exists()
+        )
+    except OSError as exc:
+        # Una carpeta que existe pero no se deja leer (OneDrive a medio
+        # sincronizar dio EIO el 7-nov) lanzaba aquí, y `cargar` lo usa todo el
+        # hub: el snapshotter dejó de latir. El proyecto se queda sin estas
+        # rutas mientras tanto y se dice en voz alta (reglas duras 2 y 21).
+        print(f"[registro] «{id_}»: no se puede leer {raiz} ({exc.strerror or exc}); "
+              "sin sus rutas hasta que se pueda", flush=True)
         return []
-    encontradas = sorted(
-        str(c).rstrip("/") for c in raiz.glob(relativo)
-        if c.is_dir() and (c / ".git").exists()
-    )
     return [Ruta(ruta=r) for r in encontradas]
 
 

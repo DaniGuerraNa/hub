@@ -10,7 +10,7 @@ al protocolo cuenta como `0.1.0`.
 ## Lo que ya hace `actualizar.sh` siempre, y por tanto NO va aquí
 
 - bajar el código, `uv sync` y el doctor;
-- regenerar los cuatro units de systemd y reiniciar los que estaban en marcha;
+- regenerar los units de systemd y reiniciar los que estaban en marcha;
 - poner al día los archivos del asistente desde su semilla;
 - comprobar que el hub contesta y apuntar la versión.
 

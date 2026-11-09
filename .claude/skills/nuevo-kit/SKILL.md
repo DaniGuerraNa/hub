@@ -148,15 +148,14 @@ kits:
     descripcion: Para qué sirve, en una línea.
 ```
 
-Y **da de alta el kit como proyecto** en tu `projects.yml`, con `tipo: kit`:
+Y **da de alta el kit como proyecto**, con `tipo: kit`. Por el hub, no
+editando `projects.yml`:
 
-```yaml
-  - id: mi-kit
-    nombre: Mi kit
-    dominio: personal
-    tipo: kit
-    asiento: /home/tu-usuario/projects/mi-kit
-    status: activo
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/proyecto/anexar \
+  -H 'Content-Type: application/json' \
+  -d '{"id": "mi-kit", "nombre": "Mi kit", "ruta": "/home/tu-usuario/projects/mi-kit",
+       "tipo": "kit", "dominio": "personal", "guardrail": "ask"}'
 ```
 
 Sin esto el kit es invisible para todo el lado web —no sale en el inventario, no

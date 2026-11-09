@@ -28,6 +28,7 @@ en ningún sitio más.
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import fcntl
 import hashlib
 import os
@@ -40,6 +41,7 @@ from urllib.parse import urlsplit
 import yaml
 
 from . import config
+from .reloj import ahora
 
 # Los nombres de casa. Siempre valen y no se pueden quitar: si un `acceso.yml`
 # mal escrito dejara al hub sin `localhost`, la forma de arreglarlo sería…
@@ -71,10 +73,6 @@ SEGUNDOS_ENTRE_MARCAS = 60
 
 class AccesoInvalido(ValueError):
     """El archivo de acceso dice algo que no se puede obedecer."""
-
-
-def _ahora() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 # ── El archivo ───────────────────────────────────────────────────────────────
@@ -216,40 +214,119 @@ def hosts() -> tuple[str, ...]:
     return (*HOSTS_LOCALES, *fuera)
 
 
+def partes_de_host(host: str | None) -> tuple[str, str | None]:
+    """El nombre de una cabecera `Host` —sin corchetes y en minúscula— y lo que
+    lleva detrás como puerto, en texto y sin validar (`None` si no lleva).
+
+    El único sitio que la parte (C-0118): la puerta del `Host` y la comparación
+    del `Origin` la leen igual (C-0187; antes el `Origin` la partía con
+    `urlsplit` por su cuenta). Una dirección IPv6 va entre corchetes y lleva `:`
+    dentro: partir por el último `:` a secas convertía `[::1]` en «:», un
+    nombre de casa que no contaba como de casa.
+    """
+    host = (host or "").strip().lower()
+    if host.startswith("["):
+        nombre, _, resto = host[1:].partition("]")
+        if not resto:
+            return nombre, None
+        # Tras el corchete sólo cabe `:<puerto>`; lo demás se devuelve tal cual
+        # para que quien valide el puerto lo rechace.
+        return nombre, resto[1:] if resto.startswith(":") else resto
+    if ":" in host:
+        nombre, _, puerto = host.rpartition(":")
+        return nombre, puerto
+    return host, None
+
+
+def nombre_de_host(host: str | None) -> str:
+    """El nombre de una cabecera `Host`, sin puerto, sin corchetes y en minúscula
+    (`partes_de_host`)."""
+    return partes_de_host(host)[0]
+
+
 def es_host_local(host: str | None) -> bool:
     """¿El nombre por el que se ha entrado es uno de casa?
 
-    Se parte por `:` para quitar el puerto. Un `Host` ausente cuenta como local:
-    lo mandan `curl` y el CLI del asistente, que no son navegadores.
+    Un `Host` ausente cuenta como local: lo mandan `curl` y el CLI del
+    asistente, que no son navegadores.
     """
+    return host_permitido(host, HOSTS_LOCALES)
+
+
+def es_cliente_local(ip: str | None, admitidos: tuple[str, ...] = ()) -> bool:
+    """¿La conexión viene de esta máquina? Loopback de IPv4 o IPv6 (también
+    `::ffff:127.0.0.1`). Sin dirección, no: aquí no se presume a favor."""
+    if not ip:
+        return False
+    if ip in admitidos:
+        return True
+    try:
+        direccion = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    if getattr(direccion, "ipv4_mapped", None):
+        direccion = direccion.ipv4_mapped
+    return direccion.is_loopback
+
+
+def host_permitido(host: str | None, permitidos: tuple[str, ...] | None = None) -> bool:
+    """Si el nombre por el que se entró está en la lista (`hosts()` si no se da
+    otra). La puerta de `web` la llama con la suya, que suma la del arnés de
+    pruebas. Un `Host` ausente pasa: no lo manda un navegador (ver
+    `es_host_local`); el WebSocket de la terminal lo trata aparte."""
     if not host:
         return True
-    nombre = host.rsplit(":", 1)[0].strip("[]").lower() if ":" in host else host.lower()
-    return nombre in HOSTS_LOCALES
+    return nombre_de_host(host) in (hosts() if permitidos is None else permitidos)
 
 
-def host_permitido(host: str | None) -> bool:
-    if not host:
-        return True
-    nombre = host.rsplit(":", 1)[0].strip("[]").lower() if ":" in host else host.lower()
-    return nombre in hosts()
+_PUERTO_DE = {"http": 80, "https": 443}
 
 
-def origen_permitido(origen: str | None) -> bool:
+def _puerto(esquema: str, puerto: int | None) -> int | None:
+    return puerto if puerto is not None else _PUERTO_DE.get(esquema)
+
+
+def origen_permitido(origen: str | None, host: str | None = None) -> bool:
     """Sin `Origin` se pasa; con un `Origin` ajeno, no.
 
     Ausente significa que no lo mandó un navegador: `curl`, el `bin/hub` del
     asistente o un script. Lo que se cierra es el caso en que un navegador dice
     de dónde viene y no es de aquí.
 
-    🔴 Se compara el HOSTNAME y no la URL entera con su puerto. La primera
-    versión montaba la lista con `config.WEB_PORT` y rechazaba al origen
-    legítimo en cuanto uvicorn arrancaba en otro puerto sin exportar `HUB_PORT`.
+    🔴 El puerto no se compara contra `config.WEB_PORT`: la primera versión lo
+    hacía y rechazaba al origen legítimo en cuanto uvicorn arrancaba en otro
+    puerto sin exportar `HUB_PORT`. **Se compara contra el `Host` de la propia
+    petición** (C-0153): para un nombre de casa, el `Origin` tiene que llevar
+    el mismo puerto al que el navegador se conectó. Sin eso, cualquier página
+    servida en `http://127.0.0.1:<otro puerto>` —la app de un encargo, el
+    servidor de desarrollo de cualquier proyecto— pasaba por «de aquí» y abría
+    la terminal, donde desde casa no se pide nada más. Los nombres de la red
+    privada siguen comparándose sólo por nombre: llegan por `tailscale serve`,
+    que no escucha en otros puertos de ese nombre.
     """
     if origen is None:
         return True
     partes = urlsplit(origen)
-    return partes.scheme in ("http", "https") and (partes.hostname or "") in hosts()
+    nombre = partes.hostname or ""
+    if partes.scheme not in ("http", "https") or nombre not in hosts():
+        return False
+    if nombre not in HOSTS_LOCALES or host is None:
+        return True
+    try:
+        puerto_origen = _puerto(partes.scheme, partes.port)
+    except ValueError:
+        return False
+    nombre_host, puerto_texto = partes_de_host(host)
+    if not puerto_texto:
+        puerto_host = _PUERTO_DE[partes.scheme]
+    elif puerto_texto.isascii() and puerto_texto.isdigit() and int(puerto_texto) <= 65535:
+        puerto_host = int(puerto_texto)
+    else:
+        # Un puerto que no es un puerto: se cierra, como cerraba `urlsplit`.
+        return False
+    # Una página de casa sólo habla con el hub por casa: la misma página de
+    # 127.0.0.1:5000 pidiendo al nombre de la red privada tampoco es el hub.
+    return nombre_host in HOSTS_LOCALES and puerto_origen == puerto_host
 
 
 # ── Dispositivos ─────────────────────────────────────────────────────────────
@@ -337,7 +414,7 @@ def canjear(codigo: str) -> str | None:
             "id": secrets.token_hex(8),
             "nombre": elegido["nombre"],
             "hash": _hash(testigo),
-            "alta": _ahora(),
+            "alta": ahora(),
             "ultimo_uso": None,
         })
         datos["dispositivos"] = lista
@@ -525,7 +602,10 @@ def _cli(argv: list[str] | None = None) -> int:
 
     codigo = alta_pendiente(args.nombre)
     enlace = f"https://{destino}/acceso/alta/{codigo}"
-    print(f"\n  {args.nombre} — escanéalo en los próximos {MINUTOS_DE_ALTA} minutos.\n")
+    # El enlace, además del QR: el aparato a dar de alta puede ser la propia PC
+    # desde la que se llega por SSH a una máquina sin monitor (C-0214).
+    print(f"\n  {args.nombre} — escanéalo, o abre el enlace de abajo en ese aparato, "
+          f"en los próximos {MINUTOS_DE_ALTA} minutos.\n")
     print(qr_terminal(enlace))
     print(f"  {enlace}\n")
     print("  Sirve una sola vez. Si caduca, vuelve a lanzar esto.\n")

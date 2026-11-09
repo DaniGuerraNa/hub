@@ -17,6 +17,7 @@ reproduce el accidente que este módulo existe para prevenir.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -25,6 +26,8 @@ from datetime import datetime, timezone
 from .models import Proyecto
 
 TIEMPO_LIMITE = 20
+# `[a-zA-Z0-9][a-zA-Z0-9_.-]*`: la regla de docker para nombrar un contenedor.
+NOMBRE_CONTENEDOR = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*")
 
 # Formato JSON por línea: `docker ps` con `--format` deja el parseo sin ambigüedad.
 _FORMATO = (
@@ -151,7 +154,10 @@ def accionar(contenedor: str, accion: str) -> None:
     """
     if accion not in ("start", "stop", "restart"):
         raise AccionInvalida(f"acción no permitida: {accion}")
-    if not contenedor or any(c.isspace() for c in contenedor):
+    # La forma de un nombre (o id) de contenedor que acepta el propio docker.
+    # Mirar sólo los espacios dejaba pasar `-a`, que `docker stop` lee como
+    # opción y no como contenedor (C-0122).
+    if not NOMBRE_CONTENEDOR.fullmatch(contenedor or ""):
         raise AccionInvalida("nombre de contenedor inválido")
     if not disponible():
         raise AccionInvalida("docker no está disponible")

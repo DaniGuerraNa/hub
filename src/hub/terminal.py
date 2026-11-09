@@ -68,23 +68,9 @@ def sesiones_disponibles() -> list[dict]:
 def _sesiones_espejo() -> list[tuple[str, int, int]]:
     """(nombre, clientes atacados, epoch de creación) de las sesiones espejo."""
     try:
-        crudo = tmux._correr(
-            ["list-sessions", "-F",
-             "#{session_name}\t#{session_attached}\t#{session_created}"]
-        )
+        return [s for s in tmux.listar_sesiones() if s[0].startswith(PREFIJO_ESPEJO)]
     except (tmux.TmuxNoDisponible, RuntimeError):
         return []
-
-    encontradas = []
-    for linea in crudo.splitlines():
-        partes = linea.split("\t")
-        if len(partes) < 3 or not partes[0].startswith(PREFIJO_ESPEJO):
-            continue
-        try:
-            encontradas.append((partes[0], int(partes[1] or 0), int(partes[2] or 0)))
-        except ValueError:
-            continue
-    return encontradas
 
 
 def limpiar_espejos_huerfanos(gracia: int = 60) -> list[str]:
@@ -138,12 +124,11 @@ def dimensionar_al_espectador(espejo: str) -> None:
         return
     try:
         for v in tmux.listar_ventanas(espejo):
-            tmux._correr([
-                "set-window-option", "-t", f"={espejo}:{int(v['indice'])}",
-                "aggressive-resize", "on",
-            ])
-    except (RuntimeError, ValueError, tmux.TmuxNoDisponible):
-        pass  # sin esto se ve mal, pero la terminal sigue siendo usable
+            tmux.ajustar_ventana_a_quien_mira(espejo, v["indice"])
+    except (RuntimeError, ValueError, tmux.TmuxNoDisponible) as exc:
+        # Sin esto se ve mal, pero la terminal sigue siendo usable. En voz alta
+        # (regla dura 21): callado, el síntoma es el de la 93, letras que faltan.
+        print(f"[terminal] no se pudo ajustar el ancho de {espejo}: {exc}", flush=True)
 
 
 def _hay_otro_espectador(espejo: str) -> bool:
@@ -154,22 +139,11 @@ def _hay_otro_espectador(espejo: str) -> bool:
     sí: no encoger es lo seguro.
     """
     try:
-        crudo = tmux._correr(
-            ["list-clients", "-F", "#{client_session}\t#{session_group}"]
-        )
-        grupo_mio = tmux._correr(
-            ["display-message", "-p", "-t", f"={espejo}", "#{session_group}"]
-        ).strip()
-    except (RuntimeError, tmux.TmuxNoDisponible):
+        clientes = tmux.clientes_y_grupo()
+        grupo_mio = tmux.grupo_de_sesion(espejo)
+    except (RuntimeError, ValueError, tmux.TmuxNoDisponible):
         return True
-
-    for linea in crudo.splitlines():
-        partes = linea.split("\t")
-        if len(partes) < 2 or partes[0] == espejo:
-            continue
-        if partes[1] and partes[1] == grupo_mio:
-            return True
-    return False
+    return any(sesion != espejo and grupo and grupo == grupo_mio for sesion, grupo in clientes)
 
 
 def crear_espejo(session: str, ventana: int | None = None) -> str:
@@ -198,21 +172,14 @@ def crear_espejo(session: str, ventana: int | None = None) -> str:
 
     limpiar_espejos_huerfanos()
     nombre = f"{PREFIJO_ESPEJO}{session}-{uuid.uuid4().hex[:6]}"
-    # -t agrupa con la sesión origen: mismas ventanas, tamaño independiente.
-    tmux._correr(["new-session", "-d", "-t", session, "-s", nombre])
+    tmux.agrupar_sesion(session, nombre)
 
     dimensionar_al_espectador(nombre)
 
-    # La rueda del ratón, que es como el usuario hace scroll. Va SOLO en el espejo —
-    # `mouse` es una opción de sesión—, así que su terminal nativa no cambia de
-    # comportamiento. Con esto la rueda entra en el copy-mode de tmux y recorre
-    # su historial, que es lo que se quiere ver.
-    # Sin `=`: `set-option` es el único de estos comandos que NO acepta ese
-    # prefijo de coincidencia exacta —«no such session: =hub-…»— y el `except`
-    # se lo tragaba, así que la rueda no funcionaba y nada lo decía. El nombre
-    # es seguro igualmente: lo compone este módulo y ya pasó por `validar_sesion`.
+    # La rueda del ratón, que es como el usuario hace scroll. Va SOLO en el
+    # espejo, así que su terminal nativa no cambia de comportamiento.
     try:
-        tmux._correr(["set-option", "-t", nombre, "mouse", "on"])
+        tmux.activar_raton(nombre)
     except (RuntimeError, tmux.TmuxNoDisponible) as exc:
         # En voz alta: un fallo mudo aquí se manifiesta como «el scroll no va»,
         # que es exactamente lo que costó encontrar.
@@ -221,8 +188,10 @@ def crear_espejo(session: str, ventana: int | None = None) -> str:
     if ventana is not None:
         try:
             tmux.seleccionar_ventana(nombre, ventana)
-        except (RuntimeError, ValueError, tmux.TmuxNoDisponible):
-            pass  # la ventana pudo cerrarse; el attach sigue siendo válido
+        except (RuntimeError, ValueError, tmux.TmuxNoDisponible) as exc:
+            # La ventana pudo cerrarse; el attach sigue siendo válido, pero se
+            # verá otra ventana y eso se dice (regla dura 21).
+            print(f"[terminal] no se pudo ir a la ventana {ventana} de {nombre}: {exc}", flush=True)
     return nombre
 
 
@@ -230,14 +199,15 @@ def destruir_espejo(nombre: str) -> None:
     if not nombre.startswith(PREFIJO_ESPEJO):
         return
     try:
-        tmux._correr(["kill-session", "-t", f"={nombre}"])
-    except (RuntimeError, tmux.TmuxNoDisponible, OSError, subprocess.SubprocessError):
-        # También `TimeoutExpired`: `tmux._correr` lleva `timeout=10` y esa
-        # excepción no la cubría ninguna de las dos ramas de arriba. Esto se
-        # llama desde el `finally` del WebSocket, así que dejarla escapar
+        tmux.matar_sesion(nombre)
+    except (RuntimeError, ValueError, tmux.TmuxNoDisponible, OSError, subprocess.SubprocessError) as exc:
+        # También `TimeoutExpired`: tmux corre con `timeout=10` y esa
+        # excepción no la cubría ninguna de las dos ramas de arriba. Y
+        # `ValueError`: un nombre que tmux listó pero no pasa `validar_sesion`.
+        # Esto se llama desde el `finally` del WebSocket, así que dejarla escapar
         # significaría no limpiar el espejo —y encima con la petición ya
-        # cerrada, sin nadie a quien contárselo.
-        pass
+        # cerrada, sin nadie a quien contárselo—. Por eso al registro.
+        print(f"[terminal] no se pudo cerrar el espejo {nombre}: {exc}", flush=True)
 
 
 def _redimensionar(fd: int, filas: int, columnas: int) -> None:

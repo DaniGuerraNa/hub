@@ -26,9 +26,8 @@ from pathlib import Path
 
 import yaml
 
+from . import kits
 from .models import Proyecto
-
-VERSION_BASE = "1.0"
 
 # Los tres campos del mínimo exigible, con los sinónimos que el usuario ya escribe.
 # No se inventan: se extrajeron de sus checkpoints del 2026-08-21.
@@ -280,10 +279,10 @@ def capa_de(proyecto: Proyecto) -> dict:
     Vive ahí porque todos los proyectos tienen `.claude/` garantizado, los
     agentes lo encuentran por convención y no ensucia la raíz (decisión 3).
     """
-    for base in proyecto.todas_las_rutas():
-        carpeta = Path(base) / ".claude" / "hub"
-        if not carpeta.is_dir():
-            continue
+    # Dónde está y qué versión se exige son de `kits`: la base es el kit
+    # obligatorio, y dos definiciones divergían al subir una (C-0117).
+    carpeta = kits.carpeta_base(proyecto.todas_las_rutas())
+    if carpeta:
         project_yml = carpeta / "project.yml"
         datos = {}
         if project_yml.is_file():
@@ -297,7 +296,7 @@ def capa_de(proyecto: Proyecto) -> dict:
             "version": str(datos.get("base_version") or proyecto.base_version or "?"),
             "tiene_project": project_yml.is_file(),
             "tiene_capabilities": (carpeta / "capabilities.yml").is_file(),
-            "al_dia": str(datos.get("base_version") or "") == VERSION_BASE,
+            "al_dia": str(datos.get("base_version") or "") == kits.VERSION_BASE,
         }
     return {
         "presente": False,
@@ -320,7 +319,7 @@ def prompt_sembrar(proyecto: Proyecto) -> str:
     return (
         f"Crea la capa base del hub en `{destino}/.claude/hub/`.\n\n"
         f"1. `project.yml` con: `id: {proyecto.id}`, `nombre: {proyecto.nombre}`, "
-        f"`base_version: \"{VERSION_BASE}\"`, y `estado_ref:` apuntando al documento "
+        f"`base_version: \"{kits.VERSION_BASE}\"`, y `estado_ref:` apuntando al documento "
         f"que HOY está vigente en este proyecto"
         + (f" (hoy declara `{proyecto.estado_ref}`)" if proyecto.estado_ref else "")
         + ".\n"

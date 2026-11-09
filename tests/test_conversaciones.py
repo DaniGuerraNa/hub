@@ -143,6 +143,33 @@ def test_trabajo_ofrece_crear_proyecto_y_slot(cliente):  # noqa: F811
     assert 'id="proyectos-para-slot"' in html and '["demo", "Demo"]' in html
 
 
+def _selector_movil(html):
+    return html.split('<select id="ir-a"', 1)[1].split("</select>", 1)[0]
+
+
+def test_en_el_movil_el_selector_tambien_crea_un_slot(cliente):  # noqa: F811
+    """En el móvil el raíl es el `<select>`: sin esta opción, crear un slot
+    desde Trabajo sólo se podía en el escritorio (C-0011)."""
+    con = web.conexion()
+    con.execute("INSERT INTO slot (id, proyecto_id, nombre, ruta, status, creado_en) "
+                "VALUES (5,'demo','login','/tmp/demo','activo','x')")
+    con.commit()
+    con.close()
+    selector = _selector_movil(cliente.get("/trabajo?slot=5").text)
+    grupo = selector.split('<optgroup label="Demo">', 1)[1].split("</optgroup>", 1)[0]
+    assert '<option value="" data-nuevo-slot="demo">+ Slot nuevo</option>' in grupo
+    # Detrás de los slots, como en el raíl.
+    assert grupo.index('value="/trabajo?slot=5"') < grupo.index("data-nuevo-slot")
+
+
+def test_sin_nada_abierto_el_selector_ofrece_crear_y_no_se_queda_elegido(cliente):  # noqa: F811
+    """Con una sola opción, elegirla no cambia nada y el `change` no llega:
+    va detrás de una primera que ya está elegida y no se puede elegir."""
+    selector = _selector_movil(cliente.get("/trabajo").text)
+    assert '<option value="" data-nuevo-slot="">+ Slot nuevo</option>' in selector
+    assert selector.index("selected disabled") < selector.index("data-nuevo-slot")
+
+
 def test_un_slot_sin_ventana_ofrece_retomar(cliente):  # noqa: F811
     con = web.conexion()
     con.execute("INSERT INTO slot (id, proyecto_id, nombre, ruta, status, creado_en) "
@@ -165,8 +192,8 @@ def con_asistente(tmp_path, registro):
 
 
 def test_el_asistente_arranca_con_la_conversacion_pedida():
-    assert f"--resume {UNO}" in asistente.comando_de_arranque(None, UNO)
-    assert "--resume" not in asistente.comando_de_arranque(None)
+    assert f"--resume {UNO}" in asistente.comando_de_arranque(UNO)
+    assert "--resume" not in asistente.comando_de_arranque()
 
 
 def test_el_asistente_lista_sus_chats_y_marca_el_de_ahora(con_asistente):

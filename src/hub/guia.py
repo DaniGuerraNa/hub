@@ -15,7 +15,6 @@ impone, está en el raíl para quien la busque (regla 3 del producto).
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
 #: Lo que hay en cada pantalla. `que_haces` son acciones, escritas como las
@@ -35,6 +34,22 @@ PANTALLAS: list[dict[str, Any]] = [
                    "Ver las preguntas que tus sesiones mandaron por Telegram y su respuesta (pestaña Consultas)",
                    "Dejar un mensaje para que Claude lo lea a una hora, una sola vez (pestaña Programados)",
                    "Organizar desde la bandeja las ventanas que aún no tienen slot"]},
+    {"grupo": "El día a día", "ruta": "/secretario", "nombre": "Secretario",
+     "para_que": "Un asistente que lee tus fuentes (reuniones, notas de slots, Telegram), te contesta con de dónde "
+                 "lo sacó, apunta lo que quedaste en hacer y te lo recuerda en el teléfono.",
+     "que_haces": ["Preguntarle por escrito o con «Hablar», y oír la respuesta («Leer las respuestas en voz alta»)",
+                   "Aprobar o rechazar lo que te pide permiso, y cerrar compromisos (pestaña Pendientes)",
+                   "Ver y corregir sus notas (pestaña Memoria)",
+                   "Encender una fuente y elegir qué conversaciones lee (pestaña Fuentes)",
+                   "Decidir qué hace sin preguntar (pestaña Confianza) y ver su bitácora",
+                   "Escribir «cuando pase X, haz Y» (pestaña Disparadores)"]},
+    {"grupo": "El día a día", "ruta": "/tablero", "nombre": "Tablero",
+     "para_que": "Soltar una mejora o una función nueva cuando se te ocurre, sin cortar lo que se esté haciendo; "
+                 "espera ahí hasta que se toma.",
+     "que_haces": ["Apuntar una idea en una línea, con detalle y proyecto si quieres",
+                   "Decírsela al secretario: «anota en el tablero que…»",
+                   "Descartar la que ya no tenga sentido, con su motivo",
+                   "Ver dónde siguió cada una que se tomó"]},
     {"grupo": "El día a día", "ruta": "/proyecto/<id>", "nombre": "Ficha de un proyecto",
      "para_que": "Todo de un proyecto: su estado, su respaldo, su consumo, sus contenedores y sus slots.",
      "que_haces": ["Crear un slot (sección Slots → «Slot nuevo»)", "Lanzar un slot para abrir su ventana",
@@ -45,6 +60,11 @@ PANTALLAS: list[dict[str, Any]] = [
                    "Confirmar o negar que toque un proyecto con guardrail «ask»",
                    "Detener o reanudar una tarea",
                    "Darle alcance por proyecto en Orquestador → Permisos"]},
+    {"grupo": "El día a día", "ruta": "/talleres", "nombre": "Talleres",
+     "para_que": "Ver trabajar a tus sesiones: cada ventana con Claude Code o Codex es un taller, con la sesión en el yunque y sus subagentes en la estación de su oficio.",
+     "que_haces": ["Ver qué sesiones trabajan, cuáles están quietas y cuáles esperan tu permiso",
+                   "Ver qué subagentes lanzó cada una y qué hace cada uno",
+                   "Tocar la cabecera de un taller para verlo en grande"]},
     {"grupo": "El día a día", "ruta": "/navegante", "nombre": "Navegante",
      "para_que": "El navegador que maneja Claude, con un guardián que pausa lo que modifica. La primera vez enseña cómo prepararlo. Luego: encenderlo, verlo en vivo, enseñarle un flujo haciéndolo tú y contestar lo que pide permiso.",
      "que_haces": ["Encender el navegador y abrir la vista en vivo",
@@ -105,32 +125,27 @@ PANTALLAS: list[dict[str, Any]] = [
 ]
 
 
-def _cuenta(con: sqlite3.Connection, sql: str) -> int:
-    return int(con.execute(sql).fetchone()[0])
-
-
-def pasos(con: sqlite3.Connection, paneles: list[dict], niveles: dict[str, str],
-          existe=lambda ruta: True) -> list[dict[str, Any]]:
+def pasos(proyectos: list[dict], slots: list[dict], repos: list[dict], paneles: list[dict],
+          niveles: dict[str, str], existe=lambda ruta: True) -> list[dict[str, Any]]:
     """Los primeros pasos, cada uno con `hecho` medido sobre el estado real.
 
-    `paneles`, `niveles` y `existe` llegan de fuera —de `api.py`— para que esto
-    no lea tmux ni el disco por su cuenta (una sola costura de lectura).
+    Todo llega de fuera —de `api.py`—: el registro entero (archivados incluidos,
+    que es como cuenta el raíl), los slots activos, los repos medidos, los
+    paneles, los niveles y `existe`. Así esto no lee la base, tmux ni el disco
+    por su cuenta (una sola costura de lectura; la base, desde C-0056).
 
     🔴 Un proyecto cuenta sólo si su carpeta **existe**. El registro recién
     instalado trae dos de ejemplo con rutas inventadas, y contándolos el paso
     «registra tu primer proyecto» salía hecho sin que nadie hubiera registrado
     nada (visto en la sala limpia del 16-oct).
     """
-    hay_asistente = _cuenta(con, "SELECT COUNT(*) FROM proyecto WHERE tipo = 'asistente'") > 0
-    filas = con.execute(
-        "SELECT id, asiento FROM proyecto WHERE tipo NOT IN ('asistente', 'kit') ORDER BY id").fetchall()
-    proyectos = [f for f in filas if f[1] and existe(f[1])]
-    fantasmas = [f[0] for f in filas if not (f[1] and existe(f[1]))]
-    slots = _cuenta(con, "SELECT COUNT(*) FROM slot WHERE status = 'activo'")
+    hay_asistente = any(p.get("tipo") == "asistente" for p in proyectos)
+    filas = sorted((p for p in proyectos if p.get("tipo") not in ("asistente", "kit")), key=lambda p: p["id"])
+    propios = [p["id"] for p in filas if p.get("asiento") and existe(p["asiento"])]
+    fantasmas = [p["id"] for p in filas if not (p.get("asiento") and existe(p["asiento"]))]
     con_slot = sum(1 for p in paneles if p.get("slot_id"))
-    repos = _cuenta(con, "SELECT COUNT(*) FROM repo")
     con_nivel = sum(1 for n in niveles.values() if n and n != "nada")
-    primero = proyectos[0][0] if proyectos else None
+    primero = propios[0] if propios else None
 
     lista = [
         {"id": "asistente", "titulo": "Instala el asistente",
@@ -147,13 +162,13 @@ def pasos(con: sqlite3.Connection, paneles: list[dict], niveles: dict[str, str],
                     f"({', '.join(fantasmas[:3])}{'…' if len(fantasmas) > 3 else ''}): no cuentan. "
                     "Si son los de ejemplo, bórralos de projects.yml cuando quieras."
                     if fantasmas else ""),
-         "hecho": bool(proyectos), "enlace": {"ruta": "/", "etiqueta": "Ir al Panorama"},
+         "hecho": bool(propios), "enlace": {"ruta": "/", "etiqueta": "Ir al Panorama"},
          "pregunta": "Quiero registrar mi primer proyecto en el hub. Guíame paso a paso."},
         {"id": "slot", "titulo": "Crea un slot",
          "por_que": "Un slot es una línea de trabajo con nombre («bug del login»). Guarda su nota "
                     "aunque se caiga todo, y te lleva a su ventana con un clic.",
          "como": "En la ficha del proyecto, sección Slots: «Slot nuevo», debajo de la lista.",
-         "hecho": slots > 0,
+         "hecho": bool(slots),
          "enlace": {"ruta": f"/proyecto/{primero}#slots" if primero else "/",
                     "etiqueta": "Ir a sus slots" if primero else "Ir al Panorama"},
          "pregunta": "¿Qué es un slot y cómo creo el primero?"},
@@ -165,7 +180,7 @@ def pasos(con: sqlite3.Connection, paneles: list[dict], niveles: dict[str, str],
         {"id": "respaldo", "titulo": "Mira qué falta por respaldar",
          "por_que": "Commits sin subir y repos sin remoto: lo que perderías si hoy se rompe el disco.",
          "como": "Respaldo lo mide solo cada rato; «Medir ahora» lo mide en el momento.",
-         "hecho": repos > 0, "enlace": {"ruta": "/respaldo", "etiqueta": "Ir a Respaldo"},
+         "hecho": bool(repos), "enlace": {"ruta": "/respaldo", "etiqueta": "Ir a Respaldo"},
          "pregunta": "¿Cómo leo la pantalla de Respaldo y qué hago con lo que sale?"},
         {"id": "orquestador", "titulo": "Prueba el orquestador", "opcional": True,
          "por_que": "Le das una tarea y él se la pide a las sesiones de tus proyectos, sin que estés delante.",

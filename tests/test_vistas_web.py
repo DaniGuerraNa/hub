@@ -12,7 +12,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from hub import busqueda, db, servicios, tmux, web
+from hub import busqueda, db, servicios, snapshotter, tmux, web
 
 
 @pytest.fixture
@@ -259,7 +259,9 @@ def test_el_pulso_responde_sin_notas_que_pedir(cliente):
     """La página lo llama en cada vuelta, también cuando no hay ninguna nota."""
     r = cliente.get("/api/trabajo/pulso")
     assert r.status_code == 200
-    assert r.json() == {"slots": {}, "notas": {}}
+    # Sin muestreo, lo de soltar ventanas muertas va a None, no a []: una lista
+    # vacía haría que la página las soltara todas (C-0234).
+    assert r.json() == {"slots": {}, "notas": {}, "paneles": None, "ventanas": None, "servidor": None}
 
 
 def test_el_pulso_ignora_lo_que_no_sea_un_id(cliente):
@@ -386,49 +388,114 @@ def con_panel(cliente, monkeypatch):
     con.commit()
     con.close()
     cerradas = []
-    monkeypatch.setattr(tmux, "cerrar_ventana", lambda s, i: cerradas.append((s, i)))
-    return cliente, cerradas
+    monkeypatch.setattr(tmux, "cerrar_ventana_de", lambda p, s: cerradas.append((p, s)) or True)
+    muestras = []
+    monkeypatch.setattr(snapshotter, "un_ciclo", lambda con: muestras.append(1))
+    monkeypatch.setattr(tmux, "servidor_pid", lambda: 100)
+    return cliente, cerradas, muestras
 
 
-def test_cerrar_manda_la_sesion_y_la_ventana_del_panel(con_panel):
-    """Salen del `pane_id`, no del formulario: el HTML pudo quedarse viejo y
-    cerrar la ventana equivocada no tiene deshacer."""
-    cliente, cerradas = con_panel
-    r = cliente.post(
-        "/panel/accion",
-        data={"pane_id": "%7", "accion": "cerrar_ventana", "destino": "/trabajo"},
-        follow_redirects=False,
-    )
+def _cerrar(cliente, **extra):
+    datos = {"pane_id": "%7", "accion": "cerrar_ventana", "destino": "/trabajo", "servidor": "100"}
+    return cliente.post("/panel/accion", data={**datos, **extra}, follow_redirects=False)
+
+
+def test_cerrar_va_por_el_panel_y_el_servidor_con_el_que_se_pinto(con_panel):
+    """Decisión 396: ni sesión ni índice, que se mueven solos mientras el HTML
+    espera abierto y cerrar la ventana equivocada no tiene deshacer."""
+    cliente, cerradas, _ = con_panel
+    r = _cerrar(cliente)
     assert r.status_code in (302, 303)
-    assert cerradas == [("ctd-api", 0)]
+    assert cerradas == [("%7", "100")]
+    assert "aviso=" not in r.headers["location"]
 
 
-def test_un_pane_que_ya_no_existe_no_cierra_nada(con_panel):
-    """La bandeja pudo pintarse hace diez minutos."""
-    cliente, cerradas = con_panel
-    cliente.post(
-        "/panel/accion",
-        data={"pane_id": "%404", "accion": "cerrar_ventana", "destino": "/trabajo"},
-        follow_redirects=False,
-    )
-    assert cerradas == []
+def test_tras_cerrar_se_mira_tmux_antes_de_volver(con_panel):
+    """C-0227: sin la muestra, la página a la que se vuelve seguía enseñando la
+    ventana hasta 20 s; se pulsaba otra vez y no se sabía si había cerrado."""
+    cliente, _, muestras = con_panel
+    _cerrar(cliente)
+    assert muestras == [1]
+
+
+def test_una_ventana_que_ya_estaba_cerrada_se_dice_sin_ser_un_error(con_panel, monkeypatch):
+    """El segundo clic sobre una fila vieja: tmux no encuentra el panel."""
+    cliente, _, muestras = con_panel
+    monkeypatch.setattr(tmux, "cerrar_ventana_de", lambda p, s: False)
+    destino = _cerrar(cliente).headers["location"]
+    assert "ya%20estaba%20cerrada" in destino and "fugaz=1" in destino
+    assert muestras == [1]
+
+
+def test_si_tmux_se_reinicio_no_se_cierra_y_pide_recargar(con_panel, monkeypatch):
+    """Los `%N` se reutilizan al reiniciar tmux: el de la página puede ser
+    hoy otra ventana."""
+    cliente, _, muestras = con_panel
+
+    def otro_servidor(p, s):
+        raise tmux.ServidorDistinto("otro")
+
+    monkeypatch.setattr(tmux, "cerrar_ventana_de", otro_servidor)
+    destino = _cerrar(cliente).headers["location"]
+    assert "rec%C3%A1rgala" in destino and "fugaz=1" not in destino
+    assert muestras == []
 
 
 def test_si_tmux_falla_se_dice_y_no_se_traga(con_panel, monkeypatch):
     """Regla dura 21. Un `except: pass` aquí es un botón que no hace nada."""
-    cliente, _ = con_panel
+    cliente, _, _ = con_panel
 
-    def revienta(s, i):
+    def revienta(p, s):
         raise RuntimeError("no hay servidor de tmux")
 
-    monkeypatch.setattr(tmux, "cerrar_ventana", revienta)
-    r = cliente.post(
-        "/panel/accion",
-        data={"pane_id": "%7", "accion": "cerrar_ventana", "destino": "/trabajo"},
-        follow_redirects=False,
-    )
+    monkeypatch.setattr(tmux, "cerrar_ventana_de", revienta)
+    r = _cerrar(cliente)
     assert "aviso=" in r.headers["location"]
     assert "no%20se%20pudo" in r.headers["location"].lower()
+
+
+def test_si_la_muestra_falla_despues_la_ventana_cuenta_como_cerrada(con_panel, monkeypatch):
+    """Ya está cerrada: un fallo al volver a mirar no puede decir «no se cerró»."""
+    cliente, cerradas, _ = con_panel
+
+    def revienta(con):
+        raise RuntimeError("registro roto")
+
+    monkeypatch.setattr(snapshotter, "un_ciclo", revienta)
+    r = _cerrar(cliente)
+    assert cerradas == [("%7", "100")] and "aviso=" not in r.headers["location"]
+
+
+def test_si_tmux_falla_al_renombrar_se_dice_en_vez_de_dar_500(con_panel, monkeypatch):
+    """C-0107: cerrar ya lo atrapaba y renombrar no, así que un tmux caído
+    daba un 500 desnudo al renombrar desde el panorama."""
+    cliente, _, _ = con_panel
+
+    def revienta(s, i, nombre):
+        raise RuntimeError("no hay servidor de tmux")
+
+    monkeypatch.setattr(tmux, "renombrar_ventana", revienta)
+    r = cliente.post(
+        "/panel/accion",
+        data={"pane_id": "%7", "accion": "renombrar_ventana", "nombre": "api", "destino": "/trabajo"},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303)
+    assert "no%20se%20pudo%20renombrar" in r.headers["location"].lower()
+
+
+def test_si_tmux_no_puede_cambiar_de_ventana_en_la_terminal_se_dice(monkeypatch, capsys):
+    """C-0107: el canal de control de la terminal se tragaba el fallo de tmux
+    junto con el JSON mal formado (regla dura 21). Lo segundo se ignora; lo
+    primero, al registro."""
+    def revienta(espejo, indice):
+        raise RuntimeError("no such window: 9")
+
+    monkeypatch.setattr(tmux, "seleccionar_ventana", revienta)
+    web._control_de_terminal(None, "hub-work-abc", '{"accion": "ventana", "indice": 9}')
+    assert "hub-work-abc" in capsys.readouterr().out
+    web._control_de_terminal(None, "hub-work-abc", "esto no es json")
+    assert capsys.readouterr().out == ""
 
 
 # ── /inventario, filtrado por proyecto: sus kits ──────────────────────────────
@@ -616,3 +683,36 @@ def test_la_terminal_sabe_que_cierre_significa_no_reintentes(cliente):
     el arnés de node se salta donde node no está instalado."""
     html = cliente.get("/trabajo?session=work").text
     assert f"ev.code === {web.CIERRE_SIN_SESION}" in html
+
+
+def test_la_documentacion_de_fastapi_no_se_sirve_porque_la_carga_de_un_cdn(cliente):
+    """C-0178: `/api/docs` y `/redoc` traen Swagger y Redoc de jsdelivr, y aquí
+    nada se carga de un CDN. El esquema queda, que es lo que leen los scripts."""
+    for ruta in ("/api/docs", "/docs", "/redoc"):
+        assert cliente.get(ruta).status_code == 404, ruta
+    assert "/api/contexto" in cliente.get("/openapi.json").json()["paths"]
+
+
+def test_las_cifras_de_las_plantillas_salen_de_consumo_y_no_de_una_copia():
+    """`web.py` llevaba su propia `millones`, idéntica y sin uso (C-0108): la
+    plantilla usa la de `consumo`, y la copia era la que se iba a arreglar el
+    día que alguien buscara el formateador en la web."""
+    from hub import consumo
+    assert web.plantillas.env.globals["millones"] is consumo.millones
+    assert not hasattr(web, "millones"), "copia de consumo.millones en web.py"
+
+
+def test_la_web_no_se_arranca_a_mitad_del_modulo():
+    """`if __name__ == "__main__"` estaba antes de las rutas del secretario
+    (C-0108): `python -m hub.web` habría servido sin ellas. La web se arranca
+    con `uvicorn hub.web:app` (el servicio y `arrancar.sh`), que importa el
+    módulo entero antes de servir."""
+    from pathlib import Path
+    texto = Path(web.__file__).read_text(encoding="utf-8")
+    assert '__name__ == "__main__"' not in texto
+
+
+def test_no_queda_la_api_de_recuperacion_sin_consumidor():
+    """`/api/recuperacion` no la pedía ninguna página ni test (C-0108): la
+    recuperación se ve en el panorama, que la lee de `api` al pintar."""
+    assert "/api/recuperacion" not in {getattr(r, "path", "") for r in web.app.routes}

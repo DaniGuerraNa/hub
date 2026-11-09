@@ -613,3 +613,64 @@ def test_una_ventana_partida_con_un_panel_vinculado_es_del_slot(escena, monkeypa
 
     v = api.ventanas_de_sesion(escena, "work", slot_id)
     assert v[0]["pertenece"] == "este"
+
+
+# ── el latido suelta las ventanas que ya no están (C-0234, decisión 398) ─────
+
+def test_el_pulso_trae_los_paneles_y_el_servidor_de_la_misma_muestra(escena_con_estados):
+    """Para que la página quite las filas de las ventanas que murieron por
+    dentro (un `exit`): del muestreo, nunca de tmux en vivo."""
+    _escena_pulsante(escena_con_estados)
+    pulso = api.pulso_trabajo(escena_con_estados)
+    assert sorted(pulso["paneles"]) == ["%1", "%2"]
+    assert pulso["ventanas"] == ["work:0", "work:1"]
+    assert pulso["servidor"] == 100
+
+
+def test_sin_muestra_viva_el_pulso_no_dice_que_no_haya_paneles(con):
+    """`None` y no `[]`: una lista vacía haría que la página lo quitara todo."""
+    pulso = api.pulso_trabajo(con)
+    assert pulso["paneles"] is None and pulso["ventanas"] is None and pulso["servidor"] is None
+
+
+def test_cada_fila_lleva_todos_los_paneles_de_su_ventana(con, monkeypatch):
+    """Una ventana partida que pierde su primer panel sigue viva con el otro:
+    con un solo `pane_id` por fila, el latido la quitaría estando viva."""
+    con.execute("INSERT INTO proyecto (id, nombre, asiento) VALUES ('demo','Demo','/tmp/demo')")
+    monkeypatch.setattr(tmux, "servidor_pid", lambda: 100)
+    monkeypatch.setattr(tmux, "rama_git", lambda cwd: None)
+    monkeypatch.setattr(tmux, "listar_paneles", lambda *a, **k: [
+        {"session": "work", "window_idx": 0, "pane_idx": 0, "pane_id": "%1",
+         "cwd": "/tmp/demo", "titulo": "a", "comando": "bash", "activo": True},
+        {"session": "work", "window_idx": 0, "pane_idx": 1, "pane_id": "%4",
+         "cwd": "/tmp/demo", "titulo": "b", "comando": "bash", "activo": False},
+        {"session": "suelta", "window_idx": 0, "pane_idx": 0, "pane_id": "%3",
+         "cwd": "/tmp/demo", "titulo": "c", "comando": "bash", "activo": False},
+        {"session": "suelta", "window_idx": 0, "pane_idx": 1, "pane_id": "%5",
+         "cwd": "/tmp/demo", "titulo": "d", "comando": "bash", "activo": False},
+    ])
+    atr = Atribuidor([Proyecto(id="demo", nombre="Demo", asiento="/tmp/demo")])
+    snapshotter.capturar(con, atr)
+    slot = slots.crear(con, "demo", "Partida")
+    slots.vincular(con, "%1", slot)
+    snapshotter.capturar(con, atr)
+
+    ctx = api.contexto_trabajo(con, session="work", ventana=0)
+    demo = next(p for p in ctx["proyectos"] if p["id"] == "demo")
+    [ventana] = next(s for s in demo["slots"] if s["id"] == slot)["ventanas"]
+    assert ventana["panes"] == ["%1", "%4"]
+
+    visibles, _ = api.bandeja_de_ventanas(con, [{"session": "suelta", "paneles": 2}], api.paneles_abiertos(con))
+    assert visibles[0]["panes"] == ["%3", "%5"]
+
+
+
+def test_las_filas_pintadas_llevan_sus_paneles_y_su_sitio(escena, monkeypatch):
+    """Revisor de C-0234: los tests de JS usan un DOM de mentira; esto mira el
+    HTML de verdad, en la bandeja (las ventanas sin slot)."""
+    from fastapi.testclient import TestClient
+    from hub import db, web
+    ruta = escena.execute("PRAGMA database_list").fetchone()[2]
+    monkeypatch.setattr(web, "conexion", lambda: db.conectar(Path(ruta)))
+    html = TestClient(web.app).get("/trabajo?session=suelta").text
+    assert 'data-panes="%3" data-sitio="suelta:0"' in html

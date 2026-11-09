@@ -197,7 +197,10 @@
             transition:transform .12s; transform:rotate(90deg); }
   .plegar:hover { color:var(--texto); }
   .proyecto.plegado .plegar { transform:rotate(0deg); }
-  .proyecto.plegado > .hijos { display:none; }
+  /* Plegado ya desde el servidor y sólo con JS (C-0167): plegarlo después
+     del primer pintado era un salto al cargar (0,16 medido a 1200 px), y sin
+     JS no habría forma de desplegarlo. */
+  .con-js .proyecto.plegado > .hijos { display:none; }
   /* Plegado, el número dice cuánto hay debajo: una lista que se esconde sin
      decir cuánto esconde se lee como una lista vacía. */
   .cuenta-slots { font-size:11px; color:var(--texto-3); padding-right:8px; }
@@ -448,7 +451,7 @@
 
   #lienzos-buscar { width:100%; margin-bottom:8px; font-size:12.5px; }
   #lienzos-lista { overflow-y:auto; max-height:44%; }
-  .lienzo-item { border:1px solid var(--borde); border-radius:10px; padding:8px 10px;
+  .lienzo-item { border:1px solid var(--borde); border-radius:var(--r-nav); padding:8px 10px;
     margin-bottom:6px; cursor:pointer; }
   .lienzo-item:hover { border-color:var(--texto-4); }
   .lienzo-item.on { border-color:var(--acento); background:var(--superficie2); }
@@ -464,7 +467,7 @@
   #lienzos-vista .cabl b { flex:1; font-size:13px; }
 
   /* La plantilla `decisiones`: todo plegado, y se abre lo que toca decidir. */
-  .dec { border:1px solid var(--borde); border-radius:9px; margin-bottom:6px; }
+  .dec { border:1px solid var(--borde); border-radius:var(--r-boton); margin-bottom:6px; }
   .dec > summary { padding:8px 10px; cursor:pointer; font-size:12.5px;
     display:flex; gap:8px; align-items:center; list-style:none; }
   .dec > summary::-webkit-details-marker { display:none; }
@@ -523,7 +526,7 @@
   .lienzo-lupa { position:fixed; inset:0; z-index:60; background:rgba(6,10,14,.82);
     display:flex; align-items:center; justify-content:center; padding:24px; }
   .lienzo-lupa .lupa-caja { background:var(--superficie); border:1px solid var(--borde);
-    border-radius:16px; padding:14px 16px; max-width:min(1200px, 94vw); max-height:92vh;
+    border-radius:var(--r-tarjeta); padding:14px 16px; max-width:min(1200px, 94vw); max-height:92vh;
     display:flex; flex-direction:column; min-height:0; }
   .lienzo-lupa .cabl { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
   .lienzo-lupa .cabl b { flex:1; font-size:14px; }
@@ -638,9 +641,20 @@
        y no hace falta: el área central ya ofrece «Abrir una ventana aquí».
 
        Depende de JavaScript, y aquí eso es gratis: sin JavaScript no hay
-       terminal, así que esta pantalla no existe. #}
+       terminal, así que esta pantalla no existe.
+
+       Crear un slot también viaja (C-0011): sin él, en el teléfono no había
+       por dónde. Son las mismas opciones que los botones del raíl, con el
+       mismo `data-nuevo-slot`, y las abre `slot-nuevo.js` al elegirlas; con
+       `value=""` el selector no navega a ninguna parte. #}
+    {% set en_uso = proyectos | selectattr('en_uso') | list %}
     <select id="ir-a" aria-label="Ir a un slot o ventana">
-      {% for p in proyectos | selectattr('en_uso') | list %}
+      {# Con «crear» como única opción, elegirla no cambia nada y no llega el
+         `change`: va detrás de una que ya está elegida. #}
+      {% if not en_uso and not sueltas %}
+      <option value="" selected disabled>Nada abierto todavía</option>
+      {% endif %}
+      {% for p in en_uso %}
       <optgroup label="{{ p.nombre }}">
         {% for s in p.slots %}
         <option value="/trabajo?slot={{ s.id }}"
@@ -650,8 +664,12 @@
         {% if not p.slots %}
         <option value="/proyecto/{{ p.id }}">{{ p.nombre }} · sin slots</option>
         {% endif %}
+        <option value="" data-nuevo-slot="{{ p.id }}">+ Slot nuevo</option>
       </optgroup>
       {% endfor %}
+      {% if proyectos | rejectattr('en_uso') | list %}
+      <option value="" data-nuevo-slot="">{{ '+ Slot en otro proyecto' if en_uso else '+ Slot nuevo' }}</option>
+      {% endif %}
       {% if sueltas %}
       <optgroup label="Sin organizar">
         {% for v in sueltas %}
@@ -663,7 +681,6 @@
       {% endif %}
     </select>
 
-    {% set en_uso = proyectos | selectattr('en_uso') | list %}
     {# Crear vive AQUÍ también, no sólo en Panorama: la primera persona que
        usó el hub sin que se lo enseñaran entró por Trabajo, no encontró cómo
        crear un proyecto y creyó que sólo se podía pidiéndoselo al asistente
@@ -691,10 +708,11 @@
       {# `mirando` lo decide el servidor, que ya sabe de qué proyecto cuelga el
          slot abierto. El script no tiene que ir a buscarlo al DOM: menos
          adivinanza y, sobre todo, una condición que se puede probar. #}
-      <div class="proyecto {{ 'mirando' if slot and slot.proyecto_id == p.id }}"
+      {% set mirando = slot and slot.proyecto_id == p.id %}
+      <div class="proyecto {{ 'mirando' if mirando else 'plegado' }}"
            data-proyecto="{{ p.id }}">
         <div class="fila-proyecto">
-          <button type="button" class="plegar" aria-expanded="true"
+          <button type="button" class="plegar" aria-expanded="{{ 'true' if mirando else 'false' }}"
                   title="Plegar o desplegar este proyecto">▶</button>
           <a class="cabecera" href="/proyecto/{{ p.id }}">{{ p.nombre }}</a>
           <span class="cuenta-slots">{{ p.slots | length or '' }}</span>
@@ -718,7 +736,7 @@
           {% if s.ventanas %}
           <div class="ventanas-slot">
             {% for v in s.ventanas %}
-            <div class="fila-ventana">
+            <div class="fila-ventana" data-panes="{{ (v.panes or [v.pane_id]) | join(' ') }}" data-sitio="{{ v.session }}:{{ v.ventana }}">
               <a class="ventana-item {{ 'activa' if v.session == session and v.ventana == ventana }}"
                  href="/trabajo?session={{ v.session }}&ventana={{ v.ventana }}"
                  data-sesion="{{ v.session }}" data-ventana="{{ v.ventana }}"
@@ -726,11 +744,12 @@
                 <span class="punto {{ v.estado }}" title="{{ TITULOS_ESTADO.get(v.estado, '') }}"></span>
                 <span class="txt">{{ v.etiqueta }}</span>
               </a>
-              <form method="post" action="/panel/accion" class="cerrar-ventana"
+              <form method="post" action="/panel/accion" class="cerrar-ventana" data-una-vez
                     data-confirmar-titulo="Cerrar la ventana «{{ v.etiqueta }}»"
                     data-confirmar-ok="Cerrar la ventana"
                     data-confirmar="Muere todo lo que esté corriendo dentro. El slot «{{ s.nombre }}» sigue, y su conversación con Claude se puede retomar desde «Conversaciones».">
                 <input type="hidden" name="pane_id" value="{{ v.pane_id }}">
+                <input type="hidden" name="servidor" value="{{ servidor or '' }}">
                 <input type="hidden" name="accion" value="cerrar_ventana">
                 <input type="hidden" name="destino" value="/trabajo?slot={{ s.id }}">
                 <button class="sutil" title="Cerrar esta ventana" aria-label="Cerrar esta ventana">×</button>
@@ -799,7 +818,7 @@
          que solía ser una de las ya vinculadas: la suelta que justificaba la
          entrada no se veía por ninguna parte. #}
       {% for v in sueltas %}
-      <div class="fila-suelta">
+      <div class="fila-suelta"{% if v.pane_id %} data-panes="{{ (v.panes or [v.pane_id]) | join(' ') }}" data-sitio="{{ v.session }}:{{ v.ventana }}"{% endif %}>
         <a class="item {{ 'activo' if v.session == session and v.ventana == ventana and not slot }}"
            href="/trabajo?session={{ v.session }}{% if v.ventana is not none %}&ventana={{ v.ventana }}{% endif %}">
           <span class="punto"></span>{{ v.etiqueta }}
@@ -823,11 +842,12 @@
           <input type="hidden" name="destino" value="/trabajo?session={{ session }}{% if ventana is not none %}&ventana={{ ventana }}{% endif %}">
           <button class="sutil" title="Quitarla de la bandeja sin cerrarla: sigue corriendo">Ocultar</button>
         </form>
-        <form method="post" action="/panel/accion" class="ocultar-una"
+        <form method="post" action="/panel/accion" class="ocultar-una" data-una-vez="Cerrando…"
               data-confirmar-titulo="{% if v.ultima %}Cerrar «{{ v.session }}»{% else %}Cerrar la ventana {{ v.session }}:{{ v.ventana }}{% endif %}"
               data-confirmar-ok="{% if v.ultima %}Cerrar la sesión{% else %}Cerrar la ventana{% endif %}"
               data-confirmar="«{{ v.etiqueta }}»{% if v.ultima %} es la única ventana de «{{ v.session }}», así que se cierra la sesión entera.{% endif %} Muere todo lo que esté corriendo dentro.">
           <input type="hidden" name="pane_id" value="{{ v.pane_id }}">
+          <input type="hidden" name="servidor" value="{{ servidor or '' }}">
           <input type="hidden" name="accion" value="cerrar_ventana">
           {# Si lo que se cierra es de la sesión que se está mirando, no se puede
              volver aquí: la sesión puede haber muerto con ella y quedaría un
@@ -1229,6 +1249,8 @@
 <script>
 (function () {
   const SESION = {{ (session or '') | tojson }};
+  // El servidor de tmux del muestreo con el que se pintó la página (396).
+  const SERVIDOR = {{ (servidor if servidor is defined else none) | tojson }};
   const VENTANA = {{ ventana | tojson }};
   // El slot que la cabecera está anunciando. Las pestañas lo necesitan
   // para poder decir cuáles NO son suyas.
@@ -2301,8 +2323,12 @@
     return SLOT;
   }
 
+  // La ventana que miras, para que el secretario sepa de qué le hablas (C-0160).
+  const enfocar = (indice) => { if (SESION) document.body.dataset.enfoque = `${SESION}:${indice}`; };
+  enfocar(VENTANA);
   function irA(indice) {
     activa = indice;
+    enfocar(indice);
     pintarVentanas();
     marcarEnRail(indice);
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -2320,6 +2346,35 @@
     } catch (e) {}
   }
 
+  /* Las filas del raíl y de la bandeja llevan los paneles de su ventana
+   * (`data-panes`). Por el panel, no por sesión e índice: se pintaron con el
+   * muestreo de antes, y si tmux renumeró, ese índice es ya otra ventana. */
+  function filasConPaneles() {
+    return Array.from(document.querySelectorAll('[data-panes]'))
+      .map(fila => [fila, String(fila.dataset.panes || '').split(' ').filter(Boolean)]);
+  }
+  // Al cerrar desde su pestaña: muere la ventana entera, con todos sus paneles.
+  function quitarDelRail(paneId) {
+    if (!paneId) return;
+    filasConPaneles().forEach(([fila, panes]) => { if (panes.includes(paneId)) fila.remove(); });
+  }
+  /* Las que murieron por dentro (un `exit`): el latido trae los paneles del
+   * muestreo y los sitios (`sesión:índice`) ocupados, y una fila se va cuando
+   * no le queda ningún panel **y** su sitio está libre (C-0234). Lo segundo
+   * guarda a una ventana partida después de pintar la página, que tiene
+   * paneles que su fila no conoce; si otra ventana ocupó ese número, la fila
+   * muerta se queda hasta recargar, que es lo menos malo. Sólo con el mismo
+   * servidor de tmux: tras un reinicio los `%N` son otros. Nunca añade. */
+  function soltarMuertas(paneles, ventanas, servidor) {
+    if (!Array.isArray(paneles) || !Array.isArray(ventanas) || servidor == null
+        || SERVIDOR == null || Number(servidor) !== Number(SERVIDOR)) return;
+    const vivos = new Set(paneles);
+    const ocupados = new Set(ventanas);
+    filasConPaneles().forEach(([fila, panes]) => {
+      if (panes.length && !panes.some(p => vivos.has(p)) && !ocupados.has(fila.dataset.sitio)) fila.remove();
+    });
+  }
+
   cajaVentanas.addEventListener('click', async (e) => {
     const cerrar = e.target.dataset ? e.target.dataset.cerrar : null;
     if (cerrar !== undefined && cerrar !== null) {
@@ -2330,6 +2385,11 @@
        * en la bandeja— no se podía cerrar desde el hub por ningún camino: había
        * que ir a la terminal. Lo que sí cambia es lo que se avisa, porque lo que
        * pasa es distinto: tmux mata la SESIÓN al morir su última ventana. */
+      if (!v) {
+        // La lista cambió mientras tanto: sin su panel no hay qué cerrar.
+        HubUI.avisar({ titulo: 'No se pudo cerrar la ventana', mensaje: 'Ya no está en la lista: puede que ya se haya cerrado.' });
+        return cargarVentanas();
+      }
       const ultima = ventanas.length === 1;
       const ok = await HubUI.confirmar({
         titulo: ultima ? `Cerrar «${SESION}»` : `Cerrar la ventana ${cerrar}`,
@@ -2341,10 +2401,26 @@
         peligro: true,
       });
       if (!ok) return;
-      await fetch(`/api/sesion/${encodeURIComponent(SESION)}/ventana/${cerrar}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accion: 'cerrar' }),
-      });
+      /* Por su panel y su servidor, que vienen de tmux en la misma lista que
+       * el índice (396): el diálogo pudo quedarse abierto lo que fuera, y por
+       * índice se cerraba la ventana que ocupara ese número para entonces. */
+      let d = {};
+      try {
+        const r = await fetch(`/api/sesion/${encodeURIComponent(SESION)}/ventana/${cerrar}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accion: 'cerrar', pane_id: v.pane_id, servidor: v.servidor }),
+        });
+        d = await r.json().catch(() => ({ ok: false, error: `el hub respondió ${r.status}` }));
+      } catch (err) {
+        d = { ok: false, error: 'el hub no contesta' };
+      }
+      if (!d.ok) {
+        HubUI.avisar({ titulo: 'No se pudo cerrar la ventana', mensaje: d.error || '' });
+        return cargarVentanas();
+      }
+      /* El raíl se pintó con el muestreo de antes: su fila de esa ventana se
+       * quita ya, que es lo que acaba de pasar (C-0227). */
+      quitarDelRail(v.pane_id);
       /* Sin sesión no hay nada que recargar: quedarse aquí dejaría el terminal
        * atado a algo que ya no existe y las pestañas pidiendo ventanas de una
        * sesión muerta. Se sale a /trabajo, que elige lo que siga vivo. */
@@ -2530,6 +2606,7 @@
       if (!d || !d.slots) return;
       pintarEstados(d.slots);
       pintarNotas(d.notas || {});
+      soltarMuertas(d.paneles, d.ventanas, d.servidor);
     } catch (e) {}
   }
 
@@ -2554,6 +2631,14 @@
 </script>
 {# Al final y en archivo aparte: el panel de lienzos no puede tumbar la terminal
    si revienta, y así se prueba ejecutándolo (regla dura 11). #}
+{# Los proyectos salen plegados del servidor (C-0167). Si `plegar.js` no
+   llega, se despliegan al cargar: plegados sin su script no se abrirían. #}
+<script data-antes-de-pintar>
+addEventListener('load', function () {
+  if (document.documentElement.dataset.plegarListo) return;
+  document.querySelectorAll('.proyecto.plegado').forEach(function (c) { c.classList.remove('plegado'); });
+});
+</script>
 <script src="/static/plegar.js"></script>
 <script src="/static/conversaciones.js"></script>
 <script src="/static/proyecto-nuevo.js"></script>

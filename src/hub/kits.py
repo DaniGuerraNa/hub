@@ -378,7 +378,9 @@ def instalar(id_kit: str, version: str, origen: str) -> Path:
     if destino.is_dir():
         return destino
     destino.parent.mkdir(parents=True, exist_ok=True)
-    orden = ["git", "clone", "--depth", "1", "--branch", f"v{version}", origen, str(destino)]
+    # `--`: el origen viene del catálogo, y un `-algo` sería una opción de git
+    # (`--upload-pack=…` ejecuta lo que diga), no un repositorio (C-0122).
+    orden = ["git", "clone", "--depth", "1", "--branch", f"v{version}", "--", origen, str(destino)]
     r = subprocess.run(orden, capture_output=True, text=True, timeout=300)
     if r.returncode != 0:
         raise KitInvalido(
@@ -503,7 +505,10 @@ def kits_declarados(raices: list[str]) -> list[dict]:
 # ───────────────────────── la medición ─────────────────────────
 
 
-def _hash(ruta: Path) -> str | None:
+def huella_de_archivo(ruta: Path) -> str | None:
+    """El sha256 del archivo, o None si no se puede leer. La usan también el
+    catálogo y el CLI de kits (C-0124). 🔴 Dos None no son «iguales»: quien
+    compara tiene que mirar antes que se pudo leer (ver `kits_cli.verificar`)."""
     try:
         return hashlib.sha256(ruta.read_bytes()).hexdigest()
     except OSError:
@@ -578,7 +583,7 @@ def _mismo_contenido(origen: Path, destino: Path, kit: Kit) -> bool:
         texto_origen = origen.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         # Binarios, o un archivo ilegible: se cae al hash de siempre.
-        return _hash(origen) == _hash(destino)
+        return huella_de_archivo(origen) == huella_de_archivo(destino)
 
     limpio = _sin_cabecera(texto_destino, kit.id)
     if limpio == _sin_cabecera(texto_origen, kit.id):
@@ -784,11 +789,12 @@ def plan_de_aplicacion(raices: list[str], kit: Kit, declarado: dict | None = Non
         "archivos": medido,
         "pendientes": [m for m in medido if m["estado"] in ("falta", "difiere")],
         "huerfanos": huerfanos(raices, kit, declarado) if declarado else [],
-        "binarios_ausentes": [b for b in kit.binarios if not _hay_binario(b)],
+        "binarios_ausentes": [b for b in kit.binarios if not hay_binario(b)],
     }
 
 
-def _hay_binario(nombre: str) -> bool:
+def hay_binario(nombre: str) -> bool:
+    """Si el binario está en el PATH. La usan el plan de aplicar y el CLI (C-0124)."""
     import shutil
 
     # `shutil.which` y no `command -v`: éste resuelve también alias y funciones

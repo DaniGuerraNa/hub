@@ -120,3 +120,43 @@ def test_el_registro_se_declara_a_salvo(cliente, tmp_path):
     _base_corrupta(tmp_path)
     c, _ = cliente()
     assert "projects.yml" in c.get("/").text
+
+
+def test_con_copia_diaria_propone_volver_a_la_ultima_antes_que_empezar_de_cero(cliente, tmp_path, monkeypatch):
+    """C-0113: el remedio mandaba renombrar la base («se reconstruye
+    escaneando») sin mencionar la copia de cada día (277), que lo salva casi
+    todo. La copia va primero, con su nombre, y se apartan los tres archivos:
+    un `-wal` viejo junto a la copia la estropearía."""
+    monkeypatch.delenv("HUB_RESPALDO", raising=False)
+    (tmp_path / "respaldos").mkdir()
+    for dia in ("20261101", "20261105"):
+        (tmp_path / "respaldos" / f"hub-{dia}.db").write_bytes(b"")
+    _base_corrupta(tmp_path)
+    c, _ = cliente()
+    texto = c.get("/").text
+    assert "hub-20261105.db" in texto and "hub-20261101.db" not in texto
+    assert "cp " in texto and texto.index("cp ") < texto.index("Si no te vale")
+    assert "hub.db*" in texto
+
+
+def test_dice_todo_lo_que_solo_vive_en_la_base(cliente, tmp_path, monkeypatch):
+    """Las notas y los slots no son lo único: el canal, los programados, los
+    encargos o las ideas del tablero tampoco se reconstruyen (regla dura 1)."""
+    monkeypatch.delenv("HUB_RESPALDO", raising=False)
+    _base_corrupta(tmp_path)
+    c, _ = cliente()
+    texto = c.get("/").text
+    for cosa in ("canal", "programados", "encargos", "tablero"):
+        assert cosa in texto, cosa
+
+
+def test_no_da_por_perdida_la_salud_de_la_maquina_que_se_vuelve_a_medir(cliente, tmp_path, monkeypatch):
+    """C-0120 (decisión 363): `maquina` guarda sólo la última medida y el
+    ciclo lento la rehace entera; contarla como perdida inflaba el precio de
+    apartar la base. Los avisos sí: cuándo salió cada uno no se rehace."""
+    monkeypatch.delenv("HUB_RESPALDO", raising=False)
+    _base_corrupta(tmp_path)
+    c, _ = cliente()
+    texto = c.get("/").text
+    assert "salud medida" not in texto
+    assert "avisos enviados" in texto

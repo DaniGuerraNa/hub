@@ -35,22 +35,28 @@ def carpeta() -> Path:
     return Path(declarada) if declarada else config.HUB_HOME / "respaldos"
 
 
-def _copias(donde: Path) -> list[Path]:
+def copias(donde: Path, prefijo: str = PREFIJO) -> list[Path]:
+    """Las copias de esa carpeta, de la más vieja a la más nueva. Pública
+    porque `db` busca en ellas la última buena cuando la base no abre."""
     if not donde.is_dir():
         return []
-    return sorted(donde.glob(f"{PREFIJO}*.db"))
+    return sorted(donde.glob(f"{prefijo}*.db"))
 
 
 def hacer(con: sqlite3.Connection, ahora: datetime | None = None,
-          conservar: int = CONSERVAR) -> Path | None:
+          conservar: int = CONSERVAR, prefijo: str = PREFIJO) -> Path | None:
     """Una copia por día; si la de hoy ya existe, no hace nada y devuelve None.
+
+    `prefijo` es para la otra base que sólo vive en un sitio: la memoria del
+    secretario (`secretario-<fecha>.db`, decisión 299), con su propia cuenta de
+    catorce.
 
     Se escribe primero a `.tmp` y se renombra: un corte a mitad de la copia
     deja un `.tmp` suelto, nunca un `hub-<fecha>.db` que parece bueno.
     """
     ahora = ahora or datetime.now()
     donde = carpeta()
-    destino = donde / f"{PREFIJO}{ahora:%Y%m%d}.db"
+    destino = donde / f"{prefijo}{ahora:%Y%m%d}.db"
     if destino.exists():
         return None
     donde.mkdir(parents=True, exist_ok=True)
@@ -61,7 +67,7 @@ def hacer(con: sqlite3.Connection, ahora: datetime | None = None,
     finally:
         copia.close()
     temporal.replace(destino)
-    for sobra in _copias(donde)[:-conservar]:
+    for sobra in copias(donde, prefijo)[:-conservar]:
         sobra.unlink(missing_ok=True)
     return destino
 
@@ -70,15 +76,15 @@ def estado(ahora: datetime | None = None) -> dict:
     """Lo que enseña `/respaldo`: dónde, cuántas, y si la última es vieja."""
     ahora = ahora or datetime.now()
     donde = carpeta()
-    copias = _copias(donde)
-    if not copias:
+    hechas = copias(donde)
+    if not hechas:
         return {"carpeta": str(donde), "copias": 0, "ultima": None,
                 "tamano": None, "vieja": True, "conservar": CONSERVAR}
-    ultima = copias[-1]
+    ultima = hechas[-1]
     cuando = datetime.fromtimestamp(ultima.stat().st_mtime)
     return {
         "carpeta": str(donde),
-        "copias": len(copias),
+        "copias": len(hechas),
         "ultima": cuando.isoformat(timespec="minutes"),
         "tamano": ultima.stat().st_size,
         "vieja": ahora - cuando > VIEJA_A_LOS,

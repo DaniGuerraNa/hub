@@ -33,6 +33,16 @@ systemctl --user restart hub-web
 No debería pasar: los estáticos se sirven con `Cache-Control: no-cache`. Si aun
 así ocurre, recarga con `Ctrl+Shift+R`.
 
+## Guardé o borré algo y la página no se recargó
+
+Es lo normal: en la mayoría de pantallas, guardar, borrar o crear cambia sólo
+la lista que toca y te deja donde estabas. El aviso sale flotando arriba: si
+salió bien («Guardado») se va solo; si el hub dice que algo falló, se queda
+hasta que lo cierras con la ×. Si ni siquiera llegó a contestar —sin conexión,
+o un error del servidor—, sale un diálogo que lo dice. Si alguna vez la lista
+parece vieja, recarga la pestaña: lo que ves sale siempre de lo que el hub
+tiene guardado.
+
 ## No aparece ningún proyecto
 
 Comprueba que tu registro existe y que es YAML válido:
@@ -117,5 +127,5 @@ y sus permisos viven en archivos aparte y no se tocan.
 
 ```bash
 bash scripts/desinstalar.sh           # servicios fuera, datos intactos
-bash scripts/desinstalar.sh --datos   # además borra ~/.local/share/hub
+bash scripts/desinstalar.sh --datos   # además borra la carpeta de datos del servicio instalado (te dice antes todo lo que se va)
 ```

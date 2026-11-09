@@ -96,7 +96,12 @@ global.document = {
   },
 };
 global.window = { addEventListener(){} };
-global.HubUI = { avisar(x){ REG.aviso = x; } };
+// Con la firma de la de verdad (`hub-ui.js`): recibe `{ titulo, mensaje }` y
+// los saca por nombre. Guardar lo que llegara tal cual dejaba pasar una
+// cadena suelta, que en el navegador es un diálogo vacío (C-0182).
+global.HubUI = { avisar({ titulo, mensaje } = {}){ REG.aviso = { titulo, mensaje }; } };
+// Y en `window`, que es donde lo busca el script: en el navegador son lo mismo.
+global.window.HubUI = global.HubUI;
 global.setInterval = () => 0;
 global.clearInterval = () => {};
 
@@ -179,6 +184,7 @@ global.fetch = async (url, opciones) => {
   REG.peticiones.push(url);
   if (url.endsWith('/archivar')) {
     REG.archivados.push({ url, cuerpo: JSON.parse(opciones.body) });
+    if (global.ARCHIVAR_FALLA) return { ok: false, status: 500, json: async () => ({ ok: false }) };
     return { ok: true, status: 200, json: async () => ({ ok: true, lienzo: {} }) };
   }
   if (opciones && opciones.method === 'POST') {
@@ -414,6 +420,19 @@ def test_archivar_NO_abre_el_lienzo_que_acabas_de_quitar():
         "archsDe(nodos['lienzos-lista'])[0].disparar('click',"
         " { stopPropagation(){ REG.corto = true; } });")
     assert salida["corto"] is True, "el clic de archivar se propaga y abre el lienzo"
+
+
+def test_si_archivar_falla_el_dialogo_dice_que_paso_y_que_el_lienzo_sigue():
+    """🔴 Se le pasaba a `HubUI.avisar` una cadena suelta, y espera
+    `{ titulo, mensaje }`: el diálogo salía sin título ni texto, sólo con
+    «Entendido» (C-0182, visto al revisar C-0167)."""
+    salida = _correr("global.ARCHIVAR_FALLA = true;"
+                     " archsDe(nodos['lienzos-lista'])[0].disparar('click');")
+    assert len(salida["archivados"]) == 1
+    aviso = salida["aviso"]
+    assert aviso and aviso["titulo"] and aviso["mensaje"], f"el diálogo sale vacío: {aviso!r}"
+    assert "archivar" in aviso["titulo"]
+    assert "sigue" in aviso["mensaje"]
 
 
 def test_el_boton_dice_lo_que_hace_segun_esté_archivado_o_no():

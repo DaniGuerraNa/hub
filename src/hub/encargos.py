@@ -31,15 +31,12 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from . import config
-
-
-def ahora() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+from .reloj import ahora, instante
 
 
 @dataclass(frozen=True)
@@ -598,6 +595,12 @@ def personas(con: sqlite3.Connection) -> list[dict]:
         "SELECT * FROM encargo_persona ORDER BY es_dueno DESC, visto_en DESC")]
 
 
+def poner_nombre(con: sqlite3.Connection, user_id: int, nombre: str) -> None:
+    """El nombre con que la saluda su canal (el chat web, decisión 246). No es
+    el alias, que es del dueño: éste lo pone el canal, y aquí se apunta."""
+    con.execute("UPDATE encargo_persona SET nombre = ? WHERE user_id = ?", (nombre, int(user_id)))
+
+
 def editar_persona(con: sqlite3.Connection, user_id: int, **campos: Any) -> None:
     """Alias, estado y nota. Dar de alta es SIEMPRE un acto suyo, y pasa aquí.
 
@@ -705,6 +708,91 @@ def ya_saludado(con: sqlite3.Connection, user_id: int) -> bool:
            WHERE user_id = ? AND direccion = 'sale' AND detalle = ? LIMIT 1""",
         (int(user_id), MARCA_SALUDO),
     ).fetchone() is not None
+
+
+# Lo mismo que `MARCA_SALUDO`, y por lo mismo: con esta frase apunta el relé lo
+# que escribe alguien sin alta, y con ella se recupera al darle de alta como sus
+# primeras palabras (`escrito_sin_alta`).
+MARCA_SIN_ALTA = "mensaje de alguien sin alta"
+
+
+def marca_sin_alta(message_id: int | None) -> str:
+    """La línea con que se apunta lo de quien no tiene alta, con el número del
+    mensaje detrás si lo trae (C-0186). Lo de esta persona no se aparca —va al
+    registro—, así que el número va aquí: es lo que deja saber que el canal lo
+    dio dos veces (`sin_alta_ya_apuntado`) y lo que `escrito_sin_alta` compara."""
+    return MARCA_SIN_ALTA if message_id is None else f"{MARCA_SIN_ALTA} #{int(message_id)}"
+
+
+def sin_alta_ya_apuntado(con: sqlite3.Connection, user_id: int, message_id: int,
+                         desde: datetime) -> bool:
+    """Si ese mensaje de quien no tenía alta ya está apuntado, de `desde` en
+    adelante. La mitad de `buzon.ya_recibido` que vive en el registro."""
+    return any(instante(f["momento"]) >= desde for f in con.execute(
+        "SELECT momento FROM encargo_registro WHERE user_id = ? AND detalle = ?",
+        (int(user_id), marca_sin_alta(message_id)),
+    ))
+
+
+def escrito_sin_alta(con: sqlite3.Connection, user_id: int,
+                     repetido_en: timedelta | None = None) -> list[str]:
+    """Lo que escribió antes de tener alta, en orden y sin lo vacío.
+
+    El relé no se lo entregó a nadie —no tenía alta—, pero lo apuntó entero en
+    el registro: es lo que el entrevistador lee en su primer lote en vez de
+    pedirle que lo repita (229).
+
+    Por el principio de la marca, que lleva detrás el número del mensaje. Con
+    `repetido_en` (la ventana de `buzon.VENTANA_REENTREGA`, que es de quien
+    sabe de reentregas), el mismo número apuntado otra vez dentro de ese plazo
+    es el canal repitiéndolo, y se lee una (C-0186); fuera, es otro mensaje
+    con un número reutilizado. Una línea sin número —las de antes, o un
+    mensaje que no lo traía— no se puede comparar y entra siempre: perder una
+    frase es peor que repetirla.
+    """
+    ultima: dict[str, datetime] = {}
+    textos = []
+    for f in con.execute(
+        """SELECT momento, detalle, cuerpo FROM encargo_registro
+           WHERE user_id = ? AND substr(detalle, 1, length(?)) = ? AND cuerpo != ''
+           ORDER BY id""",
+        (int(user_id), MARCA_SIN_ALTA, MARCA_SIN_ALTA),
+    ):
+        if repetido_en is not None and f["detalle"] != MARCA_SIN_ALTA:
+            cuando = instante(f["momento"])
+            antes = ultima.get(f["detalle"])
+            if antes is not None and cuando - antes <= repetido_en:
+                continue
+            ultima[f["detalle"]] = cuando
+        textos.append(f["cuerpo"])
+    return textos
+
+
+def tiene_encargos(con: sqlite3.Connection, user_id: int) -> bool:
+    """Si alguna vez tuvo un encargo, en el estado que sea: el primero es un estreno."""
+    return con.execute(
+        "SELECT 1 FROM encargo WHERE user_id = ? LIMIT 1", (int(user_id),)
+    ).fetchone() is not None
+
+
+def ya_registrado(con: sqlite3.Connection, encargo_id: str, detalle: str,
+                  desde: datetime | None = None) -> bool:
+    """Si el rastro del encargo tiene una línea que empieza por `detalle`,
+    y —con `desde`— de ese momento en adelante.
+
+    Por el principio y no entero: la línea lleva detrás lo que cambia de una
+    vez a otra («no se pudo desplegar (código 3)»). Comparado tal cual y no
+    con `LIKE`, que leería un `%` o un `_` del texto como comodín y no
+    distinguiría mayúsculas: quien busca pasa la misma marca con que se apuntó.
+    """
+    filas = con.execute(
+        """SELECT momento FROM encargo_registro
+           WHERE encargo_id = ? AND substr(detalle, 1, length(?)) = ?""",
+        (encargo_id, detalle, detalle),
+    ).fetchall()
+    if desde is None:
+        return bool(filas)
+    return any(datetime.fromisoformat(f["momento"]) >= desde for f in filas)
 
 
 def por_plan_msg(con: sqlite3.Connection, message_id: int) -> dict | None:

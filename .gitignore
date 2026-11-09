@@ -18,3 +18,7 @@ projects.yml
 # diseño. Ninguno de los dos es del proyecto.
 projects.yml.lock
 projects.yml.*.tmp
+
+# Las dependencias del colector de WhatsApp (decisión 320): se instalan con
+# `npm ci` desde el package-lock.json, que sí va en el repo.
+componentes/whatsapp-web/node_modules/

@@ -9,7 +9,10 @@
   document.addEventListener('click', (e) => {
     const boton = e.target && e.target.closest ? e.target.closest('[data-guiame]') : null;
     if (!boton) return;
-    if (window.HubAsistente && window.HubAsistente.preguntar) {
+    // Quien te habla en todas las pantallas: el secretario si está (C-0160).
+    if (window.HubSecretario && window.HubSecretario.preguntar) {
+      window.HubSecretario.preguntar(boton.dataset.guiame);
+    } else if (window.HubAsistente && window.HubAsistente.preguntar) {
       window.HubAsistente.preguntar(boton.dataset.guiame);
     } else if (window.HubUI) {
       window.HubUI.avisar({ titulo: 'El asistente no está',

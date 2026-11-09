@@ -30,6 +30,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from . import api, entrega
+from .reloj import ahora
 
 # 🔴 **Un intento y sólo uno.** Decisión suya, del 2026-09-12: *«prefiero que no
 # se mande a que se manden 90 mensajes de reintentos»*.
@@ -66,10 +67,6 @@ PLAZO_MINUTOS = 30
 
 class SlotDesconocido(ValueError):
     """No se programa contra un slot que no existe: no habría dónde entregarlo."""
-
-
-def ahora() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _momento(valor: str | None) -> datetime:

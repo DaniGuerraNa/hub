@@ -54,6 +54,10 @@ parecer respaldado sin estarlo.
 
 El asiento no hace falta repetirlo: ya cuenta como ruta.
 
+No hace falta escribirlo a mano: el alta del hub lo acepta igual, y comprueba que
+cada ruta existe —`"rutas": [...]`, `"patrones": [...]` y `"contenedores": [...]`
+en `/api/proyecto/anexar`, que es lo que usa la skill `anexar-proyecto`—.
+
 ### Un workspace que contiene repos
 
 El caso inverso: el asiento es una carpeta de trabajo **sin git propio** que
@@ -155,6 +159,28 @@ conexiones:
 También puedes añadirlas desde la pantalla de Conexiones: el formulario escribe
 en este mismo archivo, y sólo admite esos siete campos: los seis del ejemplo
 más una `nota`.
+
+### Las llaves de esta máquina
+
+Debajo de los destinos, la pantalla enseña cada llave que usa el hub —los
+tokens de los bots, las del secretario, las claves ssh y lo que haya suelto
+en `~/.secretos`— con dónde vive y si ya la tienes en Bitwarden. El valor no
+se abre nunca: sólo se mira si el archivo existe y con qué permisos.
+
+«Sólo en esta máquina» quiere decir que, si el disco muere, se pierde. Para
+subirlas, en tu terminal y con la caja de Bitwarden abierta:
+
+```bash
+export BW_SESSION=$(bw unlock --raw)
+uv run python -m hub.llavero subir
+```
+
+Cada archivo va como nota segura a una carpeta «hub» de tu caja; lo que ya
+esté con el mismo nombre no se pisa. Las sesiones (la de tu Telegram, la de
+WhatsApp) no se suben: se vuelven a vincular. La orden sólo funciona en una
+terminal de verdad: un agente no puede lanzarla. Si subiste una a mano,
+«Ya está en Bitwarden» la marca. La marca es lo que tú dices, no una
+comprobación: el hub no abre tu caja.
 
 ## Tipos especiales
 

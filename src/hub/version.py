@@ -117,14 +117,19 @@ def buscar_remota(raiz: Path | None = None, *, ahora: datetime | None = None,
         except (KeyError, ValueError):
             pass
     raiz = raiz or config.RAIZ_REPO
-    # Un clon sin `origin` (el de desarrollo, una copia suelta) no tiene de
-    # dónde mirar: no es un fallo que enseñar, es que no aplica.
-    sin_remoto = subprocess.run(["git", "-C", str(raiz), "remote", "get-url", "origin"],
-                                capture_output=True, text=True, timeout=5).returncode != 0
-    if sin_remoto:
-        return None
     datos = dict(previa or {})
     datos["mirado_en"] = ahora.isoformat(timespec="seconds")
+    # Un clon sin `origin` (el de desarrollo, una copia suelta) no tiene de
+    # dónde mirar: no es un fallo que enseñar, es que no aplica. Sin git, o
+    # con git colgado, sí lo es, y se dice en vez de dar un 500 (C-0121).
+    try:
+        sin_remoto = subprocess.run(["git", "-C", str(raiz), "remote", "get-url", "origin"],
+                                    capture_output=True, text=True, timeout=5).returncode != 0
+    except (OSError, subprocess.SubprocessError) as exc:
+        datos["error"] = f"no se pudo ejecutar git: {exc}"[:200]
+        return _apuntar(datos)
+    if sin_remoto:
+        return None
     try:
         r = subprocess.run(
             ["git", "-C", str(raiz), "ls-remote", "--tags", "origin"],
@@ -138,9 +143,21 @@ def buscar_remota(raiz: Path | None = None, *, ahora: datetime | None = None,
         datos.pop("error", None)
     except Exception as exc:  # noqa: BLE001 — sin red no es una avería del hub
         datos["error"] = str(exc)[:200]
+    return _apuntar(datos)
+
+
+def _apuntar(datos: dict) -> dict:
+    """Lo escribe aparte y lo cambia de un golpe, como `registrar`: un corte a
+    mitad no puede dejar el archivo truncado y hacer olvidar la última
+    publicada. Si ni eso se puede, se dice y se devuelve lo leído igual."""
     destino = _archivo_remota()
-    destino.parent.mkdir(parents=True, exist_ok=True)
-    destino.write_text(json.dumps(datos) + "\n")
+    tmp = destino.with_suffix(".tmp")
+    try:
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(datos) + "\n")
+        tmp.replace(destino)
+    except OSError as exc:
+        print(f"[version] no se pudo apuntar la versión publicada: {exc}", file=sys.stderr, flush=True)
     return datos
 
 

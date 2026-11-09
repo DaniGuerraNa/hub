@@ -25,7 +25,9 @@ de 1M. El fallo de arriba lo dio precisamente un alias.
 
 from __future__ import annotations
 
+import re
 import shlex
+from dataclasses import dataclass, field
 
 #: El que usan los agentes que lanza el hub (crear proyecto, aplicar kit, …).
 AGENTE = "claude-sonnet-5"
@@ -106,3 +108,110 @@ def bandera(modelo: str) -> str:
             f"Permitidos: {', '.join(sorted(PERMITIDOS))}"
         )
     return f"--model {shlex.quote(modelo)}"
+
+
+# ── La línea de `claude` (decisión 340) ─────────────────────────────────────
+#
+# Ocho sitios la armaban cada uno a su manera: tres metían su propio
+# `env PATH=` además del de tmux, tres convertían el umbral de compactar en
+# texto a mano, sólo uno validaba el `--resume` y uno podía sacar dos
+# `--permission-mode`. Ahora la arma esto y nadie más
+# (`test_solo_modelos_arma_la_linea_de_claude`).
+#
+# 🔴 **El PATH no es de la línea**: es de las primitivas de tmux
+# (`tmux.con_entorno`, decisiones 81 y 339). Si la línea lo pusiera también,
+# saldría dos veces, que es justo lo que se quitó.
+
+#: Sin `--model`: sólo las ventanas del DUEÑO (sus slots y restaurar), que
+#: eligen modelo él desde sus ajustes (decisión 149). Lo que el hub lanza solo
+#: lleva siempre un id de `PERMITIDOS`.
+HEREDA = None
+
+#: Lo que acepta `--permission-mode`. `manual` lo rechaza la 2.1.112 (231):
+#: está sólo porque `ajustar` repite el modo que midió en un proceso que ya
+#: lo aceptó; ningún arranque nuevo del hub lo usa.
+MODOS_PERMISO = ("default", "manual", "acceptEdits", "auto", "dontAsk", "plan", "bypassPermissions")
+
+# El id que llega a una terminal es un UUID comprobado, no texto de la base.
+_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def es_sesion(sesion: str | None) -> bool:
+    """Si es el id de una conversación de Claude Code. La única comprobación:
+    la usan reanudar, la lista de conversaciones, el muestreo y los
+    transcripts, que lo usan como nombre de archivo (C-0092)."""
+    return bool(sesion) and bool(_UUID.match(sesion))
+
+
+@dataclass(frozen=True)
+class LineaClaude:
+    """El comando y su entorno, por separado.
+
+    Al lanzar, quien llama suma `entorno` al PATH y se lo da a la primitiva de
+    tmux, que lo pone en un único `env`. Lo que se GUARDA en un slot (267) es
+    `completa()`, para que una restauración lo vuelva a poner."""
+    comando: str
+    entorno: dict[str, str] = field(default_factory=dict)
+
+    def completa(self) -> str:
+        from . import tmux
+        return tmux.con_entorno(self.comando, self.entorno)
+
+
+def linea_claude(modelo: str | None, *, esfuerzo: str = "", permisos: str = "", reanudar: str = "",
+                 prompt: str = "", compactar: bool = False, programa: str = "claude") -> LineaClaude:
+    """La única forma de armar el `claude` que el hub lanza en tmux.
+
+    `modelo` no tiene valor por omisión a propósito: heredar se escribe a la
+    vista (`HEREDA`). El orden es fijo —programa, `--model`, `--effort`,
+    `--permission-mode`, `--resume` y el prompt el último—, y la línea es
+    siempre UN comando simple: `sh -c` hace `exec` del último, y así `claude`
+    queda como proceso raíz del panel, que es de lo que dependen
+    `tui.detectar` y `orquestador.ajustar` (200, 261, 268).
+
+    `programa` sólo vale con `HEREDA`: es `HUB_COMANDO_CLAUDE` (266), una
+    configuración de quien instala, nunca algo que llegue de una petición.
+    """
+    if programa != "claude" and modelo is not HEREDA:
+        raise ValueError("un programa propio sólo para ventanas que heredan el modelo (266)")
+    partes = [programa]
+    if modelo is not HEREDA:
+        partes.append(bandera(resolver(modelo)))
+    if esfuerzo:
+        partes.append(bandera_esfuerzo(esfuerzo))
+    if permisos:
+        if permisos not in MODOS_PERMISO:
+            raise ValueError(f"modo de permisos «{permisos}» no válido. Válidos: {', '.join(MODOS_PERMISO)}")
+        partes.append(f"--permission-mode {permisos}")
+    if reanudar:
+        if not es_sesion(reanudar):
+            raise ValueError(f"«{reanudar}» no es un id de conversación")
+        partes.append(f"--resume {reanudar}")
+    if prompt:
+        partes.append(shlex.quote(prompt))
+    return LineaClaude(" ".join(partes), entorno_de_sesion() if compactar else {})
+
+
+_BANDERAS_LEIDAS = {"--model": "modelo", "--effort": "esfuerzo", "--permission-mode": "permisos"}
+
+
+def leer_linea(argv: list[str]) -> dict[str, str | None]:
+    """La vuelta de `linea_claude`: modelo, esfuerzo y permisos de un `claude`
+    ya lanzado (su `/proc/<pid>/cmdline`). Vive aquí, junto a quien la escribe,
+    para que un cambio de formato rompa el test de ida y vuelta y no a
+    `orquestador.ficha` en silencio (C-0093).
+
+    Lee también lo que escribe una persona y el hub no: `--model=…` y
+    `--dangerously-skip-permissions`. Lo que no está queda en None: medido, no
+    supuesto (regla dura 13)."""
+    datos: dict[str, str | None] = dict.fromkeys(_BANDERAS_LEIDAS.values())
+    for i, arg in enumerate(argv):
+        bandera_, igual, valor = arg.partition("=")
+        if bandera_ in _BANDERAS_LEIDAS:
+            if igual:
+                datos[_BANDERAS_LEIDAS[bandera_]] = valor
+            elif i + 1 < len(argv):
+                datos[_BANDERAS_LEIDAS[bandera_]] = argv[i + 1]
+    if "--dangerously-skip-permissions" in argv:
+        datos["permisos"] = "bypassPermissions"
+    return datos

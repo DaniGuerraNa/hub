@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  /* Pensada para el teléfono: se abre, se escribe una línea y se cierra. */
+  .idea-nueva textarea { min-height:64px; resize:vertical }
+  .idea-nueva .mas-campos { display:grid; grid-template-columns:1fr minmax(0, 220px); gap:10px }
+  @media (max-width: 560px) { .idea-nueva .mas-campos { grid-template-columns:1fr } }
+  .fila-idea { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-start; padding:11px 13px;
+               border-bottom:1px solid var(--borde) }
+  /* En el teléfono las acciones bajan bajo el texto en vez de estrujarlo. */
+  .fila-idea .acciones { display:flex; gap:6px; margin-left:auto }
+  .fila-idea .acciones form { margin:0 }
+  .fila-idea:last-child { border-bottom:0 }
+  .fila-idea .cuerpo { flex:1 1 220px; min-width:0 }
+  .fila-idea .texto { font-size:14.5px; overflow-wrap:anywhere }
+  .fila-idea .detalle { color:var(--texto-2); font-size:13px; white-space:pre-wrap;
+                        overflow-wrap:anywhere; margin-top:4px }
+  .fila-idea .meta { display:flex; flex-wrap:wrap; gap:4px 10px; color:var(--texto-3);
+                     font-size:12px; margin-top:5px; font-variant-numeric:tabular-nums }
+  .fila-idea .num { color:var(--texto-3); font-size:12px; min-width:2.2em; padding-top:2px;
+                    font-variant-numeric:tabular-nums }
+  .fila-idea button { flex:none }
+  .vacio-tablero { padding:14px 13px; color:var(--texto-3); font-size:13.5px }
+  .idea-nueva .con-dictado { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px }
+  .idea-nueva .estado-dictado, .idea-nueva .elegidos { color:var(--texto-3); font-size:12.5px }
+  .idea-nueva.encima { outline:2px dashed var(--acento); outline-offset:4px }
+  .boton.grabando { border-color:var(--riesgo); color:var(--riesgo) }
+  .adjuntos { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px }
+  .adjuntos a { display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--texto-2);
+                text-decoration:none; max-width:100%; overflow-wrap:anywhere }
+  .adjuntos img { width:88px; height:88px; object-fit:cover; border-radius:var(--r-input);
+                  border:1px solid var(--borde); background:var(--superficie2) }
+</style>
+
+{% macro adjuntos(i) %}
+  {% if i.adjuntos %}
+  <div class="adjuntos">
+    {% for a in i.adjuntos %}
+      {% if a.imagen %}
+      <a href="/intercambio/ver/{{ a.nombre | urlencode }}" target="_blank" rel="noopener" title="{{ a.archivo }}">
+        <img src="/intercambio/ver/{{ a.nombre | urlencode }}" alt="{{ a.archivo }}" loading="lazy"></a>
+      {% else %}
+      <a href="/intercambio/bajar/{{ a.nombre | urlencode }}">📎 {{ a.archivo }} <span class="tenue">{{ a.tamano }}</span></a>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endmacro %}
+
+{{ ui.cabecera_vista('Tablero',
+    'Suelta aquí una mejora o una función nueva cuando se te ocurra. Se queda esperando, y se toma de una en una sin cortar lo que se esté haciendo.') }}
+
+{# `data-sin-recarga` y `data-region` (C-0167): apuntar, adjuntar, trabajar o
+   descartar cambia sólo la lista, sin recargar la página ni volver arriba. #}
+<form class="tarjeta idea-nueva" id="form-idea" method="post" action="/tablero/idea" enctype="multipart/form-data" data-sin-recarga
+      data-una-vez="Apuntando…">
+  <label for="texto-idea">La idea, en una línea</label>
+  <textarea id="texto-idea" name="texto" maxlength="300" required
+            placeholder="p.ej. que la pantalla de respaldo diga cuánto hace del último push"></textarea>
+  <div class="mas-campos">
+    <div>
+      <label for="detalle-idea">Detalle, escrito o dictado</label>
+      <textarea id="detalle-idea" name="detalle" rows="3" maxlength="4000"
+                placeholder="lo que no cabe arriba; con «Dictar» lo dices en voz"></textarea>
+      <div class="con-dictado">
+        <button type="button" class="boton" data-grabar="detalle-idea"
+                data-grabar-estado="estado-dictado" data-grabar-url="/api/voz">Dictar</button>
+        <button type="button" class="boton" data-elegir="archivos-idea">Adjuntar</button>
+        <input id="archivos-idea" type="file" name="archivos" multiple hidden>
+        <span class="estado-dictado" id="estado-dictado"></span>
+      </div>
+      <div class="elegidos" id="elegidos-idea"></div>
+    </div>
+    <div>
+      <label for="proyecto-idea">Proyecto</label>
+      <select id="proyecto-idea" name="proyecto">
+        <option value="">— el hub o sin decir —</option>
+        {% for p in t.proyectos %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="barra" style="margin-top:14px">
+    <button class="cta" type="submit">Apuntar</button>
+    <span class="tenue" style="font-size:12.5px">
+      Fotos, capturas (Ctrl+V) y archivos: con «Adjuntar» o soltándolos aquí.
+      También puedes decírselo al secretario: «anota en el tablero que…».
+    </span>
+  </div>
+</form>
+
+<div data-region="ideas">
+{{ ui.seccion('lapiz', 'Esperando', t.nuevas | length ~ ' por tomar') }}
+<div class="tarjeta" style="padding:0">
+  {% for i in t.nuevas %}
+  <div class="fila-idea">
+    <span class="num">#{{ i.id }}</span>
+    <div class="cuerpo">
+      <div class="texto">{{ i.texto }}</div>
+      {% if i.detalle %}<div class="detalle">{{ i.detalle }}</div>{% endif %}
+      {{ adjuntos(i) }}
+      <div class="meta">
+        <span>{{ i.creada[:10] }}</span>
+        {% if i.proyecto %}<span>{{ i.proyecto }}</span>{% endif %}
+        {% if i.origen != 'web' %}<span>por {{ i.origen }}</span>{% endif %}
+        {% if i.tarea %}<span>encargada → <a href="/orquestador">{{ i.tarea.id }}</a> ({{ i.tarea.estado }})</span>{% endif %}
+      </div>
+    </div>
+    <div class="acciones">
+      {% if not i.tarea %}
+      {# Pulsar es su sí (regla 7): la sesión del Tablero la aterriza y, si es
+         M o L, le vuelve el plan antes de construir (C-0151). #}
+      {% set donde = i.get('donde') or {} %}
+      {% if donde.falta_copia %}
+      <form method="post" action="/tablero/idea/{{ i.id }}/trabajar" data-sin-recarga data-una-vez="Creando la copia…"
+            data-confirmar-titulo="Crear su copia de trabajo"
+            data-confirmar-ok="Crearla y trabajarla"
+            data-confirmar="Las ideas de {{ i.proyecto }} se trabajan en una copia aparte, {{ donde.falta_copia }}, junto a su carpeta (git worktree, rama «tablero»). Tu carpeta y tus ramas no se tocan; integrar lo hecho lo decides tú. Se crea una vez.">
+        <input type="hidden" name="crear_copia" value="1">
+        <button class="boton">Crear la copia y trabajarla</button>
+      </form>
+      {% elif donde.error %}
+      <span class="tenue" style="font-size:12px">{{ donde.error }}</span>
+      {% else %}
+      <form method="post" action="/tablero/idea/{{ i.id }}/trabajar" data-sin-recarga>
+        <button class="boton">Trabajarla</button>
+      </form>
+      {% endif %}
+      {% endif %}
+      {% if i.adjuntos | length < t.max_adjuntos %}
+      <form class="adjuntar-idea" method="post" action="/tablero/idea/{{ i.id }}/adjuntar" enctype="multipart/form-data" data-sin-recarga>
+        <input type="file" name="archivos" id="archivos-{{ i.id }}" multiple hidden>
+        <button type="button" class="boton" data-elegir="archivos-{{ i.id }}">Adjuntar</button>
+      </form>
+      {% endif %}
+      <button type="button" class="boton descartar-idea" data-id="{{ i.id }}" data-texto="{{ i.texto }}">Descartar</button>
+    </div>
+  </div>
+  {% else %}
+  <div class="vacio-tablero">No hay nada esperando. Lo que apuntes arriba aparece aquí, de la más antigua a la más nueva.</div>
+  {% endfor %}
+</div>
+
+{% if t.recientes %}
+{{ ui.seccion('ok', 'Tomadas y descartadas hace poco') }}
+<div class="tarjeta" style="padding:0">
+  {% for i in t.recientes %}
+  <div class="fila-idea">
+    <span class="num">#{{ i.id }}</span>
+    <div class="cuerpo">
+      <div class="texto">{{ i.texto }}</div>
+      {{ adjuntos(i) }}
+      <div class="meta">
+        {% if i.estado == 'tomada' %}<span>tomada → <strong>{{ i.ref }}</strong></span>
+        {% else %}<span>descartada: {{ i.motivo }}</span>{% endif %}
+        <span>{{ (i.movida or '')[:10] }}</span>
+        {% if i.proyecto %}<span>{{ i.proyecto }}</span>{% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+</div>
+
+<form id="form-descartar" method="post" hidden data-sin-recarga><input type="hidden" name="motivo"></form>
+
+<script src="/static/grabar.js"></script>
+<script>
+// Adjuntar al apuntar: con el botón, pegando (Ctrl+V) o soltando encima.
+// Todo acaba en el mismo <input type=file>, que es lo que viaja en el
+// formulario: no hay un segundo camino de subida (C-0149).
+(() => {
+  const form = document.getElementById('form-idea');
+  const entrada = document.getElementById('archivos-idea');
+  const elegidos = document.getElementById('elegidos-idea');
+  if (!form || !entrada) return;
+  const pintar = () => {
+    const n = entrada.files ? entrada.files.length : 0;
+    elegidos.textContent = n ? Array.from(entrada.files).map(f => f.name).join(' · ') : '';
+  };
+  const sumar = (archivos) => {
+    if (!archivos || !archivos.length || typeof DataTransfer === 'undefined') return;
+    const junto = new DataTransfer();
+    Array.from(entrada.files || []).forEach(f => junto.items.add(f));
+    Array.from(archivos).forEach(f => junto.items.add(f));
+    entrada.files = junto.files;
+    pintar();
+  };
+  entrada.addEventListener('change', pintar);
+  // Apuntada sin recargar (C-0167), el formulario se vacía: la lista de
+  // adjuntos elegidos también.
+  form.addEventListener('reset', () => setTimeout(pintar));
+  form.addEventListener('paste', (e) => {
+    const archivos = e.clipboardData && e.clipboardData.files;
+    if (archivos && archivos.length) { e.preventDefault(); sumar(archivos); }
+  });
+  form.addEventListener('dragover', (e) => { e.preventDefault(); form.classList.add('encima'); });
+  form.addEventListener('dragleave', () => form.classList.remove('encima'));
+  form.addEventListener('drop', (e) => {
+    e.preventDefault();
+    form.classList.remove('encima');
+    sumar(e.dataTransfer && e.dataTransfer.files);
+  });
+  // En una idea que ya espera: elegir es subir. Por delegación: la lista se
+  // repinta sin recargar y un oyente atado a cada campo se perdería con ella.
+  // `requestSubmit` para que el envío pase por `sin-recarga.js`.
+  document.addEventListener('change', (e) => {
+    const i = e.target;
+    if (!i.matches || !i.matches('.adjuntar-idea input[type=file]') || !i.files.length) return;
+    i.form.requestSubmit ? i.form.requestSubmit() : i.form.submit();
+  });
+})();
+
+document.addEventListener('click', async (e) => {
+  // «Adjuntar» abre el selector de su campo (cámara, galería o archivos en el móvil).
+  const elegir = e.target.closest && e.target.closest('[data-elegir]');
+  if (elegir) { const campo = document.getElementById(elegir.dataset.elegir); if (campo) campo.click(); return; }
+  const boton = e.target.closest && e.target.closest('.descartar-idea');
+  if (!boton) return;
+  const motivo = await HubUI.preguntar({
+    titulo: 'Descartar la idea #' + boton.dataset.id,
+    etiqueta: 'Por qué',
+    nota: boton.dataset.texto,
+    aceptar: 'Descartar',
+    obligatorio: true,
+  });
+  if (!motivo || !motivo.trim()) return;
+  const f = document.getElementById('form-descartar');
+  f.action = '/tablero/idea/' + encodeURIComponent(boton.dataset.id) + '/descartar';
+  f.elements.motivo.value = motivo;
+  f.requestSubmit ? f.requestSubmit() : f.submit();
+});
+</script>
+
+{% endblock %}

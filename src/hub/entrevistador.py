@@ -422,7 +422,7 @@ def acotar(carpeta: Path) -> None:
         }, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    agentes._confiar(carpeta)
+    agentes.confiar(carpeta)
 
 
 def panel_vivo(con: sqlite3.Connection, slot_id: int) -> dict | None:
@@ -512,25 +512,44 @@ def empezar_con(con: sqlite3.Connection, user_id: int) -> dict:
         return {"encargo_id": publicado["id"], "ya_estaba": True}
 
     persona = encargos.ver_persona(con, user_id) or {}
-    estreno = con.execute(
-        "SELECT 1 FROM encargo WHERE user_id = ? LIMIT 1", (int(user_id),)
-    ).fetchone() is None
+    estreno = not encargos.tiene_encargos(con, user_id)
     encargo_id = encargos.siguiente_provisional(con)
     encargos.crear(con, encargo_id, int(user_id),
                    titulo=f"Encargo de {encargos.nombre_visible(persona)}")
 
     if estreno:
-        previos = con.execute(
-            """SELECT cuerpo FROM encargo_registro
-               WHERE user_id = ? AND detalle = 'mensaje de alguien sin alta'
-                 AND cuerpo != '' ORDER BY id""",
-            (int(user_id),),
-        ).fetchall()
-        for fila in previos:
-            buzon.aparcar(con, encargo_id, int(user_id), fila["cuerpo"])
+        for texto in encargos.escrito_sin_alta(con, user_id, buzon.VENTANA_REENTREGA):
+            buzon.aparcar(con, encargo_id, int(user_id), texto)
 
     abierto = abrir_agente(con, encargo_id)
     return {"encargo_id": encargo_id, "ya_estaba": False, **abierto}
+
+
+def dar_de_alta(con: sqlite3.Connection, user_id: int) -> dict:
+    """Pasa a alguien a «activo» y empieza con él: el alta entera (decisión 229).
+
+    Estaba escrita dos veces en la web (el alta de siempre y la del chat web),
+    cada una con su forma de fallar. Aquí, una:
+
+    - **Al dueño se le niega** (`ValueError`): aprueba los encargos, no los
+      encarga, y abrirle uno le pondría un entrevistador delante.
+    - **Si la entrevista no se puede abrir, el alta se queda** y el motivo
+      vuelve en `error` (regla dura 21): quitarle el alta por un tmux caído
+      sería castigarla por un fallo de la máquina. Lo que `empezar_con` alcanzó
+      a escribir (su encargo) también se queda, para abrirlo luego con el botón.
+
+    No hace commit: lo hace quien llama, también cuando vuelve con `error`.
+    """
+    persona = encargos.ver_persona(con, user_id)
+    if not persona:
+        raise ValueError(f"nadie con el id {user_id} ha escrito al canal de encargos")
+    if persona.get("es_dueno"):
+        raise ValueError("el dueño aprueba los encargos, no los encarga: no se le abre uno")
+    encargos.editar_persona(con, user_id, estado="activo")
+    try:
+        return empezar_con(con, user_id)
+    except (ValueError, RuntimeError) as exc:
+        return {"error": str(exc)}
 
 
 # Cuánto se espera para saber si el agente arrancó. Un `claude` que rechaza un

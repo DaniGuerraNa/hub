@@ -296,6 +296,60 @@ def test_tras_un_arranque_en_frio_el_latido_tiene_gracia(escena):
     assert [a["clase"] for a in tarde] == ["sin-latido"]
 
 
+# El de verdad, antes de que el doble de `conftest` lo sustituya en cada prueba.
+_LATIDO_REAL = avisos.latido_secretario
+
+
+def _secretario(edad_min: int | None, activo: bool = True):
+    return lambda: (activo, None if edad_min is None else en(-edad_min))
+
+
+def test_avisa_una_vez_si_el_secretario_deja_de_latir(escena):
+    """Decisión 329: si `hub-secretario` muere, sus recordatorios se callan sin
+    que nada lo diga. Lo dice el relé, que es otro proceso."""
+    latido(escena, en(0))
+    vivo = avisos.revisar(escena, momento=en(0), esperando=nunca, arranque=en(-60), secretario=_secretario(1))
+    assert vivo == []
+    (aviso,) = avisos.revisar(escena, momento=en(0), esperando=nunca, arranque=en(-60), secretario=_secretario(6))
+    assert aviso["clase"] == "secretario-caido" and "6 min" in aviso["texto"]
+    avisos.marcar_avisado(escena, aviso["clave"])
+    assert avisos.revisar(escena, momento=en(1), esperando=nunca, arranque=en(-60), secretario=_secretario(7)) == []
+    # Vuelve a latir y se vuelve a caer: episodio nuevo, aviso nuevo.
+    avisos.revisar(escena, momento=en(2), esperando=nunca, arranque=en(-60), secretario=_secretario(0))
+    assert len(avisos.revisar(escena, momento=en(3), esperando=nunca, arranque=en(-60),
+                              secretario=_secretario(9))) == 1
+
+
+def test_no_avisa_del_secretario_si_el_dueno_lo_apago_o_nunca_latio(escena):
+    latido(escena, en(0))
+    assert avisos.revisar(escena, momento=en(0), esperando=nunca, arranque=en(-60),
+                          secretario=_secretario(60, activo=False)) == []
+    assert avisos.revisar(escena, momento=en(0), esperando=nunca, arranque=en(-60),
+                          secretario=_secretario(None)) == []
+
+
+def test_el_secretario_tambien_tiene_gracia_tras_arrancar(escena):
+    latido(escena, en(0))
+    assert avisos.revisar(escena, momento=en(0), esperando=nunca, arranque=en(-1),
+                          secretario=_secretario(600)) == []
+
+
+def test_el_latido_del_secretario_se_lee_de_su_base_sin_crearla(monkeypatch, tmp_path):
+    import subprocess as sp
+    from hub.secretario import memoria
+    monkeypatch.setattr(sp, "run", lambda *a, **k: sp.CompletedProcess(a, 0, "enabled\n", ""))
+    monkeypatch.setattr(memoria, "ruta", lambda: tmp_path / "memoria.db")
+    assert _LATIDO_REAL() == (True, None)
+    assert not (tmp_path / "memoria.db").exists()
+    import json
+    import sqlite3
+    db = sqlite3.connect(tmp_path / "memoria.db")
+    db.execute("CREATE TABLE estado (clave TEXT PRIMARY KEY, valor TEXT NOT NULL)")
+    db.execute("INSERT INTO estado VALUES ('latido', ?)", (json.dumps("2026-11-02T10:00:00+00:00"),))
+    db.commit(); db.close()
+    assert _LATIDO_REAL() == (True, "2026-11-02T10:00:00+00:00")
+
+
 def test_un_panel_que_desaparece_se_olvida(escena):
     """Un `pane_id` reciclado por tmux no puede heredar el episodio del anterior.
 

@@ -178,19 +178,24 @@ class Canal:
             return None
         return api.panel_de_slot(self.con, int(fila["slot_id"]))
 
-    def pantalla(self, pane_id: str, esperando: str = "",
-                 segundos: float = 3.0) -> str:
+    def pantalla(self, pane_id: str, *esperando: str, segundos: float = 60.0) -> str:
         """Lo que se ve en el panel de verdad. `-J` junta lo que el ancho partió.
 
-        Con `esperando` se espera a VERLO, hasta un tope. Pegar y leer son dos
-        órdenes distintas de tmux y entre ellas hay un proceso echando el texto a
-        la pantalla: mirar sin esperar es una prueba que pasa aquí y falla un día
-        de cada veinte en la máquina de otro.
+        Con `esperando` se espera a VERLO todo: lo que el test va a comprobar,
+        no una parte. Pegar y leer son dos órdenes distintas de tmux y entre
+        ellas hay un proceso echando el texto a la pantalla: mirar sin esperar es
+        una prueba que pasa aquí y falla un día de cada veinte en la máquina de
+        otro.
+
+        🔴 Se espera a la condición, no a un tiempo. El tope era de 3 s y con la
+        máquina cargada (otras suites y agentes a la vez) la captura llegaba sin
+        el tercer mensaje (C-0180). Ahora sólo está para que un fallo de verdad
+        no cuelgue la suite: en verde se sale en cuanto se ve.
         """
         limite = time.monotonic() + segundos
         while True:
             visto = tmux.capturar_panel(pane_id, unir_lineas=True)
-            if not esperando or esperando in visto or time.monotonic() >= limite:
+            if all(e in visto for e in esperando) or time.monotonic() >= limite:
                 return visto
             time.sleep(0.05)
 
@@ -444,7 +449,8 @@ def test_al_volver_el_panel_los_tres_entran_en_un_solo_lote_y_enmarcados(canal):
     canal.vuelta()
 
     assert buzon.en_cola(canal.con, ENCARGO) == []
-    pantalla = canal.pantalla(sitio["pane_id"], esperando="los sábados")
+    pantalla = canal.pantalla(sitio["pane_id"], "Mensajes de «Lucía»", "canal de encargos (3)",
+                              "abro a las siete", "los sábados", "transcrito")
     assert "Mensajes de «Lucía»" in pantalla and "canal de encargos (3)" in pantalla
     assert "abro a las siete" in pantalla and "los sábados" in pantalla
     assert "transcrito" in pantalla, "el audio llegó sin decir que es una transcripción"
@@ -577,7 +583,7 @@ def test_reiniciar_al_agente_no_pierde_lo_sabido_ni_lo_que_esperaba_en_la_cola(
     canal.vuelta()
     assert len(buzon.en_cola(canal.con, ENCARGO)) == 1
 
-    tmux.cerrar_ventana(sitio["session"], int(sitio["window_idx"]))
+    tmux._correr(["kill-window", "-t", f"={sitio['session']}:{int(sitio['window_idx'])}"])
     canal.muestrear()
 
     # Sin panel no se entrega, y sobre todo no se da por entregado.
@@ -605,8 +611,7 @@ def test_reiniciar_al_agente_no_pierde_lo_sabido_ni_lo_que_esperaba_en_la_cola(
     canal.panel["ocupado"] = False
     canal.vuelta()
     assert buzon.en_cola(canal.con, ENCARGO) == []
-    assert "los sábados vendo el doble" in canal.pantalla(
-        nuevo["pane_id"], esperando="los sábados vendo el doble")
+    assert "los sábados vendo el doble" in canal.pantalla(nuevo["pane_id"], "los sábados vendo el doble")
 
 
 # --------------------------------------------------------------------------- #

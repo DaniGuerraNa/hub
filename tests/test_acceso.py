@@ -252,11 +252,21 @@ def test_el_manifiesto_se_sirve_y_apunta_a_iconos_que_existen(de_casa):
         assert de_casa.get(icono["src"]).status_code == 200, icono["src"]
 
 
-def test_el_manifiesto_no_declara_ningun_service_worker(de_casa):
-    """Decisión 168. Un service worker cachea, y enseñaría una pantalla vieja
-    como si fuera de ahora — la forma exacta de mentir que este hub prohíbe."""
+def test_ningun_service_worker_cachea_ni_intercepta_pantallas(de_casa):
+    """Decisión 168. Un service worker que cachea enseñaría una pantalla vieja
+    como si fuera de ahora — la forma exacta de mentir que este hub prohíbe.
+
+    Desde la decisión 311 existe uno, el de los avisos del secretario, porque
+    Web Push no llega sin él. Lo que se prohíbe sigue igual: que atienda
+    peticiones (`fetch`) o guarde respuestas (`caches`). Y el hub fuera del
+    secretario sigue sin registrar ninguno."""
     assert "serviceWorker" not in de_casa.get("/").text
-    assert not list((__import__("pathlib").Path(web.__file__).parent / "static").glob("*sw*.js"))
+    sws = list((__import__("pathlib").Path(web.__file__).parent / "static").glob("*sw*.js"))
+    assert [x.name for x in sws] == ["secretario-sw.js"]
+    for sw in sws:
+        codigo = sw.read_text(encoding="utf-8")
+        assert "addEventListener('fetch'" not in codigo and 'addEventListener("fetch"' not in codigo
+        assert "caches." not in codigo
 
 
 def test_el_manifiesto_se_puede_pedir_sin_haber_dado_de_alta_el_aparato(de_fuera):
@@ -513,3 +523,79 @@ def test_el_mensaje_de_la_puerta_manda_a_un_comando_que_existe(de_fuera, capsys)
 
     assert acceso._cli(["alta", "Un aparato", "--host", FUERA]) == 0
     assert acceso.pendientes(), "el comando que dice el mensaje no dio de alta nada"
+
+
+# ── C-0112: el nombre solo no hace «de casa» ─────────────────────────────────
+
+@pytest.fixture
+def de_la_red_local():
+    """Lo que pasaría si el hub escuchara en 0.0.0.0: alguien de la red local
+    que entra diciendo `Host: localhost`, que es una cabecera que pone él."""
+    return TestClient(web.app, base_url="http://localhost:8787", client=("192.168.1.50", 40000))
+
+
+def test_desde_la_red_local_con_host_localhost_no_se_entra_sin_alta(de_la_red_local):
+    r = de_la_red_local.get("/")
+    assert r.status_code == 403 and "no está dado de alta" in r.text
+
+
+def test_desde_la_red_local_con_host_localhost_no_se_abre_la_terminal(de_la_red_local):
+    _se_cierra_sin_aceptar(de_la_red_local)
+
+
+def test_desde_loopback_con_host_localhost_sigue_siendo_de_casa():
+    """La mitad que no puede romperse: el navegador de casa llega por
+    127.0.0.1 (medido el 3-nov, también el de Windows hacia WSL)."""
+    casa = TestClient(web.app, base_url="http://localhost:8787", client=("127.0.0.1", 40000))
+    assert casa.get("/").status_code == 200
+    with casa.websocket_connect("/ws/terminal/no vale este nombre") as ws:
+        assert b"[hub]" in ws.receive_bytes()
+
+
+@pytest.mark.parametrize("ip,esperado", [
+    ("127.0.0.1", True), ("127.0.1.1", True), ("::1", True), ("::ffff:127.0.0.1", True),
+    ("192.168.1.50", False), ("100.64.0.7", False), ("0.0.0.0", False), ("", False), (None, False),
+    ("testclient", False),
+])
+def test_cliente_local_es_solo_loopback(ip, esperado):
+    assert acceso.es_cliente_local(ip) is esperado
+
+
+@pytest.mark.parametrize("host, nombre", [
+    ("localhost", "localhost"), ("LocalHost:8787", "localhost"), ("127.0.0.1:8787", "127.0.0.1"),
+    ("[::1]:8787", "::1"), ("[::1]", "::1"), (f"{FUERA}:443", FUERA), ("", ""), (None, ""),
+])
+def test_el_nombre_del_host_se_saca_en_un_solo_sitio_y_entiende_ipv6(host, nombre):
+    """El mismo `rsplit(":")…strip("[]")` estaba en tres sitios (C-0118), y
+    con `[::1]` sin puerto partía por el último `:` de la dirección y dejaba
+    «:»: un nombre de casa que no contaba como de casa."""
+    assert acceso.nombre_de_host(host) == nombre
+
+
+@pytest.mark.parametrize("host, origen, pasa", [
+    ("localhost:8787", "http://localhost:8787", True),
+    ("LocalHost:8787", "http://localhost:8787", True),
+    ("[::1]:8787", "http://[::1]:8787", True),
+    ("[::1]", "http://[::1]", True),
+    (" localhost:8787 ", "http://localhost:8787", True),
+    ("localhost:", "http://localhost", True),
+    ("localhost:8787", "http://localhost:8788", False),
+    ("localhost:99999", "http://localhost:99999", False),
+    ("localhost:87x7", "http://localhost:8787", False),
+    ("[::1]x", "http://[::1]", False),
+])
+def test_el_origen_lee_el_host_como_la_puerta(host, origen, pasa):
+    """C-0187: `origen_permitido` partía el `Host` con `urlsplit` por su cuenta,
+    y `nombre_de_host` dice ser el único sitio que lo parte. Donde difieren,
+    la puerta del `Host` aceptaba un nombre que el `Origin` leía distinto. Un
+    puerto que no es un número válido sigue sin pasar: falla cerrado."""
+    assert acceso.origen_permitido(origen, host) is pasa
+
+
+def test_la_puerta_del_host_es_la_de_acceso():
+    """La comprobación real era una copia en `web.py` y `acceso.host_permitido`
+    no la llamaba nadie (C-0118)."""
+    assert acceso.es_host_local("[::1]")
+    assert acceso.host_permitido("[::1]:8787", ("::1",))
+    assert not acceso.host_permitido("otro:8787", ("::1",))
+    assert not hasattr(web, "_en_lista")

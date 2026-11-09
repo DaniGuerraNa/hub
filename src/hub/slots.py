@@ -7,15 +7,14 @@ manuales. No hay expiración, ni avisos, ni nada automático.
 from __future__ import annotations
 
 import re
-import shlex
 import sqlite3
 import time
 from pathlib import Path
 
-from . import api, restauracion, tmux
-from .snapshotter import ahora
+from . import api, modelos, restauracion, tmux
+from .reloj import ahora
 
-# Lo que tmux no admite en un nombre de sesión, igual que en `agentes`.
+# Lo que tmux no admite en un nombre de sesión: se deriva del id.
 _NO_VALIDO = re.compile(r"[^\w.\-]+")
 
 
@@ -28,6 +27,12 @@ def crear(
     comando: str | None = None,
     autostart_claude: bool = False,
 ) -> int:
+    """Da de alta un slot y devuelve su id. No abre ventana: eso es `abrir`.
+
+    Es la puerta por la que crean slots la web, el secretario, el orquestador
+    y los agentes de encargos (MAPA → Capacidades): el slot es fuente, sólo
+    vive en `hub.db` (regla dura 1), y un segundo INSERT sería otra forma de él.
+    """
     cur = con.execute(
         """INSERT INTO slot (proyecto_id, nombre, ruta, nota, comando,
                              autostart_claude, status, creado_en)
@@ -46,6 +51,12 @@ def editar(con: sqlite3.Connection, slot_id: int, **campos) -> None:
     for bandera in ("autostart_claude", "restaurar"):
         if bandera in cambios:
             cambios[bandera] = int(bool(cambios[bandera]))
+    # Se dice aquí y con su nombre: la clave ajena lo frenaba igual, pero con
+    # una `IntegrityError` que la web enseñaba como «el índice del hub no se
+    # puede leer» (C-0103) — mandaba a mirar la base cuando el fallo era el id.
+    if "proyecto_id" in cambios and not con.execute(
+            "SELECT 1 FROM proyecto WHERE id=?", (cambios["proyecto_id"],)).fetchone():
+        raise ValueError(f"no hay ningún proyecto «{cambios['proyecto_id']}»")
     asignaciones = ", ".join(f"{k}=?" for k in cambios)
     con.execute(
         f"UPDATE slot SET {asignaciones} WHERE id=?", (*cambios.values(), slot_id)
@@ -183,42 +194,33 @@ def abrir(con: sqlite3.Connection, slot_id: int, session: str | None = None,
             f"«{slot['nombre']}» no tiene ruta y su proyecto no tiene asiento: "
             "no hay dónde abrir la ventana."
         )
-    comando = comando or slot["comando"]
-    if not comando and slot["autostart_claude"]:
-        # Un slot es TU ventana de trabajo, no un agente del hub: la abres, la
-        # miras y eliges tú con qué modelo trabajar, desde
-        # `~/.claude/settings.json` o con `/model`. Si un slot concreto quiere
-        # otro, se le pone en `slot["comando"]`. La política de `modelos.py`
-        # cubre lo que el hub lanza por su cuenta, que es lo que nadie mira.
-        comando = "claude"  # modelo: hereda — a propósito, ver arriba
-
-    if comando:
-        # 🔴 El PATH del usuario DENTRO del comando (regla dura 18, decisión
-        # 231). Ni el `-e` de `new-session` alcanza al primer panel ni el de
-        # `new-window` al proceso: medido, la ventana sale con el PATH del
-        # cliente que la pidió, y desde un servicio de systemd ese PATH
-        # encuentra `/usr/bin/claude` —otra versión— en vez del suyo. `env`
-        # hace `exec`, así que `pane_current_command` sigue diciendo `claude`.
-        comando = f"env PATH={shlex.quote(tmux.path_de_usuario())} {comando}"
+    comando = comando or _comando_de(slot)
+    # 🔴 El PATH del usuario, que las primitivas de tmux ponen DENTRO del
+    # comando (regla dura 18, decisiones 231 y 339): desde un servicio de
+    # systemd, sin él se encuentra `/usr/bin/claude` —otra versión—.
+    entorno = {"PATH": tmux.path_de_usuario()}
     if not session or not tmux.existe_sesion(session):
         session = sesion_para(con, slot["proyecto_id"])
     if tmux.existe_sesion(session):
         pane_id = tmux.abrir_ventana(ruta, slot["nombre"], comando, session,
-                                     conservar=conservar_al_morir)
+                                     conservar=conservar_al_morir, entorno=entorno)
     else:
-        # El PATH de usuario, o `claude` no está: `hub-web` corre bajo systemd
-        # y su PATH no trae `~/.local/bin` (decisión 81).
-        tmux.nueva_sesion(session, ruta, slot["nombre"], comando,
-                          entorno={"PATH": tmux.path_de_usuario()},
+        tmux.nueva_sesion(session, ruta, slot["nombre"], comando, entorno=entorno,
                           conservar=conservar_al_morir)
         pane_id = tmux.panel_de_sesion(session)
     if pane_id:
         vincular(con, pane_id, slot_id)
-        try:
-            tmux.escribir_titulo(pane_id, slot["nombre"])
-        except Exception:
-            pass  # el título es cosmético; no debe tumbar la apertura
+        _titular(pane_id, slot["nombre"])
     return pane_id
+
+
+def _titular(pane_id: str, nombre: str) -> None:
+    """El título de la ventana. Cosmético: no tumba la apertura, pero un fallo
+    de tmux se dice en voz alta (regla dura 21, C-0085)."""
+    try:
+        tmux.escribir_titulo(pane_id, nombre)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[slots] no se pudo poner el título «{nombre}» a {pane_id}: {exc}", flush=True)
 
 
 def abrir_en(ruta: str, nombre: str, session: str, texto: str = "") -> str:
@@ -236,17 +238,14 @@ def abrir_en(ruta: str, nombre: str, session: str, texto: str = "") -> str:
     if tmux.existe_sesion(session):
         pane_id = tmux.abrir_ventana(ruta, nombre, None, session)
     else:
-        # El PATH de usuario: `hub-web` corre bajo systemd (decisión 81).
-        tmux.nueva_sesion(session, ruta, nombre, None,
-                          entorno={"PATH": tmux.path_de_usuario()})
+        # Sin `entorno`: sin comando no llegaría (C-0058); la shell de login
+        # pone el PATH del usuario al leer su perfil.
+        tmux.nueva_sesion(session, ruta, nombre, None)
         pane_id = tmux.panel_de_sesion(session)
     if not pane_id:
         raise ValueError("tmux no devolvió el panel de la ventana nueva")
 
-    try:
-        tmux.escribir_titulo(pane_id, nombre)
-    except Exception:
-        pass  # el título es cosmético; no debe tumbar la apertura
+    _titular(pane_id, nombre)
 
     if texto:
         # 🔴 Si la escritura llega tarde, se dice: una ventana con el comando a
@@ -259,8 +258,8 @@ def abrir_en(ruta: str, nombre: str, session: str, texto: str = "") -> str:
 def sesion_para(con: sqlite3.Connection, proyecto_id: str) -> str:
     """Dónde abrir la ventana: donde ya vive ese proyecto, si es que vive.
 
-    El mismo criterio que usan los agentes (`agentes.sesion_para`); vive aquí
-    también porque `agentes` no puede importar `slots` sin cerrar un ciclo.
+    La única: la usan también los agentes, para que un slot y un agente del
+    mismo proyecto caigan en la misma sesión de tmux (C-0090).
     """
     for panel in api.paneles_abiertos(con):
         if panel["proyecto_id"] == proyecto_id:
@@ -272,28 +271,24 @@ def comando_manual(con: sqlite3.Connection, slot_id: int) -> str | None:
     slot = api.obtener_slot(con, slot_id)
     if not slot or not slot["ruta"]:
         return None
-    # modelo: hereda — el mismo comando que `abrir()`, para copiar y pegar.
-    comando = slot["comando"] or ("claude" if slot["autostart_claude"] else None)
-    return tmux.comando_de_apertura(slot["ruta"], slot["nombre"], comando)
+    return tmux.comando_de_apertura(slot["ruta"], slot["nombre"], _comando_de(slot))
+
+
+def _comando_de(slot) -> str | None:
+    """Con qué arranca un slot: su comando guardado, o `claude` si se pidió.
+
+    Un slot es TU ventana de trabajo, no un agente del hub: la abres, la miras
+    y eliges tú con qué modelo trabajar, desde `~/.claude/settings.json` o con
+    `/model`. Si un slot concreto quiere otro, se le pone en `slot["comando"]`.
+    La política de `modelos.py` cubre lo que el hub lanza por su cuenta, que es
+    lo que nadie mira (decisión 149)."""
+    if slot["comando"]:
+        return slot["comando"]
+    return modelos.linea_claude(modelos.HEREDA).comando if slot["autostart_claude"] else None
 
 
 # ── Restaurar tras un apagón ─────────────────────────────────────────────────
 
-# Lo que se deja escrito en la ventana: `restauracion.COMANDO_SUGERIDO`, que es
-# `claude` salvo que `HUB_COMANDO_CLAUDE` diga otra cosa (decisiones 165 y 266).
-#
-# modelo: hereda — y aquí con más motivo que en `abrir()`. Esto no arranca nada:
-# deja el texto en el prompt para que lo lance una persona, que puede editarlo
-# antes de pulsar Enter. Fijar un modelo sería decidir por él en su propia
-# ventana de trabajo; la política de `modelos.py` cubre lo que el hub lanza por
-# su cuenta, que es lo que nadie mira.
-# modelo: hereda
-# Se reexportan para no romper a quien ya los importaba de aquí.
-COMANDO_SUGERIDO = restauracion.COMANDO_SUGERIDO
-marcados_para_restaurar = restauracion.marcados_para_restaurar
-plan_de_restauracion = restauracion.plan_de_restauracion
-candidatos_de_restauracion = restauracion.candidatos_de_restauracion
-normalizar_ruta = restauracion.normalizar_ruta
 
 def restaurar(con: sqlite3.Connection, muestra_id: int | None = None) -> dict:
     """Deja el escritorio como estaba: una ventana por cada una que había abierta.
@@ -326,7 +321,7 @@ def restaurar(con: sqlite3.Connection, muestra_id: int | None = None) -> dict:
     Que sea barato no lo hace automático: sigue siendo un botón (regla dura 3).
     """
     abiertos, fallos = [], []
-    for paso in plan_de_restauracion(con, muestra_id=muestra_id):
+    for paso in restauracion.plan_de_restauracion(con, muestra_id=muestra_id):
         if not paso["ruta"]:
             fallos.append(f"«{paso['nombre']}»: {paso['aviso']}")
             continue
@@ -336,8 +331,7 @@ def restaurar(con: sqlite3.Connection, muestra_id: int | None = None) -> dict:
             if tmux.existe_sesion(session):
                 pane_id = tmux.abrir_ventana(paso["ruta"], paso["nombre"], None, session)
             else:
-                tmux.nueva_sesion(session, paso["ruta"], paso["nombre"], None,
-                                  entorno={"PATH": tmux.path_de_usuario()})
+                tmux.nueva_sesion(session, paso["ruta"], paso["nombre"], None)
                 pane_id = tmux.panel_de_sesion(session)
         except Exception as exc:  # noqa: BLE001 — una ventana rota no cancela las demás
             fallos.append(f"«{paso['nombre']}»: {exc}")
@@ -348,10 +342,7 @@ def restaurar(con: sqlite3.Connection, muestra_id: int | None = None) -> dict:
             continue
 
         vincular(con, pane_id, paso["slot_id"])
-        try:
-            tmux.escribir_titulo(pane_id, paso["nombre"])
-        except Exception:
-            pass  # el título es cosmético; no debe tumbar la restauración
+        _titular(pane_id, paso["nombre"])
 
         abierto = {"slot_id": paso["slot_id"], "nombre": paso["nombre"],
                    "pane_id": pane_id, "ruta": paso["ruta"],

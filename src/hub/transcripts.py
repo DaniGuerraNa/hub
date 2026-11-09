@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from . import modelos
 from .models import Proyecto
 
 # Donde Claude Code guarda sus transcripts. Un directorio por ruta de trabajo.
@@ -45,9 +46,6 @@ TRANSCRIPTS = Path.home() / ".claude" / "projects"
 # `last-prompt`, `queue-operation`…— es maquinaria de la sesión.
 TIPOS_UTILES = ("user", "assistant")
 
-# Un id de sesión es el nombre de un archivo: si viene de una URL y no se valida,
-# `../../..` sale del directorio de transcripts.
-ID_SESION = re.compile(r"^[0-9a-fA-F-]{8,64}$")
 
 _NO_ALFANUMERICO = re.compile(r"[^a-zA-Z0-9]")
 
@@ -112,7 +110,10 @@ def leer_lineas(ruta: Path) -> Iterator[dict[str, Any]]:
 
 def ruta_de_sesion(session_id: str, directorios: list[Path] | None = None) -> Path | None:
     """Localiza el archivo de una sesión. None si el id no es válido o no está."""
-    if not ID_SESION.match(session_id or ""):
+    # Un id de sesión es el nombre de un archivo: si viene de una URL y no se
+    # valida, `../../..` sale del directorio de transcripts. Es un UUID, el
+    # mismo criterio que al reanudar (`modelos.es_sesion`, C-0092).
+    if not modelos.es_sesion(session_id):
         return None
     for directorio in directorios if directorios is not None else _todos_los_directorios():
         candidato = directorio / f"{session_id}.jsonl"
@@ -277,6 +278,31 @@ def esqueleto(ruta: Path, limite: int | None = None, desde_uuid: str | None = No
     return {"id": ruta.stem, "mensajes": mensajes}
 
 
+def respuesta_tras(ruta: Path, marca: str, hasta_el_siguiente: bool = False) -> str | None:
+    """Lo que dijo el asistente después del ÚLTIMO mensaje del usuario que
+    lleva `marca`, junto. None si la marca no está en esa conversación.
+
+    La usan el orquestador (su marca es única por espera) y el secretario
+    (`[Del secretario…]`, la misma siempre: la última es la de ahora). Era
+    código del orquestador; dos copias serían dos lecturas que se separan.
+
+    `hasta_el_siguiente` corta en el siguiente mensaje del usuario: en la
+    sesión del dueño, él sigue escribiendo después, y lo que la sesión le
+    conteste a él no es la respuesta al secretario (revisor de C-0225)."""
+    mensajes = esqueleto(ruta)["mensajes"]
+    inicio = next((i for i in range(len(mensajes) - 1, -1, -1)
+                   if mensajes[i].get("rol") == "user" and marca in (mensajes[i].get("texto") or "")), None)
+    if inicio is None:
+        return None
+    textos = []
+    for m in mensajes[inicio + 1:]:
+        if hasta_el_siguiente and m.get("rol") == "user" and (m.get("texto") or "").strip():
+            break
+        if m.get("rol") == "assistant" and (m.get("texto") or "").strip():
+            textos.append(m["texto"])
+    return "\n\n".join(textos).strip()
+
+
 def _condensar(dato: dict[str, Any]) -> dict[str, Any] | None:
     """Un mensaje reducido a texto + herramientas. None si no queda nada."""
     texto = _texto_de(dato)
@@ -418,6 +444,79 @@ def ultima_ocupacion(ruta: Path) -> dict[str, Any] | None:
     uso, modelo, ts = ultimo
     tokens = sum(int(uso.get(c) or 0) for c in CAMPOS_ENTRADA)
     return {"tokens": tokens, "modelo": modelo, "medido_en": ts, "origen": "transcript"}
+
+
+# --------------------------------------------------------------------------- #
+# Subagentes de una sesión
+# --------------------------------------------------------------------------- #
+
+#: Sin escribir una línea en este tiempo, un subagente ya no cuenta como vivo.
+#: Una herramienta larga (una suite de tests) calla unos minutos; lo que pasa
+#: de esto es uno que se interrumpió sin acabar y no va a escribir más.
+SUBAGENTE_QUIETO_S = 900
+
+
+def _ultima_linea(ruta: Path) -> dict[str, Any] | None:
+    """La última línea entera del JSONL, leyendo sólo su cola."""
+    try:
+        with ruta.open("rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 262_144))
+            lineas = f.read().splitlines()
+    except OSError:
+        return None
+    for crudo in reversed(lineas):
+        try:
+            dato = json.loads(crudo)
+        except ValueError:
+            continue   # la última puede estar a medio escribir
+        if isinstance(dato, dict) and dato.get("type") in TIPOS_UTILES:
+            return dato
+    return None
+
+
+def _acabado(dato: dict[str, Any] | None) -> bool:
+    """Su última línea es la respuesta final: texto, sin herramientas, `end_turn`."""
+    if not dato or dato.get("type") != "assistant":
+        return False
+    mensaje = dato.get("message") or {}
+    bloques = mensaje.get("content") if isinstance(mensaje.get("content"), list) else []
+    return mensaje.get("stop_reason") in ("end_turn", "stop_sequence") and not any(
+        isinstance(b, dict) and b.get("type") == "tool_use" for b in bloques)
+
+
+def subagentes_vivos(ruta: Path, ahora: float | None = None) -> list[dict[str, Any]]:
+    """Los subagentes que la sesión de `ruta` tiene trabajando ahora (C-0166).
+
+    Claude Code deja cada uno en `<sesión>/subagents/agent-<id>.jsonl`, con su
+    `agent-<id>.meta.json` al lado (`agentType`, `description`). Medido el
+    6-nov en 2.1.280 sobre una sesión con siete: los que habían terminado
+    acababan en un `assistant` con `end_turn` y sólo texto; los vivos, en una
+    herramienta o en su resultado. Vivo es eso **y** haber escrito hace menos
+    de `SUBAGENTE_QUIETO_S`: uno interrumpido no llega a escribir su final.
+
+    Devuelve `{"id", "tipo", "que"}` del más reciente al más viejo; `tipo` es
+    el `agentType` tal cual (el rol lo decide quien pinta) e `id` el de su
+    archivo, para que quien pinta sepa cuál llega y cuál se va (C-0220)."""
+    carpeta = ruta.with_suffix("") / "subagents"
+    if not carpeta.is_dir():
+        return []
+    import time
+
+    ahora = time.time() if ahora is None else ahora
+    vivos = []
+    for jsonl in carpeta.glob("agent-*.jsonl"):
+        cuando = mtime(jsonl)
+        if ahora - cuando > SUBAGENTE_QUIETO_S or _acabado(_ultima_linea(jsonl)):
+            continue
+        try:
+            meta = json.loads(jsonl.with_suffix(".meta.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = {}
+        vivos.append((cuando, {"id": jsonl.stem.removeprefix("agent-"),
+                               "tipo": str(meta.get("agentType") or ""),
+                               "que": " ".join(str(meta.get("description") or "").split())[:80]}))
+    return [v for _, v in sorted(vivos, key=lambda x: -x[0])]
 
 
 # --------------------------------------------------------------------------- #

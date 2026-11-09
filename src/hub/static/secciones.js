@@ -15,36 +15,47 @@
  * El hash manda —así un enlace a #registro lleva ahí— y si no hay, se recuerda
  * la última mirada: estas páginas hacen POST y redirigen, y volver siempre a la
  * primera sección perdía el sitio en cada acción.
+ *
+ * C-0167: qué sección se ve ya lo decide antes del primer pintado el trocito en
+ * línea de `ui.seccion_previa()`; esto lo confirma y quita su estilo. Antes se
+ * veían todas un instante y luego se plegaban. Y como `sin-recarga.js` puede
+ * repintar las secciones, se vuelve a aplicar con `hub:repintado`, y el clic en
+ * el índice va por delegación: un oyente atado al índice se perdería con él.
  */
 (() => {
-  const taller = document.querySelector('[data-secciones]');
-  const indice = document.querySelector('[data-indice-secciones]');
-  if (!taller || !indice) return;
+  const taller = () => document.querySelector('[data-secciones]');
+  const enlaces = () => [...document.querySelectorAll('[data-indice-secciones] a[data-sec]')];
+  if (!taller() || !enlaces().length) return;
 
-  const enlaces = [...indice.querySelectorAll('a[data-sec]')];
-  if (!enlaces.length) return;
-  const existe = (s) => document.getElementById(`sec-${s}`) && enlaces.some((a) => a.dataset.sec === s);
-  const CLAVE = `hub:seccion:${taller.dataset.secciones}`;
+  const CLAVE = `hub:seccion:${taller().dataset.secciones}`;
+  const existe = (s) => document.getElementById(`sec-${s}`) && enlaces().some((a) => a.dataset.sec === s);
+  let actual = null;
 
   function mostrar(sec, recordar = true) {
-    if (!existe(sec)) sec = enlaces[0].dataset.sec;
-    for (const s of taller.querySelectorAll('.seccion')) {
+    const t = taller();
+    const lista = enlaces();
+    if (!t || !lista.length) return;
+    if (!existe(sec)) sec = lista[0].dataset.sec;
+    actual = sec;
+    // Sólo ahora: hasta aquí la página se ve entera, así que un fallo de script
+    // deja una página larga y no una en blanco. La marca le dice a
+    // `ui.seccion_previa()` que no deshaga lo suyo al cargar.
+    t.classList.add('con-secciones');
+    t.dataset.seccionesListo = '1';
+    for (const s of t.querySelectorAll('.seccion')) {
       s.classList.toggle('viendo', s.id === `sec-${sec}`);
     }
-    for (const a of enlaces) a.classList.toggle('aqui', a.dataset.sec === sec);
+    for (const a of lista) a.classList.toggle('aqui', a.dataset.sec === sec);
+    document.querySelectorAll('style[data-seccion-previa]').forEach((e) => e.remove());
     if (recordar) { try { sessionStorage.setItem(CLAVE, sec); } catch (e) { /* modo privado */ } }
   }
 
-  // Sólo ahora: hasta aquí la página se ve entera, así que un fallo de script
-  // deja una página larga y no una en blanco.
-  taller.classList.add('con-secciones');
-
   let guardada = null;
   try { guardada = sessionStorage.getItem(CLAVE); } catch (e) { /* modo privado */ }
-  mostrar(location.hash.slice(1) || guardada || enlaces[0].dataset.sec, false);
+  mostrar(location.hash.slice(1) || guardada || enlaces()[0].dataset.sec, false);
 
-  indice.addEventListener('click', (e) => {
-    const a = e.target.closest('a[data-sec]');
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest && e.target.closest('[data-indice-secciones] a[data-sec]');
     if (!a) return;
     e.preventDefault();
     // replaceState y no el hash directo: así el botón «atrás» sale de la página
@@ -54,4 +65,5 @@
   });
 
   window.addEventListener('hashchange', () => mostrar(location.hash.slice(1)));
+  document.addEventListener('hub:repintado', () => mostrar(actual, false));
 })();

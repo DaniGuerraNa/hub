@@ -273,3 +273,21 @@ def test_la_clave_se_crea_sin_passphrase_a_proposito(tmp_path):
 def test_un_alias_raro_se_rechaza(tmp_path):
     r = correr(ALTA, "VPS Ejemplo", "10.0.0.4", "deploy", casa=tmp_path)
     assert r.returncode == 2
+
+
+@pytest.mark.parametrize("host, usuario, puerto", [
+    ("10.0.0.4\n    ProxyCommand sh -c id", "deploy", "22"),
+    ("10.0.0.4", "deploy\n    LocalCommand id", "22"),
+    ("10.0.0.4", "deploy", "22\nPermitLocalCommand yes"),
+    ("-oProxyCommand=id", "deploy", "22"),
+    ("10.0.0.4", "deploy", "noventa"),
+    ("10.0.0.4", "deploy", "70000"),
+])
+def test_un_host_usuario_o_puerto_que_anade_directivas_se_rechaza_sin_tocar_nada(
+        tmp_path, ssh_de_mentira, host, usuario, puerto):
+    """C-0122: se escribían en `~/.ssh/config` tal cual, y un salto de línea
+    añadía directivas —`ProxyCommand` ejecuta lo que diga en cada conexión—."""
+    r = correr(ALTA, "vps-pruebas", host, usuario, puerto, casa=tmp_path, ruta_extra=ssh_de_mentira)
+    assert r.returncode == 2
+    assert not (tmp_path / ".ssh" / "config").exists()
+    assert not (tmp_path / ".ssh" / "vps-pruebas").exists()

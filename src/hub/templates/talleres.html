@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block cabeza %}
+<link rel="stylesheet" href="/static/talleres.css">
+{% endblock %}
+{% block contenido %}
+{#- Los talleres (C-0220, decisión 391). La escena la pinta `talleres.js`
+    con lo que hay en la región; sin JavaScript queda la lista de texto, que
+    dice lo mismo. La región se pide de nuevo cada 10 s (`HubSinRecarga`) y el
+    JS compara: sólo se mueve lo que cambió. -#}
+<div class="tll" data-talleres>
+  <div class="tll-cabeza">
+    <div>
+      <h1>Talleres</h1>
+      <p class="tll-sub">Cada sesión con un agente es un taller. La rana del yunque es la sesión; sus subagentes entran por la puerta y van a la estación de su oficio, y al terminar le llevan el resultado.</p>
+    </div>
+    <div class="tll-resumen" data-resumen></div>
+  </div>
+  <p class="tll-vieja" data-vieja hidden></p>
+  <section class="tll-rejilla" data-escenas aria-label="Talleres"></section>
+
+  <div data-region="talleres">
+    <script type="application/json" data-datos>{{ {"talleres": datos.talleres, "tomado_en": datos.tomado_en}|tojson }}</script>
+    {% if datos.talleres %}
+    <ul class="tll-texto" data-texto>
+      {% for t in datos.talleres %}
+      <li><b>{{ t.proyecto }}{% if t.proyecto %} · {% endif %}{{ t.nombre }}</b>
+        <span class="tll-chip {{ t.estado }}">{{ {"trabajando": "trabajando", "quieta": "quieta", "espera": "espera tu sí", "neutro": t.agente}[t.estado] }}</span>
+        {% if t.subagentes %} — {% for s in t.subagentes %}{{ s.tipo or "subagente" }}{% if s.que %}: {{ s.que }}{% endif %}{% if not loop.last %}; {% endif %}{% endfor %}{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="tll-nadie">Ninguna sesión con un agente ahora mismo. Cuando abras Claude Code o Codex en una ventana de Trabajo, aquí aparecerá su taller.</p>
+    {% endif %}
+  </div>
+  <script type="application/json" data-escena>{{ datos.escena|tojson }}</script>
+</div>
+<script src="/static/talleres.js"></script>
+{% endblock %}

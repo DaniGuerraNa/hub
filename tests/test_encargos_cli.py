@@ -702,6 +702,26 @@ def test_listo_avisa_a_quien_aprobo_y_el_agente_NO_despliega(escena, monkeypatch
     assert aviso["user_id"] == 1 and "desplegar-encargo.sh" in aviso["texto"]
 
 
+def test_la_pista_para_desplegar_a_mano_es_la_que_el_guion_acepta(escena, monkeypatch):
+    """C-0141: sugería `…/sitio` también para una app implementada y no decía
+    ni el dominio ni el servidor, que el guion exige: copiada tal cual, fallaba."""
+    from hub import rele_encargos
+
+    monkeypatch.setattr(rele_encargos, "ajustes", lambda: {})
+    monkeypatch.setattr(encargos_cli, "_servidor", lambda e: None)
+    encargos.tocar(escena, "encargo-1", estado="implementando")
+    app_ = encargos.carpeta("encargo-1") / "app"
+    (app_ / "static").mkdir(parents=True, exist_ok=True)
+    (app_ / "main.py").write_text("", encoding="utf-8")
+    (app_ / "static" / "index.html").write_text("<h1>x</h1>", encoding="utf-8")
+    escena.commit()
+
+    assert corre("listo") == 0
+    texto = buzon.salientes(escena)[-1]["texto"]
+    assert f"{app_} " in texto and "/sitio" not in texto
+    assert "HUB_DOMINIO_ENCARGOS=" in texto and "<alias-ssh>" in texto
+
+
 def test_con_despliegue_configurado_el_aviso_dice_que_sale_solo(escena, monkeypatch):
     from hub import rele_encargos
 
@@ -875,6 +895,35 @@ def test_lo_que_ya_salio_no_se_puede_retirar(escena, capsys):
 
     assert corre("deshacer") == 2
     assert "ya salió" in capsys.readouterr().err
+
+
+def test_si_el_rele_lo_manda_mientras_se_deshace_se_dice_que_ya_salio(escena, capsys, monkeypatch):
+    """C-0186: `deshacer` lee la cola y retira, y el relé puede mandar entre
+    las dos cosas. Contaba «retirados 1, que no habían salido» de algo que ya
+    había llegado; ahora dice cuál se fue."""
+    from hub import rele_encargos
+
+    buzon.encolar_salida(escena, "encargo-1", "uno")
+    buzon.encolar_salida(escena, "encargo-1", "dos")
+    leer = buzon.salientes
+
+    class Bot:
+        def enviar(self, chat_id, texto):
+            return 700
+
+    def lee_y_el_rele_manda(con):
+        hay = leer(con)
+        if not getattr(lee_y_el_rele_manda, "hecho", False):
+            lee_y_el_rele_manda.hecho = True
+            rele_encargos.mandar_salientes(con, Bot())   # el relé, en ese hueco
+        return hay
+
+    monkeypatch.setattr(buzon, "salientes", lee_y_el_rele_manda)
+
+    assert corre("deshacer", "2") == 2, "no se deshizo nada"
+    salida = capsys.readouterr().out
+    assert "retirados 0" in salida and "ya había salido" in salida
+    assert {m["estado"] for m in buzon.conversacion(escena, "encargo-1") if m["direccion"] == "sale"} == {"enviado"}
 
 
 def test_el_permiso_casa_con_lo_que_el_agente_ESCRIBE(escena, tmux_falso):

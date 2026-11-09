@@ -38,6 +38,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from . import config
+from .reloj import ahora
 
 # El mismo patrón que `catalogo.leer_frontmatter`. No se reutiliza aquella
 # función porque corta el archivo a 4000 caracteres —le basta para leer la
@@ -45,8 +46,8 @@ from . import config
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.S)
 
 # Un id de lienzo es un nombre de archivo: si viniera de una URL sin validar,
-# `../../..` saldría de la carpeta del proyecto. Mismo criterio que
-# `transcripts.ID_SESION`.
+# `../../..` saldría de la carpeta del proyecto. Mismo criterio que el id de
+# una conversación (`modelos.es_sesion`).
 ID_VALIDO = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 
 # Igual para el proyecto, que también compone una ruta.
@@ -303,7 +304,7 @@ def escribir(
         plantilla=plantilla,
         proyecto_id=proyecto_id,
         slot=slot,
-        publicado_en=_ahora(),
+        publicado_en=ahora(),
         cuerpo=cuerpo,
         extra=previo.extra if previo and previo.id == base else {},
     )
@@ -341,7 +342,7 @@ def archivar(proyecto_id: str, lienzo_id: str, archivar: bool = True) -> Lienzo 
     lienzo = leer(proyecto_id, lienzo_id)
     if lienzo is None:
         return None
-    lienzo.archivado_en = _ahora() if archivar else None
+    lienzo.archivado_en = ahora() if archivar else None
     antes = lienzo.ruta.stat()
     _volcar(lienzo)
     with contextlib.suppress(OSError):
@@ -389,10 +390,6 @@ def _volcar(lienzo: Lienzo) -> None:
 # --------------------------------------------------------------------------- #
 # Utilidades
 # --------------------------------------------------------------------------- #
-
-
-def _ahora() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _a_epoch(cuando: str | None) -> float | None:

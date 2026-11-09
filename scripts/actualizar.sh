@@ -55,6 +55,10 @@ else
   HUB_PORT=${HUB_PORT:-8787}
 fi
 export HUB_HOME
+# Un unit con otro `--host` no se conserva: se para aquí y se dice (C-0112).
+# shellcheck source=lib/loopback.sh
+. "$RAIZ/scripts/lib/loopback.sh"
+exigir_loopback "$HUB_HOST"
 
 paso "1/7 · El clon"
 cd "$RAIZ"

@@ -80,3 +80,40 @@ def test_sin_microfono_lo_dice_en_vez_de_callar(tmp_path):
     """)
 
     assert "HTTPS" in r["estado"]
+
+
+def test_el_tablero_dicta_contra_su_url_y_el_orquestador_sigue_en_la_suya(tmp_path):
+    """C-0149: `data-grabar-url` lleva el audio a /api/voz (`transcribir.dictado`,
+    que borra el audio al salir bien); sin él, como siempre, /orquestador/audio."""
+    r = ejecutar(GUION, tmp_path, previo=MICROFONO + """
+      document.querySelectorAll('[data-grabar]')[0].dataset.grabarUrl = '/api/voz';
+    """, accion=PULSAR_DOS_VECES, respuestas={"POST /api/voz": {"ok": True, "texto": "una idea dictada"}})
+    assert r["errores"] == []
+    assert r["texto"] == "una idea dictada"
+    assert [e["url"] for e in r["enviados"]] == ["/api/voz"]
+
+
+def test_al_vaciarse_el_formulario_lo_siguiente_ya_no_sale_como_dictado(tmp_path):
+    """C-0233: «Encolar» ya no recarga, y `sin-recarga.js` vacía el formulario
+    con `reset()`. El origen es un campo oculto y `reset()` no lo devuelve —su
+    valor ES su atributo—: la tarea siguiente, tecleada, salía «dictada», y
+    el «Revísalo antes de mandarlo» se quedaba hablando de lo ya mandado."""
+    r = ejecutar(GUION, tmp_path, previo=MICROFONO + """
+      nodo('origen-0').value = 'texto';
+      document.querySelectorAll('[data-grabar]')[0].form = nodo('formulario-0');
+    """, accion="""
+      const b = document.querySelectorAll('[data-grabar]')[0];
+      b.disparar('click');
+      setTimeout(() => b.disparar('click'), 3);
+      setTimeout(() => {
+        registro.antes = nodo('origen-0').value;
+        nodo('formulario-0').disparar('reset');
+        registro.despues = nodo('origen-0').value;
+        registro.estado = nodo('estado-0').textContent;
+      }, 12);
+    """, respuestas={"POST /orquestador/audio": {"ok": True, "texto": "revisa alfa"}})
+
+    assert r["errores"] == []
+    assert r["antes"] == "audio"
+    assert r["despues"] == "texto"
+    assert r["estado"] == ""

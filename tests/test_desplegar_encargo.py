@@ -199,14 +199,14 @@ def app_(tmp_path):
 
 def test_una_app_sin_acceso_no_se_publica(falsos, app_):
     (app_.parent / "acceso.bcrypt").unlink()
-    r = corre(falsos, "citas", str(app_))
+    r = corre(falsos, "citas", str(app_), "vps")
     assert r.returncode == 1 and "acceso" in r.stderr
     assert "rsync" not in bitacora(falsos)
 
 
 def test_el_bloque_de_una_app_pone_el_acceso_delante_y_no_sirve_archivos(falsos, app_):
     (falsos["raiz"] / "hay-import").touch()
-    r = corre(falsos, "citas", str(app_))
+    r = corre(falsos, "citas", str(app_), "vps")
     assert r.returncode == 0, r.stderr
     assert "basic_auth" in r.stdout and "$2b$12$hashdeprueba" in r.stdout
     assert "reverse_proxy encargo-citas:8000" in r.stdout
@@ -245,3 +245,71 @@ def test_sin_dominio_no_publica_bajo_ninguno_por_omision(falsos, app_):
 
     assert r.returncode != 0 and "HUB_DOMINIO_ENCARGOS" in r.stderr
     assert "ssh" not in bitacora(falsos)
+
+
+def test_sin_servidor_no_despliega_en_uno_por_omision(falsos, mvp):
+    """C-0141: el alias por omisión era el servidor de quien lo escribió, contra
+    el criterio que el propio guion aplica a Caddy y al dominio."""
+    r = corre(falsos, "abarrotes-rosa", str(mvp))
+    assert r.returncode != 0 and "alias" in (r.stderr + r.stdout)
+    assert "ssh" not in bitacora(falsos)
+
+
+# ── El chat web: su token se lee por el mismo puntero que el hub ─────────────
+
+CHAT = RAIZ / "scripts" / "desplegar-chat.sh"
+
+
+def _chat(falsos, *args, entorno_extra=None):
+    # `ssh` guarda lo que le llega por la entrada cuando escribe el token.env:
+    # es lo único que va al servidor, y es lo que hay que ver.
+    ssh = falsos["bin"] / "ssh"
+    ssh.write_text(f'''#!/usr/bin/env bash
+echo "ssh $*" >> "{falsos['bitacora']}"
+case "$*" in
+  *"cat > "*token.env*) cat > "{falsos['raiz']}/token.env" ;;
+  *) cat >/dev/null 2>&1 || true ;;
+esac
+exit 0
+''', encoding="utf-8")
+    entorno = {**os.environ, "PATH": f"{falsos['bin']}:{os.environ['PATH']}",
+               "HUB_DOMINIO_ENCARGOS": "ejemplo.com", "HUB_CADDY": "caddy", **(entorno_extra or {})}
+    return subprocess.run(["bash", str(CHAT), *args], capture_output=True, text=True, timeout=120, env=entorno)
+
+
+def test_el_token_del_chat_sale_de_la_clave_que_dice_su_ancla(falsos, tmp_path):
+    """C-0141: el guion buscaba `CHAT_WEB_TOKEN=` con grep aunque el puntero
+    (`chat_web.token_ref`) dijera otra clave: con otra, subía un token vacío y
+    el chat no aceptaba al hub. Ahora lee `ruta#CLAVE` con `telegram.leer_token`,
+    como el hub."""
+    secreto = tmp_path / "chat.env"
+    secreto.write_text("OTRA=no\nMI_TOKEN_DEL_CHAT=abc123\n", encoding="utf-8")
+    r = _chat(falsos, "vps", f"{secreto}#MI_TOKEN_DEL_CHAT", "--va")
+    assert r.returncode == 0, r.stderr + r.stdout
+    assert (tmp_path / "token.env").read_text(encoding="utf-8").strip() == "CHAT_TOKEN=abc123"
+    assert "abc123" not in bitacora(falsos), "el token no va nunca en la línea de órdenes"
+
+
+def test_el_puntero_del_chat_con_la_casa_abreviada_tambien_vale(falsos, tmp_path):
+    """C-0186: la forma documentada es `~/.secretos/…#CLAVE`. El guion miraba
+    antes `[ -f "${TOKEN_REF%%#*}" ]`, que no expande `~`, y se paraba con
+    «falta el puntero» mientras `leer_token` —que sí lo expande— lo habría
+    leído bien. Ahora lo dice `leer_token`, el mismo que usa el hub."""
+    import subprocess as sp
+
+    casa = tmp_path / "casa"
+    (casa / ".secretos").mkdir(parents=True)
+    (casa / ".secretos" / "chat.env").write_text("MI_TOKEN_DEL_CHAT=abc123\n", encoding="utf-8")
+    cache = sp.run(["uv", "cache", "dir"], capture_output=True, text=True).stdout.strip()
+    r = _chat(falsos, "vps", "~/.secretos/chat.env#MI_TOKEN_DEL_CHAT", "--va",
+              entorno_extra={"HOME": str(casa), "UV_CACHE_DIR": cache})
+    assert r.returncode == 0, r.stderr + r.stdout
+    assert (tmp_path / "token.env").read_text(encoding="utf-8").strip() == "CHAT_TOKEN=abc123"
+
+
+def test_un_puntero_del_chat_que_no_lleva_a_nada_se_para_antes_de_tocar_el_servidor(falsos, tmp_path):
+    r = _chat(falsos, "vps", f"{tmp_path}/no-existe.env#MI_TOKEN_DEL_CHAT", "--va")
+    assert r.returncode == 1
+    assert "no existe" in r.stderr
+    assert "rsync" not in bitacora(falsos) and "mkdir" not in bitacora(falsos)
+

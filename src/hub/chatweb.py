@@ -21,7 +21,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from . import telegram
+from . import encargos, llavero, telegram
 
 
 TIMEOUT = 15
@@ -87,17 +87,37 @@ class BotDeChat:
             "botones": json.dumps([list(b) for b in botones], ensure_ascii=False)}).get("message_id")
 
     def enviar_foto(self, chat_id: int, ruta: Path, pie: str = "") -> int | None:
+        # Leer la imagen es parte de mandarla: un archivo que ya no está es un
+        # `TelegramCaido` más, como en `telegram.BotDeEncargos.enviar_foto`. Fuera
+        # del `try`, el `FileNotFoundError` cortaba cada vuelta del relé antes de
+        # pedir lo nuevo, y el canal se quedaba sordo (C-0186).
+        ruta = Path(ruta)
+        try:
+            datos = ruta.read_bytes()
+        except FileNotFoundError as exc:
+            raise telegram.TelegramCaido(f"no existe la imagen «{ruta}»") from exc
+        except OSError as exc:
+            raise telegram.TelegramCaido(f"no se pudo leer la imagen «{ruta}»: {exc}") from exc
         return self._peticion("/hub/fotos", {"user_id": int(chat_id), "pie": pie},
-                              archivo=("foto", Path(ruta).name, Path(ruta).read_bytes())).get("message_id")
+                              archivo=("foto", ruta.name, datos)).get("message_id")
 
     def pulsado(self, callback_id: str, texto: str = "") -> None:
         return None   # en la página el botón desaparece al pulsarlo; no hay «cargando…»
 
+    # Las dos de cortesía se tragan el fallo, como en `telegram.BotDeEncargos`
+    # (C-0129): el relé las llama sin `try`, y con el chat caído la vuelta se
+    # cortaba antes de leer nada, también lo de Telegram.
     def quitar_botones(self, chat_id: int, message_id: int) -> None:
-        self._peticion("/hub/quitar_botones", {"user_id": int(chat_id), "message_id": int(message_id)})
+        try:
+            self._peticion("/hub/quitar_botones", {"user_id": int(chat_id), "message_id": int(message_id)})
+        except telegram.TelegramCaido:
+            pass
 
     def escribiendo(self, chat_id: int) -> None:
-        self._peticion("/hub/escribiendo", {"user_id": int(chat_id)})
+        try:
+            self._peticion("/hub/escribiendo", {"user_id": int(chat_id)})
+        except telegram.TelegramCaido:
+            pass
 
     def descargar(self, file_id: str, destino: Path) -> Path:
         nombre = file_id[len(PREFIJO_MEDIO):] if file_id.startswith(PREFIJO_MEDIO) else file_id
@@ -155,6 +175,15 @@ def configurado(ajustes: dict) -> dict | None:
     return bloque
 
 
+def _token_ref() -> str | None:
+    from . import rele_encargos
+    return str((configurado(rele_encargos.ajustes()) or {}).get("token_ref") or "") or None
+
+
+#: Para el inventario del llavero (C-0143): dónde vive, nunca el valor.
+LLAVES = (llavero.Llave("chat-web", "la llave del hub ante el chat web de encargos", _token_ref),)
+
+
 def bot(ajustes: dict) -> BotDeChat | None:
     bloque = configurado(ajustes)
     if not bloque:
@@ -178,9 +207,8 @@ class Bots:
         self.caidos: dict[str, str] = {}
 
     def _de(self, chat_id: int):
-        fila = self.con.execute("SELECT canal FROM encargo_persona WHERE user_id = ?",
-                                (int(chat_id),)).fetchone()
-        canal = (fila["canal"] if fila else None) or "telegram"
+        persona = encargos.ver_persona(self.con, int(chat_id))
+        canal = (persona or {}).get("canal") or "telegram"
         if canal not in self.por_canal:
             raise telegram.TelegramCaido(f"la persona {chat_id} es de «{canal}» y ese canal no está configurado")
         return self.por_canal[canal]
@@ -228,15 +256,22 @@ class Bots:
                 # una vez por racha y se sigue con los demás canales.
                 if self.caidos.get(canal) != str(exc):
                     self.caidos[canal] = str(exc)
-                    from . import encargos
-
                     encargos.registrar(self.con, "falla", f"el canal «{canal}» no responde: {exc}")
                 continue
             self.caidos.pop(canal, None)
             for u in nuevas:
-                self.cursores[canal] = max(int(u.get("update_id", 0)) + 1, self.cursores.get(canal) or 0)
                 u = dict(u)
+                # El cursor no avanza al bajarlas sino al guardarlas
+                # (`confirmar`, decisión 345): avanzar aquí daba por leído lo
+                # que iba detrás de un mensaje que falló.
+                u["id_canal"] = int(u.get("update_id", 0))
                 u["update_id"] = offset or 0   # que no mueva el offset de Telegram
                 u["canal"] = canal
                 salida.append(u)
         return salida
+
+    def confirmar(self, update: dict) -> None:
+        """Ya guardado: el chat web no lo vuelve a dar."""
+        canal = update.get("canal")
+        if canal in self.cursores:
+            self.cursores[canal] = max(int(update["id_canal"]) + 1, self.cursores.get(canal) or 0)

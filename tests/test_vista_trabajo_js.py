@@ -384,6 +384,76 @@ def test_tras_cerrar_la_ultima_no_se_queda_mirando_una_sesion_muerta():
     assert "if (ultima) { location.href = '/trabajo'; return; }" in guion
 
 
+# ── cerrar desde la × de una pestaña (C-0227, decisión 396) ──────────────────
+
+DOS_VENTANAS = [
+    {"indice": 1, "etiqueta": "uno", "activa": True, "paneles": 1, "pertenece": "este",
+     "slot": None, "pane_id": "%11", "servidor": 4242},
+    {"indice": 2, "etiqueta": "dos", "activa": False, "paneles": 1, "pertenece": "este",
+     "slot": None, "pane_id": "%12", "servidor": 4242},
+]
+
+# Tres filas en el raíl, por su panel; cada una anota si se quitó. La 0 es la
+# que se cierra, y la 2 tiene sesión e índice iguales pero es otra (tmux
+# renumeró): por índice se habría ido la que no era.
+RAIL = """
+const filas = document.querySelectorAll('[data-panes]');
+['%12', '%11', '%30'].forEach((p, i) => {
+  filas[i].dataset = { panes: p };
+  filas[i].remove = () => registro.valores.push('quitada:' + i);
+});
+"""
+
+CERRAR_LA_2 = """
+HubUI.confirmar = () => Promise.resolve(true);
+setTimeout(() => nodo('ventanas').disparar('click',
+  { target: { dataset: { cerrar: '2' } }, stopPropagation(){} }), 5);
+"""
+
+
+def _cerrar_pestana(tmp_path, respuesta):
+    return ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path,
+        {"/ventanas": DOS_VENTANAS, "POST /api/sesion/work/ventana/2": respuesta},
+        accion=CERRAR_LA_2, previo=RAIL,
+    )
+
+
+def test_la_equis_cierra_por_el_panel_y_el_servidor_de_su_pestana(tmp_path):
+    """El diálogo pudo quedarse abierto lo que fuera: por índice se cerraba la
+    ventana que ocupara ese número para entonces."""
+    r = _cerrar_pestana(tmp_path, {"ok": True, "aviso": ""})
+    assert r["errores"] == []
+    cuerpo = next(e["cuerpo"] for e in r["enviados"] if e["url"].endswith("/ventana/2"))
+    assert cuerpo == {"accion": "cerrar", "pane_id": "%12", "servidor": 4242}
+
+
+def test_al_cerrar_desde_la_pestana_su_fila_del_rail_se_va_ya(tmp_path):
+    """C-0227: el raíl se pintó con el muestreo de antes y seguía enseñándola."""
+    r = _cerrar_pestana(tmp_path, {"ok": True, "aviso": ""})
+    assert "quitada:0" in r["valores"]
+    assert "quitada:1" not in r["valores"] and "quitada:2" not in r["valores"]
+    assert r["avisos"] == []
+
+
+def test_si_la_pestana_ya_no_esta_en_la_lista_no_se_manda_nada(tmp_path):
+    """Sin su panel, el hub sólo podía contestar «No se pudo cerrar: » sin más."""
+    r = ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path, {"/ventanas": DOS_VENTANAS},
+        accion=CERRAR_LA_2.replace("cerrar: '2'", "cerrar: '9'"), previo=RAIL,
+    )
+    assert not [e for e in r["enviados"] if "/ventana/" in e["url"]]
+    assert [a["titulo"] for a in r["avisos"]] == ["No se pudo cerrar la ventana"]
+
+
+def test_si_el_hub_no_pudo_cerrarla_lo_dice_y_no_toca_el_rail(tmp_path):
+    """La × ignoraba la respuesta: no cerrar y no decirlo es «¿cerró o no?»."""
+    r = _cerrar_pestana(tmp_path, {"ok": False, "error": "tmux se reinició desde que abriste esta página"})
+    assert [a["titulo"] for a in r["avisos"]] == ["No se pudo cerrar la ventana"]
+    assert "se reinició" in r["avisos"][0]["mensaje"]
+    assert not any(v.startswith("quitada") for v in r["valores"] if isinstance(v, str))
+
+
 # ── Las pestañas dicen de quién es cada ventana ──────────────────────────────
 #
 # 🔴 Esto es lo que él llevaba semanas reportando: «veo una en sin organizar que
@@ -1048,3 +1118,62 @@ def test_dictar_graba_transcribe_y_pega_sin_enter(tmp_path_factory):
     assert r["peticiones"].count("/api/voz") == 1
     assert r["pegados"] == ["explícame el fallo del login"]
     assert "\r" not in "".join(r["tecleado"])
+
+
+
+# ── el latido suelta las ventanas que murieron por dentro (C-0234) ───────────
+
+# Tres filas: una ventana muerta, una partida que perdió su primer panel pero
+# sigue viva con el segundo, y una entera viva.
+FILAS_LATIDO = """
+const filas = document.querySelectorAll('[data-panes]');
+[['%1', 'work:0'], ['%2 %4', 'work:1'], ['%3', 'work:2']].forEach(([p, sitio], i) => {
+  filas[i].dataset = { panes: p, sitio };
+  filas[i].remove = () => registro.valores.push('quitada:' + i);
+});
+"""
+
+
+def _latido(tmp_path, paneles, servidor, servidor_pagina=4242, ventanas=("work:1", "work:2")):
+    contexto = {**CONTEXTO, "servidor": servidor_pagina}
+    return ejecutar(
+        script_de("trabajo.html", contexto), tmp_path,
+        {"/api/trabajo/pulso": {"slots": {}, "notas": {}, "paneles": paneles,
+                                "ventanas": None if paneles is None else list(ventanas),
+                                "servidor": servidor}},
+        previo=FILAS_LATIDO,
+    )
+
+
+def _quitadas(r):
+    return sorted(v for v in r["valores"] if isinstance(v, str) and v.startswith("quitada"))
+
+
+def test_el_latido_quita_la_ventana_que_ya_no_esta_en_el_muestreo(tmp_path):
+    r = _latido(tmp_path, ["%4", "%3"], 4242)
+    assert r["errores"] == []
+    assert _quitadas(r) == ["quitada:0"]
+
+
+def test_una_ventana_partida_que_perdio_su_primer_panel_sigue(tmp_path):
+    """Con el primer panel como identidad desaparecería estando viva."""
+    r = _latido(tmp_path, ["%4", "%3"], 4242)
+    assert "quitada:1" not in _quitadas(r)
+
+
+def test_con_otro_servidor_de_tmux_no_se_toca_nada(tmp_path):
+    """Tras un reinicio los `%N` son otros: se vaciaría el raíl de ventanas
+    que volvieron con otro id."""
+    assert _quitadas(_latido(tmp_path, ["%9"], 5151)) == []
+
+
+def test_sin_datos_del_muestreo_no_se_toca_nada(tmp_path):
+    assert _quitadas(_latido(tmp_path, None, None)) == []
+
+
+
+def test_una_ventana_partida_despues_de_pintar_la_pagina_sigue_aunque_muera_su_panel(tmp_path):
+    """Revisor de C-0234: la fila sólo conocía `%1`; la ventana se partió (`%7`)
+    y luego `%1` hizo `exit`. Sigue viva en su sitio: la fila no se va."""
+    r = _latido(tmp_path, ["%7", "%4", "%3"], 4242, ventanas=("work:0", "work:1", "work:2"))
+    assert _quitadas(r) == []

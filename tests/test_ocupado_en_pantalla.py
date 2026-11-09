@@ -52,8 +52,47 @@ EN_EL_HISTORIAL = f"""\
 """
 
 
+# Medido el 9-nov (C-0222) con Claude Code 2.1.280: una sesión con nombre lo
+# pinta en el borde de arriba del cuadro, y con lista de tareas ésta va entre
+# la línea de estado y el cuadro. Con las dos cosas, se daba por parada.
+CON_NOMBRE_Y_TAREAS = "\n".join([
+    "",
+    "· Preparando la versión… (53m 38s · ↓ 151.2k tokens)",
+    "  ⎿ \xa0✔ C-0214: hub en máquina aparte (4 piezas)",
+    "     ◼ Preparar la versión 0.5.0",
+    "     ◼ C-0222: talleres y punto de estado",
+    "     … +2 pending",
+    "",
+    "─" * 100 + " Hub remoto con control desde múltiples dispositivos ─",
+    "❯\xa0",
+    REGLA,
+    "  [Opus 5.5] │ hub git:(main)",
+])
+
+# Un cuadro de permiso abierto: el `❯` más cercano es un mensaje del
+# historial, y encima el turno anterior citaba una línea de estado. No hay
+# cuadro de entrada, así que no se lee nada (revisor de C-0222).
+PERMISO_TRAS_CITAR_UNA_LINEA_DE_ESTADO = "\n".join([
+    "● El panel decía «· Brewing… (1m 3s)» cuando lo miré.",
+    "✻ Worked for 4s · done 1:40 PM",
+    "❯ Crea el archivo nota.txt con el texto hola.",
+    "● Write(nota.txt)",
+    REGLA,
+    " Create file",
+    " Do you want to create nota.txt?",
+    " ❯ 1. Yes",
+    "   3. No",
+])
+
+ACABADO_CON_NOMBRE = CON_NOMBRE_Y_TAREAS.replace(
+    "· Preparando la versión… (53m 38s · ↓ 151.2k tokens)", "✻ Brewed for 10m 39s · done 1:42 PM")
+
+
 @pytest.mark.parametrize("pantalla, esperado", [
     (TRABAJANDO, True),
+    (CON_NOMBRE_Y_TAREAS, True),
+    (ACABADO_CON_NOMBRE, False),
+    (PERMISO_TRAS_CITAR_UNA_LINEA_DE_ESTADO, False),
     (ACABADO, False),
     (EN_EL_HISTORIAL, False),
     ("sin cuadro de entrada", False),

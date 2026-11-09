@@ -40,6 +40,15 @@ def _hostname_fijo(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _secretario_apagado(monkeypatch):
+    """El aviso de «secretario caído» mira `systemctl` de quien corre la suite:
+    en la máquina del dueño está habilitado y en la de otro no. Por omisión,
+    apagado; sus pruebas ponen el latido que quieren (decisión 329)."""
+    from hub import avisos
+    monkeypatch.setattr(avisos, "latido_secretario", lambda: (False, None))
+
+
+@pytest.fixture(autouse=True)
 def _datos_aparte(tmp_path, monkeypatch):
     """Ningún test toca los datos reales de quien los ejecuta.
 
@@ -95,6 +104,15 @@ def _datos_aparte(tmp_path, monkeypatch):
     # `git ls-remote` al repo publicado. La suite no sale a internet; los tests
     # de `version` la encienden a propósito contra un repo local.
     monkeypatch.setenv("HUB_BUSCAR_VERSIONES", "0")
+    # Y las llaves del secretario (decisiones 304 y 311): por omisión viven en
+    # `~/.secretos/` de quien ejecuta, y la de Web Push existe en cuanto el
+    # servicio arrancó una vez. Un test no lee ni crea llaves reales.
+    monkeypatch.setenv("HUB_SECRETARIO_WEBPUSH", str(tmp_path / "secretos" / "webpush"))
+    monkeypatch.setenv("HUB_SECRETARIO_GOOGLE", str(tmp_path / "secretos" / "google"))
+    monkeypatch.setenv("HUB_SECRETARIO_CORREO", str(tmp_path / "secretos" / "correo"))
+    # Telegram fija su carpeta al importarse: se mueve el atributo, no sólo la variable.
+    from hub.secretario.fuentes import telegram as _telegram
+    monkeypatch.setattr(_telegram, "POR_OMISION", tmp_path / "secretos" / "telegram")
 
 
 @pytest.fixture
@@ -114,3 +132,21 @@ def proyecto_demo(con):
         "INSERT INTO proyecto_ruta (proyecto_id, ruta, tipo) VALUES ('demo','/tmp/demo','asiento')"
     )
     return "demo"
+
+
+@pytest.fixture
+def canal_telegram():
+    """El Canal de Telegram configurado: el respaldo de los avisos del
+    secretario (decisión 310) sólo cuenta como listo si existe, si `hub-canal`
+    leyó su token y si hay dueño en /canal (C-0060)."""
+    from hub import canal, rele_base
+
+    config.canal_yml().parent.mkdir(parents=True, exist_ok=True)
+    config.canal_yml().write_text("token_ref: env:TOKEN_DE_PRUEBA\n", encoding="utf-8")
+    rele_base.anotar_token("canal", "env:TOKEN_DE_PRUEBA", None)
+    h = db.conectar()
+    db.inicializar(h)
+    canal.anotar_contacto(h, 1, "dueno", "Dueño")
+    canal.marcar_dueno(h, 1)
+    h.close()
+    yield config.canal_yml()

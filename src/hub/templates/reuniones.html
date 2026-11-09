@@ -23,7 +23,7 @@
   .acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
   .marca { font-size:11px; padding:1px 8px; border-radius:999px; white-space:nowrap; }
   .marca.ok, .marca.hecho { color:var(--ok); background:color-mix(in srgb, var(--ok) 14%, transparent); }
-  .marca.mal, .marca.fallo { color:var(--riesgo); background:color-mix(in srgb, var(--riesgo) 14%, transparent); }
+  .marca.mal, .marca.fallo, .marca.se-cortó { color:var(--riesgo); background:color-mix(in srgb, var(--riesgo) 14%, transparent); }
   .marca.sin-comprimir { color:var(--texto-3); background:var(--elevado); }
   .marca.espera, .marca.procesando, .marca.grabando, .marca.sin-procesar
     { color:var(--espera); background:color-mix(in srgb, var(--espera) 14%, transparent); }
@@ -49,7 +49,9 @@
 {% set a = r.agente %}
 {% macro peso(b) %}{% if b >= 1e9 %}{{ '%.1f' | format(b / 1e9) }} GB{% else %}{{ (b / 1e6) | round | int }} MB{% endif %}{% endmacro %}
 {% set cx = r.conexion %}
-<div class="reu" {% if not llave_nueva and (r.orden.grabar or r.sin_comprimir.comprimiendo or (r.lista | selectattr('estado', 'in', ['procesando', 'grabando']) | list)) %}data-refrescar="5"{% endif %}>
+{# Una región (C-0167): las acciones y el refresco solo cambian esto, sin
+   recargar la página. #}
+<div data-region="reuniones" class="reu" {% if not llave_nueva and (r.orden.grabar or r.sin_comprimir.comprimiendo or (r.lista | selectattr('estado', 'in', ['procesando', 'grabando']) | list)) %}data-refrescar="5"{% endif %}>
 
 {% if llave_nueva %}
   <div class="tarjeta">
@@ -77,14 +79,14 @@
       {% for p in pr.pasos %}
         {% if p.id == 'carpeta' %}
           {% call prep.paso(p, loop.index, p.id == sig) %}
-            <form method="post" action="/reuniones/carpeta">
+            <form data-sin-recarga method="post" action="/reuniones/carpeta">
               <input type="text" name="ruta" value="{{ pr.windows }}" aria-label="Carpeta del agente en Windows">
               <button class="boton">Guardar</button>
             </form>
           {% endcall %}
         {% elif p.id == 'agente' %}
           {% call prep.paso(p, loop.index, p.id == sig) %}
-            <form method="post" action="/reuniones/copiar-agente">
+            <form data-sin-recarga method="post" action="/reuniones/copiar-agente">
               <button class="boton {{ 'principal' if p.id == sig }}">Copiar el agente a {{ pr.windows }}</button>
             </form>
           {% endcall %}
@@ -104,6 +106,7 @@
 {% endif %}
 
 {% if not cx.hay_llave %}
+  {# Sin `data-sin-recarga`: contesta enseñando la llave nueva, no con un 303. #}
   <form class="tarjeta" method="post" action="/reuniones/conectar">
     <h2>Conectar el agente <span class="marca espera">sin llave</span></h2>
     <p class="ayuda">El agente de Windows sólo puede hablar con el hub con una llave, para que nadie más pueda darle
@@ -138,13 +141,13 @@
       <span>Grabando {% if r.orden.titulo %}«{{ r.orden.titulo }}» {% endif %}· monitor {{ r.orden.monitor }}
         {% if r.orden.app %}· audio de <strong>{{ r.orden.app }}</strong>{% endif %}
         {% if r.orden.micro %}· con tu micro{% endif %} · {{ g.fotos or 0 }} capturas</span>
-      <form method="post" action="/reuniones/accion" style="margin-left:auto">
+      <form data-sin-recarga method="post" action="/reuniones/accion" style="margin-left:auto">
         <button class="boton principal" name="que" value="parar">Parar</button></form>
     </div>
     {% if g.errores %}<p class="ayuda" style="color:var(--riesgo);margin-top:10px">{{ g.errores | join(' · ') }}</p>{% endif %}
   </div>
 {% else %}
-  <form class="tarjeta" method="post" action="/reuniones/accion">
+  <form data-sin-recarga class="tarjeta" method="post" action="/reuniones/accion">
     <h2>Grabar <span class="marca ok">agente conectado · {{ a.equipo }}</span></h2>
     <p class="ayuda">Graba el monitor elegido (1 captura por segundo, sólo se guardan las que cambian), el audio
       <strong>sólo</strong> de la aplicación elegida —otra música no entra— y tu micro aparte. Al parar, se
@@ -185,7 +188,7 @@
   <div class="tarjeta">
     <h2>Grabadas</h2>
     {% if r.sin_comprimir.n %}
-    <form method="post" action="/reuniones/accion" class="acciones" style="margin:0 0 10px">
+    <form data-sin-recarga method="post" action="/reuniones/accion" class="acciones" style="margin:0 0 10px">
       <span>{{ r.sin_comprimir.n }} sin comprimir · <strong>{{ peso(r.sin_comprimir.bytes) }}</strong>.
         <span class="tenue" style="font-size:12.5px">Comprimir pasa el audio a Opus (unas 15 veces menos) y borra el WAV original.</span></span>
       <button class="boton" name="que" value="comprimir-todas" {{ 'disabled' if r.sin_comprimir.comprimiendo }}>

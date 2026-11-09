@@ -65,7 +65,7 @@ tmux, y sin él el hub parece instalado sin estarlo.
 |---|---|
 | `~/.local/share/hub/projects.yml` | **Tu registro.** Aquí declaras tus proyectos. Es un archivo de texto a propósito: si algo se rompe, se arregla con un editor |
 | `~/.local/share/hub/hub.db` | El índice, y también tus slots, notas, canal, programados y encargos. No lo borres: si algo falla, apártalo (ver `conocimiento/06-problemas.md`) |
-| `~/.config/systemd/user/hub-*.service` | Cuatro servicios, generados con las rutas de tu clon: `hub-web` y `hub-snapshotter` arrancados; `hub-canal` y `hub-encargos` instalados **parados** |
+| `~/.config/systemd/user/hub-*.service` | Cinco servicios, generados con las rutas de tu clon: `hub-web` y `hub-snapshotter` arrancados; `hub-canal`, `hub-encargos` y `hub-secretario` instalados **parados** |
 
 Los dos parados son los relés de Telegram (el canal de consulta con sus avisos,
 y los encargos). Sin su archivo de ajustes no tienen token, y por eso no se
@@ -74,6 +74,7 @@ arrancan. Cuando los configures (`canal.yml`, `encargos.yml`; cómo, en
 
 ```bash
 systemctl --user enable --now hub-canal       # y/o hub-encargos
+systemctl --user enable --now hub-secretario  # el secretario (conocimiento/13-secretario.md)
 ```
 
 Tus datos **no viven dentro del repo**: así puedes actualizar el hub con un
@@ -117,10 +118,10 @@ sus botones «Guíame» se lo preguntan al asistente.
 ## Comprobar y desinstalar
 
 ```bash
-systemctl --user status hub-web hub-snapshotter hub-canal hub-encargos   # cómo van
+systemctl --user status hub-web hub-snapshotter hub-canal hub-encargos hub-secretario   # cómo van
 journalctl --user -u hub-web -f                   # qué está haciendo
 bash scripts/desinstalar.sh                       # servicios fuera, datos intactos
-bash scripts/desinstalar.sh --datos               # además borra ~/.local/share/hub
+bash scripts/desinstalar.sh --datos               # además borra la carpeta de datos del servicio instalado
 ```
 
 ## Instalar en otro sitio o en otro puerto
@@ -131,9 +132,9 @@ Los datos y el puerto salen de variables de entorno:
 HUB_HOME=/tmp/hub-pruebas HUB_PORT=8788 bash scripts/instalar.sh --sin-servicios
 ```
 
-🔴 **`--sin-servicios` no es opcional si ya tienes el hub instalado.** Los cuatro
+🔴 **`--sin-servicios` no es opcional si ya tienes el hub instalado.** Los cinco
 units de systemd se llaman siempre igual (`hub-web`, `hub-snapshotter`,
-`hub-canal`, `hub-encargos`), así que una
+`hub-canal`, `hub-encargos`, `hub-secretario`), así que una
 segunda instalación **reescribe los de la primera** y te deja el hub de verdad
 sirviendo desde la carpeta de pruebas. Cambiar `HUB_HOME` y `HUB_PORT` no
 evita eso: aísla los datos, no los servicios.
@@ -166,7 +167,7 @@ funciona. Están aquí porque la que no se documenta no existe.
 | `REUNIONES_PROYECTO` | `componentes/reuniones` | El procesado de Reuniones, si lo tienes en otro sitio |
 | `REUNIONES_AGENTE` | la carpeta que eliges en Reuniones | Dónde está el agente de Windows, visto desde WSL (`/mnt/c/…`) |
 | `REUNIONES_RAIZ` | junto al agente | Dónde están las grabaciones, vistas desde WSL |
-| `HUB_BUSCAR_VERSIONES` | `1` | Con `0`, el hub no mira si hay versión nueva publicada (un `git ls-remote` al día como mucho) |
+| `HUB_BUSCAR_VERSIONES` | `1` | Con `0`, el hub no mira si hay versión nueva publicada (un `git ls-remote` a la hora como mucho) |
 | `HUB_BIN` | `~/.local/bin` | Dónde enlaza `sembrar-asistente.sh` el comando `hub` |
 | `HUB_STATUSLINE_SIGUIENTE` | *(ninguno)* | Ver abajo |
 | `HUB_COMANDO_CLAUDE` | `claude` | Lo que «Restaurar» deja escrito (sin Enter) en las ventanas que tenían Claude Code. Va en el entorno de `hub-web` |
@@ -175,7 +176,7 @@ funciona. Están aquí porque la que no se documenta no existe.
 | `HUB_CANAL_YML` | `$HUB_HOME/canal.yml` | Ajustes del canal de consulta: el **puntero** al token del bot, nunca el token |
 | `HUB_ENCARGOS_YML` | `$HUB_HOME/encargos.yml` | Lo mismo para el bot de encargos, que es otro bot con otro token |
 | `HUB_COMANDOS_YML` | `$HUB_HOME/comandos.yml` | Los comandos preparados de Archivos. Sin archivo, ninguno |
-| `HUB_TRANSCRIPTS` | `~/.claude/projects` | Dónde busca los transcripts de Claude Code la pantalla de Consumo |
+| `HUB_TRANSCRIPTS` | `~/.claude/projects` | Dónde busca los transcripts de Claude Code la pantalla de Consumo, y el «último uso» de Inventario |
 | `HUB_CADDY`, `HUB_DOMINIO_ENCARGOS` | *(ninguno)* | Sólo para `scripts/desplegar-encargo.sh` y `desplegar-chat.sh`: el Caddy del servidor y el dominio bajo el que se publica cada encargo. El relé los pasa desde `encargos.yml` |
 
 🔴 **`HUB_STATUSLINE_SIGUIENTE`, si ya tienes una statusline.** Sembrar el
@@ -252,6 +253,17 @@ uv run python -m hub.acceso alta "Mi móvil"     # imprime el QR
 La terminal pide además el interruptor **«terminal remota»** de `/acceso`, que
 está apagado de fábrica y se vuelve a apagar cada vez que `hub-web` reinicia.
 
+### El hub en una máquina aparte
+
+Si lo instalas en una máquina sin monitor para usarlo desde tu PC, el primer
+aparato se da de alta igual pero por SSH, y el enlace que imprime se abre en
+el navegador de tu PC (no hace falta escanear). Para que esa máquina vuelva
+sola tras un apagón hacen falta piezas fuera del hub —la BIOS, una tarea de
+arranque sin sesión (`scripts/arrancar-sin-sesion.ps1` en Windows), Tailscale
+desatendido, no suspenderse— y **Máquina → Salud** dice cuál falta. La guía
+entera, con lo que todavía no funciona entre dos máquinas, está en
+`conocimiento/14-maquina-aparte.md`.
+
 Lo que esa puerta **no** cubre: un aparato que ya esté aprobado en tu red
 privada y falsee la cabecera `Host: localhost` pasa como si fuera de casa. Ahí
 te defiende la aprobación manual de aparatos de la red privada (en Tailscale,
@@ -281,4 +293,5 @@ El resto es para piezas opcionales o para mantener el hub:
 | `transcribir-whisper.py` | Transcriptor local con faster-whisper. No se importa: se apunta desde `transcripcion.comando` en `encargos.yml` |
 | `sala-limpia/` | Probar la instalación de cero en un contenedor (`conocimiento/08-sala-limpia.md`) |
 | `tmux-arranque.service` | Ejemplo de unit que levanta un servidor de tmux al arrancar, para el acceso remoto en frío. El instalador **no** lo instala |
+| `arrancar-sin-sesion.ps1` | En Windows, crea la tarea que levanta WSL al encender sin iniciar sesión, para el hub en una máquina aparte. Se ejecuta a mano, como administrador |
 | `generar-iconos.py` | Regenera los iconos de la web |

@@ -68,3 +68,25 @@ def test_un_hueco_en_blanco_cuenta_como_ausente(declarados):
     """Un campo que se deja vacío en el formulario no es un valor."""
     with pytest.raises(comandos.ComandoInvalido):
         comandos.expandir("bash x.sh {repo}", {"repo": "   "})
+
+
+# ── preparar: lo que hacía la ruta de /archivos/terminal (C-0106) ────────────
+
+def test_preparar_rellena_la_ruta_con_la_carpeta_y_escapa_lo_demas(declarados):
+    """`{ruta}` es el dato que el móvil no puede teclear: lo pone la carpeta."""
+    orden = comandos.preparar("clonar", {"repo": "mi api; rm -rf ~", "sobra": "x"}, "/srv/proyectos")
+    assert orden == "bash ~/.secretos/clonar.sh 'mi api; rm -rf ~' /srv/proyectos"
+
+
+def test_preparar_respeta_una_ruta_escrita_a_mano(declarados):
+    assert comandos.preparar("clonar", {"repo": "r", "ruta": "/otra"}, "/srv").endswith(" r /otra")
+
+
+def test_preparar_un_comando_que_no_existe_no_escribe_nada(declarados):
+    with pytest.raises(comandos.ComandoInvalido, match="no hay ningún comando «nada»"):
+        comandos.preparar("nada", {}, "/srv")
+
+
+def test_preparar_con_un_hueco_vacio_no_escribe_nada(declarados):
+    with pytest.raises(comandos.ComandoInvalido, match="repo"):
+        comandos.preparar("clonar", {"repo": " "}, "/srv")

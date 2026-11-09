@@ -454,3 +454,62 @@ def test_las_dos_primeras_preguntas_hablan_del_sistema_y_no_del_dia():
     assert "sistema" in dia.pregunta and "día normal" not in dia.pregunta
     assert "primero" in duele.pregunta and "quitarte" not in duele.pregunta
     assert dia.campo == "negocio" and duele.campo == "dolor", "los campos de la ficha no cambian"
+
+
+# ── Lo que otros preguntan al registro y a los encargos (C-0137) ────────────
+
+
+def test_ya_registrado_busca_por_el_principio_del_detalle_y_desde_cuando(con):
+    from datetime import datetime, timedelta, timezone
+
+    encargos.registrar(con, "falla", "no se pudo desplegar (código 3)", encargo_id="tienda")
+    ahora = datetime.now(timezone.utc)
+
+    assert encargos.ya_registrado(con, "tienda", "no se pudo desplegar")
+    assert encargos.ya_registrado(con, "tienda", "no se pudo desplegar", desde=ahora - timedelta(minutes=10))
+    assert not encargos.ya_registrado(con, "tienda", "no se pudo desplegar", desde=ahora + timedelta(minutes=1))
+    assert not encargos.ya_registrado(con, "otra", "no se pudo desplegar")
+    # Por el principio y tal cual: ni por el medio ni con comodines de LIKE.
+    assert not encargos.ya_registrado(con, "tienda", "se pudo desplegar")
+    assert not encargos.ya_registrado(con, "tienda", "no se pudo %")
+
+
+def test_lo_que_escribio_sin_alta_se_recupera_en_orden_y_sin_lo_vacio(con):
+    encargos.registrar(con, "falla", encargos.MARCA_SIN_ALTA, user_id=9, cuerpo="hola")
+    encargos.registrar(con, "falla", encargos.MARCA_SIN_ALTA, user_id=9, cuerpo="")
+    encargos.registrar(con, "falla", "otra cosa", user_id=9, cuerpo="no cuenta")
+    encargos.registrar(con, "falla", encargos.MARCA_SIN_ALTA, user_id=8, cuerpo="de otra persona")
+    encargos.registrar(con, "falla", encargos.MARCA_SIN_ALTA, user_id=9, cuerpo="tengo una tienda")
+
+    assert encargos.escrito_sin_alta(con, 9) == ["hola", "tengo una tienda"]
+
+
+def test_lo_escrito_sin_alta_con_su_numero_se_recupera_una_vez_aunque_se_apuntara_dos(con):
+    """C-0186: el relé apunta lo de quien no tiene alta con el número del
+    mensaje. Si el canal lo dio dos veces y las dos se apuntaron, al darle de
+    alta el entrevistador lo leía dos veces. El mismo número pasado el plazo
+    ya es otro mensaje (el chat web rehecho reempieza sus números), y las
+    líneas sin número —las de antes— no se pueden comparar y van todas."""
+    from datetime import datetime, timedelta, timezone
+
+    dia = timedelta(hours=24)
+    for marca, cuerpo in ((encargos.marca_sin_alta(31), "tengo una panadería"),
+                          (encargos.marca_sin_alta(31), "tengo una panadería"),
+                          (encargos.marca_sin_alta(32), "y fío a los vecinos"),
+                          (encargos.MARCA_SIN_ALTA, "sí"),
+                          (encargos.MARCA_SIN_ALTA, "sí")):
+        encargos.registrar(con, "falla", marca, user_id=9, cuerpo=cuerpo)
+    encargos.registrar(con, "falla", encargos.marca_sin_alta(31), user_id=9, cuerpo="otra cosa")
+    con.execute("UPDATE encargo_registro SET momento = ? WHERE id = (SELECT MAX(id) FROM encargo_registro)",
+                ((datetime.now(timezone.utc) + timedelta(days=3)).isoformat(timespec="seconds"),))
+
+    assert encargos.escrito_sin_alta(con, 9, dia) == [
+        "tengo una panadería", "y fío a los vecinos", "sí", "sí", "otra cosa"]
+    assert len(encargos.escrito_sin_alta(con, 9)) == 6, "sin plazo no se descarta nada"
+
+
+def test_tiene_encargos_cuenta_cualquiera_aunque_no_este_abierto(con):
+    assert not encargos.tiene_encargos(con, 5)
+    encargos.crear(con, "encargo-1", 5, "x")
+    encargos.tocar(con, "encargo-1", estado="descartado")
+    assert encargos.tiene_encargos(con, 5)

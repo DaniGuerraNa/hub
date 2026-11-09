@@ -107,6 +107,40 @@ proyectos:
     assert p.rutas == []
 
 
+def test_una_carpeta_que_no_se_puede_leer_no_tumba_el_registro(tmp_path, monkeypatch, capsys):
+    """Medido el 7-nov: OneDrive dejó una carpeta en EIO y `is_dir()` lanzó en
+    vez de decir que no. `cargar` lo usa todo el hub —el snapshotter dejó de
+    latir y avisó «hub callado»—, así que un proyecto ilegible se queda sin esas
+    rutas y se dice en voz alta (reglas duras 2 y 21); los demás cargan."""
+    ws = tmp_path / "onedrive"
+    ws.mkdir()
+    otro = tmp_path / "otro"
+    otro.mkdir()
+    yml = tmp_path / "projects.yml"
+    yml.write_text(f"""
+proyectos:
+  - id: trabajo
+    nombre: Trabajo
+    asiento: {ws}
+    rutas:
+      - patron: "*/repos/*"
+  - id: otro
+    nombre: Otro
+    asiento: {otro}
+""", encoding="utf-8")
+    original = Path.stat
+
+    def stat_que_falla(self, *a, **k):
+        if str(self).startswith(str(ws)):
+            raise OSError(5, "Input/output error", str(self))
+        return original(self, *a, **k)
+
+    monkeypatch.setattr(Path, "stat", stat_que_falla)
+    trabajo, segundo = registry.cargar(yml)
+    assert (trabajo.id, trabajo.rutas, segundo.id) == ("trabajo", [], "otro")
+    assert "no se puede leer" in capsys.readouterr().out
+
+
 def test_un_patron_relativo_sin_asiento_se_rechaza(tmp_path):
     yml = tmp_path / "projects.yml"
     yml.write_text("""

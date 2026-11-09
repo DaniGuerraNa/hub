@@ -30,7 +30,7 @@ import urllib.request
 import wave
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 HUB = os.environ.get("REUNIONES_HUB", "http://127.0.0.1:8787")
 # Las grabaciones y el log van junto a la carpeta del agente (`<base>\agente`
 # → `<base>\grabaciones`, `<base>\agente.log`): así el agente funciona donde lo
@@ -317,18 +317,46 @@ class Grabacion:
 
 # ─────────────────────────────── el bucle ───────────────────────────────
 
+def abrir(ruta: str) -> bool:
+    """Una pantalla del hub en el navegador de esta PC (la pide el secretario).
+
+    Sólo rutas del hub («/trabajo?slot=3»), pegadas a la dirección del hub que
+    conoce el agente: aunque alguien escribiera una URL en la orden, no podría
+    mandar el navegador a otra web."""
+    if not ruta.startswith("/") or ruta.startswith("//") or "\\" in ruta:
+        log("ruta rechazada:", ruta[:120])
+        return False
+    url = HUB.rstrip("/") + ruta
+    if hasattr(os, "startfile"):
+        os.startfile(url)
+    else:
+        import webbrowser
+        webbrowser.open(url)
+    log("abierta:", ruta[:120])
+    return True
+
+
 def bucle():
     log(f"agente {VERSION} → {HUB}, graba en {RAIZ}")
     grab = None
     inventario, cuando_inv = {}, 0.0
     avisado_llave = 0.0
+    abiertas: list[str] = []      # se confirman en el latido siguiente
     while True:
         try:
             if time.time() - cuando_inv > 15:
                 inventario = {"monitores": monitores(), "microfonos": microfonos(), "apps": apps_con_audio()}
                 cuando_inv = time.time()
             r = _post("/api/reuniones/latido", {"agente": VERSION, "equipo": platform.node(),
-                                                "grabando": grab.estado() if grab else None, **inventario})
+                                                "grabando": grab.estado() if grab else None,
+                                                "abiertas": abiertas, **inventario})
+            abiertas = []
+            for p in r.get("abrir") or []:
+                try:
+                    if abrir(str(p.get("ruta") or "")):
+                        abiertas.append(str(p.get("id")))
+                except Exception as e:  # una pantalla que no abre no para el agente
+                    log("no se pudo abrir:", repr(e)[:200])
             orden = r.get("orden") or {}
             if orden.get("grabar") and not grab:
                 grab = Grabacion(orden)

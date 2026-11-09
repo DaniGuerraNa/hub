@@ -152,6 +152,9 @@
 </div>
 {% endif %}
 
+{# Región, y fuera del `if` (C-0233): «Ya lo revisé» quita el aviso sin
+   recargar ni volver arriba, y en la página a la que vuelve ya no está. #}
+<div data-region="recuperacion">
 {% if r.recuperacion %}
 <div class="aviso">
   {# Envuelto: `.aviso` es flex en fila, y con el título, el párrafo, la lista
@@ -168,7 +171,10 @@
     {% for p in r.recuperacion.paneles %}
     <li>
       <div class="pila">
-        <span class="etiqueta">{{ p.etiqueta }}</span>
+        {# Partible, como la ruta de debajo: la etiqueta es el título que puso
+           el panel, y a veces es una ruta sin espacios que empujaba la portada
+           a 473 px en el teléfono (medido el 6-nov, C-0168). #}
+        <span class="etiqueta" style="overflow-wrap:anywhere">{{ p.etiqueta }}</span>
         <span class="mono" style="overflow-wrap:anywhere">{{ p.cwd }}</span>
         {% if p.slot_nombre %}<span class="tenue">slot: {{ p.slot_nombre }}</span>{% endif %}
       </div>
@@ -177,13 +183,14 @@
   </ul>
   <div class="barra" style="margin-top:12px;flex-wrap:wrap">
     <a class="boton principal" href="/trabajo">Ir a trabajar</a>
-    <form method="post" action="/recuperacion/{{ r.recuperacion.id }}/revisada" class="enlinea">
+    <form method="post" action="/recuperacion/{{ r.recuperacion.id }}/revisada" class="enlinea" data-sin-recarga>
       <button class="aceptar">Ya lo revisé</button>
     </form>
   </div>
   </div>
 </div>
 {% endif %}
+</div>
 
 {% if r.respaldo.commits_sin_respaldo %}
 <!-- Lo primero de la pantalla principal, porque es el hallazgo que originó el
@@ -221,6 +228,9 @@
   {% endif %}
 </p>
 
+{# La bandeja y los proyectos son regiones (C-0167): renombrar, ocultar,
+   descartar o darle un slot a una ventana repinta sólo esto, sin recargar. #}
+<div data-region="bandeja">
 {% if r.bandeja or r.ocultas %}
 <h2 class="con-placa">{{ ui.placa('bandeja', 'espera') }}
   <span>Bandeja de entrada</span>
@@ -238,7 +248,8 @@
       <span class="etiqueta">
         {{ ui.nombre_editable(p.etiqueta, '/panel/accion', campo='nombre', destino='/',
                               etiqueta='Renombrar la ventana',
-                              ocultos={'pane_id': p.pane_id, 'accion': 'renombrar_ventana'}) }}
+                              ocultos={'pane_id': p.pane_id, 'accion': 'renombrar_ventana'},
+                              sin_recarga=true) }}
       </span>
       <span class="mono dato" data-que="tmux">{{ p.session }}:{{ p.window_idx }}.{{ p.pane_idx }} · {{ p.cwd }}</span>
       <span class="barra" style="gap:12px">
@@ -258,7 +269,7 @@
       {% call ui.menu('Más acciones sobre este panel') %}
         {% if p.proyecto_id %}
         <div class="rotulo-menu">Darle sitio</div>
-        <form method="post" action="/panel/accion">
+        <form method="post" action="/panel/accion" data-sin-recarga>
           <input type="hidden" name="pane_id" value="{{ p.pane_id }}">
           <input type="hidden" name="accion" value="promover">
           <div class="fila-menu">
@@ -274,7 +285,7 @@
                                    | map(attribute='slots') | first %}
         {% if suyos %}
         <div class="separador"></div>
-        <form method="post" action="/panel/accion">
+        <form method="post" action="/panel/accion" data-sin-recarga>
           <input type="hidden" name="pane_id" value="{{ p.pane_id }}">
           <input type="hidden" name="accion" value="vincular">
           <div class="fila-menu">
@@ -293,18 +304,18 @@
            es lo que hace falta para un servidor de node que está siempre
            abierto y nunca va a ser un trabajo. #}
         <div class="rotulo-menu">Quitarla de en medio</div>
-        <form method="post" action="/panel/accion">
+        <form method="post" action="/panel/accion" data-sin-recarga>
           <input type="hidden" name="pane_id" value="{{ p.pane_id }}">
           <input type="hidden" name="accion" value="ocultar">
           <button type="submit" title="No la cierra: sigue corriendo, sólo deja de salir en la bandeja">Ocultar esta ventana</button>
         </form>
-        <form method="post" action="/panel/accion">
+        <form method="post" action="/panel/accion" data-sin-recarga>
           <input type="hidden" name="pane_id" value="{{ p.pane_id }}">
           <input type="hidden" name="accion" value="ocultar_sesion">
           <button type="submit" title="Oculta todas las ventanas de «{{ p.session }}», también las que abra después">Ocultar «{{ p.session }}» entera</button>
         </form>
         <div class="separador"></div>
-        <form method="post" action="/panel/accion">
+        <form method="post" action="/panel/accion" data-sin-recarga>
           <input type="hidden" name="pane_id" value="{{ p.pane_id }}">
           <input type="hidden" name="accion" value="descartar">
           <button class="peligro" type="submit">Descartar de la bandeja</button>
@@ -322,7 +333,7 @@
     <span class="tenue">Ocultas: no salen en la bandeja ni en la barra de trabajo. Siguen corriendo.</span>
     <div class="der lista-ocultas">
       {% for v in r.ocultas %}
-      <form method="post" action="/oculto/mostrar">
+      <form method="post" action="/oculto/mostrar" data-sin-recarga>
         <input type="hidden" name="session" value="{{ v.session }}">
         <input type="hidden" name="ventana" value="{{ v.window_idx if v.window_idx is not none }}">
         <input type="hidden" name="destino" value="/">
@@ -334,6 +345,7 @@
 {% endif %}
 </div>
 {% endif %}
+</div>
 
 {# La acción va AQUÍ, junto a lo que crea, y no al fondo de la pantalla.
    Antes sólo había una línea en gris al final de la portada explicando que esto
@@ -343,7 +355,7 @@
 <h2 class="con-placa">{{ ui.placa('rejilla') }}<span>Proyectos</span>
   <span class="apunte">{{ r.proyectos | length }}</span>
   <button class="principal" id="nuevo-proyecto" data-nuevo-proyecto>Proyecto nuevo</button></h2>
-<div class="rejilla">
+<div class="rejilla" data-region="proyectos">
 {% for p in r.proyectos %}
   <div class="tarjeta">
     <div class="fila">

@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import carpeta, resumir, transcribir, voces
+from . import carpeta, resumir, tasa, transcribir, voces
 
 
 def _estado(c: Path, **cambios):
@@ -67,6 +67,12 @@ def procesar(c: Path, resumen: bool = True, separar: bool = True) -> dict:
     _estado(c, inicio=time.time(), estado="procesando", error=None)
     try:
         if not (c / "transcripcion.json").exists():
+            # Antes de nada: una pista con la frecuencia mal declarada se
+            # transcribe como ruido (2-nov, audífonos a 96 kHz). Ver `tasa`.
+            hecho = tasa.corregir(c)
+            if hecho:
+                _estado(c, etapa=("frecuencia", f"{hecho.get('de')} → {hecho.get('a')} Hz" if hecho["corregida"]
+                                  else f"sin corregir: {hecho['motivo']}"))
             _estado(c, etapa=("transcribir", "en-curso"))
             t0 = time.time()
             from .comprimir import audio

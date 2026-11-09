@@ -54,6 +54,17 @@ def es_de_windows(chrome: str) -> bool:
     return chrome.lower().endswith(".exe")
 
 
+def cual_linux() -> str | None:
+    """El mejor Chromium **de Linux**, o `None` si sólo está el de Windows.
+
+    Para quien no puede conformarse con el de Windows: encerrarlo (no se puede,
+    `encierro.fotografiar`) o medir a 390 px (no baja de 500, `recorrido`).
+    Era la misma comprobación copiada en cada sitio que la necesitaba.
+    """
+    chrome = cual()
+    return chrome if chrome and not es_de_windows(chrome) else None
+
+
 def para(chrome: str, ruta: Path | str) -> str:
     r"""La misma ruta, dicha como la entiende ESE navegador.
 

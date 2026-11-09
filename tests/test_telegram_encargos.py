@@ -122,12 +122,13 @@ def test_el_canal_de_consulta_sigue_teniendo_solo_preguntar_y_recibir():
 
 def test_lo_que_hace_falta_para_los_encargos_vive_en_la_subclase():
     """Las cuatro de la decisión 221, ni una más: si aparece una quinta, que se
-    escriba aquí con su motivo en vez de colarse."""
+    escriba aquí con su motivo en vez de colarse. `responder` salió (C-0140):
+    aprobar es pulsar un botón atado al mensaje (237), y nadie la llamaba."""
     anadidos = {
         nombre for nombre, valor in vars(telegram.BotDeEncargos).items()
         if callable(valor) and not nombre.startswith("_")
     }
-    assert anadidos == {"enviar_foto", "responder", "escribiendo", "descargar",
+    assert anadidos == {"enviar_foto", "escribiendo", "descargar",
                         # y los botones (237): mandar con ellos, cerrar la
                         # pulsación y retirarlos al decidir. Tres métodos para
                         # una capacidad: que él decida con un dedo.
@@ -275,22 +276,6 @@ def test_pero_no_se_traga_cualquier_cosa(monkeypatch):
 
 
 # ── responder a un mensaje concreto ──────────────────────────────────────────
-
-
-def test_la_respuesta_va_colgada_del_mensaje_al_que_contesta(monkeypatch):
-    """🔴 Es lo que ata una aprobación a un plan (decisión 281).
-
-    Sin `reply_to_message_id` el «sí» de vuelta es un «sí» suelto, y si mientras
-    tanto se mandó otra cosa hay que adivinar qué se aprobó. Adivinar aquí es
-    construir el negocio equivocado.
-    """
-    bot, red = montar(monkeypatch, {"ok": True, "result": {"message_id": 77}})
-    assert bot.responder(555, "queda así, ¿lo hago?", 4242) == 77
-
-    enviado = urllib.parse.parse_qs(red.peticiones[0].data.decode())
-    assert enviado["reply_to_message_id"] == ["4242"]
-    assert enviado["chat_id"] == ["555"]
-    assert enviado["text"] == ["queda así, ¿lo hago?"]
 
 
 # ── normalizar lo que llega, con voz ─────────────────────────────────────────

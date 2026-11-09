@@ -18,10 +18,11 @@
 <p style="margin:-6px 0 14px"><a href="/orquestador">← Volver a las tareas</a></p>
 
 
-<div class="tarjeta">
+{# Guardar un nivel repinta sólo la lista, sin recargar (C-0167). #}
+<div class="tarjeta" data-region="permisos">
   {% set niveles = p.niveles %}{% set descripcion = p.descripcion %}{% set siempre = p.siempre_del_dueno %}
   {% for p in p.proyectos %}
-  <form method="post" action="/orquestador/permiso" class="permiso-fila">
+  <form method="post" action="/orquestador/permiso" class="permiso-fila" data-sin-recarga>
     <input type="hidden" name="proyecto_id" value="{{ p.id }}">
     <span class="nombre">{{ p.nombre }}</span>
     {% if p.guardrail == 'never' %}

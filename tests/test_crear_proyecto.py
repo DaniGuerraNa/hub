@@ -465,3 +465,36 @@ def test_anexar_desde_la_api(con, escena, tmp_path, monkeypatch):
 
     assert r["ok"] is True and r["estado_ref"] is None
     assert malo["ok"] is False and "no sirve como id" in malo["error"]
+
+
+def test_anexar_declara_rutas_patrones_contenedores_y_tipo_sin_editar_el_yaml(con, escena, tmp_path):
+    """Era lo que obligaba a las skills a escribir `projects.yml` a mano (C-0039)."""
+    carpeta = _existente(tmp_path)
+    repo = tmp_path / "repo-fuera"
+    repo.mkdir()
+
+    agentes.anexar_proyecto(con, "ya-existe", "Ya Existe", str(carpeta), rutas=[str(repo)],
+                            patrones=["*/repos/*"], contenedores=["ya-existe-"], tipo="kit")
+
+    (p,) = [x for x in registry.cargar(escena["registro"]) if x.id == "ya-existe"]
+    assert str(repo) in [r.ruta for r in p.rutas]
+    assert p.contenedores == ["ya-existe-"] and p.tipo == "kit"
+    assert "patron: '*/repos/*'" in escena["registro"].read_text(encoding="utf-8")
+
+
+def test_anexar_rechaza_una_ruta_declarada_que_no_existe(con, escena, tmp_path):
+    carpeta = _existente(tmp_path)
+    with pytest.raises(ValueError, match="no existe"):
+        agentes.anexar_proyecto(con, "x", "X", str(carpeta), rutas=[str(tmp_path / "nada")])
+    assert "id: x" not in escena["registro"].read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("campo", ["rutas", "patrones", "contenedores"])
+def test_anexar_rechaza_un_texto_donde_va_una_lista(con, escena, tmp_path, campo):
+    """Recorrido letra a letra, «mi-p» serían los prefijos m, i, -, p."""
+    carpeta = _existente(tmp_path)
+    with pytest.raises(ValueError, match="es una lista"):
+        agentes.anexar_proyecto(con, "x", "X", str(carpeta), **{campo: "mi-p"})
+    with pytest.raises(registry.YamlInvalido, match="es una lista"):
+        registry.añadir_proyecto({"id": "x", "asiento": str(carpeta), campo: "mi-p"}, escena["registro"])
+    assert "id: x" not in escena["registro"].read_text(encoding="utf-8")

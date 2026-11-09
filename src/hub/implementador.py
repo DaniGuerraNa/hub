@@ -58,7 +58,7 @@ SQLite y las mismas pantallas de la maqueta servidas desde `static/`.
 
 1. 🔴 **Lo que se ve no cambia.** Mismas pantallas, misma navegación, mismo
    `estilo.css` (no se toca), y sigue viéndose bien en el teléfono y en la
-   PC: `./encargo mirar <url>` te da las dos capturas, mira las dos. Lo que cambia es de dónde salen los datos: donde
+   PC: `./encargo mirar /` (o la ruta de otra pantalla) te da las dos capturas, mira las dos. Lo que cambia es de dónde salen los datos: donde
    la maqueta usaba `localStorage`, la app llama a tu API (`fetch` a
    `/api/...`). Nada de reescribir la interfaz.
 2. **La base es SQLite en `DATOS`** (una variable de entorno; `main.py` ya la
@@ -73,16 +73,19 @@ SQLite y las mismas pantallas de la maqueta servidas desde `static/`.
    tokens.
 5. **No borres nada de golpe**: borrar una fila es una acción que la maqueta
    ya tiene con su «¿segura?»; conserva eso.
-6. 🔴 **Tus manos son `./encargo`, `curl`, y los archivos de `{app}/`.** No
+6. 🔴 **Tus manos son `./encargo` y los archivos de `{app}/`.** No
    leas ni busques nada fuera de esta carpeta. Si una orden falla, lee lo que
    dice y sigue. **No uses `rm`**: `./encargo quitar {app}/<archivo>`.
 
 ## Cómo lo compruebas (obligatorio antes de decir que está)
 
-1. `./encargo servir` — arranca tu app en local con una base vacía de prueba y
-   te dice la URL. Si no arranca, te enseña el error.
-2. `curl` contra tu API: crea algo, léelo, cámbialo, bórralo. Y abre las
-   páginas: `./encargo mirar <url>` las pinta a 390 px y a 1000 px.
+1. `./encargo servir` — arranca tu app en local, aislada (sin red ni nada de
+   fuera de `{app}/`), con una base vacía de prueba. Si no arranca, te enseña
+   el error. Sólo se le habla con `./encargo api` y se la mira con
+   `./encargo mirar`: no tiene URL ni puerto.
+2. `./encargo api POST /api/<cosa> '{{"campo": "valor"}}'` y `./encargo api GET
+   /api/<cosa>` contra tu API: crea algo, léelo, cámbialo, bórralo. Y abre las
+   páginas: `./encargo mirar /ruta` las pinta a 390 px y a 1000 px.
 3. Corrige, `./encargo servir` otra vez (reinicia), repite.
 4. `./encargo parar` cuando esté, y entonces `./encargo listo`. Se publica
    solo: el hub construye la imagen, la levanta en el servidor y les manda
@@ -183,7 +186,9 @@ def preparar(con: sqlite3.Connection, encargo_id: str) -> Path:
 
 
 def acotar(carpeta: Path) -> None:
-    """Como el constructor, más `curl`: es cómo prueba su API sin salirse."""
+    """Como el constructor: su API la prueba con `./encargo api`, que sólo
+    llega a su app en local. `curl` no, ni acotado por prefijo: acepta varias
+    URL en una línea (`file:///…`) y `-d @archivo` (C-0128, regla dura 22)."""
     from . import agentes, config
 
     raiz_hub = config.RAIZ_REPO
@@ -196,17 +201,16 @@ def acotar(carpeta: Path) -> None:
                 "allow": [
                     f"Edit({patron})", f"Read({patron})",
                     "Bash(./encargo:*)", f"Bash({carpeta / 'encargo'}:*)",
-                    "Bash(curl:*)",
                 ],
                 "deny": [
                     f"Read(//{str(raiz_hub).lstrip('/')}/**)",
-                    "Bash(grep:*)", "Bash(rg:*)", "Bash(find:*)",
+                    "Bash(grep:*)", "Bash(rg:*)", "Bash(find:*)", "Bash(curl:*)", "Bash(wget:*)",
                 ],
             }
         }, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    agentes._confiar(carpeta)
+    agentes.confiar(carpeta)
 
 
 def primer_mensaje(encargo_id: str) -> str:

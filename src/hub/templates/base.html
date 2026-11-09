@@ -2,17 +2,31 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+{# Una pantalla que es una app en el teléfono (el secretario) pide más: llegar
+   a los bordes con `viewport-fit=cover` y que el teclado encoja la página. #}
+<meta name="viewport" content="{% block viewport %}width=device-width, initial-scale=1{% endblock %}">
 <title>{{ titulo }} · Hub</title>
 
 {# El icono y la pantalla completa en el móvil (decisión 168). SIN service
-   worker a propósito: cachearía, y enseñaría una pantalla vieja como si fuera
-   de ahora — la forma exacta de mentir que este hub tiene prohibida. El precio
-   es que Chrome no ofrece «instalar» sin él; «añadir a la pantalla de inicio»
-   sí funciona, y es lo que se quería. En iOS lo dan las dos metas de Apple. #}
+   worker que cachee, a propósito: enseñaría una pantalla vieja como si fuera
+   de ahora — la forma exacta de mentir que este hub tiene prohibida. El único
+   que hay es el de los avisos del secretario (decisión 311), sólo bajo
+   /secretario/ y sin tocar ninguna petición. En iOS lo dan las dos metas de Apple.
+   🔴 `use-credentials` no es opcional (decisión 316): el navegador pide el
+   manifiesto SIN cookies salvo que se le diga, la puerta de dispositivo le
+   contesta 403 y la app deja de poder instalarse — sin error visible. #}
+{# Antes del primer pintado (C-0167), y por eso en línea y aquí arriba:
+   - la marca de «hay JS» en <html>. Puesta por `hub-ui.js` al final del cuerpo
+     llegaba tarde: se veían el campo de renombrar y el <select> nativo, y
+     luego se iban.
+   - la fuente, pedida ya. Sin esto el texto se pintaba con la de reserva y
+     saltaba al llegar Inter: medido 0,43 de desplazamiento al cargar
+     /orquestador/permisos a 1200 px, y 0 con ella pedida aquí. #}
+<script data-antes-de-pintar>document.documentElement.classList.add('con-js');</script>
+<link rel="preload" href="/static/inter.woff2?v=1" as="font" type="font/woff2" crossorigin>
 <link rel="icon" href="/static/icono.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/static/icono-192.png">
-<link rel="manifest" href="/static/manifest.json">
+<link rel="manifest" href="{% block manifiesto %}/static/manifest.json{% endblock %}" crossorigin="use-credentials">
 <meta name="theme-color" content="#0d1117">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Hub">
@@ -34,7 +48,7 @@
    ─────────────────────────────────────────────────────────────────────────── */
 @font-face {
   font-family: 'Inter';
-  src: url('/static/inter.woff2') format('woff2');
+  src: url('/static/inter.woff2?v=1') format('woff2');
   font-weight: 100 900;
   font-display: swap;
 }
@@ -47,6 +61,10 @@
   --superficie:  #131a23;
   --superficie2: #1a232e;
   --elevado:     #243040;
+  /* Lo que oscurece la página detrás de un diálogo. Es el tono del lienzo
+     anterior, el violeta-negro: pasarlo a `--lienzo` cambiaría lo que se ve
+     (poco), y eso se decide mirándolo, no al ordenar tokens (C-0110). */
+  --velo:        rgba(15,16,26,.72);
 
   /* Bordes */
   --borde:       #232e3c;   /* tarjetas e inputs: sutil */
@@ -73,6 +91,7 @@
      y el acento sólo aparece en acciones, enlaces y en lo que está activo. */
   --acento:      #3fb9d4;
   --acento-tinta:#06222a;   /* texto sobre el acento sólido */
+  --acento-hover:#55c8e0;   /* el acento un punto más claro: `.cta` bajo el puntero */
   --alerta:      #e8735c;
 
   /* 🔴 Aquí vivía `--brillo`, un reflejo interior de 1px
@@ -364,7 +383,7 @@ a:hover { text-decoration: underline; }
 /* ── Icono dentro de un cuadrado con su color ──────────────────────────────
    El tratamiento que más gustó de las maquetas: el icono no flota junto al
    texto, vive en una placa tintada que le da peso y lo hace localizable. */
-.placa { display: grid; place-items: center; flex: none; border-radius: 9px;
+.placa { display: grid; place-items: center; flex: none; border-radius: var(--r-boton);
   width: 30px; height: 30px;
   background: color-mix(in srgb, var(--c, var(--acento)) 16%, transparent);
   color: var(--c, var(--acento)); }
@@ -399,7 +418,7 @@ a:hover { text-decoration: underline; }
 
 /* ── Panel de filas: la lista densa con separadores, no tarjetas sueltas ── */
 .panel { background: var(--superficie); border: 1px solid var(--borde);
-         border-radius: 10px; overflow: hidden; }
+         border-radius: var(--r-input); overflow: hidden; }
 .panel .fila { display: flex; align-items: center; gap: 14px; padding: 11px 16px;
                border-bottom: 1px solid var(--borde); }
 .panel .fila:last-child { border-bottom: 0; }
@@ -499,7 +518,7 @@ button.principal:hover, a.boton.principal:hover {
 button.cta, a.boton.cta {
   background: var(--acento); color: var(--acento-tinta); font-weight: 650;
 }
-button.cta:hover, a.boton.cta:hover { background: #55c8e0; color: var(--acento-tinta); }
+button.cta:hover, a.boton.cta:hover { background: var(--acento-hover); color: var(--acento-tinta); }
 
 /* Secundario de verdad: SIN fondo en reposo. Es el peldaño que faltaba —antes
    todo lo que no era `cta` seguía pareciendo igual de pulsable— y es lo que
@@ -646,15 +665,20 @@ button.icono-solo:hover { background: var(--superficie2); color: var(--texto); }
 .editable { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
 .editable > .lapiz { opacity: 0; }
 .editable:hover > .lapiz, .editable > .lapiz:focus-visible { opacity: 1; }
-.editable > .edicion { display: none; align-items: center; gap: 6px; }
+.editable > .edicion { display: inline-flex; align-items: center; gap: 6px; }
 .editable > .edicion input[type=text] { width: auto; min-width: 190px; padding: 5px 10px;
                                         font-size: 14px; }
 /* Con JS: el formulario aparece y el nombre se va. Sin JS la clase nunca se
-   pone y se ve el campo de siempre — se degrada a lo que había, no a nada. */
+   pone y se ve el campo de siempre — se degrada a lo que había, no a nada.
+   Escondido de entrada sólo con `.con-js`: sin él también se escondía, y sin
+   JS no había forma de renombrar (C-0187). El lápiz y «Cancelar» no hacen
+   nada sin JS, y el nombre ya va en el campo. */
+:root:not(.con-js) .editable > .valor, :root:not(.con-js) .editable > .lapiz,
+:root:not(.con-js) .editable .cancelar { display: none; }
 .editable.editando > .valor, .editable.editando > .lapiz { display: none; }
 .editable.editando > .edicion { display: inline-flex; }
-body.con-js .editable > .edicion { display: none; }
-body.con-js .editable.editando > .edicion { display: inline-flex; }
+.con-js .editable > .edicion { display: none; }
+.con-js .editable.editando > .edicion { display: inline-flex; }
 
 /* ── Selector con búsqueda ─────────────────────────────────────────────────
    El `<select>` nativo despliega una fila por opción: con veinte proyectos son
@@ -663,8 +687,13 @@ body.con-js .editable.editando > .edicion { display: inline-flex; }
    El `<select>` real sigue debajo, oculto, y es lo que se envía: si el JS
    fallara, el formulario seguiría funcionando con el desplegable de siempre. */
 .combo { position: relative; display: inline-block; min-width: 190px; }
-body.con-js .combo > select { position: absolute; opacity: 0; pointer-events: none;
-                              width: 100%; height: 100%; }
+/* Hasta que `hub-ui.js` lo envuelve, el `<select>` ya mide de alto lo que
+   medirá el combo: medido a 390 px, 39 px de nativo contra 35 de combo, y la
+   cabecera encogía al cargar empujando lo de debajo (C-0167). */
+.con-js :not(.combo) > select[data-combo="si"] { height: 35px; padding-top: 0; padding-bottom: 0;
+                                                 width: auto; min-width: 190px; }
+.con-js .combo > select { position: absolute; opacity: 0; pointer-events: none;
+                         width: 100%; height: 100%; }
 .combo-abre { width: 100%; justify-content: space-between; font-weight: 450;
               color: var(--texto); }
 .combo-abre::after { content: '▾'; color: var(--texto-3); font-size: 11px; }
@@ -734,7 +763,7 @@ dialog.dlg {
   background: var(--superficie); color: var(--texto);
   padding: 0; max-width: 520px; width: calc(100% - 32px);
 }
-dialog.dlg::backdrop { background: rgba(15,16,26,.72); }
+dialog.dlg::backdrop { background: var(--velo); }
 dialog.dlg form { padding: 20px; margin: 0; }
 dialog.dlg h3 { margin: 0 0 8px; font-size: 20px; font-weight: 500; letter-spacing: -0.2px; }
 dialog.dlg .dlg-cuerpo p { margin: 0; color: var(--texto-2); white-space: pre-line; }
@@ -857,21 +886,43 @@ dialog.paleta li .detalle {
 }
 #asistente-permiso button { padding: 3px 12px; font-size: 12px; }
 </style>
+{# El secretario en todas las pantallas (C-0160), en el sitio del asistente.
+   En /secretario no: ahí la conversación es la página entera. #}
+{% set panel_secretario = (rail | default({}, true)).voz == 'secretario' and not (request is defined and request.url.path.startswith('/secretario')) %}
+{# Las hojas de su panel, aquí y no junto al panel (C-0181): en el cuerpo, si
+   tardaban, el `<aside>` entraba sin estilo como una columna más del `body`
+   en flex y estrechaba la página hasta que llegaban. #}
+{% if panel_secretario %}
+<link rel="stylesheet" href="/static/chat-secretario.css">
+<link rel="stylesheet" href="/static/avatar-secretario.css">
+{% endif %}
+{# Lo que una pantalla necesita ANTES del primer pintado (C-0167): sus hojas
+   de estilo. Puestas en el cuerpo, el navegador pinta lo de arriba sin ellas
+   y luego lo recoloca; en /secretario el raíl se veía y se iba (0,29 de
+   desplazamiento al cargar en el teléfono). #}
+{% block cabeza %}{% endblock %}
 </head>
 <style>
   .aviso-accion { display:flex; gap:10px; align-items:center; margin:8px 16px; padding:8px 12px;
-                  border:1px solid var(--acento); border-radius:10px; color:var(--texto);
+                  border:1px solid var(--acento); border-radius:var(--r-input); color:var(--texto);
                   background:var(--superficie); font-size:13px; transition:opacity .5s; }
   /* Lo que salió bien se lee una vez y se va (`_volver(..., fugaz=True)`). */
   .aviso-accion.fugaz { border-color:transparent; background:var(--superficie2); color:var(--texto-2); }
   .aviso-accion.ido { opacity:0; }
+  /* El de la acción flota (C-0167): metido en el flujo empujaba la página al
+     llegar y la subía al irse, dos saltos por cada «Guardar». Sin sombra —el
+     sistema no las usa—: lo separa el borde y el tono `--elevado`. */
+  .aviso-accion[data-aviso-fugaz] { position:fixed; z-index:70; top:12px; left:50%;
+                  transform:translateX(-50%); margin:0; width:max-content;
+                  max-width:min(560px, calc(100vw - 32px)); background:var(--elevado); }
+  .aviso-accion[data-aviso-fugaz].fugaz { background:var(--elevado); border-color:var(--borde); }
   /* Falta terminar una actualización: el código ya es otro y lo instalado no. */
   .aviso-accion.version-urge { border-color:var(--riesgo); }
   .aviso-accion a { color:var(--acento); }
   .aviso-accion button { margin-left:auto; background:none; border:0; color:var(--texto-3);
                          font-size:16px; line-height:1; padding:0 2px; cursor:pointer; }
 </style>
-<body class="{{ 'completo' if ancho_completo else '' }}">
+<body class="{{ 'completo' if ancho_completo else '' }} {% block clase_cuerpo %}{% endblock %}">
 
 {# ── Raíl global ────────────────────────────────────────────────────────────
    Sólo vistas. Los proyectos vivieron aquí con su estado hasta el 2026-09-22
@@ -880,7 +931,9 @@ dialog.paleta li .detalle {
    las vistas mediante un procesador de contexto — si dependiera de que cada
    vista se acordase de pasarlo, la que se olvidara perdería la navegación. #}
 {% set rail = rail | default({}, true) %}
-<nav class="rail-global">
+{# Región (C-0167): sus cifras —lo que espera en el navegante, el secretario,
+   los contenedores— cambian con las acciones que ya no recargan la página. #}
+<nav class="rail-global" data-region="rail">
   <a href="/" class="marca">
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor"
          stroke-width="2" stroke-linejoin="round" aria-hidden="true">
@@ -907,6 +960,8 @@ dialog.paleta li .detalle {
       <span class="cuenta urge">{{ rail.sin_respaldo }}</span>
     {% elif clave == 'servicios' and rail.servicios %}
       <span class="cuenta">{{ rail.servicios }}</span>
+    {% elif clave == 'secretario' and rail.secretario_pendientes %}
+      <span class="cuenta urge">{{ rail.secretario_pendientes }}</span>
     {% elif clave == 'trabajo' and rail.paneles %}
       <span class="cuenta">{{ rail.paneles }}</span>
     {% elif clave == 'actualizaciones' and rail.version and (rail.version.hay_nueva or rail.version.falta_terminar) %}
@@ -916,10 +971,13 @@ dialog.paleta li .detalle {
   {% endmacro %}
   {{ entrada_rail('/', 'panorama', 'Panorama', 'casa') }}
   {{ entrada_rail('/trabajo', 'trabajo', 'Trabajo', 'terminal') }}
+  {{ entrada_rail('/secretario', 'secretario', rail.secretario_nombre or 'Secretario', 'secretario') }}
+  {{ entrada_rail('/tablero', 'tablero', 'Tablero', 'lapiz') }}
   {% set ver_rail = rail.version %}
   {% set grupos_rail = [
       ('Agentes', 'agente', rail.navegante_pendientes or 0, [
         ('/orquestador', 'orquestador', 'Orquestador', 'agente'),
+        ('/talleres', 'talleres', 'Talleres', 'rejilla'),
         ('/navegante', 'navegante', 'Navegante', 'navegador'),
         ('/reuniones', 'reuniones', 'Reuniones', 'reunion')]),
       ('Proyectos', 'rejilla', 0, [
@@ -966,7 +1024,12 @@ dialog.paleta li .detalle {
     <span class="tenue">{{ subtitulo | default('') }}</span>
     <span style="flex:1"></span>
     <button class="sutil" id="abrir-paleta" title="Ctrl+K">Buscar <span class="tecla">Ctrl K</span></button>
-    <form method="post" action="/refrescar" class="enlinea"><button class="sutil">Refrescar</button></form>
+    {# Vuelve a la pantalla en la que estabas (antes, siempre a Panorama), sin el
+       aviso de la acción anterior, que si no saldría otra vez (C-0230). #}
+    {% if request is defined %}{% set _q = request.query_params.multi_items() | rejectattr('0', 'in', ['aviso', 'fugaz', 'hecho']) | list %}{% endif %}
+    <form method="post" action="/refrescar" class="enlinea">
+      <input type="hidden" name="destino" value="{% if request is defined %}{{ request.url.path }}{% if _q %}?{{ _q | urlencode }}{% endif %}{% else %}/{% endif %}">
+      <button class="sutil">Refrescar</button></form>
   </header>
   {# La versión (decisión 286): que falta terminar de actualizar se dice en
      TODAS las pantallas, porque quien hizo `git pull` y reinició ve el código
@@ -995,11 +1058,12 @@ dialog.paleta li .detalle {
   {# Lo que falló en la acción anterior, dicho aquí y no tragado (regla 21). #}
   {% if request is defined and request.query_params.get('aviso') %}
   {% set fugaz = request.query_params.get('fugaz') %}
-  <div class="aviso-accion {{ 'fugaz' if fugaz }}" data-aviso-fugaz role="{{ 'status' if fugaz else 'alert' }}">
+  {# `data-hecho`: falló algo, pero lo pedido se hizo (`_volver(hecho=True)`). #}
+  <div class="aviso-accion {{ 'fugaz' if fugaz }}" data-aviso-fugaz role="{{ 'status' if fugaz else 'alert' }}"
+       {% if request.query_params.get('hecho') %}data-hecho{% endif %}>
     <span>{{ request.query_params.get('aviso') }}</span>
     <button type="button" aria-label="Cerrar" data-cerrar-aviso>×</button>
   </div>
-  <script src="/static/aviso-fugaz.js" defer></script>
   {% endif %}
   {% block contenido %}{% endblock %}
 </div>
@@ -1022,7 +1086,7 @@ dialog.paleta li .detalle {
      Sólo se pinta si hay un proyecto con `tipo: asistente` declarado. Sin él la
      pestaña salía igual y el error aparecía al pulsarla — ofrecer algo que sólo
      puede fallar es peor que no ofrecerlo. -->
-{% if rail.hay_asistente %}
+{% if rail.voz == 'asistente' %}
 <aside id="asistente">
   <button id="asistente-pestana" aria-expanded="false">
     <span id="asistente-luz"></span>
@@ -1065,8 +1129,36 @@ dialog.paleta li .detalle {
 {% endif %}
 
 <script src="/static/hub-ui.js"></script>
+{# Siempre, y no sólo con `?aviso=`: `sin-recarga.js` pinta avisos sin recargar. #}
+<script src="/static/aviso-fugaz.js"></script>
+<script src="/static/sin-recarga.js"></script>
 <script src="/static/paleta.js"></script>
-{% if rail.hay_asistente %}<script src="/static/formato-chat.js"></script>
+{% if rail.voz == 'asistente' %}<script src="/static/formato-chat.js"></script>
 <script src="/static/asistente.js"></script>{% endif %}
+{# Sus hojas ya van en `<head>` (C-0181). #}
+{% if panel_secretario %}
+{% import "_personaje.html" as personaje %}
+{{ personaje.defs() }}
+<aside id="secretario-panel" aria-label="{{ rail.secretario_nombre or 'Secretario' }}">
+  {# El personaje ES la pestaña (C-0166): te sigue por todas las pantallas y
+     enseña lo que hace. Sale pintado con lo del raíl; lo demás, del sondeo. #}
+  <button id="secretario-pestana" type="button" aria-expanded="false" data-personaje data-estado="quieto"
+          data-espera='{{ rail.secretario_espera | tojson }}'>
+    {{ personaje.figura(pj=rail.personaje) }}
+    <span class="pj-texto"><span class="nombre">{{ rail.secretario_nombre or 'Secretario' }}</span><span class="pj-rotulo" data-rotulo></span></span>
+    <span class="pj-acompanantes" data-acompanantes aria-hidden="true"></span>
+    <span class="tenue" id="secretario-flecha">▴</span>
+  </button>
+  {# Lo que importa (espera tu sí, falló, listo) se anuncia; cada herramienta no. #}
+  <span class="pj-anuncio" data-anuncio role="status" aria-live="polite"></span>
+  <div id="secretario-cuerpo" class="conv-chat">
+    {% set chat = {'turnos': [], 'ingles': rail.secretario_ingles, 'cargar': True} %}
+    {% include '_chat_secretario.html' %}
+  </div>
+</aside>
+<script src="/static/avatar-secretario.js"></script>
+<script src="/static/formato-chat.js"></script>
+<script src="/static/chat-secretario.js"></script>
+{% endif %}
 </body>
 </html>

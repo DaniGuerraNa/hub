@@ -357,6 +357,22 @@ def test_el_offset_avanza_aunque_el_mensaje_se_descarte(escena):
     assert rele.una_vuelta(escena, bot, None) == 8
 
 
+def test_un_paso_que_falla_siempre_no_deja_sordo_al_canal(escena, monkeypatch):
+    """Regla dura 2 (C-0186): pedir lo nuevo es lo último de la vuelta, y un
+    paso de antes que fallaba siempre la cortaba ahí. El relé seguía vivo y no
+    volvía a leer nada; ahora el fallo se apunta una vez y la vuelta sigue."""
+    def roto(*_a, **_k):
+        raise RuntimeError("roto")
+
+    monkeypatch.setattr(rele, "FALLANDO", {}, raising=False)
+    monkeypatch.setattr(rele, "enviar_avisos", roto)
+    bot = BotFalso(updates=[_update(user_id=42, update_id=7)])
+
+    assert rele.una_vuelta(escena, bot, None) == 8
+    assert rele.una_vuelta(escena, bot, 8) == 8
+    assert sum("enviar_avisos" in r["detalle"] for r in canal.registro(escena)) == 1
+
+
 def test_el_409_no_se_traga(escena):
     """El peor fallo posible: dos pollers robándose mensajes de forma
     intermitente, que reintentando en silencio se ve como «Telegram va lento»."""
@@ -712,3 +728,28 @@ def test_sin_dueno_el_aviso_se_dice_una_vez_y_no_cada_vuelta(escena, monkeypatch
     assert len(fallas) == 1
     assert "nadie está marcado como dueño" in fallas[0]["detalle"]
     assert bot.enviados == []
+
+
+def test_la_respuesta_se_pega_tras_guardarla_y_un_fallo_al_pegar_no_repite_el_mensaje(escena, monkeypatch):
+    """C-0152: pegar en el panel va fuera de la transacción del mensaje. Si
+    lo que falla es pegar, el mensaje ya está guardado: el offset avanza y no
+    se vuelve a tratar (la respuesta la reintenta su cola, no el relé)."""
+    pid = canal.crear_pregunta(escena, "contab", "¿lleva IVA?", user_id=777, pane_id="%7")
+    canal.marcar_enviada(escena, pid, 4321)
+    pegados: list[bool] = []
+
+    def entregar(pane_id, texto):
+        # Lo que se pega se pega con la respuesta ya guardada (y la
+        # transacción cerrada): si no, un rollback no lo deshaería.
+        pegados.append(escena.in_transaction)
+        raise entrega.EscritoSinConfirmar("no se vio salir")
+
+    monkeypatch.setattr(entrega, "panel_apto", lambda pane_id: (True, ""))
+    monkeypatch.setattr(entrega, "entregar", entregar)
+    monkeypatch.setattr(rele, "FALLOS", {})
+    bot = BotFalso([_update(texto="sí", responde_a=4321, update_id=50)])
+
+    assert rele.una_vuelta(escena, bot, None) == 51
+    assert pegados == [False]
+    assert canal.ver_pregunta(escena, pid)["respuesta"] == "sí"
+    assert rele.una_vuelta(escena, bot, 51) == 51 and pegados == [False], "no se trata otra vez"

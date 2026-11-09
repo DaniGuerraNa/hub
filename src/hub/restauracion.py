@@ -20,6 +20,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from . import modelos
+
 # Es una ventana de trabajo suya, no un agente del hub, así que le toca el
 # modelo: hereda el que él tenga puesto en su propia configuración.
 #
@@ -58,18 +60,14 @@ def modo_claude() -> str:
     return modo if modo in MODOS_CLAUDE else "reanudar"
 
 
-# El id que se escribe es un UUID comprobado aquí, no texto de la base tal
-# cual: lo que acaba en una terminal son cadenas fijas o validadas.
-_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-
-
 def comando_claude(sesion: str | None, modo: str | None = None) -> str:
+    """Lo que se deja escrito. El id que llega a la terminal es un UUID
+    comprobado (`modelos.es_sesion`), no texto de la base tal cual."""
     modo = modo or modo_claude()
     if modo == "nada":
         return ""
-    if modo == "reanudar" and sesion and _UUID.match(sesion):
-        return f"{COMANDO_SUGERIDO} --resume {sesion}"
-    return COMANDO_SUGERIDO
+    reanudar = sesion if modo == "reanudar" and modelos.es_sesion(sesion) else ""
+    return modelos.linea_claude(modelos.HEREDA, reanudar=reanudar, programa=COMANDO_SUGERIDO).comando
 
 
 COMANDOS_CONOCIDOS = {

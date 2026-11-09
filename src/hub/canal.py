@@ -21,7 +21,7 @@ import sqlite3
 from typing import Any
 
 from . import api
-from .snapshotter import ahora
+from .reloj import ahora
 
 # Las tres acciones de la V1. Es una lista CERRADA a propósito: si conceder algo
 # nuevo fuera cuestión de escribir otra cadena en la tabla, el día que alguien
@@ -860,14 +860,3 @@ def marcar_vencida(con: sqlite3.Connection, pregunta_id: int) -> None:
     )
     registrar(con, "falla", "venció sin respuesta", pregunta_id=int(pregunta_id))
 
-
-def archivar(con: sqlite3.Connection, pregunta_id: int) -> None:
-    """Nadie contestó. Se archiva y el trabajo sigue: es el final acordado.
-
-    No es un fallo del canal — es el comportamiento que ya había antes de que
-    existiera, cuando las dudas esperaban al checkpoint.
-    """
-    con.execute(
-        "UPDATE canal_pregunta SET estado='archivada' WHERE id=?", (int(pregunta_id),)
-    )
-    registrar(con, "sale", "archivada sin respuesta", pregunta_id=int(pregunta_id))

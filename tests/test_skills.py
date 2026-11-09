@@ -49,3 +49,13 @@ def test_los_flujos_estan_documentados_en_un_solo_sitio():
     flujos = (RAIZ / "FLUJOS.md").read_text(encoding="utf-8")
     for nombre in ESPERADAS:
         assert nombre in flujos, f"{nombre} no aparece en FLUJOS.md"
+
+
+@pytest.mark.parametrize("nombre", ["nuevo-proyecto", "anexar-proyecto", "nuevo-kit"])
+def test_las_skills_de_alta_registran_por_el_hub_y_no_editando_el_yaml(nombre):
+    """El alta tiene una puerta: cerrojo, escritura atómica y comprobaciones.
+    Una skill que enseña a añadir el bloque a mano abre un segundo camino que
+    se salta las tres, y es el que tomaba quien seguía la skill."""
+    texto = (RAIZ / ".claude" / "skills" / nombre / "SKILL.md").read_text(encoding="utf-8")
+    assert "/api/proyecto/anexar" in texto
+    assert not re.search(r"(?i)a[ñn]ade el bloque|edita el registro a mano", texto)

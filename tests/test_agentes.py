@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from hub import agentes, api, snapshotter, tmux
+from hub import agentes, api, slots, snapshotter, tmux
 from hub.models import Proyecto
 from hub.registry import Atribuidor
 
@@ -84,7 +84,7 @@ def test_sin_paneles_abiertos_cae_a_una_sesion_derivada_del_id(escena, tmux_fals
     monkeypatch.setattr(tmux, "listar_paneles", lambda *a, **k: [])
     con = escena
     con.execute("DELETE FROM panel")
-    assert agentes.sesion_para(con, "mi.proyecto raro") == "mi.proyecto-raro"
+    assert slots.sesion_para(con, "mi.proyecto raro") == "mi.proyecto-raro"
 
 
 def test_un_proyecto_sin_asiento_no_se_lanza(escena, tmux_falso):

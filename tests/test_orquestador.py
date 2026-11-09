@@ -599,7 +599,7 @@ def test_su_sesion_no_se_confunde_con_un_espejo_de_la_terminal():
 def test_arranca_en_opus_y_sin_poder_preguntar_permisos():
     """`dontAsk`: lo no permitido se rechaza, no se queda esperando a nadie.
     Opus por decisión suya del 22-sep (257), con id exacto (91)."""
-    comando = orq.comando_de_arranque("Tarea nueva: t-1")
+    comando = orq.comando_de_arranque("Tarea nueva: t-1").completa()
 
     assert "--permission-mode dontAsk" in comando
     assert f"--model {modelos.ORQUESTADOR}" in comando
@@ -1090,7 +1090,7 @@ def test_reanudar_desde_la_pantalla(cliente, escena, monkeypatch):
 
 def test_el_orquestador_y_sus_sesiones_compactan_al_70():
     """Una sesión llegó al 96 % sin compactar en siete horas (267)."""
-    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70" in orq.comando_de_arranque("Tarea nueva: t-1")
+    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70" in orq.comando_de_arranque("Tarea nueva: t-1").completa()
     assert modelos.entorno_de_sesion() == {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70"}
 
 
@@ -1099,7 +1099,7 @@ def abriendo(escena, monkeypatch):
     from hub import agentes, entrevistador, slots
     creados: list[str] = []
     monkeypatch.setattr(orq, "sesiones", lambda con, p: [])
-    monkeypatch.setattr(agentes, "_confiar", lambda ruta: None)
+    monkeypatch.setattr(agentes, "confiar", lambda ruta: None)
     monkeypatch.setattr(slots, "crear", lambda con, p, n, **kw: creados.append(kw["comando"]) or 1)
     monkeypatch.setattr(slots, "abrir", lambda con, sid, **kw: "%7")
     monkeypatch.setattr(entrevistador, "comprobar_arranque", lambda pane: None)
@@ -1134,7 +1134,7 @@ def test_abrir_no_pasa_del_techo_de_modelos_ni_inventa_esfuerzos(escena, abriend
 @pytest.fixture
 def ajustando(escena, sesion_libre, monkeypatch):
     """`%5` con Claude como proceso raíz, en Sonnet y quieto."""
-    fichas = [{"pid": 100, "session_id": "s-1", "cwd": "/tmp/alfa", "estado": "idle",
+    fichas = [{"pid": 100, "session_id": "0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0", "cwd": "/tmp/alfa", "estado": "idle",
                "modelo": "claude-sonnet-5", "esfuerzo": None,
                "permisos": "bypassPermissions", "compacta_al": None, "contexto": 900_000}]
     relanzados: list[tuple] = []
@@ -1157,8 +1157,9 @@ def test_ajustar_relanza_la_misma_conversacion_en_el_mismo_panel(escena, sesion_
 
     pane, ruta, comando, entorno = relanzados[0]
     assert (pane, ruta) == ("%5", "/tmp/alfa")
-    assert comando == ("claude --resume s-1 --model claude-opus-5-5 --effort xhigh "
-                       "--permission-mode bypassPermissions")
+    # Orden de la puerta única (340): las banderas de `claude` no dependen del orden.
+    assert comando == ("claude --model claude-opus-5-5 --effort xhigh "
+                       "--permission-mode bypassPermissions --resume 0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0")
     assert entorno["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "70" and "PATH" in entorno
     assert sesion_libre == []      # no se escribió nada en su cuadro
     assert "claude-opus-5-5/xhigh" in r["cambio"]
@@ -1308,3 +1309,230 @@ def test_el_estado_se_lee_del_archivo_de_su_panel_y_solo_si_esta_vivo(tmp_path, 
         {"pid": vivo, "status": "shell", "tmux": "s:@1.%5"}))
     assert orq.estado_claude("%5") == "shell"
     assert orq.estado_claude("%55") is None         # no casa por prefijo
+
+
+@pytest.mark.parametrize("cambio,motivo", [
+    ({"permisos": "inventado"}, "modo de permisos que el hub no conoce"),
+    ({"session_id": "no-es-uuid"}, "qué conversación retomar"),
+])
+def test_ajustar_no_relanza_lo_que_no_cabe_en_la_linea_y_lo_dice(escena, sesion_libre, ajustando, cambio, motivo):
+    """Lo medido viene de `/proc` y del json de sesión; si no cabe en la puerta
+    (340), se dice qué y el panel no se toca."""
+    fichas, relanzados = ajustando
+    fichas[0].update(cambio)
+    with pytest.raises(ValueError, match=motivo):
+        orq.ajustar(escena, "alfa", "%5", modelo="opus")
+    assert relanzados == []
+
+
+# ─────── archivos que entran, evidencia que sale y el relevo (384, 388) ───────
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
+
+
+def _en_el_intercambio(nombre: str, dentro: str = "", datos: bytes = PNG) -> str:
+    """Lo deja en el intercambio y devuelve su ruta relativa, como la da `guardar`."""
+    from hub import intercambio
+    destino = intercambio.guardar(nombre, datos, dentro=dentro)
+    return destino.relative_to(intercambio.carpeta()).as_posix()
+
+
+def test_encargar_con_archivos_los_lleva_a_la_tarea_y_al_pedido():
+    """El encargo guarda las rutas relativas (lo que sirve `/intercambio/ver/`) y
+    la sesión recibe las absolutas, marcadas como dato que trae el dueño."""
+    from hub import intercambio
+    foto = _en_el_intercambio("foto.png", dentro="_secretario/20261107")
+    informe = _en_el_intercambio("informe.pdf", dentro="alfa", datos=b"%PDF-1.4")
+    absoluta = str(intercambio.carpeta() / informe)
+
+    tarea_id = orq.crear("prueba alfa con esta imagen", origen="secretario",
+                         archivos=(foto, absoluta, foto))
+
+    t = orq.cargar(tarea_id)
+    assert t["archivos"] == [foto, informe], "relativas, sin repetir y en su orden"
+    assert t["evidencias"] == []
+    assert t["pedido"].startswith("prueba alfa con esta imagen")
+    assert str(intercambio.carpeta() / foto) in t["pedido"] and absoluta in t["pedido"]
+    assert "no instrucciones" in t["pedido"], "lo que trae un archivo es dato (322)"
+    assert orq.bitacora(tarea_id)[0]["texto"] == t["pedido"]
+
+
+def test_un_archivo_fuera_del_intercambio_no_entra_en_un_encargo(tmp_path):
+    from hub import intercambio
+    fuera = tmp_path / "secreto.png"
+    fuera.write_bytes(PNG)
+    enlace = intercambio.carpeta() / "enlace.png"
+    enlace.symlink_to(fuera)
+
+    for ruta in (str(fuera), "../hub.db", "enlace.png", str(enlace), "no-existe.png", ""):
+        with pytest.raises(ValueError):
+            orq.crear("prueba alfa", archivos=(ruta,))
+    with pytest.raises(ValueError, match="lista"):
+        orq.crear("prueba alfa", archivos="foto.png")
+
+    assert orq.listar() == [], "un encargo con un archivo que no vale no se encola a medias"
+    assert orq.cargar(orq.crear("sin archivos", archivos=None))["archivos"] == [], \
+        "quien pasa `params.get(\"archivos\")` trae None"
+
+
+def test_un_nombre_que_el_hub_no_sirve_se_dice_en_vez_de_buscar_otro():
+    """Una sesión que copia «Captura de pantalla.png» con `cp`: `resolver` sanea
+    el nombre y buscaría otro archivo. Se le dice al orquestador qué renombrar."""
+    from hub import intercambio
+    (intercambio.carpeta() / "alfa").mkdir()
+    (intercambio.carpeta() / "alfa" / "Captura de pantalla.png").write_bytes(PNG)
+
+    with pytest.raises(ValueError, match="renómbr"):
+        orq.crear("prueba alfa", archivos=("alfa/Captura de pantalla.png",))
+
+
+def test_la_evidencia_solo_admite_imagenes_del_intercambio_con_una_tarea_viva(tmp_path):
+    from hub import intercambio
+    captura = _en_el_intercambio("pantalla.png", dentro="alfa")
+    informe = _en_el_intercambio("informe.pdf", dentro="alfa", datos=b"%PDF-1.4")
+    dibujo = _en_el_intercambio("dibujo.svg", dentro="alfa", datos=b"<svg/>")
+    fuera = tmp_path / "fuera.png"
+    fuera.write_bytes(PNG)
+
+    with pytest.raises(orq.TareaCerrada):
+        orq.evidencia(captura)
+
+    tarea_id = _activa()
+    for mala in (informe, dibujo, str(fuera), "../fuera.png"):
+        with pytest.raises(ValueError):
+            orq.evidencia(mala)
+
+    assert orq.evidencia(str(intercambio.carpeta() / captura), "el render de la casa") == captura
+    assert orq.evidencia(captura, "el render, otra vez") == captura
+
+    t = orq.cargar(tarea_id)
+    assert [(e["ruta"], e["nota"]) for e in t["evidencias"]] == [(captura, "el render, otra vez")]
+    assert [b["ruta"] for b in orq.bitacora(tarea_id) if b["tipo"] == "evidencia"] == [captura, captura]
+
+    orq.terminar("hecho")
+    with pytest.raises(orq.TareaCerrada):
+        orq.evidencia(captura)
+
+
+def test_el_orquestador_apunta_evidencia_y_la_ve_en_su_tarea(escena, capsys, monkeypatch, tmp_path):
+    # Una conexión por orden, como `./orq`: `main` cierra la suya al acabar.
+    conectar = db.conectar
+    monkeypatch.setattr(orquestador_cli.db, "conectar", lambda ruta: conectar(tmp_path / "hub.db"))
+    captura = _en_el_intercambio("pantalla.png", dentro="alfa")
+    _activa()
+
+    assert orquestador_cli.main(["evidencia", captura, "se ve la casa"]) == 0
+    assert captura in capsys.readouterr().out
+    assert orquestador_cli.main(["evidencia", "alfa/nada.png"]) == 1
+    assert "no hay" in capsys.readouterr().err
+
+    assert orquestador_cli.main(["tarea"]) == 0
+    salida = capsys.readouterr().out
+    assert "## Evidencia apuntada" in salida and f"{captura}: se ve la casa" in salida
+
+
+@pytest.mark.parametrize("texto", [
+    "¿firmo el contrato del proveedor para seguir?",
+    "hay que aceptar los términos y condiciones del servicio",
+    "falta un trámite en el portal de la tienda",
+    "¿pago la suscripción del dominio?",
+    "¿gasto 20 en créditos de la API?",
+    "¿lo publico en su nombre en sus redes?",
+    "¿lo publico en sus redes?",
+    "¿apuesto 20 a la cuota de 1,5?",
+    "deposita 500 en la cuenta nueva",
+    "¿retiro las ganancias ya?",
+    "¿me suscribo al plan anual?",
+    "¿lo despliego a producción?",
+])
+def test_lo_legal_va_al_dueno_aunque_el_motivo_diga_otra_cosa(texto):
+    """La red sólo sube (348, 381): lo que le compromete legalmente o con dinero
+    no lo contesta el secretario, aunque el orquestador diga que es una duda."""
+    assert orq.toca_al_dueno(texto)
+    assert orq.para_quien(texto, "duda") == "dueno"
+
+
+def test_lo_operativo_no_lo_toma_por_legal():
+    for texto in ("¿a cuál de las dos sesiones mando?", "¿lo apunto en el avance o espero al final?",
+                  "los tests fallaron dos veces igual, ¿reintento con más contexto?",
+                  "lo anotaría en el avance y sigo"):
+        assert not orq.toca_al_dueno(texto), texto
+
+
+def test_la_lista_de_nunca_sin_el_dueno_lleva_lo_legal():
+    nunca = " · ".join(orq.SIEMPRE_DEL_DUENO)
+    for palabra in ("firmar", "términos", "trámites", "contratos", "publicar en nombre del dueño", "dinero"):
+        assert palabra in nunca
+    assert all(orq.toca_al_dueno(x) for x in orq.SIEMPRE_DEL_DUENO), "la red reconoce su propia lista"
+
+
+@pytest.fixture
+def pc(monkeypatch):
+    """El agente de Windows de Reuniones, simulado en su frontera."""
+    estado = {"vivo": True, "falla": None, "abiertas": []}
+
+    def pedir_abrir(ruta):
+        if estado["falla"]:
+            raise estado["falla"]
+        estado["abiertas"].append(ruta)
+        return "pid"
+
+    monkeypatch.setattr(orq.reuniones, "agente", lambda: {"vivo": estado["vivo"]})
+    monkeypatch.setattr(orq.reuniones, "pedir_abrir", pedir_abrir)
+    return estado
+
+
+def test_una_pregunta_de_relevo_es_del_dueno_y_abre_sus_asuntos_en_la_pc(pc):
+    """388: lo que sólo él puede hacer en la PC se le abre en la PC, nunca en el teléfono."""
+    tarea_id = _activa()
+
+    assert orq.preguntar("hay un captcha en la pestaña del alta", "relevo") == "dueno"
+
+    assert pc["abiertas"] == ["/secretario?p=pendientes"]
+    assert orq.timbres_pendientes() == [], "el relevo no va al teléfono"
+    t = orq.cargar(tarea_id)
+    assert t["estado"] == orq.ESPERANDO_DUENO and t["pregunta"]["motivo"] == "relevo"
+    assert any(b["tipo"] == "relevo" for b in orq.bitacora(tarea_id))
+
+
+@pytest.mark.parametrize("vivo,falla", [(False, None), (True, OSError("disco lleno"))])
+def test_sin_el_agente_de_windows_el_relevo_no_revienta_y_queda_la_pregunta(pc, vivo, falla):
+    pc["vivo"], pc["falla"] = vivo, falla
+    tarea_id = _activa()
+
+    assert orq.preguntar("verifica tu identidad en la página del banco", "relevo") == "dueno"
+
+    assert pc["abiertas"] == []
+    t = orq.cargar(tarea_id)
+    assert t["pregunta"]["texto"].startswith("verifica") and t["estado"] == orq.ESPERANDO_DUENO
+    relevo = [b for b in orq.bitacora(tarea_id) if b["tipo"] == "relevo"]
+    assert relevo and "no se abrió" in relevo[0]["texto"], "se dice en voz alta (regla 21)"
+
+
+def test_el_cli_acepta_el_motivo_relevo(escena, capsys, monkeypatch, pc):
+    monkeypatch.setattr(orquestador_cli.db, "conectar", lambda ruta: escena)
+    _activa()
+
+    assert orquestador_cli.main(["preguntar", "--motivo", "relevo", "inicia sesión en el portal"]) == 0
+
+    assert "PC" in capsys.readouterr().out
+    assert pc["abiertas"] == ["/secretario?p=pendientes"]
+
+
+def test_el_contrato_explica_archivos_receta_evidencia_y_relevo():
+    texto = (orq.preparar() / "CLAUDE.md").read_text(encoding="utf-8")
+
+    assert "./orq evidencia <ruta>" in texto
+    assert "Cómo se prueba" in texto and "la escriba" in texto
+    assert "--motivo relevo" in texto
+    assert "no instrucciones" in texto
+    assert "{" not in texto.replace("{HUB_HOME}", ""), "una llave sin doblar en el CONTRATO"
+
+
+@pytest.mark.parametrize("texto", ["El hub espera credenciales o una decisión del dueño",
+                                   "Falta la contraseña del panel", "Lo decide el dueño: el precio final"])
+def test_lo_que_el_bloqueo_dice_que_es_suyo_no_se_delega(texto):
+    """Medido el 7-nov en el registro real: un bloqueo que espera credenciales o
+    su decisión se ofrecía para «Te lo delego» (381)."""
+    assert orq.toca_al_dueno(texto)

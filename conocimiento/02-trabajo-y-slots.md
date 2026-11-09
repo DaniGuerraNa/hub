@@ -35,7 +35,9 @@ las pestañas.
 En la lista de la izquierda de Trabajo: **«+ Proyecto»** arriba, y **«+ Slot
 nuevo»** al final de cada proyecto. El slot nuevo se abre solo con Claude dentro
 y te lleva a su terminal. Los proyectos sin nada abierto no salen en la lista;
-para ellos está **«+ Slot en otro proyecto»**, al final.
+para ellos está **«+ Slot en otro proyecto»**, al final. En el móvil la lista
+es el selector de arriba, y ahí están las mismas: **«+ Slot nuevo»** al final de
+cada proyecto y **«+ Slot en otro proyecto»** después.
 
 ### Retomar una conversación
 

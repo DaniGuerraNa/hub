@@ -1,6 +1,6 @@
 [project]
 name = "hub"
-version = "0.4.0"
+version = "0.5.0"
 description = "Índice central de proyectos, sesiones de trabajo y capacidades"
 requires-python = ">=3.12"
 dependencies = [
@@ -12,12 +12,22 @@ dependencies = [
     "python-multipart>=0.0.9",
     "segno>=1.6.6",
     "bcrypt>=5.0.0",
+    "telethon>=1.36",
+    "cryptography>=43",
+    "icalendar>=7.3.0",
+    "recurring-ical-events>=3.8.2",
 ]
 
 [dependency-groups]
 dev = [
     "httpx2>=2.12.0",
     "pytest>=8.0",
+]
+# Recorrer las pantallas en un navegador real (`hub.recorrido`, decisión 361).
+# Aparte de `dev` a propósito: `instalar.sh` y `actualizar.sh` hacen `uv sync`,
+# que trae `dev`, y Playwright con su driver bajaría en cada instalación.
+navegador = [
+    "playwright>=1.48",
 ]
 
 [build-system]
@@ -30,3 +40,6 @@ packages = ["src/hub"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests"]
+markers = [
+    "navegador: abre las pantallas en Chromium; necesita el grupo `navegador` (uv run --group navegador pytest -m navegador)",
+]

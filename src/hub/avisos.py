@@ -53,20 +53,21 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from . import api, maquina
+from .reloj import ahora
 
 # La lista, y nada que no esté aquí. **Cerrada sigue**: lo que la decisión 248
 # abrió no es la puerta, es una familia — la salud del equipo, que es de la
 # misma clase que `sin-latido` y no de la de «llevas cinco días sin tocar este
 # slot». Sigue prohibido lo que el principio 9 llama gestión, y añadir aquí una
 # cadena sin una decisión escrita con su razón sigue siendo erosionarlo.
-CLASES = ("preguntando", "quieta", "sin-latido", "temperatura", "disco", "luz")
+CLASES = ("preguntando", "quieta", "sin-latido", "secretario-caido", "temperatura", "disco", "luz")
 
 # Minutos por defecto. Se pueden cambiar en `canal.yml`, sección `avisos`.
 #
 # El de «preguntando» es más corto que el de «quieta» a propósito: una sesión
 # bloqueada en un cuadro de permisos es tiempo muerto seguro, mientras que una
 # que acaba de terminar puede estar a punto de recibir lo siguiente.
-UMBRALES = {"preguntando": 3, "quieta": 10, "sin-latido": 5}
+UMBRALES = {"preguntando": 3, "quieta": 10, "sin-latido": 5, "secretario-caido": 5}
 
 # Los de la máquina NO son minutos, así que viven aparte: meterlos en el mismo
 # diccionario haría que «85» se leyera como una espera. Grados y gigas libres.
@@ -85,6 +86,8 @@ MINUTOS_DE_VIGENCIA = 60
 # La clave del latido del hub. No es un panel, así que no colisiona con ninguno:
 # los de tmux siempre empiezan por «%».
 CLAVE_HUB = "hub"
+# La del secretario (decisión 329), por lo mismo: no empieza por «%».
+CLAVE_SECRETARIO = "secretario"
 
 # Cuándo empezó a vivir este proceso. Se fija al importar, que en el relé es su
 # arranque, y existe para una sola cosa: la gracia del aviso de latido.
@@ -95,10 +98,6 @@ CLAVE_HUB = "hub"
 # arrancando bien. Y no vale mirar sólo si la fila es nueva: el relé se reinicia
 # solo (`Restart=always`), y entonces la fila ya existe.
 ARRANQUE = datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def ahora() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _momento(valor: str | None) -> datetime:
@@ -161,6 +160,18 @@ def activos(ajustes: dict | None = None) -> bool:
 # --------------------------------------------------------------------------- #
 # La memoria de lo que ya se vio
 # --------------------------------------------------------------------------- #
+
+
+def preguntando(con: sqlite3.Connection) -> set[str]:
+    """Los paneles que el relé vio la última vez con un cuadro de permisos
+    abierto (estado `preguntando`), por su `pane_id`.
+
+    Para pintar (los talleres, C-0220), no para avisar: aquí no se mide nada
+    nuevo. Sus límites, dichos para que nadie los dé por cubiertos: esta tabla
+    la llena sólo `hub-canal`, con los avisos encendidos y sólo para paneles
+    con slot (`_de_las_sesiones`). Sin eso, el conjunto sale vacío y la
+    página lo pinta como quieta, que es lo que dice el título."""
+    return {f["clave"] for f in con.execute("SELECT clave FROM aviso WHERE estado = 'preguntando'")}
 
 
 def _visto(con: sqlite3.Connection, clave: str) -> dict | None:
@@ -327,6 +338,60 @@ def _del_latido(
     }]
 
 
+def latido_secretario() -> tuple[bool, str | None]:
+    """Si `hub-secretario` debería estar en marcha, y su último latido.
+
+    «Debería» es que el servicio esté **habilitado**: si el dueño lo apagó con
+    `disable`, que calle no es noticia. El latido se lee de su base en sólo
+    lectura: el relé no le crea ni le toca nada.
+    """
+    import subprocess
+    try:
+        r = subprocess.run(["systemctl", "--user", "is-enabled", "hub-secretario"],
+                           capture_output=True, text=True, timeout=10)
+        activo = r.stdout.strip() == "enabled"
+    except (OSError, subprocess.TimeoutExpired):
+        activo = False
+    if not activo:
+        return False, None
+    from .secretario import memoria
+    try:
+        return True, memoria.leer_sin_abrir("latido")
+    except sqlite3.Error:
+        return True, None
+
+
+def _del_secretario(
+    con: sqlite3.Connection, momento: str, limite: int, arranque: str,
+    latido: Callable[[], tuple[bool, str | None]],
+) -> list[dict]:
+    """El secretario dejó de latir (decisión 329).
+
+    Pidió el dueño saberlo: sus recordatorios y sus avisos propios salen de
+    `hub-secretario`, así que si muere se callan **sin que nada lo diga**, y un
+    recordatorio que no llega se confunde con uno que no había. Es de la misma
+    familia que `sin-latido` —el sistema se cayó, no «llevas días sin…»— y por
+    eso lo manda el relé, que es otro proceso: el que se cae no puede avisar
+    de que se cayó. Mismo alcance: si se fue la luz, tampoco hay relé.
+    """
+    if _minutos(arranque, momento) < limite:
+        return []
+    activo, ultimo = latido()
+    if not activo or not ultimo:
+        return []
+    edad = _minutos(ultimo, momento)
+    marca = anotar(con, CLAVE_SECRETARIO, "callado" if edad >= limite else "late", momento)
+    if marca["estado"] != "callado" or marca["avisado"]:
+        return []
+    return [{
+        "clase": "secretario-caido", "clave": CLAVE_SECRETARIO,
+        "texto": (
+            f"El secretario no late desde hace {edad} min: no contesta ni te recuerda nada.\n"
+            "En la PC: `systemctl --user status hub-secretario`."
+        ),
+    }]
+
+
 def _reciente(medida: dict, momento: str) -> bool:
     """Una medida vieja no dispara nada. Ver `MINUTOS_DE_VIGENCIA`."""
     return _minutos(medida["medido_en"], momento) <= MINUTOS_DE_VIGENCIA
@@ -423,6 +488,7 @@ def revisar(
     ajustes: dict | None = None,
     esperando: Callable[[str], bool] | None = None,
     arranque: str | None = None,
+    secretario: Callable[[], tuple[bool, str | None]] | None = None,
 ) -> list[dict]:
     """Qué avisos toca mandar ahora mismo. **No manda ninguno.**
 
@@ -442,16 +508,22 @@ def revisar(
     return (
         _de_las_sesiones(con, momento, limites, esperando)
         + _del_latido(con, momento, limites["sin-latido"], arranque or ARRANQUE)
+        + _del_secretario(con, momento, limites["secretario-caido"], arranque or ARRANQUE,
+                          secretario or latido_secretario)
         + _de_la_maquina(con, momento, limites_de_maquina)
     )
 
 
-def ultimos(con: sqlite3.Connection, limite: int = 20) -> list[dict[str, Any]]:
-    """Lo que el relé tiene apuntado, para poder enseñarlo sin adivinar."""
+def ultimos(con: sqlite3.Connection, limite: int = 20, desde: str | None = None) -> list[dict[str, Any]]:
+    """Lo que el relé tiene apuntado, para poder enseñarlo sin adivinar.
+
+    `desde` (ISO en UTC) deja sólo lo que salió desde entonces. Es el último
+    aviso de cada clave, no un histórico: la tabla guarda un episodio por clave.
+    """
     return [
         dict(f) for f in con.execute(
-            "SELECT * FROM aviso WHERE avisado IS NOT NULL"
-            " ORDER BY avisado DESC LIMIT ?", (limite,)
+            "SELECT * FROM aviso WHERE avisado IS NOT NULL AND avisado >= ?"
+            " ORDER BY avisado DESC LIMIT ?", (desde or "", limite)
         )
     ]
 
@@ -472,7 +544,7 @@ def panorama(
         "umbrales": umbrales(ajustes),
         "dueno": dueno,
         "vigilados": con.execute(
-            "SELECT COUNT(*) AS n FROM aviso WHERE clave <> ?", (CLAVE_HUB,)
+            "SELECT COUNT(*) AS n FROM aviso WHERE clave NOT IN (?, ?)", (CLAVE_HUB, CLAVE_SECRETARIO)
         ).fetchone()["n"],
         "ultimos": ultimos(con, 5),
     }

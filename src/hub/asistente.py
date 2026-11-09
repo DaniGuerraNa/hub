@@ -29,7 +29,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
 import time
 from pathlib import Path
 from typing import Any
@@ -105,6 +104,11 @@ class DestinoNoAutorizado(PermissionError):
     """🔴 Se intentó escribir en un panel que no es el del asistente (regla dura 15)."""
 
 
+class AsistenteNoListo(ValueError):
+    """El panel es el del asistente pero ahora no acepta un comando. `ValueError`
+    para que los endpoints que ya lo atrapan lo devuelvan como error legible."""
+
+
 # --------------------------------------------------------------------------- #
 # Dónde vive
 # --------------------------------------------------------------------------- #
@@ -158,7 +162,7 @@ def asegurar_sesion(proyectos: list[Proyecto], reanudar: str | None = None) -> d
     # esto, la primera vez Claude Code pregunta si confía en ella y el chat se
     # queda delante de un menú que desde la web no se puede contestar (265).
     from . import agentes
-    agentes._confiar(Path(proyecto.asiento))
+    agentes.confiar(Path(proyecto.asiento))
 
     try:
         if not tmux.existe_sesion(SESION):
@@ -166,10 +170,10 @@ def asegurar_sesion(proyectos: list[Proyecto], reanudar: str | None = None) -> d
             # después: así `claude` ES el proceso de la ventana y nunca se teclea
             # nada en una shell (decisión 22).
             tmux.nueva_sesion(SESION, proyecto.asiento, VENTANA,
-                              comando_de_arranque(proyecto, reanudar), _entorno(proyecto))
+                              comando_de_arranque(reanudar), _entorno(proyecto))
         else:
             tmux.nueva_ventana(SESION, proyecto.asiento, VENTANA,
-                               comando_de_arranque(proyecto, reanudar), _entorno(proyecto))
+                               comando_de_arranque(reanudar), _entorno(proyecto))
     except (tmux.TmuxNoDisponible, RuntimeError) as exc:
         raise AsistenteNoDisponible(str(exc)) from exc
 
@@ -181,35 +185,22 @@ def asegurar_sesion(proyectos: list[Proyecto], reanudar: str | None = None) -> d
 
 
 def _entorno(proyecto: Proyecto) -> dict[str, str]:
-    """El `bin/` del asistente por delante, para que `hub` esté siempre a mano.
+    """El `bin/` del asistente por delante, para que `hub` esté siempre a mano,
+    y dónde escribe su contexto.
 
-    Sin esto, el comando que el asistente necesita **no existe para él**: lo
+    Sin el PATH, el comando que el asistente necesita **no existe para él**: lo
     lanza `hub-web`, que corre bajo systemd y no tiene `~/.local/bin` en el
-    PATH. Ver `tmux.path_de_usuario`.
+    PATH. Va dentro del comando (`tmux.con_entorno`): el `-e` de tmux no llega
+    al proceso (decisión 339). `env` hace `exec`, así que
+    `pane_current_command` sigue diciendo `claude` y `localizar()` lo ve.
     """
-    return {"PATH": tmux.path_de_usuario(str(Path(proyecto.asiento) / "bin"))}
+    return {"PATH": tmux.path_de_usuario(str(Path(proyecto.asiento) / "bin")),
+            "HUB_CONTEXTO_FICHERO": str(ARCHIVO_CONTEXTO)}
 
 
-def comando_de_arranque(proyecto: Proyecto | None = None, reanudar: str | None = None) -> str:
-    """`claude` con el PATH correcto delante.
-
-    El PATH va **en el comando** y no sólo en el `-e` de tmux porque se comprobó
-    que no basta: `tmux new-session -e PATH=…` deja bien la variable de la
-    sesión —`show-environment` la enseña— pero el **primer panel** arranca con
-    el entorno de quien lanzó el comando, que aquí es `hub-web` bajo systemd.
-    Resultado: el asistente veía el venv del hub y no encontraba `hub`.
-
-    `env` se sustituye a sí mismo por `claude`, así que `pane_current_command`
-    sigue diciendo `claude` y `localizar()` no se entera de nada.
-    """
-    base = f"claude {modelos.bandera(MODELO)}"
-    if reanudar:
-        base += f" --resume {shlex.quote(reanudar)}"
-    if not proyecto or not proyecto.asiento:
-        return base
-    ruta = tmux.path_de_usuario(str(Path(proyecto.asiento) / "bin"))
-    return (f"env PATH={shlex.quote(ruta)} "
-            f"HUB_CONTEXTO_FICHERO={shlex.quote(str(ARCHIVO_CONTEXTO))} {base}")
+def comando_de_arranque(reanudar: str | None = None) -> str:
+    """`claude` en el modelo del asistente; el entorno lo pone `_entorno` (340)."""
+    return modelos.linea_claude(MODELO, reanudar=reanudar or "").comando
 
 
 # El chevron del cuadro de entrada de Claude Code. Es la señal de que la TUI ya
@@ -284,6 +275,34 @@ _MARCAS_CONFIRMACION = (
 
 
 _LINEA_PREGUNTA = "Do you want to proceed?"
+
+# Crear y editar un archivo (medidos el 9-nov en 2.1.280, C-0223): «Do you want
+# to create nota.txt?» y «Do you want to make this edit to nota.txt?». Llevan
+# el nombre en medio, así que van por patrón —sin exigir el «?» al final: un
+# nombre largo parte la línea y la pantalla se lee sin unir—, y cuentan sólo
+# con el menú debajo («1. Yes» y «Esc to cancel»): una respuesta que cite la
+# pregunta no es el cuadro (revisor). Las opciones son las del de comandos:
+# «1» es sí (pulsado al medir: creó el archivo) y Escape cancela.
+_PREGUNTA_DE_ARCHIVO = re.compile(r"^\s*Do you want to (?:create|make this edit to)\b")
+# La raya discontinua que enmarca el contenido del archivo en esos cuadros.
+_RAYA_DE_CONTENIDO = "╌"
+
+
+def _linea_de_la_pregunta(lineas: list[str]) -> int | None:
+    """Dónde está la pregunta del cuadro de permisos, o None si no hay cuadro."""
+    for i, linea in enumerate(lineas):
+        if _LINEA_PREGUNTA in linea:
+            return i
+        if (_PREGUNTA_DE_ARCHIVO.match(linea) and any("1. Yes" in x for x in lineas[i + 1:i + 5])
+                and any("Esc to cancel" in x for x in lineas[i + 1:i + 10])):
+            return i
+    return None
+
+
+
+def _hay_cuadro(pantalla: str) -> bool:
+    return (any(marca in pantalla for marca in _MARCAS_CONFIRMACION)
+            or _linea_de_la_pregunta(pantalla.splitlines()) is not None)
 _OPCION = "opcion"
 
 # Las dos únicas respuestas que el hub ofrece. El «2. Yes, and don't ask again»
@@ -324,14 +343,16 @@ def confirmacion_pendiente(pane_id: str | None = None) -> dict[str, Any] | None:
         return None
 
     pantalla = tmux.capturar_panel(pane_id)
-    if not any(marca in pantalla for marca in _MARCAS_CONFIRMACION):
+    if not _hay_cuadro(pantalla):
         return None
 
     lineas = pantalla.splitlines()
-    corte = next((i for i, l in enumerate(lineas) if _LINEA_PREGUNTA in l), len(lineas))
+    corte = _linea_de_la_pregunta(lineas)
+    corte = len(lineas) if corte is None else corte
     # Lo que pide va entre la última regla anterior a la pregunta y la pregunta.
     inicio = max((i for i, l in enumerate(lineas[:corte]) if _es_regla(l)), default=-1)
-    peticion = [l.strip() for l in lineas[inicio + 1:corte] if l.strip()]
+    peticion = [l.strip() for l in lineas[inicio + 1:corte]
+                if l.strip() and set(l.strip()) != {_RAYA_DE_CONTENIDO}]
     # El consejo de Claude Code («Tip: auto mode handles these prompts… choose
     # "switch to auto mode" below») no es parte de lo que pide, y a quien
     # empieza le invita a quitarse los permisos. Puede ocupar varias líneas.
@@ -346,7 +367,7 @@ def esperando_confirmacion(pane_id: str | None = None) -> bool:
     pane_id = pane_id or localizar()
     if not pane_id:
         return False
-    return any(m in tmux.capturar_panel(pane_id) for m in _MARCAS_CONFIRMACION)
+    return _hay_cuadro(tmux.capturar_panel(pane_id))
 
 
 def responder_confirmacion(respuesta: str, pane_id: str | None = None) -> dict[str, Any]:
@@ -552,12 +573,34 @@ def ocupado(pane_id: str | None = None) -> bool | None:
 _LINEA_TRABAJANDO = re.compile(r"…\s*\((?:\d+h\s*)?(?:\d+m\s*)?\d+s\b")
 
 
+# Lo que Claude Code pinta entre la línea de estado y el cuadro cuando la
+# sesión lleva una lista de tareas: «⎿ ✔ Hecha», «◼ En curso», «◻ Pendiente» y,
+# plegada, «… +3 pending». No es la línea de estado y no debe ocupar su sitio.
+_LINEA_DE_TAREAS = re.compile(r"^(?:⎿\s*)?(?:[✔✓◼◻☐☒■□]\s|…\s*\+\d)")
+
+
+def _es_borde_superior(linea: str) -> bool:
+    """El borde de arriba del cuadro, con o sin el nombre de la sesión dentro.
+
+    🔴 Medido el 9-nov con Claude Code 2.1.280: una sesión con nombre lo pinta
+    en ese borde, «────── Hub remoto con control… ─», y `_es_regla` —guiones y
+    nada más— no lo veía. El borde de abajo sigue siendo una regla limpia, que
+    es en la que se anclan `_cuadro` y esto."""
+    limpia = linea.strip()
+    return _es_regla(linea) or (limpia.startswith(_GUION_CAJA * _ANCHO_MINIMO_REGLA)
+                                and limpia.endswith(_GUION_CAJA))
+
+
 def trabajando_en_pantalla(pane_id: str) -> bool:
     """Si la línea de estado de encima del cuadro dice que está trabajando.
 
-    Sólo se miran las pocas líneas justo encima del cuadro de entrada, nunca el
+    Sólo se mira el bloque justo encima del cuadro de entrada, nunca el
     historial: un «…(3s» en la salida de una herramienta de hace una hora no es
-    trabajo de ahora.
+    trabajo de ahora. Del bloque se saltan las líneas de la lista de tareas:
+    con una lista de tres, la línea de estado quedaba fuera de las cuatro que
+    se miraban (medido el 9-nov, C-0222). Una tarea tan larga que el panel la
+    parte en dos sí ocupa sitio con su segunda línea: con varias así podría
+    volver a quedar fuera. No se ha visto en paneles de 160 columnas.
     """
     lineas = tmux.capturar_panel(pane_id).splitlines()
     reglas = [i for i, l in enumerate(lineas) if _es_regla(l)]
@@ -565,10 +608,20 @@ def trabajando_en_pantalla(pane_id: str) -> bool:
         return False
     prompt = next((i for i in range(reglas[-1] - 1, -1, -1)
                    if lineas[i].strip().startswith(MARCA_LISTO)), None)
-    if prompt is None:
+    # El `❯` tiene que ser el del cuadro, con su borde encima. Con un cuadro de
+    # permiso abierto no hay cuadro de entrada, y el `❯` más cercano es el de un
+    # mensaje del historial: lo de encima es el turno anterior, y si citaba una
+    # línea de estado («· Brewing… (1m 3s)») daba «trabajando» (revisor).
+    if not prompt or not _es_borde_superior(lineas[prompt - 1]):
         return False
-    tope = max((i for i in reglas if i < prompt), default=prompt)
-    zona = [l for l in lineas[max(0, tope - 6):tope] if l.strip()][-4:]
+    tope = prompt - 1
+    zona = []
+    for linea in reversed(lineas[max(0, tope - 16):tope]):
+        limpia = linea.replace("\xa0", " ").strip()
+        if limpia and not _LINEA_DE_TAREAS.match(limpia):
+            zona.append(limpia)
+        if len(zona) == 4:
+            break
     return any(_LINEA_TRABAJANDO.search(l) or "esc to interrupt" in l for l in zona)
 
 
@@ -778,6 +831,16 @@ def enviar_comando(cmd: str, argumento: str = "", pane_id: str | None = None) ->
         raise ValueError(f"comando no permitido: {cmd}")
     linea = f"/{cmd} {argumento}".strip() if argumento else f"/{cmd}"
     destino = _autorizar(pane_id)
+    # 🔴 Las mismas comprobaciones que `enviar` (C-0079). Sin ellas, con el
+    # cuadro de permisos abierto, el pegado no entra y el Enter de `despachar`
+    # elige la opción marcada, que es «1. Yes»: «Limpiar» autorizaba el
+    # comando que el asistente estaba pidiendo.
+    if esperando_confirmacion(destino):
+        raise AsistenteNoListo(f"/{cmd} no se manda: el asistente espera que contestes un permiso")
+    if not listo(destino):
+        raise AsistenteNoListo(f"/{cmd} no se manda: el asistente está arrancando o tiene un menú abierto")
+    if ocupado(destino):
+        raise AsistenteNoListo(f"/{cmd} no se manda: el asistente está trabajando; espera a que acabe")
     tmux.pegar_en_panel(destino, linea, enter=False)
     return {"enviado": True, "comando": cmd, "pane_id": destino,
             "despachado": despachar(destino, linea)}
@@ -1018,7 +1081,7 @@ def conversaciones_anteriores(proyectos: list[Proyecto], limite: int = 12) -> li
     vivo = transcript_vivo(proyectos)
     salida = []
     for archivo in sorted(archivos, key=transcripts.mtime, reverse=True):
-        ficha = conversaciones._ficha(archivo)
+        ficha = conversaciones.ficha(archivo)
         if not ficha or not ficha.get("turnos"):
             continue
         salida.append({**ficha, "actual": bool(vivo and archivo == vivo)})
@@ -1046,7 +1109,7 @@ def retomar(proyectos: list[Proyecto], sesion: str) -> dict[str, Any]:
     archivo = transcripts.ruta_de_sesion(sesion, transcripts.directorios_de(proyecto))
     pane_id = localizar()
     if pane_id:
-        tmux.relanzar_panel(pane_id, proyecto.asiento, comando_de_arranque(proyecto, sesion),
+        tmux.relanzar_panel(pane_id, proyecto.asiento, comando_de_arranque(sesion),
                             _entorno(proyecto))
         pane_id = _esperar_panel()
     else:

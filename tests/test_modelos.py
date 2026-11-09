@@ -67,7 +67,7 @@ def test_el_agente_lanzado_por_el_hub_lleva_su_modelo() -> None:
 
 
 def test_el_asistente_lleva_su_modelo() -> None:
-    assert f"--model {modelos.ASISTENTE}" in asistente.comando_de_arranque(None)
+    assert f"--model {modelos.ASISTENTE}" in asistente.comando_de_arranque()
 
 
 def test_el_asistente_no_duplica_la_politica() -> None:
@@ -83,6 +83,9 @@ def test_nadie_en_src_arranca_claude_sin_modelo() -> None:
     arranque = re.compile(r"""["'](?:env [^"']*)?claude(?: |["'])""")
     sospechosos: list[str] = []
     for archivo in sorted(SRC.rglob("*.py")):
+        # La puerta misma (decisión 340): es donde se decide el `--model`.
+        if archivo == SRC / "modelos.py":
+            continue
         lineas = archivo.read_text(encoding="utf-8").splitlines()
         for n, linea in enumerate(lineas, 1):
             if not arranque.search(linea):
@@ -111,3 +114,27 @@ def test_nadie_en_src_arranca_claude_sin_modelo() -> None:
         " heredarlo —una ventana de trabajo suya, no un agente del hub—, dilo"
         " en el mismo renglón con un comentario y añádelo aquí."
     )
+
+
+@pytest.mark.parametrize("modelo, esfuerzo, permisos", [
+    ("opus", "high", "plan"), ("sonnet", "", ""), (modelos.HEREDA, "max", "bypassPermissions"),
+    (modelos.HEREDA, "", ""),
+])
+def test_leer_la_linea_de_claude_devuelve_lo_que_linea_claude_escribio(modelo, esfuerzo, permisos):
+    """La ida y la vuelta en el mismo módulo (C-0093): `orquestador.ficha`
+    interpretaba a mano la línea que arma `linea_claude`, y sus tests la
+    sustituían siempre, así que un cambio de formato en un lado no lo veía el
+    otro. El prompt va al final y no se lee como banderas."""
+    import shlex
+    linea = modelos.linea_claude(modelo, esfuerzo=esfuerzo, permisos=permisos, prompt="haz algo --model x")
+    leido = modelos.leer_linea(shlex.split(linea.comando))
+    assert leido == {"modelo": modelo and modelos.resolver(modelo), "esfuerzo": esfuerzo or None,
+                     "permisos": permisos or None}
+
+
+def test_leer_la_linea_entiende_lo_que_escribe_una_persona():
+    """Una sesión del dueño puede venir con `--model=…` o con el atajo de
+    saltarse los permisos: también hay que leerla."""
+    assert modelos.leer_linea(["claude", "--model=claude-sonnet-5", "--effort=low",
+                               "--dangerously-skip-permissions"]) == {
+        "modelo": "claude-sonnet-5", "esfuerzo": "low", "permisos": "bypassPermissions"}

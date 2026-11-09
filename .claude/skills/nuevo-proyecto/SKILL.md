@@ -75,7 +75,18 @@ ya escrito con la carpeta creada y el alta hecha, te lanzó el hub.
 
 ### 5. Da de alta en el registro
 
-Añade el bloque a `~/.local/share/hub/projects.yml`. Mismo formato que en
+Si te lanzó el hub, **ya está hecha**: no la repitas. Si no, el alta la hace el
+hub, nunca tú editando `projects.yml` —se saltaría el cerrojo y las
+comprobaciones—. La carpeta ya existe y no está vacía, así que es un anexo:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/proyecto/anexar \
+  -H 'Content-Type: application/json' \
+  -d '{"id": "<id>", "nombre": "<Nombre>", "ruta": "<ruta absoluta>",
+       "estado_ref": "<documento de estado>", "dominio": "personal", "guardrail": "ask"}'
+```
+
+Los campos, y `rutas`/`patrones`/`contenedores` si hacen falta, como en
 `anexar-proyecto`.
 
 ### 6. Comprueba

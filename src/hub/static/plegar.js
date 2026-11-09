@@ -18,6 +18,9 @@
  * (regla dura 11).
  */
 (() => {
+  // Que llegó: si no, `trabajo.html` despliega al cargar lo que el servidor
+  // pintó plegado, para que nada quede cerrado sin forma de abrirlo (C-0167).
+  document.documentElement.dataset.plegarListo = '1';
   // La preferencia vieja ya no se usa: se borra para no dejar basura.
   try { localStorage.removeItem('hub.trabajo.plegados'); } catch { /* da igual */ }
 

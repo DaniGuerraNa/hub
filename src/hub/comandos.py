@@ -92,3 +92,20 @@ def expandir(plantilla: str, valores: dict[str, str]) -> str:
         return shlex.quote(valores[coincidencia.group(1)].strip())
 
     return HUECO.sub(sustituir, plantilla)
+
+
+def preparar(id_comando: str, valores: dict[str, str], ruta: str) -> str:
+    """La orden de un comando declarado, lista para dejarla escrita en `ruta`.
+
+    `valores` puede traer de más: se usan los huecos que tenga la plantilla.
+    `{ruta}` lo rellena la carpeta si no viene escrito, porque es el dato que
+    el móvil no puede teclear y el que da sentido a todo esto. Un comando que
+    no existe o un hueco vacío levantan `ComandoInvalido`, y no se escribe nada.
+    """
+    comando = por_id(id_comando)
+    if not comando:
+        raise ComandoInvalido(f"no hay ningún comando «{id_comando}»")
+    usados = {h: str(valores.get(h) or "") for h in huecos(comando["plantilla"])}
+    if not usados.get("ruta", "").strip():
+        usados["ruta"] = str(ruta)
+    return expandir(comando["plantilla"], usados)

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Sube un encargo ya construido al servidor y lo pone bajo su subdominio.
 #
-#   bash scripts/desplegar-encargo.sh <id> <carpeta> [alias-ssh]   # ensayo
-#   bash scripts/desplegar-encargo.sh <id> <carpeta> [alias] --va   # de verdad
+#   bash scripts/desplegar-encargo.sh <id> <carpeta> <alias-ssh>       # ensayo
+#   bash scripts/desplegar-encargo.sh <id> <carpeta> <alias-ssh> --va  # de verdad
 #
 # 🔴 **La casa construye; la casa NO sirve** (decisión 282, regla dura 8). Esto
 # empuja archivos a un servidor por SSH. Tu máquina no abre ningún puerto más.
@@ -24,7 +24,8 @@ set -euo pipefail
 
 ID=${1:-}
 CARPETA=${2:-}
-ALIAS=${3:-vps-test}
+# El servidor, sin valor por omisión por lo mismo que Caddy y el dominio.
+ALIAS=${3:-}
 MODO=${4:-}
 
 # El contenedor de Caddy, por NOMBRE EXACTO y SIN valor por omisión.
@@ -41,7 +42,8 @@ DOMINIO=${HUB_DOMINIO_ENCARGOS:-}
 rojo() { printf '  ✗ %s\n' "$1" >&2; }
 bien() { printf '  ✓ %s\n' "$1"; }
 
-if [ -z "$ID" ] || [ -z "$CARPETA" ]; then
+if [ -z "$ID" ] || [ -z "$CARPETA" ] || [ -z "$ALIAS" ]; then
+  [ -n "$ID" ] && [ -n "$CARPETA" ] && rojo "falta el alias de ssh del servidor (el tercer argumento)"
   sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 fi

@@ -10,10 +10,11 @@ from __future__ import annotations
 import os
 import re
 import shlex
-import shutil
 import socket
 import subprocess
 from pathlib import Path
+
+from . import procesos
 
 # session | window | pane | pane_id | cwd | título | comando | activo
 _FORMATO = (
@@ -64,12 +65,16 @@ class DestinoInvalido(ValueError):
 
 
 def validar_sesion(session: str) -> str:
+    """El nombre, si cabe en `NOMBRE_VALIDO`; si no, `DestinoInvalido`. Lo que
+    llega de una URL acaba en la línea de órdenes de tmux (regla dura 9)."""
     if not isinstance(session, str) or not NOMBRE_VALIDO.match(session):
         raise DestinoInvalido(session)
     return session
 
 
 def validar_panel(pane_id: str) -> str:
+    """El id, si es `%N`; si no, `DestinoInvalido` (regla dura 9). Un id de
+    panel no es un nombre: con `%` sólo se apunta a un panel, nunca a una sesión."""
     if not isinstance(pane_id, str) or not PANEL_VALIDO.match(pane_id):
         raise DestinoInvalido(pane_id)
     return pane_id
@@ -105,34 +110,14 @@ def orden_base() -> list[str]:
 # sino por de quién queda colgando el servidor que arrancan.
 _PUEDEN_CREAR_SERVIDOR = {"new-session", "new"}
 
-# Un cgroup propio y transitorio para la orden. `--collect` lo recoge solo
-# cuando ya no queda nada dentro.
-_PREFIJO_DESASIR = ["systemd-run", "--user", "--scope", "--quiet", "--collect"]
-
-# Se prueba una vez por proceso: preguntar por systemd en cada llamada costaría
-# un subproceso de más en el camino más caliente del hub.
-_puede_desasir: bool | None = None
+# El cgroup propio lo da `procesos` (decisión 344, que generaliza ésta). Aquí
+# sólo se envuelve lo que puede crear el servidor, con `run` y no con `Popen`:
+# tmux vuelve en el acto y su salida hace falta.
+_PREFIJO_DESASIR = procesos.PREFIJO_SCOPE
 
 
 def _hay_donde_desasir() -> bool:
-    """Si esta máquina puede darle al servidor de tmux un cgroup propio.
-
-    Se comprueba ejecutando de verdad, no mirando si el binario existe: en un
-    contenedor `systemd-run` está instalado y falla igual por no haber bus.
-    """
-    global _puede_desasir
-    if _puede_desasir is None:
-        _puede_desasir = False
-        if shutil.which("systemd-run") and os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
-            try:
-                sonda = subprocess.run(
-                    [*_PREFIJO_DESASIR, "true"],
-                    capture_output=True, timeout=10, check=False,
-                )
-                _puede_desasir = sonda.returncode == 0
-            except (OSError, subprocess.SubprocessError):
-                _puede_desasir = False
-    return _puede_desasir
+    return procesos.puede_desasir()
 
 
 def _correr(args: list[str], entrada: str | None = None) -> str:
@@ -319,7 +304,11 @@ _FORMATO_VENTANA = (
     # El ancho real de la ventana. La vista lo compara con el suyo: si no
     # coinciden se pierden caracteres al final de cada línea, y sin este dato
     # no hay forma de verlo.
-    "#{window_width}"
+    "#{window_width}\t"
+    # El panel activo y el servidor: con ellos se cierra la ventana (396), y
+    # salen de la misma llamada que el índice. Al final, para no mover los de
+    # antes.
+    "#{pane_id}\t#{pid}"
 )
 
 
@@ -356,6 +345,8 @@ def listar_ventanas(session: str) -> list[dict]:
                 "renombrada": not automatico,
                 "ancho": int(campos[8]) if len(campos) > 8 and campos[8].isdigit() else None,
                 "cwd": cwd,
+                "pane_id": campos[9] if len(campos) > 9 else "",
+                "servidor": int(campos[10]) if len(campos) > 10 and campos[10].isdigit() else None,
             }
         )
     return ventanas
@@ -390,6 +381,43 @@ def path_de_usuario(extra: str | None = None) -> str:
     return os.pathsep.join(vistos)
 
 
+def con_entorno(comando: str, entorno: dict[str, str] | None) -> str:
+    """`comando` con su entorno DENTRO, por `env`.
+
+    🔴 `-e PATH=…` de tmux no llega al proceso: medido el 2-nov con tmux
+    3.4 (C-0041), una ventana pedida con el PATH de `hub-web` y
+    `-e PATH=<el del usuario>` arrancó `/usr/bin/claude` 2.1.112 en vez del
+    `claude` 2.1.280 del dueño. Es el fallo de la decisión 231, que se había
+    arreglado en `abrir_ventana` y seguía vivo en las otras tres primitivas.
+    Por eso el entorno va aquí, en un solo sitio, para todas.
+
+    Medido otra vez el 6-nov (C-0058, `test_tmux_entorno.py`): tmux pone el
+    PATH del CLIENTE que da la orden, con comando y sin él; otra variable por
+    `-e` sí llega. Sin comando no se manda nada: la shell de login lee su
+    perfil, y su PATH sale igual con `-e PATH` que sin él. Las primitivas ya no
+    llevan `-e`, y su `entorno` sólo sirve con comando.
+    """
+    if not entorno:
+        return comando
+    asignaciones = " ".join(shlex.quote(f"{k}={v}") for k, v in entorno.items())
+    return f"env {asignaciones} {comando}"
+
+
+def literal(texto: str) -> str:
+    """Un nombre o una ruta tal cual, sin que tmux lo lea como formato (C-0078).
+
+    `-c` y `-n` de `new-window`/`new-session`/`respawn-pane`, `rename-window` y
+    `select-pane -T` expanden formatos, y `#(orden)` en un formato **ejecuta**
+    la orden. Medido con tmux 3.4 en un servidor aparte (3-nov): una ruta
+    `#(touch x)` en `-c` crea `x`; en `-n` el nombre se queda vacío (se
+    evalúa) y en una de dos mediciones también lo creó. `##` es el `#` literal
+    en los cinco. El
+    `-e` no expande y no se escapa. Lo que pase por aquí puede venir de una
+    carpeta clonada, del nombre de un slot o de un cwd restaurado (reglas 9-10).
+    """
+    return texto.replace("#", "##")
+
+
 def nueva_ventana(
     session: str,
     ruta: str | None = None,
@@ -407,15 +435,13 @@ def nueva_ventana(
     """
     validar_sesion(session)
     args = ["new-window", "-P", "-F", "#{window_index}", *al_final(session)]
-    for clave, valor in (entorno or {}).items():
-        args += ["-e", f"{clave}={valor}"]
     # `-c` admite un formato de tmux, resuelto contra el destino: es el idioma
     # de tmux para «aquí mismo» y evita una consulta extra.
-    args += ["-c", ruta or "#{pane_current_path}"]
+    args += ["-c", literal(ruta) if ruta else "#{pane_current_path}"]
     if nombre:
-        args += ["-n", nombre]
+        args += ["-n", literal(nombre)]
     if comando:
-        args.append(comando)
+        args.append(con_entorno(comando, entorno))
     salida = _correr(args).strip()
     return int(salida) if salida.isdigit() else None
 
@@ -446,14 +472,12 @@ def nueva_sesion(
     """
     validar_sesion(session)
     args = ["new-session", "-d", "-s", session]
-    for clave, valor in (entorno or {}).items():
-        args += ["-e", f"{clave}={valor}"]
     if ruta:
-        args += ["-c", ruta]
+        args += ["-c", literal(ruta)]
     if nombre_ventana:
-        args += ["-n", nombre_ventana]
+        args += ["-n", literal(nombre_ventana)]
     if comando:
-        args.append(comando)
+        args.append(con_entorno(comando, entorno))
     # Ver `abrir_ventana`: aquí importa aún más, porque una sesión cuyo único
     # comando muere desaparece ENTERA, y con ella cualquier forma de mirar.
     if conservar:
@@ -484,13 +508,41 @@ def panel_de_sesion(session: str) -> str:
 
 def renombrar_ventana(session: str, indice: int, nombre: str) -> None:
     validar_sesion(session)
-    _correr(["rename-window", "-t", f"={session}:{int(indice)}", nombre])
+    _correr(["rename-window", "-t", f"={session}:{int(indice)}", literal(nombre)])
 
 
-def cerrar_ventana(session: str, indice: int) -> None:
-    """Mata la ventana y todo lo que corra dentro. Acción destructiva."""
-    validar_sesion(session)
-    _correr(["kill-window", "-t", f"={session}:{int(indice)}"])
+class ServidorDistinto(RuntimeError):
+    """El panel salió del muestreo de un servidor de tmux que ya no es el de
+    ahora: su `%N` puede ser hoy otra ventana."""
+
+
+def cerrar_ventana_de(pane_id: str, servidor: int | str | None) -> bool:
+    """Mata la ventana que contiene `pane_id` y todo lo que corra dentro.
+    Acción destructiva (decisión 396).
+
+    Por el panel y no por `sesión:índice`: tmux reasigna los índices libres,
+    y el segundo clic sobre una fila vieja mataba otra ventana. Con `%N`, si
+    el panel ya no existe tmux falla en vez de elegir otra: devuelve False
+    («ya estaba cerrada»). `servidor` es el `server_pid` del muestreo con el
+    que se pintó lo que se pulsó; los `%N` se reutilizan al reiniciar tmux, y
+    si no coincide no se cierra nada (`ServidorDistinto`)."""
+    validar_panel(pane_id)
+    try:
+        esperado = int(servidor) if servidor is not None else None
+    except (TypeError, ValueError):
+        esperado = None
+    actual = servidor_pid()
+    if actual is None:
+        return False  # sin servidor no queda ninguna ventana abierta
+    if esperado != actual:
+        raise ServidorDistinto("tmux se reinició desde que se pintó esta página")
+    try:
+        _correr(["kill-window", "-t", pane_id])
+    except RuntimeError as exc:
+        if "can't find pane" in str(exc):
+            return False
+        raise
+    return True
 
 
 def seleccionar_ventana(destino: str, indice: int) -> None:
@@ -503,9 +555,80 @@ def seleccionar_ventana(destino: str, indice: int) -> None:
     _correr(["select-window", "-t", f"={destino}:{int(indice)}"])
 
 
+# ── Las sesiones espejo de la terminal embebida (las usa `terminal`) ─────────
+
+
+def listar_sesiones() -> list[tuple[str, int, int]]:
+    """(nombre, clientes atacados, epoch de creación) de cada sesión."""
+    crudo = _correr(["list-sessions", "-F", "#{session_name}\t#{session_attached}\t#{session_created}"])
+    sesiones = []
+    for linea in crudo.splitlines():
+        partes = linea.split("\t")
+        if len(partes) < 3:
+            continue
+        try:
+            sesiones.append((partes[0], int(partes[1] or 0), int(partes[2] or 0)))
+        except ValueError:
+            continue
+    return sesiones
+
+
+def agrupar_sesion(origen: str, nombre: str) -> None:
+    """Crea `nombre` en el grupo de `origen`: mismas ventanas, tamaño propio.
+
+    🔴 tmux NO falla si `origen` no existe: lee `-t` como el nombre de un
+    grupo y lo crea, con una shell vacía en el cwd de quien llama. Quien llama
+    comprueba antes que exista (`terminal.crear_espejo`)."""
+    validar_sesion(origen)
+    validar_sesion(nombre)
+    _correr(["new-session", "-d", "-t", origen, "-s", nombre])
+
+
+def ajustar_ventana_a_quien_mira(session: str, indice: int) -> None:
+    """`aggressive-resize` en esa ventana, y sin `-g`: con `-g` la opción queda
+    puesta en todo el servidor, también en las sesiones del dueño."""
+    validar_sesion(session)
+    _correr(["set-window-option", "-t", f"={session}:{int(indice)}", "aggressive-resize", "on"])
+
+
+def clientes_y_grupo() -> list[tuple[str, str]]:
+    """(sesión del cliente, grupo de esa sesión) de cada cliente atacado."""
+    crudo = _correr(["list-clients", "-F", "#{client_session}\t#{session_group}"])
+    return [(p[0], p[1]) for p in (l.split("\t") for l in crudo.splitlines()) if len(p) >= 2]
+
+
+def grupo_de_sesion(session: str) -> str:
+    """El grupo de la sesión, o "" si no está agrupada.
+
+    🔴 **`=sesión:`, con los dos puntos.** Con `-t =sesión` a secas
+    `display-message` devuelve una línea VACÍA para `#{session_group}` —medido
+    en tmux 3.4, con y sin cliente atacado—, prima de lo de `panel_de_sesion`.
+    Vacía, `terminal._hay_otro_espectador` contestaba siempre «nadie» y la
+    ventana se encogía con la terminal del dueño mirándola (C-0087)."""
+    validar_sesion(session)
+    return _correr(["display-message", "-p", "-t", f"={session}:", "#{session_group}"]).strip()
+
+
+def activar_raton(session: str) -> None:
+    """La rueda entra en el copy-mode. `mouse` es opción de sesión: sólo ésa.
+
+    Sin `=`: `set-option` es el único que NO acepta ese prefijo («no such
+    session: =hub-…»), y callado el síntoma era «el scroll no va» (regla dura
+    21). El nombre ya pasó por `validar_sesion`."""
+    validar_sesion(session)
+    _correr(["set-option", "-t", session, "mouse", "on"])
+
+
+def matar_sesion(session: str) -> None:
+    """Mata la sesión entera. Acción destructiva: hoy sólo la usan los espejos."""
+    validar_sesion(session)
+    _correr(["kill-session", "-t", f"={session}"])
+
+
 def escribir_titulo(pane_id: str, titulo: str) -> None:
     """Escribe la etiqueta de vuelta a tmux para que aparezca en la status bar."""
-    _correr(["select-pane", "-t", pane_id, "-T", titulo])
+    validar_panel(pane_id)
+    _correr(["select-pane", "-t", pane_id, "-T", literal(titulo)])
 
 
 def al_final(session: str) -> list[str]:
@@ -523,12 +646,13 @@ def al_final(session: str) -> list[str]:
 
 def abrir_ventana(ruta: str, nombre: str, comando: str | None = None,
                   session: str | None = None,
-                  conservar: bool = False) -> str:
+                  conservar: bool = False,
+                  entorno: dict[str, str] | None = None) -> str:
     """Abre una ventana nueva en la ruta del slot.
 
     La UI LANZA terminales, no las hospeda: sin PTY, sin rendering, sin resize.
     """
-    args = ["new-window", "-P", "-F", "#{pane_id}", "-c", ruta, "-n", nombre]
+    args = ["new-window", "-P", "-F", "#{pane_id}", "-c", literal(ruta), "-n", literal(nombre)]
     # 🔴 Sin `-e PATH=`: se probó y NO llega al proceso —la ventana nueva sale
     # con el PATH del CLIENTE que la pide, que desde systemd es el del servicio
     # y encuentra otro `claude` (decisión 231)—. El PATH va DENTRO del comando
@@ -537,7 +661,7 @@ def abrir_ventana(ruta: str, nombre: str, comando: str | None = None,
     if session:
         args += al_final(session)
     if comando:
-        args.append(comando)
+        args.append(con_entorno(comando, entorno))
     # 🔴 `remain-on-exit` en la MISMA orden que crea la ventana, no en otra
     # después: un comando que muere al instante cerraría la ventana entre las
     # dos y se llevaría el motivo (decisión 231). `new-window` deja la ventana
@@ -668,6 +792,9 @@ def conservar_al_morir(pane_id: str, conservar: bool) -> None:
 
 
 def matar_panel(pane_id: str) -> None:
+    """Mata un panel y lo que corre dentro. Acción destructiva: sólo sobre
+    paneles que abrió el hub (el de un entrevistador, el de una tarea), nunca
+    sobre una ventana de trabajo del dueño."""
     validar_panel(pane_id)
     _correr(["kill-pane", "-t", pane_id])
 
@@ -688,10 +815,8 @@ def relanzar_panel(pane_id: str, ruta: str, comando: str,
     ninguno se entera de que debajo cambió el proceso (decisión 268).
     """
     validar_panel(pane_id)
-    args = ["respawn-pane", "-k", "-t", pane_id, "-c", ruta]
-    for clave, valor in (entorno or {}).items():
-        args += ["-e", f"{clave}={valor}"]
-    args.append(comando)
+    args = ["respawn-pane", "-k", "-t", pane_id, "-c", literal(ruta)]
+    args.append(con_entorno(comando, entorno))
     _correr(args)
 
 
@@ -781,5 +906,5 @@ def tecla_en_panel(pane_id: str, tecla: str) -> None:
 
 def comando_de_apertura(ruta: str, nombre: str, comando: str | None) -> str:
     """El equivalente en texto, para poder copiarlo si se prefiere hacerlo a mano."""
-    base = f"tmux new-window -c {shlex.quote(ruta)} -n {shlex.quote(nombre)}"
+    base = f"tmux new-window -c {shlex.quote(literal(ruta))} -n {shlex.quote(literal(nombre))}"
     return f"{base} {shlex.quote(comando)}" if comando else base

@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -101,7 +102,7 @@ def test_el_unit_generado_lleva_las_rutas_reales(tmp_path):
     assert "@" not in re.sub(r"[\w.-]+@[\w.-]+", "", generado.replace("@RAIZ@", ""))
 
 
-@pytest.mark.parametrize("nombre", ["hub-web", "hub-snapshotter", "hub-canal", "hub-encargos"])
+@pytest.mark.parametrize("nombre", ["hub-web", "hub-snapshotter", "hub-canal", "hub-encargos", "hub-secretario"])
 def test_todos_los_servicios_saben_en_que_puerto_esta_la_web(nombre):
     """El pánico corre en `hub-canal` y comprobaba 8787 aunque el hub se
     hubiera instalado en otro puerto: `HUB_PORT` sólo llegaba al ExecStart."""
@@ -398,7 +399,157 @@ def test_sembrar_no_pisa_un_hub_que_ya_existia_en_esa_ruta(tmp_path):
     assert "no se toca" in r.stdout
 
 
+def _desinstalar_con_datos(tmp_path, entorno_hub_home: str, respuesta: str, respaldo: str = "",
+                           respaldo_del_unit: str = ""):
+    """`desinstalar.sh --datos` en una casa de mentira, con un `systemctl`
+    falso delante: el de verdad pararía los servicios de quien corre la suite."""
+    casa = tmp_path / "casa"
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    (bin_ / "systemctl").write_text("#!/bin/sh\nexit 0\n")
+    (bin_ / "systemctl").chmod(0o755)
+    unidades = casa / ".config" / "systemd" / "user"
+    unidades.mkdir(parents=True)
+    datos = tmp_path / "datos-de-verdad"
+    (datos / "respaldos").mkdir(parents=True)
+    (datos / "respaldos" / "hub-20261105.db").write_bytes(b"x")
+    (datos / "secretario").mkdir()
+    (datos / "secretario" / "memoria.db").write_bytes(b"x")
+    (datos / "hub.db").write_bytes(b"x")
+    (unidades / "hub-web.service").write_text(
+        f"[Service]\nEnvironment=HUB_HOME={datos}\n"
+        "ExecStart=/x/uv run uvicorn hub.web:app --host 127.0.0.1 --port 8787\n")
+    if respaldo_del_unit:
+        (unidades / "hub-snapshotter.service").write_text(
+            f"[Service]\nEnvironment=HUB_HOME={datos}\nEnvironment=HUB_RESPALDO={respaldo_del_unit}\n")
+    r = subprocess.run(
+        [BASH, str(RAIZ / "scripts" / "desinstalar.sh"), "--datos"], input=respuesta + "\n",
+        capture_output=True, text=True, timeout=60,
+        env={**os.environ, "HOME": str(casa), "XDG_CONFIG_HOME": str(casa / ".config"),
+             "PATH": f"{bin_}:{os.environ['PATH']}", "HUB_HOME": entorno_hub_home,
+             "HUB_RESPALDO": respaldo},
+    )
+    return r, datos
+
+
+def test_desinstalar_datos_borra_el_hub_home_del_servicio_y_no_uno_supuesto(tmp_path):
+    """C-0114: usaba el `HUB_HOME` del entorno (o el de por omisión), no el
+    del servicio instalado: borraba una carpeta que no era y dejaba los datos."""
+    supuesto = tmp_path / "supuesto"
+    supuesto.mkdir()
+    (supuesto / "algo").write_text("no es del hub")
+    r, datos = _desinstalar_con_datos(tmp_path, str(supuesto), "borrar")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not datos.exists()
+    assert (supuesto / "algo").exists()
+
+
+def test_desinstalar_datos_dice_todo_lo_que_se_va_antes_de_pedir_borrar(tmp_path):
+    """El aviso sólo nombraba «tus notas de slots»; con la carpeta se van
+    también las copias de cada día y la memoria del secretario."""
+    r, datos = _desinstalar_con_datos(tmp_path, "", "no")
+    salida = r.stdout + r.stderr
+    assert str(datos) in salida
+    assert "respaldos" in salida and "secretario" in salida
+    assert datos.exists()
+
+
+def test_desinstalar_datos_dice_que_las_copias_fuera_de_la_carpeta_no_se_tocan(tmp_path):
+    """C-0186: con `HUB_RESPALDO` fuera de `HUB_HOME`, las copias diarias no se
+    borran —están en otra carpeta— y el aviso no lo decía: quien quería
+    llevárselo todo creía que ya no quedaba nada."""
+    fuera = tmp_path / "copias-en-otro-disco"
+    fuera.mkdir()
+    (fuera / "hub-20261105.db").write_bytes(b"x")
+
+    r, datos = _desinstalar_con_datos(tmp_path, "", "borrar", respaldo=str(fuera))
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not datos.exists() and (fuera / "hub-20261105.db").exists()
+    assert str(fuera) in r.stdout and "no se toca" in r.stdout
+
+
+def test_desinstalar_las_copias_de_fuera_las_dice_el_servicio_instalado_y_no_el_entorno(tmp_path):
+    """Como `HUB_HOME` (C-0114): manda lo que usa el servicio, no lo que diga
+    la shell desde la que se desinstala."""
+    del_servicio, de_la_shell = tmp_path / "copias-del-servicio", tmp_path / "copias-de-la-shell"
+    r, _ = _desinstalar_con_datos(tmp_path, "", "no", respaldo=str(de_la_shell),
+                                  respaldo_del_unit=str(del_servicio))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert str(del_servicio) in r.stdout and str(de_la_shell) not in r.stdout
+
+
+def test_desinstalar_datos_sin_servicios_instalados_tambien_avisa_de_las_copias(tmp_path):
+    """Sin units que leer, buscar `HUB_RESPALDO` en ellos no puede tumbar el
+    guion (`set -e` con `pipefail`): se dice la frase general y se sigue."""
+    casa, bin_, datos = tmp_path / "casa", tmp_path / "bin", tmp_path / "datos"
+    for d in (casa, bin_, datos):
+        d.mkdir()
+    (bin_ / "systemctl").write_text("#!/bin/sh\nexit 0\n")
+    (bin_ / "systemctl").chmod(0o755)
+    (datos / "hub.db").write_bytes(b"x")
+    r = subprocess.run(
+        [BASH, str(RAIZ / "scripts" / "desinstalar.sh"), "--datos"], input="no\n",
+        capture_output=True, text=True, timeout=60,
+        env={**os.environ, "HOME": str(casa), "XDG_CONFIG_HOME": str(casa / ".config"),
+             "PATH": f"{bin_}:{os.environ['PATH']}", "HUB_HOME": str(datos), "HUB_RESPALDO": ""},
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "HUB_RESPALDO" in r.stdout and datos.exists()
+
+
 def test_desinstalar_solo_quita_el_enlace_si_lleva_al_asistente():
     texto = (RAIZ / "scripts" / "desinstalar.sh").read_text(encoding="utf-8")
     bloque = texto.split("ENLACE=")[1].split("\nfi\n")[0]
     assert "el asistente" in bloque and 'rm -f "$ENLACE"' in bloque
+
+
+# ── C-0112: el hub sólo escucha en esta máquina (regla dura 8) ───────────────
+
+@pytest.mark.parametrize("guion", ["instalar.sh", "arrancar.sh"])
+@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.20", "::", "mi-pc.local"])
+def test_los_guiones_se_niegan_a_escuchar_fuera_de_esta_maquina(tmp_path, guion, host):
+    r = _correr(RAIZ / "scripts" / guion, {"HUB_HOST": host, "HUB_HOME": str(tmp_path / "home"),
+                                            "HUB_PORT": "1"}, "--sin-servicios")
+    assert r.returncode != 0
+    assert "sólo escucha en esta máquina" in r.stderr
+    assert not (tmp_path / "home").exists(), "paró después de empezar a instalar"
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1", "127.0.0.2"])
+def test_la_guarda_de_loopback_deja_pasar_lo_de_esta_maquina(host):
+    r = subprocess.run([BASH, "-c", f'. "{RAIZ}/scripts/lib/loopback.sh"; exigir_loopback "{host}"; echo sigue'],
+                       capture_output=True, text=True)
+    assert r.stdout.strip() == "sigue"
+
+
+def test_actualizar_no_conserva_un_unit_que_escucha_fuera():
+    texto = (RAIZ / "scripts" / "actualizar.sh").read_text(encoding="utf-8")
+    assert texto.index('exigir_loopback "$HUB_HOST"') < texto.index('paso "1/7')
+
+
+# 🔴 Direcciones de documentación, que no se pueden abrir: si la guarda dejara
+# de funcionar, el test fallaría sin dejar el hub escuchando en la red ni un
+# segundo (regla 8: «ni temporalmente»). Con 0.0.0.0 sí lo dejaba.
+@pytest.mark.parametrize("host", ["192.0.2.1", "2001:db8::1"])
+def test_la_web_no_arranca_escuchando_fuera(host, tmp_path):
+    """Con uvicorn de verdad, como lo lanza el unit: `--host` no pasa por
+    `main()`, así que lo para el arranque de la app."""
+    r = subprocess.run(
+        [sys.executable, "-m", "uvicorn", "hub.web:app", "--host", host, "--port", "0"],
+        capture_output=True, text=True, timeout=60, cwd=RAIZ,
+        env={**os.environ, "HUB_HOME": str(tmp_path)},
+    )
+    assert r.returncode != 0
+    assert "sólo escucha en esta máquina" in r.stderr
+    assert "Uvicorn running" not in r.stderr
+
+
+def test_la_web_lee_el_host_de_la_orden_en_sus_dos_formas():
+    from hub import web
+
+    assert web._host_de_la_orden(["uvicorn", "hub.web:app", "--host", "0.0.0.0"]) == "0.0.0.0"
+    assert web._host_de_la_orden(["uvicorn", "--host=::", "hub.web:app"]) == "::"
+    assert web._host_de_la_orden(["uvicorn", "hub.web:app"], {}) == "127.0.0.1"
+    # uvicorn también lo toma del entorno (revisor de C-0112).
+    assert web._host_de_la_orden(["uvicorn", "hub.web:app"], {"UVICORN_HOST": "0.0.0.0"}) == "0.0.0.0"

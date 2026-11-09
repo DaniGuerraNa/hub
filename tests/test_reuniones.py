@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import time
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from hub import api, db, reuniones, web
+from hub import api, db, procesos, reuniones, web
 
 INVENTARIO = {"agente": "0.1.0", "equipo": "DESKTOP",
               "monitores": [{"n": 1, "ancho": 1920, "alto": 1080}, {"n": 3, "ancho": 1920, "alto": 1080}],
@@ -285,18 +286,23 @@ def test_el_boton_de_copiar_la_ruta_la_copia_y_lo_dice(tmp_path):
       const el = (id) => nodos[id] ||= { id, dataset: { texto: 'Resumen: /r/resumen.md' },
         textContent: '', _f: {}, addEventListener(ev, f) { this._f[ev] = f; },
         setAttribute(){}, style: {}, select(){}, remove(){} };
+      // Por delegación en el documento (C-0167): la ficha se repinta sin
+      // recargar mientras se procesa y un oyente atado al botón se perdería.
+      const delDoc = {};
       global.document = { getElementById: el, createElement: () => el('textarea'),
-        body: { appendChild(){} }, execCommand: () => true };
+        body: { appendChild(){} }, execCommand: () => true,
+        addEventListener(ev, f) { delDoc[ev] = f; } };
+      const pulsar = () => delDoc.click({ target: { closest: (s) => s === '#copiar-ruta' ? el('copiar-ruta') : null } });
       const copiado = [];
       Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {
         clipboard: { writeText: (t) => globalThis.NIEGA ? Promise.reject(new Error('no'))
                                                          : (copiado.push(t), Promise.resolve()) } } });
       GUION
       (async () => {
-        await nodos['copiar-ruta']._f.click();
+        await pulsar();
         const primero = nodos['copiada'].textContent;
         globalThis.NIEGA = true;
-        await nodos['copiar-ruta']._f.click();
+        await pulsar();
         console.log(JSON.stringify({ copiado, primero, segundo: nodos['copiada'].textContent }));
       })();
     """.replace("GUION", guion)
@@ -331,7 +337,7 @@ def test_las_voces_salen_con_su_nombre_y_se_pueden_nombrar(cliente, raiz, monkey
                          {"ini": 5, "fin": 6, "texto": "Yo lo hago", "quien": "Yo"}],
                      {"Persona 1": "Ana"})
     ordenes = []
-    monkeypatch.setattr(reuniones, "_lanzar", lambda *a: ordenes.append(a))
+    monkeypatch.setattr(reuniones, "_lanzar", lambda *a, **k: ordenes.append(a))
 
     html = cliente.get(f"/reuniones/{d.name}").text
     assert 'name="voz:Persona 1" value="Ana"' in html and 'name="voz:Persona 2" value=""' in html
@@ -346,7 +352,7 @@ def test_un_nombre_raro_o_una_clave_inventada_no_llegan_a_la_orden(cliente, raiz
     r, _ = raiz
     d = _reunion_con(r, [{"ini": 1, "fin": 2, "texto": "Hola", "quien": "Persona 1"}])
     ordenes = []
-    monkeypatch.setattr(reuniones, "_lanzar", lambda *a: ordenes.append(a))
+    monkeypatch.setattr(reuniones, "_lanzar", lambda *a, **k: ordenes.append(a))
     for datos in ({"voz:Persona 1": "Ana; rm -rf"}, {"voz:--rehacer": "x"},
                   {"voz:Persona 1": "a" * 61}):
         r_ = cliente.post("/reuniones/accion", data={"id": d.name, "que": "nombres", **datos},
@@ -359,7 +365,7 @@ def test_sin_voces_separadas_se_ofrece_separarlas_y_no_mientras_se_procesa(clien
     r, _ = raiz
     d = _reunion_con(r, [{"ini": 1, "fin": 2, "texto": "Hola", "quien": "Reunión"}])
     ordenes = []
-    monkeypatch.setattr(reuniones, "_lanzar", lambda *a: ordenes.append(a))
+    monkeypatch.setattr(reuniones, "_lanzar", lambda *a, **k: ordenes.append(a))
 
     assert 'value="voces"' in cliente.get(f"/reuniones/{d.name}").text
     (d / "procesado.json").write_text(json.dumps(
@@ -371,3 +377,109 @@ def test_sin_voces_separadas_se_ofrece_separarlas_y_no_mientras_se_procesa(clien
     (d / "procesado.json").write_text(json.dumps({"estado": "procesando"}))
     cliente.post("/reuniones/accion", data={"id": d.name, "que": "voces"})
     assert len(ordenes) == 1
+
+
+# ── lo que se corta a medias (C-0148, decisión 344) ──
+
+
+def _procesando(r, id_="20261020-090000", inicio=None):
+    d = r / id_
+    d.mkdir()
+    (d / "meta.json").write_text(json.dumps({"id": id_, "inicio": 0, "fin": 60}))
+    (d / "procesado.json").write_text(json.dumps({"estado": "procesando", "inicio": inicio or time.time(),
+                                                  "etapas": {"transcribir": "hecho en 24 s", "resumir": "en-curso"}}))
+    return d
+
+
+def test_un_procesado_cuyo_proceso_murio_se_ve_cortado_y_se_puede_reintentar(cliente, raiz):
+    r, _ = raiz
+    d = _procesando(r)
+    muerto = subprocess.Popen(["true"])
+    huella = procesos.huella(muerto.pid)
+    muerto.wait()
+    reuniones._escribir(reuniones._lanzados(crear=True) / f"{d.name}-procesar.json", {**huella, "desde": time.time()})
+    assert reuniones.lista()[0]["estado"] == "se cortó"
+    html = cliente.get(f"/reuniones/{d.name}").text
+    assert "se cortó" in html and "Reintentar" in html and "resumir: en-curso" in html
+    assert 'data-refrescar' not in html, "algo cortado no se refresca esperando a que acabe"
+    (d / "reunion.wav").write_bytes(b"\0" * 5000)
+    assert reuniones.sin_comprimir() == [], "reuniones comprimir se negaría: primero se reintenta"
+    assert "Comprimir audio" not in cliente.get(f"/reuniones/{d.name}").text
+
+
+def test_lo_que_sigue_vivo_o_lo_que_lanzo_otro_sigue_procesando(cliente, raiz):
+    r, _ = raiz
+    d = _procesando(r)
+    assert reuniones.lista()[0]["estado"] == "procesando", "sin registro no se sabe: lo lanzó otro"
+    vivo = subprocess.Popen(["sleep", "30"])
+    try:
+        reuniones._escribir(reuniones._lanzados(crear=True) / f"{d.name}-procesar.json",
+                            {**procesos.huella(vivo.pid), "desde": time.time()})
+        assert reuniones.lista()[0]["estado"] == "procesando"
+    finally:
+        vivo.kill()
+        vivo.wait()
+    (d / "procesado.json").write_text(json.dumps({"estado": "procesando", "inicio": time.time() + 3600}))
+    assert reuniones.lista()[0]["estado"] == "procesando", "un arranque posterior no es de este lanzamiento"
+
+
+def test_una_compresion_cortada_deja_de_bloquear(raiz):
+    r, _ = raiz
+    d = r / "20261020-090000"
+    d.mkdir()
+    (d / "meta.json").write_text(json.dumps({"id": d.name, "inicio": 0, "fin": 60}))
+    (d / "reunion.wav").write_bytes(b"\0" * 5000)
+    (d / "comprimiendo").touch()
+    assert reuniones.sin_comprimir() == []
+    muerto = subprocess.Popen(["true"])
+    huella = procesos.huella(muerto.pid)
+    muerto.wait()
+    reuniones._escribir(reuniones._lanzados(crear=True) / f"{d.name}-comprimir.json", {**huella, "desde": time.time()})
+    assert reuniones.sin_comprimir() == [d.name]
+
+
+def test_al_lanzar_se_apunta_la_huella_de_lo_lanzado(raiz, monkeypatch):
+    lanzado = subprocess.Popen(["sleep", "30"])
+    ordenes = []
+    monkeypatch.setattr(procesos, "desasir", lambda orden, **kw: ordenes.append(orden) or lanzado)
+    try:
+        reuniones._lanzar("procesar", "20261020-090000", ids=("20261020-090000",))
+        h = reuniones._leer(reuniones._lanzados() / "20261020-090000-procesar.json")
+        assert h["pid"] == lanzado.pid and procesos.vivo(h)
+        assert ordenes[0][-2:] == ["procesar", "20261020-090000"]
+    finally:
+        lanzado.kill()
+        lanzado.wait()
+
+
+def test_separar_voces_cortado_tambien_se_ve_cortado(raiz, monkeypatch):
+    """`reuniones voces` pasa por `procesar` y escribe su «procesando» con un
+    inicio nuevo: su huella va con la de procesar (revisor de C-0148)."""
+    r, _ = raiz
+    d = r / "20261020-090000"
+    d.mkdir()
+    (d / "meta.json").write_text(json.dumps({"id": d.name, "inicio": 0, "fin": 60}))
+    (d / "procesado.json").write_text(json.dumps({"estado": "hecho", "inicio": time.time() - 7200}))
+    muerto = subprocess.Popen(["true"])
+    monkeypatch.setattr(procesos, "desasir", lambda orden, **kw: muerto)
+    reuniones.lanzar_voces(d.name)
+    (d / "procesado.json").write_text(json.dumps({"estado": "procesando", "inicio": time.time()}))
+    muerto.wait()
+    assert reuniones.lista()[0]["estado"] == "se cortó"
+    with pytest.raises(ValueError, match="reinténtalo"):
+        reuniones.lanzar_voces(d.name)
+
+
+def test_una_compresion_de_varias_marca_tarde_y_aun_asi_se_ve_cortada(raiz):
+    r, _ = raiz
+    d = r / "20261020-090000"
+    d.mkdir()
+    (d / "meta.json").write_text(json.dumps({"id": d.name, "inicio": 0, "fin": 60}))
+    (d / "reunion.wav").write_bytes(b"\0" * 5000)
+    (d / "comprimiendo").touch()
+    muerto = subprocess.Popen(["true"])
+    huella = procesos.huella(muerto.pid)
+    muerto.wait()
+    reuniones._escribir(reuniones._lanzados(crear=True) / f"{d.name}-comprimir.json",
+                        {**huella, "desde": time.time() - 3600})
+    assert reuniones.sin_comprimir() == [d.name], "marcada una hora después de lanzarse"

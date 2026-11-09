@@ -23,7 +23,6 @@ import json
 import os
 import re
 import secrets
-import subprocess
 import time
 from pathlib import Path
 
@@ -144,14 +143,14 @@ def preparacion() -> dict:
     # que le falta es la llave, y eso es otro paso.
     llamo = agente()["hace"] is not None or rechazo_reciente() is not None
     pasos = componentes.pasos_reuniones_wsl() + [
-        componentes._paso("carpeta", "Dónde va el agente en Windows",
+        componentes.paso("carpeta", "Dónde va el agente en Windows",
                           bool(carpeta_windows()) or destino.is_dir(),
                           "Una carpeta de Windows para el agente; las grabaciones irán a la de al lado."),
-        componentes._paso("agente", "El agente está en esa carpeta", (destino / "agente.py").exists(),
+        componentes.paso("agente", "El agente está en esa carpeta", (destino / "agente.py").exists(),
                           "«Copiar el agente» lo deja ahí, con el puerto de este hub."),
-        componentes._paso("instalado", "El agente está instalado en Windows", llamo,
+        componentes.paso("instalado", "El agente está instalado en Windows", llamo,
                           "Doble clic en instalar.cmd dentro de esa carpeta. Necesita uv para Windows."),
-        componentes._paso("llave", "Tiene su llave", hay_llave(), "«Generar la llave», aquí abajo."),
+        componentes.paso("llave", "Tiene su llave", hay_llave(), "«Generar la llave», aquí abajo."),
     ]
     return {"pasos": pasos, "listo": componentes.listo(pasos),
             "windows": carpeta_windows() or (POR_OMISION_WINDOWS if destino.is_dir() else SUGERIDA_WINDOWS),
@@ -259,6 +258,8 @@ def latido(datos: dict) -> dict:
     es el único momento en que se sabe que los archivos están cerrados."""
     if datos.get("terminada"):
         terminada(str(datos["terminada"]))
+    if datos.get("abiertas"):
+        _confirmar_abiertas(datos["abiertas"])
     datos = {k: datos.get(k) for k in ("agente", "equipo", "grabando", "monitores", "microfonos", "apps")}
     previo = _leer(carpeta() / "latido.json") or {}
     for k in ("monitores", "microfonos", "apps"):       # el inventario no llega en cada latido
@@ -266,7 +267,50 @@ def latido(datos: dict) -> dict:
             datos[k] = previo.get(k)
     datos["t"] = time.time()
     _escribir(carpeta() / "latido.json", datos)
-    return {"orden": orden(), "miniaturas": _consumir("pedir-miniaturas")}
+    return {"orden": orden(), "miniaturas": _consumir("pedir-miniaturas"), "abrir": _por_abrir()}
+
+
+# ── abrir una pantalla del hub en la PC (decisión 313) ────────────────────────
+# El agente ya llama cada segundo y vive en la sesión de Windows: él la abre en
+# su navegador. (La 313 decía que WSL no podía lanzar programas de Windows; el
+# 7-nov se midió que sí, y leer la PC va directo, decisión 386; lo que cambia
+# algo en ella sigue por aquí.) Sólo
+# rutas del propio hub —«/trabajo?slot=3»—, nunca una URL de fuera: el agente
+# las pega a SU dirección del hub, así que aunque alguien escribiera aquí, no
+# podría mandarlo a otra web.
+RUTA_DEL_HUB = re.compile(r"^/(?!/)[\w\-./?=&%#:+~@!,;]*$")
+
+
+def pedir_abrir(ruta: str) -> str:
+    """Encola una pantalla para que el agente la abra. Devuelve su id."""
+    if not RUTA_DEL_HUB.match(ruta or "") or "\\" in ruta:
+        raise ValueError(f"sólo se abren pantallas del hub («/trabajo», «/reuniones/…»), no «{ruta}»")
+    import uuid
+    pedidos = _leer(carpeta() / "abrir.json") or []
+    pid = uuid.uuid4().hex[:12]
+    pedidos.append({"id": pid, "ruta": ruta, "t": time.time()})
+    _escribir(carpeta() / "abrir.json", pedidos[-10:])
+    return pid
+
+
+def _por_abrir() -> list[dict]:
+    """Lo pendiente, una vez: lo que lleva más de un minuto ya no es lo que se pidió."""
+    f = carpeta() / "abrir.json"
+    pedidos = _leer(f) or []
+    if not pedidos:
+        return []
+    f.unlink(missing_ok=True)
+    return [{"id": p["id"], "ruta": p["ruta"]} for p in pedidos if time.time() - p.get("t", 0) < 60]
+
+
+def _confirmar_abiertas(ids) -> None:
+    hechas = set(_leer(carpeta() / "abiertas.json") or [])
+    hechas |= {str(i) for i in ids if isinstance(i, str)}
+    _escribir(carpeta() / "abiertas.json", sorted(hechas)[-50:])
+
+
+def abierta(pid: str) -> bool:
+    return pid in set(_leer(carpeta() / "abiertas.json") or [])
 
 
 def terminada(id_: str) -> None:
@@ -342,30 +386,100 @@ def parar() -> dict:
 # ───────────────────────────── lo grabado ─────────────────────────────
 
 
-def _lanzar(*args: str) -> None:
-    """Una orden de `reuniones`, en segundo plano y con su salida al log."""
-    from . import tmux
-    log = open(carpeta() / "procesado.log", "a")
-    subprocess.Popen(["uv", "run", "--quiet", "--project", str(proyecto()), "reuniones", *args],
-                     cwd=proyecto(), stdout=log, stderr=log, start_new_session=True,
-                     env={**os.environ, "PATH": tmux.path_de_usuario(), "REUNIONES_RAIZ": str(raiz())})
+def _lanzar(*args: str, ids: tuple[str, ...] = (), estado: str | None = None) -> None:
+    """Una orden de `reuniones`, en segundo plano y con su salida al log.
+
+    Fuera del cgroup de `hub-web` (decisión 344): al reiniciarlo, el resumen de
+    una reunión murió a medias (C-0148). Y se apunta qué se lanzó y su huella,
+    para que un «procesando» cuyo proceso ya no existe no se quede así para
+    siempre (`_cortado`). El pid es el de `uv`, no el de Python: mueren juntos.
+    `estado` es el archivo de estado que escribe la orden: `voces` y `nombres`
+    pasan por `procesar` y escriben su «procesando» (revisor de C-0148).
+    """
+    from . import procesos, tmux
+    with open(carpeta() / "procesado.log", "a") as log:
+        proceso = procesos.desasir(["uv", "run", "--quiet", "--project", str(proyecto()), "reuniones", *args],
+                                   cwd=proyecto(), salida=log,
+                                   env={**os.environ, "PATH": tmux.path_de_usuario(), "REUNIONES_RAIZ": str(raiz())})
+    huella = procesos.huella(proceso.pid)
+    if huella:
+        for id_ in ids:
+            _escribir(_lanzados(crear=True) / f"{id_}-{estado or args[0]}.json", {**huella, "desde": time.time()})
+
+
+# Lo lanzado por el hub, en su carpeta y no en la de la grabación: ésa la
+# escribe el proyecto reuniones, y el hub no escribe en lo de otro (regla 16).
+def _lanzados(crear: bool = False) -> Path:
+    d = carpeta() / "lanzados"
+    if crear:
+        d.mkdir(exist_ok=True)
+    return d
+
+
+# Cuánto puede tardar `uv run` en arrancar y que `reuniones procesar` escriba
+# su «procesando». Un inicio más tardío que esto no es de este lanzamiento:
+# lo empezó otro (a mano, en una terminal) y no se da por cortado.
+_ARRANQUE_S = 300
+
+
+def _cortado(id_: str, orden: str, desde: float | None, tope: float | None = _ARRANQUE_S) -> bool:
+    """Si lo que el hub lanzó para esta reunión ya no corre.
+
+    Sin registro no se sabe —lo lanzó otro— y se deja como esté. `desde` es
+    cuándo empezó lo que dice estar en marcha: el registro tiene que ser de
+    ese mismo arranque, y no puede ser anterior a él. `tope=None` quita el
+    límite por arriba: una compresión de varias marca cada reunión al llegar
+    a ella, quizá mucho después de lanzarse.
+    """
+    from . import procesos
+    h = _leer(_lanzados() / f"{id_}-{orden}.json")
+    if not h or desde is None:
+        return False
+    inicio = h.get("desde", 0)
+    if desde < inicio - 5 or (tope is not None and desde > inicio + tope):
+        return False
+    return not procesos.vivo(h)
+
+
+#: Lo que no deja comprimir: el proyecto reuniones lee «procesando» en ambos.
+SIN_TERMINAR = ("procesando", "se cortó")
+
+
+def _estado_procesado(id_: str, p: dict) -> str | None:
+    if p.get("estado") == "procesando" and _cortado(id_, "procesar", p.get("inicio")):
+        return "se cortó"
+    return p.get("estado")
+
+
+def _comprimiendo(d: Path) -> bool:
+    marca = d / "comprimiendo"
+    if not marca.exists():
+        return False
+    try:
+        desde = marca.stat().st_mtime
+    except OSError:
+        return False
+    return not _cortado(d.name, "comprimir", desde, tope=None)
 
 
 def _libre(id_: str) -> None:
-    if (_leer(_dir(id_) / "procesado.json") or {}).get("estado") == "procesando":
+    estado = _estado_procesado(id_, _leer(_dir(id_) / "procesado.json") or {})
+    if estado == "procesando":
         raise ValueError("se está procesando: espera a que termine")
+    if estado == "se cortó":
+        raise ValueError("el procesado se cortó a medias: reinténtalo primero")
 
 
 def lanzar_procesado(id_: str) -> None:
     if not ID.match(id_):
         raise ValueError("id no válido")
-    _lanzar("procesar", id_)
+    _lanzar("procesar", id_, ids=(id_,))
 
 
 def lanzar_voces(id_: str) -> None:
     """Separar las voces de una ya procesada, y rehacer su resumen con ellas."""
     _libre(id_)
-    _lanzar("voces", id_, "--resumen")
+    _lanzar("voces", id_, "--resumen", ids=(id_,), estado="procesar")
 
 
 # Lo que se acepta como nombre: corto y de una línea. Va como argumento a un
@@ -383,7 +497,7 @@ def lanzar_nombres(id_: str, nombres: dict[str, str], resumen: bool) -> None:
         if not re.match(r"^Persona \d{1,3}$", clave) or not _NOMBRE.match(valor):
             raise ValueError(f"nombre no válido para {clave}: usa letras, espacios o guiones")
         pares.append(f"{clave}={valor}")
-    _lanzar("nombres", id_, *pares, *(["--resumen"] if resumen else []))
+    _lanzar("nombres", id_, *pares, *(["--resumen"] if resumen else []), ids=(id_,), estado="procesar")
 
 
 def _tamano(d: Path) -> int:
@@ -399,21 +513,19 @@ def lanzar_compresion(ids: list[str]) -> None:
     dueño lo pide, nunca solo. Lo hace `reuniones comprimir`, que comprueba la
     duración antes de borrar nada."""
     ids = [i for i in ids if ID.match(i)]
-    if any((_leer(raiz() / i / "procesado.json") or {}).get("estado") == "procesando" for i in ids):
+    # Una cortada tampoco: su procesado.json sigue diciendo «procesando», y
+    # `reuniones comprimir` se negaría. Primero se reintenta.
+    if any(_estado_procesado(i, _leer(raiz() / i / "procesado.json") or {}) in SIN_TERMINAR for i in ids):
         raise ValueError("se está procesando: comprime cuando termine")
     if not ids:
         raise ValueError("nada que comprimir")
-    from . import tmux
-    log = open(carpeta() / "procesado.log", "a")
-    subprocess.Popen(["uv", "run", "--quiet", "--project", str(proyecto()), "reuniones", "comprimir", *ids],
-                     cwd=proyecto(), stdout=log, stderr=log, start_new_session=True,
-                     env={**os.environ, "PATH": tmux.path_de_usuario(), "REUNIONES_RAIZ": str(raiz())})
+    _lanzar("comprimir", *ids, ids=tuple(ids))
 
 
 def sin_comprimir() -> list[str]:
     """Las terminadas que aún tienen WAV y no se están comprimiendo."""
     return [x["id"] for x in lista(500) if x["terminada"] and not x["comprimida"] and not x["comprimiendo"]
-            and x["estado"] != "procesando"]
+            and x["estado"] not in SIN_TERMINAR]
 
 
 def _dir(id_: str) -> Path:
@@ -437,19 +549,22 @@ def lista(n: int = 50) -> list[dict]:
         dur = int(meta["fin"] - meta["inicio"]) if meta.get("fin") is not None and meta.get("inicio") is not None else None
         out.append({"id": d.name, "titulo": res.get("titulo") or meta.get("titulo") or "",
                     "app": (meta.get("proceso") or {}).get("nombre"), "duracion": dur,
-                    "estado": p.get("estado") or ("grabando" if not meta.get("fin") else "sin procesar"),
+                    "estado": _estado_procesado(d.name, p) or ("grabando" if not meta.get("fin") else "sin procesar"),
                     "tareas": len(res.get("tareas") or []), "terminada": bool(meta.get("fin")),
                     "tamano": _tamano(d), "comprimida": _comprimida(d),
-                    "comprimiendo": (d / "comprimiendo").exists(),
+                    "comprimiendo": _comprimiendo(d),
                     "error_compresion": (_leer(d / "comprimido.json") or {}).get("error")})
     return out
 
 
 def detalle(id_: str) -> dict:
     d = _dir(id_)
+    procesado = _leer(d / "procesado.json") or {}
+    if procesado:
+        procesado = {**procesado, "estado": _estado_procesado(id_, procesado)}
     return {"id": id_, "carpeta": str(d), "guia_voces": f"{proyecto()}/README.md",
-            "meta": _leer(d / "meta.json") or {}, "procesado": _leer(d / "procesado.json") or {},
-            "tamano": _tamano(d), "comprimida": _comprimida(d), "comprimiendo": (d / "comprimiendo").exists(),
+            "meta": _leer(d / "meta.json") or {}, "procesado": procesado,
+            "tamano": _tamano(d), "comprimida": _comprimida(d), "comprimiendo": _comprimiendo(d),
             "compresion": _leer(d / "comprimido.json"),
             "resumen": _leer(d / "resumen.json"), "transcripcion": _leer(d / "transcripcion.json") or [],
             "nombres": _leer(d / "nombres.json") or {},

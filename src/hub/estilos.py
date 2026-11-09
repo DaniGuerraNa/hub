@@ -26,7 +26,6 @@ git no se puede revisar y engorda para siempre.
 from __future__ import annotations
 
 import re
-import subprocess
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -820,11 +819,6 @@ def _navegador() -> str | None:
     return mirar.cual()
 
 
-def _para_el_navegador(chrome: str, ruta: Path) -> str:
-    """La misma ruta, dicha como la entiende ESE navegador. Ver `mirar.para`."""
-    return mirar.para(chrome, ruta)
-
-
 def carpeta() -> Path:
     return Path(config.HUB_HOME) / "estilos"
 
@@ -1010,17 +1004,12 @@ def capturar(estilo: Estilo, pantalla: Pantalla | None = None,
     fuente = salida / f"{nombre}.html"
     fuente.write_text(pagina(estilo, pantalla), encoding="utf-8")
     png = ruta_muestra(estilo, pantalla, salida)
-    subprocess.run(
-        [chrome, "--headless", "--disable-gpu", "--no-sandbox",
-         "--window-size=720,1000", "--force-device-scale-factor=2",
-         f"--screenshot={_para_el_navegador(chrome, png)}",
-         _para_el_navegador(chrome, fuente)],
-        capture_output=True, timeout=90, check=False,
-    )
-    fuente.unlink(missing_ok=True)
-    if not png.is_file():
-        raise RuntimeError(f"Chrome no produjo la captura de «{nombre}»")
-    return png
+    # Por `mirar.captura` y no con la orden armada aquí (C-0139): la misma que
+    # traduce rutas para el Chrome de Windows y avisa de lo que no sabe pintar.
+    try:
+        return mirar.captura(str(fuente), png, 720, 1000, escala=2, chrome=chrome)
+    finally:
+        fuente.unlink(missing_ok=True)
 
 
 def catalogo() -> dict[str, list[tuple[Estilo, Pantalla]]]:

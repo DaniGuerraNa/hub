@@ -1,0 +1,41 @@
+{
+ "rana-alquimista": {
+  "cuadros": [
+   "f0",
+   "f1",
+   "f2",
+   "f3"
+  ],
+  "ancho": 99.95,
+  "alto": 100.84,
+  "izquierda": 0.04,
+  "bajar": 0.0
+ },
+ "rana-bardo": {
+  "cuadros": [
+   "f0",
+   "f1",
+   "f2"
+  ],
+  "ancho": 99.91,
+  "alto": 93.65,
+  "izquierda": -0.03,
+  "bajar": 0.34
+ },
+ "rana-herrera": {
+  "cuadros": [
+   "f0",
+   "f1",
+   "f2"
+  ],
+  "ancho": 101.98,
+  "alto": 103.55,
+  "izquierda": -9.16,
+  "bajar": 3.43,
+  "objeto": {
+   "u": 0.7806,
+   "v_arriba": 0.689,
+   "v_base": 0.9035
+  }
+ }
+}

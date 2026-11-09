@@ -24,7 +24,10 @@ prompt (decisión 256). Lo que no hay, a propósito:
     orq plan                      guarda el plan (por stdin), con pasos numerados
     orq paso <n>                  en qué paso vas; los de antes quedan hechos
     orq avance "<texto>"          cómo va, en una línea, para el dueño
-    orq preguntar "<texto>"       a la bandeja del dueño; la tarea espera
+    orq evidencia <ruta> ["nota"] apunta una imagen del intercambio de lo que se vio
+    orq preguntar --motivo M "<texto>"
+                                  al dueño o al secretario según el motivo; la tarea espera
+                                  (`--motivo relevo`: lo que sólo él hace en su PC)
     orq terminar "<resumen>"      cierra la tarea
 """
 
@@ -56,7 +59,15 @@ def cmd_tarea(con, args) -> int:
     if t.get("avance"):
         print(f"## Último avance\n\n{t['avance']}\n")
     if t.get("pregunta"):
-        print(f"## Pregunta abierta al dueño\n\n{t['pregunta']['texto']}\n")
+        quien = "al secretario" if t["pregunta"].get("para") == "secretario" else "al dueño"
+        if t["pregunta"].get("motivo") == "relevo":
+            quien = "al dueño, en su PC (relevo)"
+        print(f"## Pregunta abierta {quien}\n\n{t['pregunta']['texto']}\n")
+    if t.get("evidencias"):
+        print("## Evidencia apuntada\n")
+        for e in t["evidencias"]:
+            print(f"- {e['ruta']}" + (f": {e['nota']}" if e.get("nota") else ""))
+        print()
     for c in t.get("confirmaciones") or []:
         if c["estado"] == "pendiente":
             print(f"## Pendiente de que el dueño confirme (#{c['id']})\n\n"
@@ -194,9 +205,20 @@ def cmd_avance(con, args) -> int:
     return 0
 
 
+def cmd_evidencia(con, args) -> int:
+    ruta = orquestador.evidencia(args.ruta, args.nota)
+    print(f"Evidencia apuntada en la tarea: {ruta}. Nómbrala también en tu resumen.")
+    return 0
+
+
 def cmd_preguntar(con, args) -> int:
-    orquestador.preguntar(_texto(args.texto))
-    print("Pregunta en su bandeja. Termina tu turno: te despierto con su respuesta.")
+    para = orquestador.preguntar(_texto(args.texto), args.motivo)
+    if args.motivo == "relevo":
+        print("Relevo en los asuntos del dueño: si su PC está conectada, se le abren ahí. No va al "
+              "teléfono, así que puede tardar hasta que vuelva. Termina tu turno: te despierto con su respuesta.")
+        return 0
+    quien = "del secretario" if para == "secretario" else "del dueño"
+    print(f"Pregunta en la bandeja {quien}. Termina tu turno: te despierto con su respuesta.")
     return 0
 
 
@@ -218,6 +240,7 @@ ORDENES = {
     "plan": cmd_plan,
     "paso": cmd_paso,
     "avance": cmd_avance,
+    "evidencia": cmd_evidencia,
     "preguntar": cmd_preguntar,
     "terminar": cmd_terminar,
 }
@@ -260,7 +283,11 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("n", type=int)
     p = sub.add_parser("avance")
     p.add_argument("texto")
+    p = sub.add_parser("evidencia")
+    p.add_argument("ruta")
+    p.add_argument("nota", nargs="?", default="")
     p = sub.add_parser("preguntar")
+    p.add_argument("--motivo", choices=sorted(orquestador.MOTIVOS), default=None)
     p.add_argument("texto", nargs="?", default=None)
     p = sub.add_parser("terminar")
     p.add_argument("texto", nargs="?", default=None)

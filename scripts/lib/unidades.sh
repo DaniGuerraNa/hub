@@ -4,7 +4,7 @@
 #
 # Espera definidas: RAIZ, HUB_HOME, HUB_HOST, HUB_PORT, UNIDADES.
 
-SERVICIOS_HUB="hub-web hub-snapshotter hub-canal hub-encargos"
+SERVICIOS_HUB="hub-web hub-snapshotter hub-canal hub-encargos hub-secretario"
 
 generar_unidades() {
   local uv servicio destino

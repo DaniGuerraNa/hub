@@ -45,12 +45,17 @@
       });
     },
 
+    /* `obligatorio`: aceptar con el campo vacío no cierra el diálogo; lo dice el
+     * navegador, como en `formulario`. Sin él, vacío daba `null`, igual que
+     * cancelar, y quien llamaba no podía distinguirlos: «Descartar» en el
+     * Tablero se cerraba sin hacer nada y sin decir por qué (C-0230). */
     preguntar({ titulo, etiqueta, valor = '', aceptar = 'Guardar',
-                multilinea = false, nota = '', cta = false }) {
+                multilinea = false, nota = '', cta = false, obligatorio = false }) {
       return new Promise(resolver => {
+        const exige = obligatorio ? ' required' : '';
         const campoHtml = multilinea
-          ? `<textarea name="dato" rows="9">${escapar(valor)}</textarea>`
-          : `<input type="text" name="dato" value="${escapar(valor)}" autocomplete="off">`;
+          ? `<textarea name="dato" rows="9"${exige}>${escapar(valor)}</textarea>`
+          : `<input type="text" name="dato" value="${escapar(valor)}" autocomplete="off"${exige}${obligatorio ? ' pattern=".*\\S.*"' : ''}>`;
         const dlg = construir({
           titulo: escapar(titulo),
           cuerpo: `
@@ -58,7 +63,7 @@
             ${campoHtml}
             ${nota ? `<p class="tenue" style="margin-top:10px">${escapar(nota)}</p>` : ''}`,
           botones: `
-            <button value="no" class="declinar">Cancelar</button>
+            <button value="no" class="declinar" formnovalidate>Cancelar</button>
             <button value="si" class="${cta ? 'cta' : 'aceptar'}">${escapar(aceptar)}</button>`,
         });
         const campo = dlg.querySelector(multilinea ? 'textarea[name=dato]' : 'input[name=dato]');
@@ -159,8 +164,11 @@
 (function () {
   // Marca de que el JS vive. El CSS lo usa para esconder el formulario de
   // renombrar: sin script no se pone la clase, se ve el campo de siempre y la
-  // página se degrada a lo que había en vez de a nada.
-  document.body.classList.add('con-js');
+  // página se degrada a lo que había en vez de a nada. La pone ya `base.html`
+  // en `<html>`, en línea y antes del primer pintado (C-0167): puesta aquí, al
+  // final del cuerpo, se veían el campo y el `<select>` nativo y luego se iban.
+  // Se repite por si una página no hereda de `base.html`.
+  (document.documentElement || document.body).classList.add('con-js');
 
   const menus = () => document.querySelectorAll('details.menu[open]');
 
@@ -294,16 +302,23 @@
         if (primera) primera.click();
       }
     });
-    document.addEventListener('click', (e) => {
-      if (!caja.contains(e.target)) caja.classList.remove('abierto');
-    });
     pintarBoton();
   }
+
+  // Cerrar el combo abierto al pulsar fuera: un oyente para todos y no uno
+  // por combo. Uno por combo se acumulaba —los repintados sin recargar crean
+  // combos nuevos (C-0167)— y los de los ya quitados no se iban nunca.
+  document.addEventListener('click', (e) => {
+    document.querySelectorAll('.combo.abierto').forEach((c) => {
+      if (!c.contains(e.target)) c.classList.remove('abierto');
+    });
+  });
 
   /* Confirmación para formularios que hacen algo irreversible.
    *
    * `<form data-confirmar="mensaje" data-confirmar-titulo="…" data-confirmar-ok="…">`
-   * y ya. Existe porque las acciones destructivas del hub estaban repartidas
+   * y ya; o lo mismo en el `<button>` que envía, si en ese formulario sólo él
+   * pregunta (si están en los dos, manda el botón). Existe porque las acciones destructivas del hub estaban repartidas
    * entre JavaScript —que sí preguntaba, con `HubUI.confirmar`— y formularios
    * normales, que no preguntaban nada: cerrar una ventana desde el raíl mataría
    * lo que corriera dentro con un solo clic y sin vuelta atrás.
@@ -316,18 +331,29 @@
    * repintan solas, y un enganche por nodo se pierde en el primer repintado. */
   document.addEventListener('submit', async (e) => {
     const form = e.target;
-    if (!form.dataset || !form.dataset.confirmar || form.dataset.confirmado) return;
+    const boton = e.submitter;
+    // La pregunta puede ir en el botón: un formulario con «Guardar» y
+    // «Borrar» sólo pregunta al borrar (las notas del secretario, C-0229).
+    const pide = boton && boton.dataset && boton.dataset.confirmar ? boton.dataset : form.dataset;
+    if (!pide || !pide.confirmar) return;
+    if (form.dataset.confirmado) { delete form.dataset.confirmado; return; }
     e.preventDefault();
     const ok = await HubUI.confirmar({
-      titulo: form.dataset.confirmarTitulo || '¿Seguro?',
-      mensaje: form.dataset.confirmar,
-      aceptar: form.dataset.confirmarOk || 'Sí',
+      titulo: pide.confirmarTitulo || '¿Seguro?',
+      mensaje: pide.confirmar,
+      aceptar: pide.confirmarOk || 'Sí',
       peligro: true,
     });
     if (!ok) return;
-    // La marca evita volver a entrar aquí con el envío de verdad.
+    // La marca deja pasar el envío de verdad, el de abajo, y se va con él
+    // (línea de arriba). Si se quedara, un formulario que sigue en la página
+    // tras enviarse sin recargar (C-0167) borraría la segunda vez sin preguntar.
     form.dataset.confirmado = '1';
-    form.submit();
+    // `requestSubmit` y no `submit`: `submit()` no dispara el evento —nadie
+    // más se entera del envío, tampoco `sin-recarga.js`— y pierde el
+    // `name=value` del botón pulsado (C-0167).
+    if (form.requestSubmit) form.requestSubmit(boton && boton.form === form ? boton : undefined);
+    else form.submit();
   }, true);
 
   /* `<form data-una-vez>`: al enviarlo, su botón se apaga. Para lo que crea
@@ -350,4 +376,6 @@
   // Meter aquí una cuarta cosa lo habría roto por mezclar dos conceptos.
   // Se expone porque hay listas que se repintan y hay que volver a pasar.
   window.HubCombos = { repasar: () => combos().forEach(comboDe) };
+  // Lo que `sin-recarga.js` acaba de pintar trae sus `<select>` sin combo.
+  document.addEventListener('hub:repintado', () => window.HubCombos.repasar());
 })();

@@ -27,19 +27,17 @@ midió en lugar de dar el dato como si fuera de ahora mismo.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sqlite3
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
-
-def ahora() -> str:
-    # Repetido y no importado de `snapshotter`: el ciclo lento vive allí y
-    # llamar aquí, así que importarlo al revés cerraría el círculo.
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+from . import config
+from .reloj import ahora
 
 
 class MaquinaNoMedida(Exception):
@@ -76,12 +74,37 @@ class Medida:
 RESPALDOS = {
     "nvidia-smi.exe": "/mnt/c/Windows/System32/nvidia-smi.exe",
     "powershell.exe": "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+    # Los del diagnóstico de la red (`diagnostico.red`, decisión 386), que el
+    # secretario lanza desde su servicio.
+    "tracert.exe": "/mnt/c/Windows/System32/tracert.exe",
+    "ping.exe": "/mnt/c/Windows/System32/ping.exe",
+    # El de Linux, para quien pregunta si hay GPU desde WSL (Reuniones,
+    # C-0119): WSL lo pone en su carpeta de librerías, no en /usr/bin.
+    "nvidia-smi": "/usr/lib/wsl/lib/nvidia-smi",
+    # El de la red privada, que va en Windows y no en WSL (decisión 159).
+    "tailscale.exe": "/mnt/c/Program Files/Tailscale/tailscale.exe",
 }
 
 
 def _programa(nombre: str) -> str:
     """El ejecutable, con su ruta absoluta si el PATH no lo trae."""
     return shutil.which(nombre) or RESPALDOS.get(nombre, nombre)
+
+
+def encontrar(nombre: str) -> str | None:
+    """Dónde está un programa aunque el PATH del servicio no lo traiga, o None.
+
+    La puerta para preguntar «¿hay X?» desde un servicio de systemd: con
+    `shutil.which` a secas la respuesta depende de quién arrancó el proceso."""
+    ruta = _programa(nombre)
+    try:
+        return ruta if shutil.which(ruta) or Path(ruta).is_file() else None
+    except OSError as exc:
+        # El disco de Windows visto desde WSL puede dar EIO (medido el 7-nov:
+        # todo `/mnt/c` cayó y `is_file` lanzaba). Para quien pregunta «¿hay
+        # X?», un programa que no se puede leer no está; se dice una vez (21).
+        _decir_que_falta(NoHay(f"no se puede leer {ruta} ({exc.strerror or exc})"))
+        return None
 
 
 class NoHay(FileNotFoundError):
@@ -248,6 +271,111 @@ def _ups() -> list[Medida]:
     return medidas
 
 
+# ── Lo que hace falta para que vuelva sola (C-0214) ─────────────────────────
+#
+# Con el hub en una máquina sin monitor, un apagón sólo tiene vuelta si cuatro
+# cosas de fuera del hub están puestas, y ninguna avisa si falta: se descubre el
+# día que no se puede entrar. Se midieron en la PC del dueño el 9-nov, que pasó
+# por las cuatro (decisiones 172 y 205, y la corrección del 23-sep: Tailscale
+# se quedó en `NeedsLogin` cinco horas tras un apagón real por no tener
+# `--unattended`). Aquí sólo se mide; lo juzga `salud`.
+
+
+def _tailscale() -> list[Medida]:
+    """Si la red privada lleva al hub y si conecta sin sesión de Windows.
+
+    El de Windows primero: es el que va con el hub en WSL (decisión 159). En un
+    Linux sin Windows debajo el suyo corre como servicio del sistema y no tiene
+    la pega de la sesión, así que ahí sólo se mira `serve`.
+    """
+    windows = encontrar("tailscale.exe")
+    programa = "tailscale.exe" if windows else "tailscale"
+    if not windows and not encontrar("tailscale"):
+        raise NoHay("no hay tailscale en esta máquina")
+    medidas: list[Medida] = []
+    if windows:
+        # `ForceDaemon` es lo que deja `tailscale set --unattended=true`. De
+        # `prefs` no se guarda nada más: lleva la cuenta con la que se entró, y
+        # por eso el error se dice sin la salida. En su propio `try`: que esto
+        # falle no puede dejar sin mirar `serve` (regla dura 14).
+        try:
+            prefs = json.loads(_salida([programa, "debug", "prefs"]))
+            medidas.append(Medida("desatendido.tailscale", 1.0 if prefs.get("ForceDaemon") else 0.0))
+        except (subprocess.SubprocessError, ValueError) as exc:
+            print(f"[maquina] tailscale debug prefs no midió: {type(exc).__name__}", flush=True)
+    estado = json.loads(_salida([programa, "serve", "status", "--json"]) or "{}")
+    sitio = sitio_del_hub(estado)
+    medidas.append(Medida("desatendido.serve", 1.0 if sitio else 0.0, texto=sitio))
+    return medidas
+
+
+def sitio_del_hub(estado: dict) -> str:
+    """El nombre por el que `tailscale serve` publica el hub, o "" si no lo hace.
+
+    Sólo la configuración de arriba, que es la que se guarda (`serve --bg`): la
+    de `Foreground` es un `serve` dejado en una terminal y muere con ella, así
+    que tras un apagón no está.
+    """
+    for sitio, web in (estado.get("Web") or {}).items():
+        for manejador in ((web or {}).get("Handlers") or {}).values():
+            proxy = (manejador or {}).get("Proxy") or ""
+            destino = urlsplit(proxy if "://" in proxy else f"http://{proxy}")
+            try:
+                puerto = destino.port
+            except ValueError:
+                continue
+            if destino.hostname in ("127.0.0.1", "localhost") and puerto == config.WEB_PORT:
+                return sitio.rsplit(":", 1)[0]
+    return ""
+
+
+# Un solo `powershell` para las dos cosas de Windows, como en `_PS_WINDOWS`.
+#
+# La tarea se busca por lo que HACE y no por su nombre, que cada cual pone el
+# suyo: que arranque al encender, sin sesión (S4U, o con contraseña guardada) y
+# que lance WSL, sea directamente o desde el `.cmd` que ejecuta, que es como lo
+# hace la del dueño (`mantener-wsl-arriba.cmd`, por la VM que WSL apagaba a los
+# 16 s). La ruta del script no puede cruzar otra `X:\`: con el programa escrito
+# con su ruta y el script sin comillas (`C:\…\cmd.exe /c C:\…\a.cmd`, lo que
+# deja «Examinar» del Programador de tareas) se quedaba con las dos juntas, el
+# `.cmd` no se leía y la tarea salía como que no está. Las formas, en
+# `test_maquina`. `powercfg` sale en el idioma de Windows; sus dos últimos
+# números son siempre «con corriente» y «con batería», en ese orden.
+_PS_ARRANQUE = r"""
+$ErrorActionPreference = 'Stop'
+$q = (powercfg /query SCHEME_CURRENT SUB_SLEEP STANDBYIDLE) | Out-String
+$h = [regex]::Matches($q, '0x[0-9a-fA-F]+')
+if ($h.Count -ge 2) { Write-Output ("suspender=" + [Convert]::ToInt64($h[$h.Count - 2].Value, 16)) }
+$tarea = ''
+foreach ($t in Get-ScheduledTask) {
+  if ($t.State -eq 'Disabled') { continue }
+  if (-not ($t.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger' })) { continue }
+  if (@('S4U', 'Password') -notcontains [string]$t.Principal.LogonType) { continue }
+  foreach ($a in $t.Actions) {
+    $texto = "$($a.Execute) $($a.Arguments) "
+    foreach ($m in [regex]::Matches($texto, '[A-Za-z]:\\(?:(?![A-Za-z]:\\)[^"])+?\.(cmd|bat|ps1)')) {
+      if (Test-Path -LiteralPath $m.Value) { $texto += (Get-Content -LiteralPath $m.Value -Raw) }
+    }
+    if ($texto -match 'wsl(\.exe)?\s') { $tarea = $t.TaskName }
+  }
+}
+Write-Output ("tarea=" + $tarea)
+"""
+
+
+def _arranque() -> list[Medida]:
+    """Si Windows levanta WSL al encender sin nadie, y si se suspende solo."""
+    crudo = _salida(["powershell.exe", "-NoProfile", "-Command", _PS_ARRANQUE])
+    medidas: list[Medida] = []
+    for linea in crudo.replace("\r", "").splitlines():
+        clave, _, valor = linea.partition("=")
+        if clave == "tarea":
+            medidas.append(Medida("desatendido.tarea", 1.0 if valor else 0.0, texto=valor))
+        elif clave == "suspender" and valor:
+            medidas.append(Medida("desatendido.suspender", float(valor), unidad="s"))
+    return medidas
+
+
 def medir() -> list[Medida]:
     """Todo lo que se puede leer, cada cosa en su propio `try`.
 
@@ -257,7 +385,7 @@ def medir() -> list[Medida]:
     """
     medidas: list[Medida] = []
     fallos = 0
-    for fuente in (_gpu, _discos, _memoria_y_carga, _windows, _ups):
+    for fuente in (_gpu, _discos, _memoria_y_carga, _windows, _ups, _tailscale, _arranque):
         try:
             medidas.extend(fuente())
         except NoHay as exc:

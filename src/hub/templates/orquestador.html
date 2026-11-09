@@ -37,12 +37,13 @@
   .pregunta { white-space:pre-wrap; font-size:14.5px; line-height:1.5; margin:0 0 10px; }
   .pedido { white-space:pre-wrap; margin:0; line-height:1.5; }
   .plan { white-space:pre-wrap; font-size:13px; line-height:1.5; color:var(--texto-2);
-          background:var(--superficie2); border-radius:10px; padding:10px 12px; margin:6px 0 0;
+          background:var(--superficie2); border-radius:var(--r-input); padding:10px 12px; margin:6px 0 0;
           overflow-x:auto; }
   .estado-tarea { font-size:11px; white-space:nowrap; }
   .estado-tarea.en-cola { color:var(--texto-3); }
   .estado-tarea.activa, .estado-tarea.esperando-sesion { color:var(--acento); }
   .estado-tarea.esperando-dueno { color:var(--espera); }
+  .estado-tarea.esperando-secretario { color:var(--texto-2); }
   .estado-tarea.terminada { color:var(--ok); }
   .estado-tarea.detenida { color:var(--riesgo); }
 
@@ -90,15 +91,29 @@
 </div>
 
 {% set d = o.detalle %}
-<div class="orq">
+{# `tarea` y `proyecto` sólo cambian lo de dentro de las regiones: contestar
+   desde /orquestador vuelve a `?tarea=<id>` sin recargar (C-0167). #}
+<div class="orq" data-params-de-region="tarea proyecto">
 
 
+{# Dos regiones (C-0167): contestar, confirmar, detener o reanudar repinta lo
+   que pide atención y las listas, sin recargar ni tocar «Nueva tarea» —que
+   puede estar a medio escribir—. #}
+<div data-region="atencion" style="display:contents">
 {# ── La bandeja: lo que pide atención va primero ─────────────────────────── #}
 {% if o.viva and o.viva.pregunta %}
 <div class="tarjeta bandeja" id="bandeja">
+  {% set p = o.viva.pregunta %}
+  {% if p.para == 'secretario' %}
+  <h2>Pregunta al secretario</h2>
+  <p class="tenue" style="margin:0 0 6px;font-size:13px">Es operativa ({{ p.motivo }}): la contesta él
+    o te la pasa. Si quieres, contéstala tú.</p>
+  {% else %}
   <h2>Te pregunta</h2>
-  <p class="pregunta">{{ o.viva.pregunta.texto }}</p>
-  <form method="post" action="/orquestador/responder">
+  {% if p.resumen %}<p class="tenue" style="margin:0 0 6px">El secretario te la pasa: {{ p.resumen }}</p>{% endif %}
+  {% endif %}
+  <p class="pregunta">{{ p.texto }}</p>
+  <form method="post" data-sin-recarga action="/orquestador/responder">
     <input type="hidden" name="tarea_id" value="{{ o.viva.id }}">
     <input type="hidden" name="origen" value="texto" id="respuesta-origen">
     <textarea name="texto" id="respuesta-texto" required
@@ -122,13 +137,13 @@
   <p class="pregunta">Quiere {{ c.accion }}:
 {{ c.detalle }}</p>
   <div class="acciones">
-    <form method="post" action="/orquestador/confirmar" class="enlinea">
+    <form method="post" data-sin-recarga action="/orquestador/confirmar" class="enlinea">
       <input type="hidden" name="tarea_id" value="{{ o.viva.id }}">
       <input type="hidden" name="conf_id" value="{{ c.id }}">
       <input type="hidden" name="decision" value="si">
       <button class="boton principal">Confirmar</button>
     </form>
-    <form method="post" action="/orquestador/confirmar" class="enlinea">
+    <form method="post" data-sin-recarga action="/orquestador/confirmar" class="enlinea">
       <input type="hidden" name="tarea_id" value="{{ o.viva.id }}">
       <input type="hidden" name="conf_id" value="{{ c.id }}">
       <input type="hidden" name="decision" value="no">
@@ -152,8 +167,8 @@
         {% if d.puntos and d.viva %}<span class="tenue" style="font-size:11px">paso {{ d.paso or 1 }} de {{ d.pasos }}</span>{% endif %}
       </span>
     </div>
-    {% if d.estado in ['en-cola', 'activa', 'esperando-sesion', 'esperando-dueno'] %}
-    <form method="post" action="/orquestador/detener" class="enlinea"
+    {% if d.estado in ['en-cola', 'activa', 'esperando-sesion', 'esperando-dueno', 'esperando-secretario'] %}
+    <form method="post" data-sin-recarga action="/orquestador/detener" class="enlinea"
           data-confirmar-titulo="Detener la tarea"
           data-confirmar-ok="Detenerla"
           data-confirmar="{% if d.estado == 'en-cola' %}Sale de la cola y no se hará.{% else %}Se interrumpe al orquestador y a las sesiones que trabajan para ella. Lo que ya hicieron, hecho está.{% endif %}">
@@ -166,7 +181,7 @@
   </div>
 
   {% if d.estado == 'detenida' %}
-  <form method="post" action="/orquestador/reanudar" class="reanudar" id="reanudar">
+  <form method="post" data-sin-recarga action="/orquestador/reanudar" class="reanudar" id="reanudar">
     <input type="hidden" name="tarea_id" value="{{ d.id }}">
     <label for="reanudar-nota">Reanudarla desde donde se quedó</label>
     <textarea name="nota" id="reanudar-nota"
@@ -216,7 +231,7 @@
       {% for b in d.bitacora %}
       <li>
         <span class="cuando">{{ b.hora }}</span>
-        <span class="que">{{ b.tipo }}{% if b.proyecto %} · {{ b.proyecto }}{% endif %}</span>
+        <span class="que">{{ b.tipo }}{% if b.proyecto %} · {{ b.proyecto }}{% endif %}{% if b.de == 'secretario' or b.por %} · {{ 'del secretario' if b.de == 'secretario' else ('por el secretario' if b.por == 'secretario' else 'sin respuesta a tiempo') }}{% endif %}{% if b.para %} · para {{ 'el secretario' if b.para == 'secretario' else 'ti' }}{% endif %}</span>
         {% if b.texto %}<span class="texto">{{ b.texto }}</span>{% endif %}
       </li>
       {% endfor %}
@@ -225,10 +240,17 @@
 </div>
 {% endif %}
 
+</div>
+
 {# ── Una tarea nueva ──────────────────────────────────────────────────────── #}
+{# Sin recargar (C-0233). C-0167 la dejó fuera porque lleva a otra tarea
+   (`?tarea=<id>`), pero `tarea` es un parámetro de las regiones de arriba: la
+   nueva sale en «atencion» y en la cola de «listas». Esto queda fuera de las
+   regiones —puede estar a medio escribir cuando se actúa en otra cosa— y
+   `sin-recarga.js` lo vacía al encolar bien; si no se encoló, se queda. #}
 <div class="tarjeta">
   <h2>Nueva tarea</h2>
-  <form method="post" action="/orquestador/tarea">
+  <form method="post" action="/orquestador/tarea" data-sin-recarga>
     <input type="hidden" name="origen" value="texto" id="pedido-origen">
     <textarea name="pedido" id="pedido" required
               placeholder="Ej.: en mi-app revisa el estado; si faltan las pruebas, despliega en vps-test, genera el APK y déjamelo en Intercambio."></textarea>
@@ -249,6 +271,7 @@
   {% endif %}
 </div>
 
+<div data-region="listas" style="display:contents">
 {# ── La cola ──────────────────────────────────────────────────────────────── #}
 {% if o.cola %}
 <div class="tarjeta">
@@ -295,6 +318,7 @@
   </details>
 </div>
 {% endif %}
+</div>
 
 </div>
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from hub import base
+from hub import base, kits
 from hub.models import Proyecto, Ruta
 
 
@@ -155,7 +155,7 @@ def test_sin_estado_ref_se_dice_que_nadie_declaro_cual_esta_vigente(proyecto):
 def test_detecta_la_capa_base_y_su_version(proyecto, tmp_path):
     _escribir(
         tmp_path / "asiento" / ".claude" / "hub" / "project.yml",
-        f'id: demo\nbase_version: "{base.VERSION_BASE}"\n',
+        f'id: demo\nbase_version: "{kits.VERSION_BASE}"\n',
     )
     capa = base.capa_de(proyecto)
     assert capa["presente"] and capa["al_dia"]
@@ -170,7 +170,7 @@ def test_el_prompt_de_siembra_prohibe_crear_otro_documento_de_estado(proyecto):
     """Sobran documentos y falta el puntero: sembrar uno nuevo sería el error."""
     prompt = base.prompt_sembrar(proyecto)
     assert "no crees un documento de estado" in prompt.lower()
-    assert proyecto.id in prompt and base.VERSION_BASE in prompt
+    assert proyecto.id in prompt and kits.VERSION_BASE in prompt
 
 
 # ── el título del documento no es su estado ──────────────────────────────────

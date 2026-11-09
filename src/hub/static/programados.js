@@ -106,12 +106,35 @@
     entregando: 'espera',
   };
 
+  /* Se pinta sólo si cambió (C-0167). Cada diez segundos se volvía a escribir
+   * la lista entera aunque fuera la misma, y en los huecos de «aún no se sabe
+   * qué ventana miras» se vaciaba para volver a llenarse: un parpadeo por
+   * latido, con el botón «cancelar» desapareciendo bajo el dedo. */
+  let pintado = null;
+  function poner(html) {
+    if (!lista) return;
+    enEspera(false);
+    if (html === pintado) return;
+    lista.innerHTML = html;
+    pintado = html;
+  }
+
+  /* Mientras no se sabe qué ventana miras, la lista que hay puede ser de
+   * otro slot: se deja en su sitio —sin el hueco del parpadeo— pero apagada y
+   * sin poder pulsarse, para no afirmar nada ni cancelar lo que no toca. */
+  function enEspera(si) {
+    if (!lista || !lista.style) return;
+    lista.style.opacity = si ? '.4' : '';
+    lista.style.pointerEvents = si ? 'none' : '';
+    if (lista.setAttribute) { if (si) lista.setAttribute('aria-busy', 'true'); else lista.removeAttribute('aria-busy'); }
+  }
+
   function pintar(mensajes) {
     if (!mensajes.length) {
-      lista.innerHTML = '<p class="tenue">Nada programado para este slot.</p>';
+      poner('<p class="tenue">Nada programado para este slot.</p>');
       return;
     }
-    lista.innerHTML = mensajes.map(m => `
+    poner(mensajes.map(m => `
       <div class="consulta programado">
         <div class="quien">
           ${m.estado === 'pendiente'
@@ -123,7 +146,7 @@
         </div>
         <div class="texto">${escapar(m.texto)}</div>
         ${m.motivo ? `<div class="motivo">${escapar(m.motivo)}</div>` : ''}
-      </div>`).join('');
+      </div>`).join(''));
   }
 
   /* Los tres estados de `slotActual`, cada uno con SU pantalla. Antes eran tres
@@ -143,11 +166,9 @@
   function noSeSabe() {
     if (forma) forma.hidden = true;
     if (sinSlot) sinSlot.hidden = true;
-    if (lista) {
-      lista.innerHTML = '<p class="tenue">No se ve qué ventana estás mirando: '
-        + 'puede que acabe de abrirse y todavía no esté en el último muestreo. '
-        + 'Se reintenta solo.</p>';
-    }
+    poner('<p class="tenue">No se ve qué ventana estás mirando: '
+      + 'puede que acabe de abrirse y todavía no esté en el último muestreo. '
+      + 'Se reintenta solo.</p>');
   }
 
   async function refrescar() {
@@ -160,7 +181,9 @@
         porMirar--;
         if (forma) forma.hidden = true;
         if (sinSlot) sinSlot.hidden = true;
-        if (lista) lista.innerHTML = '';
+        // La lista se queda, apagada: vaciarla para volver a llenarla en un
+        // cuarto de segundo era el parpadeo (C-0167).
+        enEspera(true);
         setTimeout(refrescar, ESPERA_BLOQUE);
         return;
       }
@@ -177,7 +200,7 @@
     if (sinSlot) sinSlot.hidden = !!slot;
     /* Sin slot no hay nada que listar, y «Nada programado para este slot» sobre
      * una ventana sin slot es afirmar que hay un slot. */
-    if (!slot) { if (lista) lista.innerHTML = ''; return; }
+    if (!slot) { poner(''); return; }
     try {
       const r = await fetch(`/api/programados?slot=${encodeURIComponent(slot)}`);
       if (!r || !r.ok) throw new Error('el hub no contestó');
@@ -186,7 +209,7 @@
       /* Sólo si no hay nada pintado: pisar una lista buena con un error de red
        * pasajero es cambiar información por ruido. */
       if (!lista.querySelector('.programado')) {
-        lista.innerHTML = '<p class="tenue">No se pudo consultar. Se reintenta solo.</p>';
+        poner('<p class="tenue">No se pudo consultar. Se reintenta solo.</p>');
       }
     }
   }
