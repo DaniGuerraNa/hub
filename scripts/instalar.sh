@@ -127,7 +127,7 @@ bien "hub-canal instalado y PARADO: arráncalo cuando configures canal.yml"
 bien "hub-encargos instalado y PARADO: arráncalo cuando configures encargos.yml"
 # El secretario, igual: llama a un modelo con la suscripción de quien lo usa, y
 # eso se decide, no se encuentra hecho al instalar.
-bien "hub-secretario instalado y PARADO: arráncalo cuando quieras usarlo (systemctl --user enable --now hub-secretario)"
+bien "hub-secretario instalado y PARADO: enciéndelo cuando quieras usarlo, con «Encenderlo» en su pantalla del hub"
 
 paso "5/5 · Comprobación"
 # Arrancar no es funcionar: se espera a que conteste de verdad. Dar por bueno un

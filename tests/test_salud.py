@@ -160,3 +160,133 @@ def test_lo_que_dejo_de_poderse_medir_no_sale_como_bien_y_se_dice():
     assert "desatendido:serve" not in revisiones
     assert revisiones["desatendido:sin-medir"]["estado"] == "aviso"
     assert revisiones["desatendido:tarea"]["estado"] == "ok"   # el SAI no marca la vuelta
+
+
+# ── C-0235: encender el secretario con un botón (decisión 400) ───────────────
+
+# Los de verdad: `conftest` los sustituye en cada prueba para que la suite no
+# accione nunca los servicios de quien la corre.
+_ORDEN_REAL = salud._orden
+_ESTADO_REAL = salud.estado_servicio
+
+_SYSTEMCTL = """#!/bin/sh
+PATH=/usr/bin:/bin
+d="$SYSTEMCTL_FALSO"
+echo "$*" >> "$d/ordenes"
+case "$2" in
+  show-environment) [ -e "$d/sin-systemd" ] && exit 1; exit 0 ;;
+  is-active) cat "$d/activo" 2>/dev/null || echo inactive ;;
+  is-enabled) if [ -e "$d/habilitado" ]; then echo enabled; else echo disabled; fi ;;
+  enable)
+    if [ -e "$d/no-enciende" ]; then cat "$d/no-enciende" >&2; exit 1; fi
+    touch "$d/habilitado"
+    cat "$d/al-encender" > "$d/activo"
+    if [ -e "$d/late" ]; then "$PYTHON_FALSO" "$d/latir.py" "$d/memoria"; fi ;;
+esac
+"""
+
+# Lo que hace el servicio al arrancar (`servicio.una_vuelta`): su latido, en su base.
+_LATIR = """import datetime, json, sqlite3, sys
+c = sqlite3.connect(open(sys.argv[1]).read())
+c.execute("INSERT INTO estado (clave, valor) VALUES ('latido', ?) ON CONFLICT(clave) DO UPDATE SET"
+          " valor = excluded.valor",
+          (json.dumps(datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")),))
+c.commit()
+"""
+
+
+@pytest.fixture
+def systemd(tmp_path, monkeypatch):
+    """Un systemd de usuario de mentira, con un `systemctl` de verdad en el
+    PATH: `salud` lo ejecuta como ejecutaría el bueno. `al-encender` es cómo
+    queda la unidad tras `enable --now`, y `late`, si el servicio llega a dar
+    su latido."""
+    import sys
+    from hub.secretario import memoria
+    d = tmp_path / "systemd"
+    (d / "bin").mkdir(parents=True)
+    (d / "bin" / "systemctl").write_text(_SYSTEMCTL)
+    (d / "bin" / "systemctl").chmod(0o755)
+    (d / "latir.py").write_text(_LATIR)
+    (d / "al-encender").write_text("active\n")
+    con = memoria.conectar()
+    con.close()
+    (d / "memoria").write_text(str(memoria.ruta()))
+    # 🔴 Sólo el de mentira en el PATH: si no se pudiera ejecutar (un `/tmp`
+    # con `noexec`), el siguiente sería el de verdad y la prueba encendería el
+    # secretario de quien corre la suite (revisor). Y se comprueba antes de
+    # devolver la orden real.
+    monkeypatch.setenv("PATH", str(d / "bin"))
+    monkeypatch.setenv("SYSTEMCTL_FALSO", str(d))
+    monkeypatch.setenv("PYTHON_FALSO", sys.executable)
+    import shutil
+    if shutil.which("systemctl") != str(d / "bin" / "systemctl"):
+        pytest.skip("el systemctl de mentira no se puede ejecutar aquí")
+    monkeypatch.setattr(salud, "_orden", _ORDEN_REAL)
+    monkeypatch.setattr(salud, "estado_servicio", _ESTADO_REAL)
+    return d
+
+
+def _ordenes(d) -> list[str]:
+    archivo = d / "ordenes"
+    return archivo.read_text().splitlines() if archivo.exists() else []
+
+
+def test_encender_lo_habilita_y_lo_da_por_bueno_al_ver_su_latido(systemd):
+    (systemd / "late").touch()
+    estado, texto = salud.encender("hub-secretario", espera=5)
+    assert estado == "encendido" and "en marcha" in texto and "reinicies" in texto
+    assert "--user enable --now hub-secretario" in _ordenes(systemd)
+    assert salud.estado_servicio("hub-secretario") == {"activo": "active", "habilitado": True}
+
+
+def test_un_latido_de_antes_del_clic_no_cuenta_como_encendido(systemd):
+    """Arrancado no es funcionar (151): la base guarda el último latido de
+    cuando estuvo encendido, y ése no dice nada de ahora."""
+    from hub.secretario import memoria
+    con = memoria.conectar()
+    memoria.poner(con, "latido", "2026-11-01T10:00:00+00:00")
+    con.close()
+    estado, texto = salud.encender("hub-secretario", espera=0)
+    assert estado == "sin-senal"
+    assert "aún no da señales" in texto and "systemctl --user status hub-secretario" in texto
+
+
+def test_si_se_cae_al_arrancar_lo_dice_con_su_registro(systemd):
+    """Con `Restart=always`, uno que revienta pasa la espera entre intentos en
+    `activating`: «encendido» sería mentira y «arrancando», también."""
+    (systemd / "al-encender").write_text("activating\n")
+    estado, texto = salud.encender("hub-secretario", espera=0)
+    assert estado == "no" and "se cae al arrancar" in texto
+    assert "journalctl --user -u hub-secretario -n 40" in texto
+
+
+def test_si_systemd_no_lo_enciende_dice_por_que(systemd):
+    (systemd / "no-enciende").write_text("Failed to enable unit: Unit file hub-secretario.service does not exist.\n")
+    estado, texto = salud.encender("hub-secretario", espera=0)
+    assert estado == "no" and "does not exist." in texto and ".." not in texto
+
+
+def test_sin_systemd_no_lanza_nada_y_dice_el_comando(systemd):
+    """Lanzado desde `hub-web` colgaría de su cgroup y nadie lo levantaría al
+    caerse (153, 344): sin systemd, sólo el comando."""
+    (systemd / "sin-systemd").touch()
+    estado, texto = salud.encender("hub-secretario", espera=0)
+    assert estado == "no" and "uv run python -m hub.secretario" in texto
+    assert not any(o.startswith("--user enable") for o in _ordenes(systemd))
+    assert salud.estado_servicio("hub-secretario") is None
+
+
+@pytest.mark.parametrize("nombre", ["hub-canal", "hub-web", "hub-secretario; reboot"])
+def test_solo_enciende_los_de_su_lista(systemd, nombre):
+    """Canal y encargos sin su token sólo apuntarían fallos, y los demás ya
+    corren siempre: la lista es cerrada y el nombre no viene de la petición."""
+    with pytest.raises(ValueError):
+        salud.encender(nombre, espera=0)
+    assert _ordenes(systemd) == []
+
+
+def test_la_suite_no_acciona_systemd_por_omision():
+    """El seguro de `conftest`: aunque una ruta llegue a `salud.encender`, la
+    orden no sale de la suite."""
+    assert salud._orden("enable", "--now", "hub-secretario")[0] != 0

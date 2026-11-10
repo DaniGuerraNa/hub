@@ -50,6 +50,56 @@ def test_sin_el_servicio_lo_dice_arriba(cliente):
     assert "No está en marcha" in cliente.get("/secretario").text
 
 
+@pytest.mark.parametrize("estado, dice, boton", [
+    ({"activo": "inactive", "habilitado": False}, "Está apagado", True),
+    ({"activo": "failed", "habilitado": True}, "Está apagado", True),
+    ({"activo": "active", "habilitado": True}, "Está encendido pero no da señales", False),
+    ({"activo": "activating", "habilitado": True}, "journalctl --user -u hub-secretario", False),
+    (None, "uv run python -m hub.secretario", False),
+])
+def test_sin_latido_dice_por_que_y_ofrece_encenderlo_solo_si_lo_arregla(cliente, monkeypatch, estado, dice, boton):
+    """C-0235: el botón donde encenderlo lo arregla. Uno que se cae al arrancar
+    ya lo reintenta systemd, y sin systemd no se lanza desde la web (400)."""
+    from hub import salud
+    monkeypatch.setattr(salud, "estado_servicio", lambda nombre: estado)
+    html = cliente.get("/secretario").text
+    assert dice in html
+    assert ('action="/secretario/encender"' in html) is boton
+    assert "systemctl --user start" not in html   # no habilita: no aguantaba un reinicio
+
+
+def test_con_latido_no_pregunta_a_systemd(cliente, monkeypatch):
+    from hub import salud
+    con = memoria.conectar()
+    memoria.poner(con, "latido", memoria.ahora())
+    con.close()
+    monkeypatch.setattr(salud, "estado_servicio", lambda nombre: pytest.fail("pintó preguntando a systemd"))
+    html = cliente.get("/secretario").text
+    assert 'class="caido"' not in html
+
+
+@pytest.mark.parametrize("estado, marca", [("encendido", "fugaz=1"), ("sin-senal", "hecho=1"), ("no", None)])
+def test_encenderlo_vuelve_con_lo_que_paso(cliente, monkeypatch, estado, marca):
+    """Encendido es un aviso que se va solo; arrancado sin latir, uno que se
+    queda sin ser un fallo; lo demás, un fallo."""
+    from hub import salud
+    pedidos = []
+    monkeypatch.setattr(salud, "encender", lambda nombre: pedidos.append(nombre) or (estado, "Lo que pasó."))
+    r = cliente.post("/secretario/encender", follow_redirects=False)
+    assert r.status_code == 303 and pedidos == ["hub-secretario"]
+    destino = r.headers["location"]
+    assert destino.startswith("/secretario?aviso=")
+    for otra in ("fugaz=1", "hecho=1"):
+        assert (otra in destino) is (otra == marca)
+
+
+def test_encenderlo_pide_mismo_origen(cliente, monkeypatch):
+    from hub import salud
+    monkeypatch.setattr(salud, "encender", lambda nombre: pytest.fail("se encendió desde otro origen"))
+    r = cliente.post("/secretario/encender", headers={"Origin": "https://malo.example"}, follow_redirects=False)
+    assert r.status_code == 403
+
+
 def test_un_hub_que_no_usa_el_secretario_no_crea_su_base_al_pintar_el_menu(cliente):
     cliente.get("/maquina")
     assert not memoria.existe()

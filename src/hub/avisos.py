@@ -345,14 +345,9 @@ def latido_secretario() -> tuple[bool, str | None]:
     `disable`, que calle no es noticia. El latido se lee de su base en sólo
     lectura: el relé no le crea ni le toca nada.
     """
-    import subprocess
-    try:
-        r = subprocess.run(["systemctl", "--user", "is-enabled", "hub-secretario"],
-                           capture_output=True, text=True, timeout=10)
-        activo = r.stdout.strip() == "enabled"
-    except (OSError, subprocess.TimeoutExpired):
-        activo = False
-    if not activo:
+    from . import salud
+    estado = salud.estado_servicio("hub-secretario")
+    if not estado or not estado["habilitado"]:
         return False, None
     from .secretario import memoria
     try:

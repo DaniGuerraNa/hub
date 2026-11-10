@@ -13,6 +13,24 @@ bash scripts/actualizar.sh
 Al terminar te enseña esta misma lista, sólo con las versiones que acabas de
 cruzar.
 
+## 0.5.1 — 2026-11-09
+
+El secretario se enciende desde su pantalla, sin terminal.
+
+### Qué tienes que hacer
+
+- **Actualiza** con el botón de **Actualizaciones** (o con
+  `bash scripts/actualizar.sh` en la carpeta del hub). Nada más.
+
+### Qué cambia en lo que ya usabas
+
+- **El secretario se enciende con un botón.** Si está apagado, su pantalla
+  dice «Está apagado» y ofrece **Encenderlo**: te recuerda que cada respuesta
+  usa tu suscripción de Claude, lo enciende y lo deja encendido también al
+  reiniciar el equipo, y no lo da por encendido hasta que da señales. Si se
+  cae al arrancar, lo dice con el comando para ver por qué; sin systemd, te da
+  el comando para arrancarlo a mano. Ya no hace falta la terminal.
+
 ## 0.5.0 — 2026-11-09
 
 Llega el secretario: lee tus reuniones, tus mensajes y tu agenda, te contesta

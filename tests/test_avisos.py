@@ -335,9 +335,9 @@ def test_el_secretario_tambien_tiene_gracia_tras_arrancar(escena):
 
 
 def test_el_latido_del_secretario_se_lee_de_su_base_sin_crearla(monkeypatch, tmp_path):
-    import subprocess as sp
+    from hub import salud
     from hub.secretario import memoria
-    monkeypatch.setattr(sp, "run", lambda *a, **k: sp.CompletedProcess(a, 0, "enabled\n", ""))
+    monkeypatch.setattr(salud, "estado_servicio", lambda nombre: {"activo": "active", "habilitado": True})
     monkeypatch.setattr(memoria, "ruta", lambda: tmp_path / "memoria.db")
     assert _LATIDO_REAL() == (True, None)
     assert not (tmp_path / "memoria.db").exists()
@@ -348,6 +348,15 @@ def test_el_latido_del_secretario_se_lee_de_su_base_sin_crearla(monkeypatch, tmp
     db.execute("INSERT INTO estado VALUES ('latido', ?)", (json.dumps("2026-11-02T10:00:00+00:00"),))
     db.commit(); db.close()
     assert _LATIDO_REAL() == (True, "2026-11-02T10:00:00+00:00")
+
+
+@pytest.mark.parametrize("estado", [None, {"activo": "active", "habilitado": False}])
+def test_sin_systemd_o_sin_habilitar_el_secretario_no_deberia_latir(monkeypatch, estado):
+    """Lo pregunta a `salud.estado_servicio` (C-0235): sin systemd no hay
+    servicio que esperar, y apagado con `disable`, que calle no es noticia."""
+    from hub import salud
+    monkeypatch.setattr(salud, "estado_servicio", lambda nombre: estado)
+    assert _LATIDO_REAL() == (False, None)
 
 
 def test_un_panel_que_desaparece_se_olvida(escena):

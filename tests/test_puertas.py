@@ -110,6 +110,27 @@ def test_solo_la_puerta_lanza_procesos_que_sobreviven_al_servicio():
     assert not fuera, f"lanzan por su cuenta en vez de por procesos.desasir: {fuera}"
 
 
+def test_solo_salud_y_el_panico_accionan_servicios():
+    """Encender es `salud.encender`, con su lista cerrada (400); reiniciar, el
+    botón de pánico desde `hub-canal` (151). Un `systemctl enable/start/stop`
+    suelto en otro módulo, o la orden de `salud` llamada desde fuera, es un
+    servicio accionado sin esa lista. Preguntar (`is-active`, `is-enabled`) no
+    es accionar. `actualizar.sh` también reinicia servicios, pero es un guion
+    entero que lanza `actualizacion` (296), no una orden suelta."""
+    accion = re.compile(r"""["']systemctl["'][^\n]*["'](?:enable|disable|start|stop|restart)["']""")
+    # La de `salud`, no cualquier `_orden` (búsqueda y WhatsApp tienen la suya).
+    orden_de_salud = re.compile(r"salud\s*\.\s*_orden\b|from\s+\S*salud\s+import[^\n]*\b_orden\b")
+    fuera = []
+    for a in SRC.rglob("*.py"):
+        nombre, texto = str(a.relative_to(SRC)), a.read_text(encoding="utf-8")
+        if (nombre != "panico.py" and accion.search(texto)) or (nombre != "salud.py" and orden_de_salud.search(texto)):
+            fuera.append(nombre)
+    assert not fuera, f"accionan servicios por su cuenta: {fuera}"
+    # Que el vigía siga viendo las formas permitidas: si no, no vigila nada.
+    assert accion.search((SRC / "panico.py").read_text(encoding="utf-8")), "el vigía ya no ve la forma de panico.py"
+    assert orden_de_salud.search("from .salud import _orden") and orden_de_salud.search("salud._orden('stop', x)")
+
+
 #: función → el único archivo que la define. Dos copias de lo mismo divergen
 #: en cuanto se arregla una de ellas (auditoría del 3-nov).
 UNA_DEFINICION = {

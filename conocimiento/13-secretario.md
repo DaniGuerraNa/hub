@@ -18,14 +18,19 @@ Está en [Secretario](/secretario), arriba en el menú.
 ## Encenderlo
 
 Viene **apagado**: cada respuesta usa tu suscripción de Claude, y eso lo decides
-tú. Para encenderlo, en la terminal:
+tú. Mientras está apagado, su pantalla lo dice arriba y ofrece **Encenderlo**:
+te lo recuerda antes, lo enciende y lo deja encendido también cuando reinicies
+el equipo. No lo da por encendido hasta que da señales; la primera vez puede
+tardar un minuto. Lo que le escribas mientras tanto espera a que arranque.
+
+Si lo prefieres en la terminal, es lo mismo:
 
 ```bash
 systemctl --user enable --now hub-secretario
 ```
 
-Mientras está apagado, la pantalla lo dice arriba, y lo que le escribas espera a
-que arranque.
+Si se cae nada más arrancar, la pantalla lo dice y te da el comando para ver
+por qué.
 
 Sin systemd de usuario (un contenedor, WSL sin systemd), `scripts/arrancar.sh`
 arranca la web y el muestreo pero no a él: lánzalo en una terminal aparte, en

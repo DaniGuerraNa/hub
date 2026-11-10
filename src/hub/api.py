@@ -2735,6 +2735,8 @@ def secretario(pestana: str = "conversacion") -> dict[str, Any]:
             "push": {"publica": _webpush.publica(), "aparatos": aparatos, "canal_actual": _canal_actual()},
             "avisos_error": _mem.leer(con, "avisos_error"),
             "vivo": vivo, "latido": a_local(latido),
+            # Sólo si no late: preguntarle a systemd en cada pintado sobra.
+            "servicio": None if vivo else _servicio_secretario(),
             "hilo": dict(h) if h else None, "turnos": turnos,
             "hilos": hilos,
             "fuentes": fuentes,
@@ -2785,6 +2787,24 @@ def secretario_datos() -> dict[str, Any]:
     return {"filas": filas, "error": error, "archivo": str(_md.ruta()),
             "confirmados": sum(f["estado"] == "confirmado" for f in filas),
             "propuestos": sum(f["estado"] == "propuesto" or bool(f["propuesta"]) for f in filas)}
+
+
+def _servicio_secretario() -> str:
+    """Por qué no late, para decir lo que toca (decisión 400): `parado` (se
+    ofrece encenderlo), `en-marcha` (corre pero no late: arrancando o
+    colgado), `falla` (se cae y systemd lo reintenta: encenderlo no arregla
+    nada) o `sin-systemd` (sólo a mano)."""
+    from . import salud
+    e = salud.estado_servicio("hub-secretario")
+    if e is None:
+        return "sin-systemd"
+    if e["activo"] == "active":
+        return "en-marcha"
+    # `Restart=always`: uno que revienta al arrancar pasa la espera entre
+    # intentos en `activating`, no en `failed`.
+    if e["activo"] == "activating":
+        return "falla"
+    return "parado"
 
 
 def _latido_secretario(con: sqlite3.Connection) -> tuple[bool, str | None]:

@@ -74,8 +74,10 @@ arrancan. Cuando los configures (`canal.yml`, `encargos.yml`; cómo, en
 
 ```bash
 systemctl --user enable --now hub-canal       # y/o hub-encargos
-systemctl --user enable --now hub-secretario  # el secretario (conocimiento/13-secretario.md)
 ```
+
+El secretario se enciende desde su pantalla, con **Encenderlo**, o con
+`systemctl --user enable --now hub-secretario` (`conocimiento/13-secretario.md`).
 
 Tus datos **no viven dentro del repo**: así puedes actualizar el hub con un
 `git pull` sin que choque con lo tuyo.

@@ -49,6 +49,21 @@ def _secretario_apagado(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _systemd_quieto(monkeypatch):
+    """🔴 La suite no acciona los servicios de quien la corre.
+
+    `salud.encender` hace `systemctl --user enable --now` (decisión 400): un
+    test que pasara por `/secretario/encender` le encendería el secretario de
+    verdad, con su suscripción. Y lo que pinta `/secretario` depende de si hay
+    systemd y de cómo está su servicio, que en cada máquina es distinto. Por
+    omisión, sin systemd y sin poder ordenar nada; las pruebas de `salud`
+    traen de vuelta lo real con un `systemctl` de mentira en el PATH."""
+    from hub import salud
+    monkeypatch.setattr(salud, "_orden", lambda *a, **k: (1, "en los tests no se acciona systemd"))
+    monkeypatch.setattr(salud, "estado_servicio", lambda nombre: None)
+
+
+@pytest.fixture(autouse=True)
 def _datos_aparte(tmp_path, monkeypatch):
     """Ningún test toca los datos reales de quien los ejecuta.
 

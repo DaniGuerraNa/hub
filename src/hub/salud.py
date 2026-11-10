@@ -21,10 +21,12 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
+import time
 from datetime import datetime, timezone
 
-from . import acceso, config, copia_base, tmux
+from . import acceso, config, copia_base, reloj, tmux
 
 ARCHIVO_LATIDO = "latido-snapshotter.json"
 # El muestreo late cada `INTERVALO_SEGUNDOS` (20 s). Unas cuantas vueltas
@@ -144,6 +146,24 @@ def _systemctl(*args: str) -> str | None:
     return r.stdout.strip()
 
 
+def _orden(*args: str, timeout: float = 30) -> tuple[int, str]:
+    """`systemctl --user` para lo que actúa: con su código y lo que dijo.
+
+    `_systemctl` sirve para preguntar y se traga ambas cosas; aquí hacen falta,
+    porque «no se encendió» sin el porqué («Unit not found») no deja arreglar
+    nada."""
+    if not shutil.which("systemctl"):
+        return 127, "no está systemctl"
+    try:
+        r = subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True,
+                           timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 124, f"systemctl no contestó en {timeout:.0f} s"
+    except OSError as exc:
+        return 126, str(exc)
+    return r.returncode, (r.stderr or r.stdout).strip()
+
+
 def hay_systemd_de_usuario() -> bool:
     """Si hay un systemd de usuario que gestione los servicios del hub.
 
@@ -160,6 +180,78 @@ def hay_systemd_de_usuario() -> bool:
         return False
 
 
+def _estado(nombre: str) -> dict:
+    return {"activo": _systemctl("is-active", nombre) or "",
+            "habilitado": _systemctl("is-enabled", nombre) == "enabled"}
+
+
+def estado_servicio(nombre: str) -> dict | None:
+    """Cómo está un servicio del hub: `activo` es lo que dice `is-active`
+    (`active`, `inactive`, `failed`, `activating`…) y `habilitado`, si arranca
+    solo al encender. None si no hay systemd de usuario: ahí no hay servicio
+    que mirar, y «parado» sería mentira."""
+    if not hay_systemd_de_usuario():
+        return None
+    return _estado(nombre)
+
+
+def _latido_secretario() -> str | None:
+    from .secretario import memoria
+    try:
+        return memoria.leer_sin_abrir("latido")
+    except sqlite3.Error:   # sin base aún: todavía no ha latido nunca
+        return None
+
+
+# Lo que la web puede encender (decisión 400), por nombre exacto: nunca viene de
+# la petición, como los contenedores (50). Cada uno con su nombre para la
+# persona y su señal de vida, porque arrancado no es funcionar (151). Canal y
+# encargos no: sin su token sólo sabrían apuntar fallos (`instalar.sh`).
+ENCENDIBLES = {
+    "hub-secretario": ("El secretario", _latido_secretario,
+                       "uv run python -m hub.secretario"),
+}
+# La primera vez `uv run` prepara el entorno y puede pasar de 20 s.
+ESPERA_SENAL = 30
+
+
+def encender(nombre: str, espera: float | None = None) -> tuple[str, str]:
+    """Enciende un servicio opcional del hub y lo deja encendido al reiniciar
+    (`enable --now`), y dice cómo quedó: `encendido` (ya da señales),
+    `sin-senal` (arrancó pero aún no late) o `no` (no arrancó o se cae).
+
+    Sólo los de `ENCENDIBLES` (decisión 400): un nombre fuera de la lista es
+    un error de quien llama, no algo que se intente. Se da por encendido cuando
+    su señal es **posterior al clic**, no cuando `systemctl` devuelve 0: eso
+    dice que la orden salió (151, como `panico.reiniciar`). Sin systemd no se
+    lanza el proceso desde aquí —colgaría del servicio que lo lanza y nadie lo
+    levantaría al caerse (153, 344)—: se dice el comando.
+    """
+    if nombre not in ENCENDIBLES:
+        raise ValueError(f"{nombre} no se enciende desde el hub")
+    quien, senal, a_mano = ENCENDIBLES[nombre]
+    if not hay_systemd_de_usuario():
+        return "no", (f"Sin systemd de usuario no se enciende desde aquí. En una terminal, en la "
+                      f"carpeta del hub: {a_mano}")
+    antes = reloj.instante()
+    codigo, dijo = _orden("enable", "--now", nombre)
+    if codigo != 0:
+        return "no", f"{quien} no se encendió: {(dijo or f'systemctl salió con {codigo}').rstrip('.')}."
+    limite = time.monotonic() + (ESPERA_SENAL if espera is None else espera)
+    while True:
+        ultima = senal()
+        if ultima and reloj.instante(ultima) >= antes:
+            return "encendido", f"{quien} está en marcha, y seguirá encendido cuando reinicies el equipo."
+        if time.monotonic() >= limite:
+            break
+        time.sleep(1)
+    if _systemctl("is-active", nombre) != "active":
+        return "no", (f"{quien} se encendió pero se cae al arrancar. Lo que dice al caerse: "
+                      f"journalctl --user -u {nombre} -n 40")
+    return "sin-senal", (f"{quien} está arrancando pero aún no da señales; la primera vez puede tardar "
+                         f"un minuto. Si no se pone en verde, mira systemctl --user status {nombre}")
+
+
 def _servicios() -> list[dict]:
     if not hay_systemd_de_usuario():
         return [{"clave": "servicios", "nombre": "Servicios", "estado": "aviso",
@@ -168,8 +260,8 @@ def _servicios() -> list[dict]:
                  "arreglo": "INSTALAR.md, «Servicios»"}]
     salida = []
     for nombre in SERVICIOS:
-        habilitado = _systemctl("is-enabled", nombre) == "enabled"
-        activo = _systemctl("is-active", nombre) == "active"
+        e = _estado(nombre)
+        habilitado, activo = e["habilitado"], e["activo"] == "active"
         if not habilitado and nombre not in IMPRESCINDIBLES:
             continue   # canal o encargos sin configurar: no es un fallo
         if activo and habilitado:

@@ -32,7 +32,7 @@ from . import consumo as _consumo_mod
 from . import (acceso, agentes, api, asistente, busqueda, canal, catalogo,
                comandos, config, conversaciones, db, encargos, entrega, entrevistador, ideas, insignias,
                intercambio, lienzos, navegador, orquestador,
-               programados, registry, restauracion, rele, rele_encargos, servicios,
+               programados, registry, restauracion, rele, rele_encargos, salud, servicios,
                slots, snapshotter, terminal, tmux, transcripts)
 from . import conexiones as conexiones_mod
 from . import repos as repos_git
@@ -4249,6 +4249,19 @@ def api_secretario_push_prueba():
     finally:
         con.close()
     return JSONResponse({"ok": True})
+
+
+@app.post("/secretario/encender")
+def secretario_encender():
+    """«Encenderlo» del aviso de apagado (C-0235, decisión 400). El nombre va
+    escrito aquí, nunca en la petición, y `salud.encender` sólo enciende los de
+    su lista. Tarda lo que tarda en dar su primer latido (hasta 30 s): la ruta
+    es síncrona, así que lo espera en el pool de hilos, no en el bucle."""
+    estado, texto = salud.encender("hub-secretario")
+    if estado == "encendido":
+        return _volver("/secretario", texto, fugaz=True)
+    # Arrancó pero aún no late: se hizo, y hay algo que decir que no se va solo.
+    return _volver("/secretario", texto, hecho=estado == "sin-senal")
 
 
 @app.post("/secretario/aparato/{sid}/quitar")
