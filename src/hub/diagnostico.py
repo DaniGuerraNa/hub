@@ -1,4 +1,5 @@
-"""Diagnosticar la PC con Windows y su red, en sólo lectura (decisión 386, C-0194).
+"""Diagnosticar la PC con Windows, su red y sus programas, en sólo lectura
+(decisiones 386 y 402; C-0194, C-0237).
 
 Nace de dos noches del dueño: dos pantallazos seguidos (5 y 6-nov) y un juego
 con el ping por las nubes. Se lo pidió al secretario, que contestó «no tengo
@@ -21,8 +22,15 @@ destinos no entran en ninguno, van como argumento suelto a `tracert.exe` y
 `ping.exe`, sin shell. Lo que cambie algo en la PC no va por aquí: o
 por el agente de Reuniones, o no va (386).
 
-🔴 **Todo cabe en `TOPE_S`**, por debajo de los 60 s: el secretario lo llama
-como herramienta, y `motor.SIN_NOTICIAS_S` mata la que se calla demasiado. Por
+🔴 **Los programas no meten nada de fuera en PowerShell** (402): sus guiones
+leen todo —los programas instalados, los procesos— y lo que se busca se filtra
+aquí, en Python. Sin entrada externa no hay nada que validar, que es más
+fuerte que validarlo. Y de cada proceso sólo sale su nombre, su PID, cuándo
+arrancó y lo que lleva leído y escrito: nunca su línea de órdenes (puede
+llevar llaves, regla dura 5) ni rutas (llevan el nombre del usuario).
+
+🔴 **Todo cabe en `TOPE_S`**: el secretario lo llama como herramienta, y
+`motor.SIN_NOTICIAS_S` mata la que se calla demasiado. Por
 eso las latencias van con `ping.exe` **en paralelo** y no con
 `Test-Connection`, que es secuencial y espera ~4,5 s por cada eco perdido
 (medido el 7-nov: 9 s por dos ecos a una IP muerta, 4,3 s por cinco a una
@@ -38,6 +46,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 from collections.abc import Sequence
 from datetime import datetime
 
@@ -48,6 +57,11 @@ from .reloj import a_local
 def _reloj() -> float:
     """El reloj de los plazos; aparte para que un test pueda adelantarlo."""
     return time.monotonic()
+
+
+def _dormir(segundos: float) -> None:
+    """La espera entre dos muestras; aparte para que un test no espere de verdad."""
+    time.sleep(segundos)
 
 
 class SinWindows(RuntimeError):
@@ -72,6 +86,17 @@ SALTOS = 15
 ESPERA_SALTO_MS = 500
 #: De cuántas conexiones de un proceso se mide la latencia.
 REMOTAS_MAX = 3
+#: Entre las dos muestras de lo que escribe cada proceso. La espera va aquí y
+#: no en PowerShell: `Start-Sleep` no es un verbo de lectura, y admitir
+#: «Start» dejaría pasar `Start-Process` (402).
+MUESTRA_S = 5
+#: Los programas que casan que se enseñan, y los procesos que más escriben.
+PROGRAMAS_MAX = 40
+ESCRITORES_MAX = 5
+INSTANCIAS_MAX = 20
+#: Lo que se busca entre los programas o los procesos no entra en ningún guion,
+#: pero se acota igual: es texto del modelo.
+BUSCAR_MAX = 64
 #: Lo que se guarda del texto de un evento: viene en el idioma del sistema y
 #: el dato es el código, no la prosa.
 TEXTO = 300
@@ -223,8 +248,72 @@ if ($buscado) {
   ConvertTo-Json -Compress -Depth 5
 """
 
+# Los programas: Windows, cada gráfica con su controlador y lo instalado (las
+# tres claves Uninstall, cada una en su `try`: una rota no se lleva las otras).
+# Sin nada de fuera: se lee todo y se filtra en Python. De lo instalado, sólo
+# nombre, versión, editor, fecha y si Windows lo esconde en «Aplicaciones»
+# (componentes y actualizaciones: `SystemComponent`, `ParentKeyName`), para
+# contar lo mismo que ve el dueño: `InstallLocation` y `UninstallString` llevan
+# la carpeta del usuario.
+_PS_PROGRAMAS = r"""
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+$fallos = @()
+$windows = $null
+$gpus = @()
+$programas = @()
+try {
+  $so = Get-CimInstance Win32_OperatingSystem
+  $windows = [ordered]@{nombre=$so.Caption; version=$so.Version; build=$so.BuildNumber}
+} catch { $fallos += ('windows: ' + $_.Exception.Message) }
+try {
+  $gpus = @(Get-CimInstance Win32_VideoController | ForEach-Object {
+    $fecha = $null
+    if ($_.DriverDate) { $fecha = $_.DriverDate.ToString('yyyy-MM-dd') }
+    [ordered]@{nombre=[string]$_.Name; controlador=[string]$_.DriverVersion; fecha=$fecha}
+  })
+} catch { $fallos += ('graficas: ' + $_.Exception.Message) }
+foreach ($clave in @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                     'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                     'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*')) {
+  try {
+    $programas += @(Get-ItemProperty -Path $clave -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } |
+      ForEach-Object {
+        [ordered]@{nombre=[string]$_.DisplayName; version=[string]$_.DisplayVersion; editor=[string]$_.Publisher;
+                   instalado=[string]$_.InstallDate; oculto=[bool]($_.SystemComponent -eq 1 -or $_.ParentKeyName)}
+      })
+  } catch { $fallos += ('programas: ' + $_.Exception.Message) }
+}
+[ordered]@{windows=$windows; gpus=$gpus; programas=$programas; fallos=$fallos} | ConvertTo-Json -Compress -Depth 4
+"""
+
+# Una muestra de lo que lleva leído y escrito cada proceso, con la hora antes y
+# después de la consulta: el intervalo entre dos sale de la mitad de cada una,
+# no del reloj de Python, porque lo que tarda en arrancar `powershell.exe`
+# varía, y la primera consulta de WMI, en frío, tarda más (regla dura 13). Sólo
+# cinco campos: nunca `CommandLine` (puede llevar llaves) ni `ExecutablePath`.
+_PS_ES = r"""
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+$fallos = @()
+$procesos = @()
+$antes = (Get-Date).ToUniversalTime().ToString('o')
+try {
+  $procesos = @(Get-CimInstance Win32_Process | ForEach-Object {
+    $desde = $null
+    if ($_.CreationDate) { $desde = $_.CreationDate.ToUniversalTime().ToString('s') + 'Z' }
+    [ordered]@{nombre=[string]$_.Name; pid=$_.ProcessId; desde=$desde; escrito=$_.WriteTransferCount;
+               leido=$_.ReadTransferCount}
+  })
+} catch { $fallos += ('procesos: ' + $_.Exception.Message) }
+$despues = (Get-Date).ToUniversalTime().ToString('o')
+[ordered]@{antes=$antes; despues=$despues; procesos=$procesos; fallos=$fallos} | ConvertTo-Json -Compress -Depth 3
+"""
+
 #: Los guiones, para que el test los lea todos.
-GUIONES = (_PS_WINDOWS, _PS_RED)
+GUIONES = (_PS_WINDOWS, _PS_RED, _PS_PROGRAMAS, _PS_ES)
 
 
 # ─────────────────────────────── validar ───────────────────────────────
@@ -303,18 +392,27 @@ def _texto(crudo: bytes) -> str:
 
 
 def _powershell(guion: str, fin: float) -> tuple[dict, list[str]]:
+    return _leer_ps(_lanzar_ps(guion), fin)
+
+
+def _lanzar_ps(guion: str) -> subprocess.Popen:
     ps = _programa("powershell.exe")
     try:
-        proc = _lanzar([ps, "-NoProfile", "-NonInteractive", "-Command", guion])
+        return _lanzar([ps, "-NoProfile", "-NonInteractive", "-Command", guion])
     except OSError as exc:
         # El archivo está pero no arranca: la interoperabilidad de WSL con
         # Windows está apagada (así se midió para la 313). Es «no hay Windows»
         # a efectos de esto, y se dice igual de claro.
         raise SinWindows(f"No puedo lanzar programas de Windows desde aquí ({exc}): ¿está apagada la "
                          "interoperabilidad de WSL con Windows?") from exc
+
+
+def _leer_ps(proc, fin: float, que: str = "") -> tuple[dict, list[str]]:
+    """Lo que devolvió un guion ya lanzado, esperando como mucho hasta `fin`.
+    `que` dice cuál era, cuando hay varios: si no, no se sabe qué faltó."""
     rc, salida, error = _esperar(proc, fin)
     if rc is None:
-        return {}, [f"PowerShell no terminó en {ESPERA_PS} s"]
+        return {}, [f"PowerShell no terminó a tiempo ({que})" if que else f"PowerShell no terminó en {ESPERA_PS} s"]
     texto = _texto(salida)
     linea = next((x for x in reversed(texto.splitlines()) if x.strip().startswith("{")), "")
     try:
@@ -595,6 +693,150 @@ def red(destinos: Sequence[str] = (), proceso: str | None = None, trazar: str | 
             "fallos": fallos, "segundos": round(_reloj() - t0, 1)}
 
 
+# ─────────────────────────────── programas ───────────────────────────────
+
+
+def _plano(texto: str) -> str:
+    """Para comparar lo buscado: sin mayúsculas ni tildes («adrenalín» casa)."""
+    t = unicodedata.normalize("NFKD", str(texto or "")).casefold()
+    return "".join(c for c in t if not unicodedata.combining(c))
+
+
+def _buscado(texto: str | None, que: str) -> str:
+    t = " ".join(str(texto or "").split())
+    if len(t) > BUSCAR_MAX:
+        raise ValueError(f"{que} demasiado largo (hasta {BUSCAR_MAX} letras)")
+    return t
+
+
+def _fecha_instalado(v: str) -> str | None:
+    """`InstallDate` viene como AAAAMMDD (cuando viene)."""
+    v = str(v or "").strip()
+    return f"{v[:4]}-{v[4:6]}-{v[6:8]}" if re.fullmatch(r"\d{8}", v) else None
+
+
+def _por_pid(muestra: dict) -> dict[tuple, dict]:
+    """Los procesos de una muestra por (pid, arranque): un PID reutilizado por
+    otro proceso entre las dos muestras no se mide como si fuera el mismo."""
+    return {(x.get("pid"), x.get("desde")): x for x in _lista(muestra.get("procesos")) if isinstance(x, dict)}
+
+
+def _hora_muestra(m: dict) -> float:
+    """La mitad de la consulta de una muestra (UTC), o 0 si no se sabe."""
+    a, d = _segundos(str(m.get("antes") or "")), _segundos(str(m.get("despues") or ""))
+    return (a + d) / 2 if a and d else 0.0
+
+
+def _bps(antes: dict | None, despues: dict, segundos: float | None) -> float | None:
+    if not antes or not segundos or segundos <= 0:
+        return None
+    try:
+        return max(0.0, (int(despues.get("escrito") or 0) - int(antes.get("escrito") or 0)) / segundos)
+    except (TypeError, ValueError):
+        return None
+
+
+def leer_programas(crudo: dict, muestras: Sequence[dict], buscar: str = "", proceso: str = "") -> dict:
+    """Lo de los dos guiones, filtrado y medido aquí. `muestras`: las de
+    `_PS_ES` que volvieron (una o dos); con una, lo que escribe ahora sale
+    «sin medir»."""
+    vistos, programas = set(), []
+    for x in _lista(crudo.get("programas")):
+        if not isinstance(x, dict) or not str(x.get("nombre") or "").strip():
+            continue
+        clave = (str(x.get("nombre")).strip(), str(x.get("version") or "").strip())
+        if clave in vistos:   # el mismo en dos claves (64 y 32 bits)
+            continue
+        vistos.add(clave)
+        programas.append({"nombre": clave[0], "version": clave[1], "editor": str(x.get("editor") or "").strip(),
+                          "instalado": _fecha_instalado(x.get("instalado")), "oculto": bool(x.get("oculto"))})
+    casan = []
+    if buscar:
+        b = _plano(buscar)
+        casan = sorted((x for x in programas if b in _plano(x["nombre"]) or b in _plano(x["editor"])),
+                       key=lambda x: _plano(x["nombre"]))
+
+    primera = muestras[0] if muestras else {}
+    segunda = muestras[1] if len(muestras) > 1 else None
+    intervalo = None
+    if segunda and _hora_muestra(primera) and _hora_muestra(segunda):
+        intervalo = _hora_muestra(segunda) - _hora_muestra(primera)
+        intervalo = round(intervalo, 1) if intervalo > 0 else None
+    antes = _por_pid(primera)
+    filas = []
+    for k, x in (_por_pid(segunda) if segunda else antes).items():
+        try:
+            escrito, leido = int(x.get("escrito") or 0), int(x.get("leido") or 0)
+        except (TypeError, ValueError):
+            continue
+        arranque = _segundos(str(x.get("desde") or "")) if x.get("desde") else 0.0
+        vivo = (_hora_muestra(segunda or primera) - arranque) if arranque else 0
+        filas.append({"nombre": str(x.get("nombre") or ""), "pid": x.get("pid"), "desde": x.get("desde"),
+                      "escrito": escrito, "leido": leido,
+                      "media_bps": round(escrito / vivo) if vivo > 0 else None,
+                      "ahora_bps": None if segunda is None else _bps(antes.get(k), x, intervalo),
+                      # Arrancó entre las dos muestras: lo de ahora no se pudo medir.
+                      "nuevo": segunda is not None and k not in antes})
+    instancias: list[dict] = []
+    if proceso:
+        p = _plano(proceso.removesuffix(".exe") if proceso.lower().endswith(".exe") else proceso)
+        instancias = [f for f in filas if p in _plano(f["nombre"])]
+    escriben = sorted((f for f in filas if f["ahora_bps"]), key=lambda f: -f["ahora_bps"])[:ESCRITORES_MAX]
+    return {"que": "programas",
+            "windows": crudo.get("windows") if isinstance(crudo.get("windows"), dict) else None,
+            "gpus": [g for g in _lista(crudo.get("gpus")) if isinstance(g, dict)],
+            "buscado": buscar or None, "programas": casan[:PROGRAMAS_MAX], "casan": len(casan),
+            # Lo que cuenta Windows en «Aplicaciones», y todas las entradas.
+            "total_programas": sum(not x["oculto"] for x in programas), "total_entradas": len(programas),
+            # Cuántos hay de verdad antes de recortar: «20 en marcha» con 35
+            # chrome.exe sería una cifra falsa (regla dura 13).
+            "proceso": None if not proceso else {"buscado": proceso, "en_marcha": len(instancias),
+                                                 "instancias": instancias[:INSTANCIAS_MAX]},
+            "mas_escriben": [{k: f[k] for k in ("nombre", "pid", "ahora_bps", "escrito")} for f in escriben],
+            "muestra_s": intervalo,
+            "fallos": [str(f)[:300] for m in [crudo, *muestras] for f in _lista(m.get("fallos"))]}
+
+
+def programas(buscar: str | None = None, proceso: str | None = None) -> dict:
+    """Windows y su build, cada gráfica con su controlador, los programas
+    instalados que casan con `buscar` (nombre o editor, sin mayúsculas ni
+    tildes; sin `buscar`, sólo cuántos hay) y lo que leen y escriben los
+    procesos: con `proceso`, los suyos (desde que arrancaron, su media y lo
+    de ahora); sin nombre, los que más escriben ahora. Sólo lectura (402).
+
+    Lo de ahora sale de dos muestras del mismo guion separadas `MUESTRA_S`,
+    con el intervalo que anota cada una. Si la primera no vuelve a tiempo, no
+    se lanza la segunda y sale «sin medir». `SinWindows` si no hay Windows."""
+    buscar = _buscado(buscar, "lo que buscas")
+    proceso = _buscado(proceso, "el proceso")
+    t0 = _reloj()
+    fin = t0 + TOPE_S
+    fallos: list[str] = []
+    progs = _lanzar_ps(_PS_PROGRAMAS)
+    try:
+        es1 = _lanzar_ps(_PS_ES)
+    except BaseException:
+        progs.kill()
+        _esperar(progs, _reloj() + 1)
+        raise
+    primera, f1 = _leer_ps(es1, min(t0 + ESPERA_PS, fin), "la primera muestra de procesos")
+    # La lista de programas, antes de esperar: su salida puede no caber en la
+    # tubería, y se quedaría escribiendo hasta que alguien la lea.
+    crudo, f0 = _leer_ps(progs, min(t0 + ESPERA_PS, fin), "la lista de programas")
+    muestras = [primera] if primera else []
+    fallos += f0 + f1
+    if primera and _reloj() + MUESTRA_S + ESPERA_PS / 2 <= fin:
+        _dormir(MUESTRA_S)
+        segunda, f2 = _leer_ps(_lanzar_ps(_PS_ES), min(_reloj() + ESPERA_PS, fin), "la segunda muestra de procesos")
+        fallos += f2
+        if segunda:
+            muestras.append(segunda)
+    d = leer_programas(crudo, muestras, buscar, proceso)
+    d["fallos"] = fallos + d["fallos"]
+    d["segundos"] = round(_reloj() - t0, 1)
+    return d
+
+
 # ─────────────────────────────── legible ───────────────────────────────
 
 _SOLO_LECTURA = "Sólo lectura: no se cambió nada en la PC."
@@ -617,7 +859,84 @@ def _n(n: int, una: str, varias: str) -> str:
 def legible(d: dict) -> str:
     """El diagnóstico dicho en pocas líneas: lo que imprime la CLI y lo que
     recibe el secretario (sin volcar el JSON entero)."""
-    return _legible_red(d) if d.get("que") == "red" else _legible_windows(d)
+    return {"red": _legible_red, "programas": _legible_programas}.get(d.get("que"), _legible_windows)(d)
+
+
+def _tam(n) -> str:
+    """Bytes dichos para una persona."""
+    n = float(n or 0)
+    for unidad in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unidad == "GB":
+            return f"{n:.0f} {unidad}" if unidad == "B" else f"{n:.1f} {unidad}"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
+def _legible_programas(d: dict) -> str:
+    out = [f"Programas de la PC ({d.get('segundos', '?')} s). {_SOLO_LECTURA}"]
+    w = d.get("windows") or {}
+    if w:
+        out.append(f"Windows: {w.get('nombre') or '?'} {w.get('version') or ''} (build {w.get('build') or '?'})")
+    gpus = d.get("gpus") or []
+    if gpus:
+        # El número del controlador de Windows no es la versión del programa del
+        # fabricante (31.0.x frente a 23.4.3 en Adrenalin): ése sale en los
+        # programas instalados. Se dice, para que no se mezclen (402).
+        out.append("Gráficas, con la versión de su controlador en Windows (no es la del programa del fabricante,"
+                   " que sale entre los programas instalados):")
+        out += [f"  {g.get('nombre') or '?'} — controlador {g.get('controlador') or '?'}"
+                + (f" del {g['fecha']}" if g.get("fecha") else "") for g in gpus]
+    total, entradas = d.get("total_programas") or 0, d.get("total_entradas") or 0
+    if d.get("buscado"):
+        casan = d.get("casan") or 0
+        if casan:
+            out.append(f"Programas instalados con «{d['buscado']}» en el nombre o el editor ({casan}):")
+            out += [f"  {x['nombre']} {x.get('version') or '(sin versión)'}"
+                    + (f" — {x['editor']}" if x.get("editor") else "")
+                    + (f", instalado el {x['instalado']}" if x.get("instalado") else "")
+                    + (" (componente que Windows no enseña en Aplicaciones)" if x.get("oculto") else "")
+                    for x in d.get("programas") or []]
+            if casan > len(d.get("programas") or []):
+                out.append(f"  … y {casan - len(d['programas'])} más: afina la búsqueda")
+        else:
+            out.append(f"Ningún programa instalado tiene «{d['buscado']}» en el nombre ni en el editor.")
+    elif entradas:
+        out.append(f"Programas instalados: {total} en Aplicaciones de Windows ({entradas} entradas contando "
+                   "componentes y actualizaciones). Busca uno por su nombre o su editor para verlo con su versión.")
+    seg = d.get("muestra_s")
+    ahora = f"medido {seg} s" if seg else "sin medir"
+    pr = d.get("proceso")
+    if pr:
+        inst = pr.get("instancias") or []
+        en_marcha = pr.get("en_marcha", len(inst))
+        if not inst:
+            out.append(f"Proceso «{pr.get('buscado')}»: no hay ninguno en marcha con ese nombre.")
+        else:
+            out.append(f"Proceso «{pr.get('buscado')}» ({en_marcha} en marcha):")
+            for x in inst:
+                media = f"media {_tam(x['media_bps'])}/s" if x.get("media_bps") is not None else "media sin medir"
+                if x.get("ahora_bps") is not None:
+                    ya = f"ahora {_tam(x['ahora_bps'])}/s ({ahora})"
+                elif x.get("nuevo"):
+                    ya = "ahora sin medir (arrancó entre las dos muestras)"
+                else:
+                    ya = "ahora sin medir"
+                desde = f", en marcha desde {_hora(x['desde'])}" if x.get("desde") else ""
+                out.append(f"  {x['nombre']} (pid {x['pid']}{desde}): {_tam(x['escrito'])} escritos y "
+                           f"{_tam(x['leido'])} leídos desde que arrancó; {media}; {ya}")
+            if en_marcha > len(inst):
+                out.append(f"  … y {en_marcha - len(inst)} más con ese nombre")
+    esc = d.get("mas_escriben") or []
+    if esc:
+        out.append(f"Los que más escriben ahora ({ahora}):")
+        out += [f"  {x['nombre']} (pid {x['pid']}): {_tam(x['ahora_bps'])}/s" for x in esc]
+    elif seg:
+        out.append(f"Ninguno de los que ya estaban en marcha escribió nada en los {seg} s medidos.")
+    if pr or esc:
+        out.append("Lo escrito y leído es lo que el proceso pide leer y escribir (archivos, red y dispositivos),"
+                   " no lo que llega al SSD.")
+    out += [f"No se pudo: {f}" for f in d.get("fallos") or []]
+    return "\n".join(out)
 
 
 def _legible_windows(d: dict) -> str:
@@ -708,7 +1027,8 @@ def _legible_red(d: dict) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m hub.diagnostico",
-                                 description="Diagnóstico de la PC con Windows y de su red, en sólo lectura.")
+                                 description="Diagnóstico de la PC con Windows, de su red y de sus programas,"
+                                             " en sólo lectura.")
     sub = ap.add_subparsers(dest="que", required=True)
     w = sub.add_parser("windows", help="pantallazos, apagados, volcados y el equipo")
     w.add_argument("--dias", type=int, default=DIAS_POR_OMISION)
@@ -716,11 +1036,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     r.add_argument("--destino", action="append", default=[], help="IP o nombre; se puede repetir")
     r.add_argument("--proceso", help="nombre (o parte) de un proceso de Windows")
     r.add_argument("--trazar", help="IP o nombre al que hacer tracert")
-    for p in (w, r):
+    g = sub.add_parser("programas", help="Windows, las gráficas y su controlador, programas instalados y lo que"
+                                         " escribe un proceso")
+    g.add_argument("--buscar", help="nombre o editor de un programa instalado (o parte)")
+    g.add_argument("--proceso", help="nombre (o parte) de un proceso de Windows")
+    for p in (w, r, g):
         p.add_argument("--json", action="store_true", help="el resultado entero, en JSON")
     a = ap.parse_args(argv)
     try:
-        d = windows(a.dias) if a.que == "windows" else red(a.destino, proceso=a.proceso, trazar=a.trazar)
+        if a.que == "windows":
+            d = windows(a.dias)
+        elif a.que == "red":
+            d = red(a.destino, proceso=a.proceso, trazar=a.trazar)
+        else:
+            d = programas(a.buscar, proceso=a.proceso)
     except (SinWindows, ValueError) as exc:
         print(exc, file=sys.stderr)
         return 2

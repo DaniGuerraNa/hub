@@ -28,7 +28,7 @@
         <li>
           <strong>Declara un proyecto.</strong>
           <div class="tenue">
-            Lo más fácil: {% if rail.hay_asistente %}pídeselo al asistente, abajo a la
+            Lo más fácil: {% if rail.voz %}pídeselo {% if rail.voz == 'secretario' and rail.secretario_nombre != 'Secretario' %}a {{ rail.secretario_nombre }}{% else %}al {{ rail.voz }}{% endif %}, abajo a la
             derecha — <em>«quiero registrar un proyecto que ya tengo»</em> —, o{% endif %}
             abre Claude Code en la carpeta del hub y dile <em>«anexa mi proyecto»</em>.
             A mano también vale: edita

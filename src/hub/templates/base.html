@@ -1138,7 +1138,7 @@ dialog.paleta li .detalle {
 {# Sus hojas ya van en `<head>` (C-0181). #}
 {% if panel_secretario %}
 {% import "_personaje.html" as personaje %}
-{{ personaje.defs() }}
+{{ personaje.defs(pj=rail.personaje) }}
 <aside id="secretario-panel" aria-label="{{ rail.secretario_nombre or 'Secretario' }}">
   {# El personaje ES la pestaña (C-0166): te sigue por todas las pantallas y
      enseña lo que hace. Sale pintado con lo del raíl; lo demás, del sondeo. #}

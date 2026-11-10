@@ -215,8 +215,10 @@ def _hub_maquina(con, p):
 
 
 def _diagnosticar_pc(con, p):
-    """Windows (pantallazos, apagados, volcados, BIOS) o la red (adaptadores,
-    ruta, latencias, un proceso, una traza), en sólo lectura (decisión 386).
+    """Windows (pantallazos, apagados, volcados, BIOS), la red (adaptadores,
+    ruta, latencias, un proceso, una traza) o los programas (instalados, el
+    controlador de la gráfica, lo que escribe un proceso), en sólo lectura
+    (decisiones 386 y 402).
 
     Vuelve en pocas líneas (`diagnostico.legible`), no el JSON entero: el
     modelo tiene que contárselo al dueño, no leerse 40 eventos."""
@@ -230,8 +232,10 @@ def _diagnosticar_pc(con, p):
             d = diagnostico.windows()
         elif que == "red":
             d = diagnostico.red(destinos, proceso=p.get("proceso") or None, trazar=p.get("trazar") or None)
+        elif que == "programas":
+            d = diagnostico.programas(p.get("buscar") or None, proceso=p.get("proceso") or None)
         else:
-            return {"error": "`que` es «windows» o «red»"}
+            return {"error": "`que` es «windows», «red» o «programas»"}
     except diagnostico.SinWindows as exc:
         return {"error": str(exc)}
     except ValueError as exc:
@@ -778,12 +782,21 @@ LECTURAS: list[Herramienta] = [
                 "ruta, el DNS, la latencia y la pérdida a la puerta de enlace, 1.1.1.1 y 8.8.8.8. Con «red», "
                 "`destinos` (IP o nombres) se miden también, `proceso` (nombre o parte, p. ej. el juego) da sus "
                 "conexiones y la latencia a lo que usa, y `trazar` (una IP o nombre) hace un traceroute. "
+                "«programas» da Windows y su build, cada tarjeta gráfica con la versión de su controlador, los "
+                "programas instalados que tienen `buscar` en el nombre o el editor (p. ej. «AMD», «Chrome»; la "
+                "versión de Adrenalin es la del programa «AMD Software», no la del controlador) y lo que escriben "
+                "los procesos, medido unos segundos: los que más escriben ahora y, con `proceso`, "
+                "los suyos (desde que arrancaron, su media y ahora). Úsala para «qué versión de X tengo», «el "
+                "controlador de la gráfica», "
+                "«qué escribe tanto en el disco». "
                 "Temperatura, disco y luz están en `hub_maquina`.",
-                _obj({"que": {"type": "string", "enum": ["windows", "red"]},
-                      "destinos": {"type": "array", "items": _S}, "proceso": _S, "trazar": _S}, ["que"]),
+                _obj({"que": {"type": "string", "enum": ["windows", "red", "programas"]},
+                      "destinos": {"type": "array", "items": _S}, "proceso": _S, "trazar": _S, "buscar": _S},
+                     ["que"]),
                 _diagnosticar_pc, gesto="maquina",
-                rotulo=lambda p: "Revisando la red de la máquina del hub" if p.get("que") == "red"
-                else "Revisando cómo está Windows en la máquina del hub"),
+                rotulo=lambda p: {"red": "Revisando la red de la máquina del hub",
+                                  "programas": "Revisando los programas de la máquina del hub"}.get(
+                    p.get("que"), "Revisando cómo está Windows en la máquina del hub")),
     Herramienta("hub_slots", "Los slots activos (frentes de trabajo): proyecto, nombre, nota, última "
                 "actividad, y sus ventanas con un agente (`agentes`: `ventana`, el agente y si está trabajando "
                 "o abierto y esperando un mensaje). «Esperando un mensaje» es una sesión VIVA a la que se le "

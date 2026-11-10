@@ -465,8 +465,8 @@ def rail(con: sqlite3.Connection) -> dict:
     from . import navegante as _nav
     secretario_nombre = nombre_secretario()
     # Quién te habla en todas las pantallas (C-0160): el secretario si lo
-    # pediste en `secretario.yml` (`en_todo_el_hub: true`) y está montado; si
-    # no, el asistente, como siempre. Nunca los dos.
+    # pusiste en Ajustes → Personaje (C-0239; antes, `en_todo_el_hub: true` en
+    # `secretario.yml`) y está montado; si no, el asistente. Nunca los dos.
     voz, ingles, personaje = ("asistente" if hay_asistente else None), False, None
     if secretario_en_todo_el_hub():
         from .secretario import memoria as _mem, personaje as _pj
@@ -2849,17 +2849,47 @@ def secretario_monitor(hub: sqlite3.Connection | None = None) -> dict[str, Any]:
     return vista
 
 
+# Lo último leído de su memoria, por base (C-0239). Sólo vale si la lectura
+# siguiente falla: quien lo puso con el botón no tiene nada en el yml, y un
+# `database is locked` le devolvería al asistente.
+_EN_TODO_LEIDO: dict[str, bool] = {}
+
+
 def secretario_en_todo_el_hub() -> bool:
     """Si el secretario es la voz del hub y el asistente está retirado (C-0160, C-0164).
 
-    Lo pide `en_todo_el_hub: true` en `secretario.yml`, y sólo vale si su
+    Lo decide «En todas las pantallas», en Ajustes → Personaje, guardado en su
+    memoria (C-0239, decisión 403). `en_todo_el_hub` de `secretario.yml` sólo
+    vale si nunca se pulsó: quien lo tenía puesto así no nota nada. Sólo si su
     memoria existe. Nunca lanza: sin secretario, la respuesta es no."""
     try:
         from .secretario import conversacion as _conv, memoria as _mem
-        # `existe()` primero: `ajustes()` crea la carpeta del secretario.
-        return bool(_mem.existe() and _conv.ajustes().get("en_todo_el_hub"))
+        if not _mem.existe():
+            return False
+        ruta = str(_mem.ruta())
+        try:
+            elegido = _mem.leer_sin_abrir(_conv.CLAVE_EN_TODO)
+        except sqlite3.Error:
+            # 🔴 Un fallo al leer no es un «no»: con `False` volvería el
+            # asistente (web._asistente_retirado). Vale lo último leído en este
+            # proceso; si no hay, el yml.
+            elegido = _EN_TODO_LEIDO.get(ruta)
+        else:
+            if elegido is not None:
+                _EN_TODO_LEIDO[ruta] = bool(elegido)
+        if elegido is None:
+            # `existe()` antes que esto: `ajustes()` crea la carpeta del secretario.
+            elegido = _conv.ajustes().get("en_todo_el_hub")
+        return bool(elegido)
     except Exception:  # noqa: BLE001
         return False
+
+
+def secretario_late(con: sqlite3.Connection) -> bool:
+    """Si `hub-secretario` está en marcha ahora. Lo pide «Ponerlo en todas las
+    pantallas» (C-0239): con el asistente retirado y él parado, abajo no
+    contestaría nadie."""
+    return _latido_secretario(con)[0]
 
 
 def _canal_actual() -> str:

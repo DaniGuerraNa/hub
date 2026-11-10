@@ -251,6 +251,19 @@ def poner_ingles(con: sqlite3.Connection, activo: bool) -> None:
         memoria.quitar(con, "modo_ingles")
 
 
+# Si es él quien te habla en la pestaña de abajo de todas las pantallas (C-0160,
+# C-0239). En su memoria, como el nombre y el personaje, y no en
+# `secretario.yml`: ése lo edita el dueño a mano, con comentarios y `contexto:`,
+# y reescribirlo se los comería (decisión 403).
+CLAVE_EN_TODO = "en_todo_el_hub"
+
+
+def poner_en_todo_el_hub(con: sqlite3.Connection, activo: bool) -> None:
+    """🔴 `False` se guarda, no se borra: borrar la clave devolvería la palabra
+    a un `en_todo_el_hub: true` del yml, y «Quitarlo» no haría nada."""
+    memoria.poner(con, CLAVE_EN_TODO, bool(activo))
+
+
 def decir(con: sqlite3.Connection, hilo: int | None, texto: str) -> int:
     """Un turno del secretario ya terminado en un hilo: lo que contesta sin
     pasar por el modelo (una solicitud rechazada o ejecutada). Puerta única

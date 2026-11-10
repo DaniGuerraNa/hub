@@ -13,6 +13,42 @@ bash scripts/actualizar.sh
 Al terminar te enseña esta misma lista, sólo con las versiones que acabas de
 cruzar.
 
+## 0.5.2 — 2026-11-10
+
+El secretario se pone en todas las pantallas con un botón, revisa tus
+programas y quien trabaja para él lleva tu personaje.
+
+### Qué tienes que hacer
+
+- **Actualiza** con el botón de **Actualizaciones** (o con
+  `bash scripts/actualizar.sh` en la carpeta del hub).
+- Si usas el secretario y abajo a la derecha sigues viendo al asistente: en
+  su pantalla, **Ajustes → Personaje → Ponerlo en todas las pantallas**.
+- Si los ayudantes del secretario siguen saliendo como el cubo azul con otro
+  personaje elegido, recarga la página con **Ctrl+Shift+R**.
+
+### Nuevo
+
+- **El secretario mira tus programas.** Pregúntale qué versión tienes de un
+  programa («¿qué tengo de AMD?»), la del controlador de tu tarjeta gráfica,
+  o si un proceso está escribiendo sin parar: te dice lo instalado con su
+  versión, cada gráfica con su controlador y lo que escribe cada proceso,
+  medido unos segundos. Sólo leyendo, como el resto de lo que revisa en tu
+  PC. Desde la terminal: `uv run python -m hub.diagnostico programas`.
+
+### Qué cambia en lo que ya usabas
+
+- **El secretario en todas las pantallas, con un botón.** Si lo usas pero en
+  la pestaña de abajo seguías viendo al asistente: en su pantalla, Ajustes →
+  Personaje → **Ponerlo en todas las pantallas** (sale con él encendido).
+  «Quitarlo de abajo» devuelve al asistente. Ya no hace falta editar
+  `secretario.yml`; si lo tenías puesto ahí, sigue igual.
+- **Quien trabaja para el secretario lleva tu personaje.** Si elegiste uno
+  dibujado, lo que investiga en la web, la sesión que hace su encargo y sus
+  subagentes salen a su lado como ese mismo personaje en pequeño, con una
+  insignia de lo que hace (la lupa si investiga…). Antes salía el cubo azul
+  de siempre junto a tu personaje. Con el cubo, todo sigue igual.
+
 ## 0.5.1 — 2026-11-09
 
 El secretario se enciende desde su pantalla, sin terminal.

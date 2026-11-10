@@ -4311,6 +4311,31 @@ def secretario_personaje(personaje: str = Form("")):
                    fugaz=True)
 
 
+@app.post("/secretario/en-todo-el-hub")
+def secretario_poner_en_todo(si: str = Form("")):
+    """Que te hable él en la pestaña de abajo de todas las pantallas, en el
+    sitio del asistente (C-0239, decisión 403). Vive en su memoria, como el
+    nombre: la web no reescribe `secretario.yml`. Ponerlo, sólo si late;
+    quitarlo, siempre. En /secretario no hay pestaña abajo, así que el aviso
+    dice dónde se nota."""
+    from .secretario import conversacion, memoria
+
+    activo = si == "1"
+    con = memoria.conectar()
+    try:
+        if activo and not api.secretario_late(con):
+            return _volver("/secretario?p=personaje#en-todo",
+                           "No se puso: no está en marcha. Arriba dice por qué.")
+        conversacion.poner_en_todo_el_hub(con, activo)
+    finally:
+        con.close()
+    if activo:
+        texto = "Hecho: en las demás pantallas te habla él, abajo a la derecha."
+    else:
+        texto = "Quitado: en las demás pantallas ya no te habla él abajo."
+    return _volver("/secretario?p=personaje#en-todo", texto, fugaz=True)
+
+
 @app.post("/secretario/nombre")
 def secretario_nombre(nombre: str = Form("")):
     """Cómo se llama (C-0226), junto al personaje y por la misma razón: vive en

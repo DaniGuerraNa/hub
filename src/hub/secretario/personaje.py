@@ -7,7 +7,8 @@ otra (decisión 298). Lo que se pinta sale de aquí y de nada más:
 - `GESTOS`: la familia de cada herramienta, que decide el accesorio que lleva
   en la mano. El JavaScript sólo conoce esta lista, nunca nombres de
   herramientas: añadir una herramienta es darle un gesto que ya existe.
-- `ROLES`: la skin de un acompañante. Un acompañante es **lo que delegó y
+- `ROLES`: la skin de un acompañante (con el cubo; con un dibujo, la
+  insignia de `GESTO_DE_ROL`). Un acompañante es **lo que delegó y
   sigue vivo** —una tarea del orquestador, la sesión que trabaja para ella y
   sus subagentes, un resumen aparte, el modelo mayor—, nunca un compañero
   inventado: el secretario no tiene subagentes (301), y pintar uno que no
@@ -69,6 +70,25 @@ ROLES: dict[str, tuple[str, str]] = {
     "resumidor": ("Resumidor", "un resumen de sesión que está leyendo aparte"),
     "experto": ("Experto", "el modelo mayor, cuando le pasa el turno"),
     "otro": ("Otro", "un subagente de un tipo que no conoce: neutro, con su inicial"),
+}
+
+#: rol → el gesto de `GESTOS` que lleva de insignia cuando quien lo hace es un
+#: dibujo (C-0236): cada acompañante es el mismo personaje en pequeño, y lo que
+#: dice su rol es lo que lleva, no su ropa. «otro» no lleva ninguna: su
+#: inicial. `_personaje.html` lleva una copia literal que un test compara.
+GESTO_DE_ROL: dict[str, str] = {
+    "orquestador": "delegar",
+    "obrero": "pc",
+    "arquitecto": "idea",
+    "revisor": "compromisos",
+    "disenador": "mostrar",
+    "explorador": "carpeta",
+    "investigador": "buscar",
+    "planificador": "agenda",
+    "ayudante": "hacer",
+    "resumidor": "leer",
+    "experto": "escalar",
+    "otro": "",
 }
 
 #: estado → (nombre, cuándo).

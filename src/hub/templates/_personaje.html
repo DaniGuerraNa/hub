@@ -14,7 +14,11 @@
     `personaje.GESTOS`, más ondas y reloj de arena) y las skins de rol (una
     por `personaje.ROLES`: sombrero, cara y lo que lleva en la mano), y la
     plantilla de un acompañante.
-  - `figura(pj, gesto)` el personaje entero (`pj`, de `api.personaje_vista`); `acomp(rol, inicial)` uno pequeño.
+  - `figura(pj, gesto)` el personaje entero (`pj`, de `api.personaje_vista`);
+    `acomp(rol, inicial, pj)` uno pequeño: con un dibujo, él mismo con la
+    insignia de su rol; con el cubo, el cubo con la ropa del rol (C-0236).
+  - `defs(pj)` recibe el personaje de la página para que la plantilla de un
+    acompañante sea la suya.
 
   Quién es lo elige el dueño (C-0188, decisión 377; `personaje.PERSONAJES`).
   El cubo es este SVG. Los demás son dibujos: una capa por pose, todas con la
@@ -28,7 +32,7 @@
   Todos los trazos son propios.
 #}
 
-{% macro defs() %}
+{% macro defs(pj=none) %}
 <svg class="pj-defs" width="0" height="0" aria-hidden="true" focusable="false"
      style="position:absolute;width:0;height:0;overflow:hidden">
   <defs>
@@ -238,10 +242,21 @@
     <symbol id="rol-otro" viewBox="0 0 64 64">
       {# Sin skin propia: el cuerpo neutro y su inicial (la pinta `.pj-inicial`). #}
     </symbol>
+
+    {# ── la insignia de cada rol en un acompañante dibujado (C-0236) ──
+       = `personaje.GESTO_DE_ROL` (lo comprueba un test): el accesorio de su
+       gesto. «otro» va vacío: lleva su inicial. #}
+    {%- for rol, gesto in [('orquestador', 'delegar'), ('obrero', 'pc'), ('arquitecto', 'idea'),
+                           ('revisor', 'compromisos'), ('disenador', 'mostrar'), ('explorador', 'carpeta'),
+                           ('investigador', 'buscar'), ('planificador', 'agenda'), ('ayudante', 'hacer'),
+                           ('resumidor', 'leer'), ('experto', 'escalar'), ('otro', '')] %}
+    <symbol id="ins-{{ rol }}" viewBox="0 0 16 16">{% if gesto %}<use href="#acc-{{ gesto }}" width="16" height="16"/>{% endif %}</symbol>
+    {%- endfor %}
   </defs>
 </svg>
-{# La plantilla de un acompañante: el JS la copia cambiando __ROL__ e __INICIAL__. #}
-<template id="pj-plantilla-acomp">{{ acomp('__ROL__', '__INICIAL__') }}</template>
+{# La plantilla de un acompañante: el JS la copia cambiando __ROL__ e __INICIAL__.
+   Con el personaje de la página: un dibujo junto a cubos era lo que no casaba. #}
+<template id="pj-plantilla-acomp">{{ acomp('__ROL__', '__INICIAL__', pj) }}</template>
 {% endmacro %}
 
 
@@ -287,17 +302,22 @@
   <g class="pj-globo pj-globo-error"><rect x="0" y="2" width="15" height="15" rx="5"/><text x="7.5" y="13.6">!</text></g>
 {% endmacro %}
 
-{# `pj`: la vista de un personaje (`api.personaje_vista`: id y hoja). Sin
-   hoja, o sin `pj`, es el cubo: la ruta de la hoja sólo la sabe `personaje.hoja`. #}
-{% macro figura(pj=none, gesto='hacer', clase='') %}
-{% if pj and pj.hoja %}
-<span class="pj pj-dibujo {{ clase }}" data-pj="{{ pj.id }}" style="--pj-hoja:url('{{ pj.hoja }}')" aria-hidden="true">
-  {# = `personaje.POSES`, en su orden (lo comprueba un test). #}
+{# Una capa por pose, todas de la misma hoja: la del personaje y la de sus
+   acompañantes. = `personaje.POSES`, en su orden (lo comprueba un test). #}
+{% macro _capas() %}
   <span class="pj-poses">
     {%- for pose in ['base', 'escuchando', 'pensando', 'buscando', 'anotando', 'hablando', 'esperando', 'listo', 'dormido'] -%}
     <span class="pj-capa" data-pose="{{ pose }}"></span>
     {%- endfor -%}
   </span>
+{% endmacro %}
+
+{# `pj`: la vista de un personaje (`api.personaje_vista`: id y hoja). Sin
+   hoja, o sin `pj`, es el cubo: la ruta de la hoja sólo la sabe `personaje.hoja`. #}
+{% macro figura(pj=none, gesto='hacer', clase='') %}
+{% if pj and pj.hoja %}
+<span class="pj pj-dibujo {{ clase }}" data-pj="{{ pj.id }}" style="--pj-hoja:url('{{ pj.hoja }}')" aria-hidden="true">
+  {{ _capas() }}
   <svg class="pj-encima" viewBox="0 0 64 64" focusable="false">
     {# El objeto que usa, en una insignia: el dibujo sólo tiene dos poses de trabajo. #}
     <g class="pj-accesorio"><circle class="pj-insignia" cx="53" cy="53" r="11"/><use href="#acc-{{ gesto }}" x="45" y="45" width="16" height="16"/></g>
@@ -322,10 +342,27 @@
 {% endif %}
 {% endmacro %}
 
-{% macro acomp(rol, inicial='') %}
+{# Uno pequeño: lo que delegó y sigue vivo. Decide sólo esta macro entre cubo y
+   dibujo, para la plantilla del JS y para la galería (C-0236). Con un dibujo,
+   el mismo personaje y, en vez de ropa, la insignia de su rol (`#ins-<rol>`),
+   más grande que la del principal: a 22 px la de él no se leería. Sin
+   `.pj-accesorio` ni globos: el JS busca el accesorio del principal por esa
+   clase, y la pose «esperando» ya lleva su «?». #}
+{% macro acomp(rol, inicial='', pj=none) %}
+{% if pj and pj.hoja %}
+<span class="pj pj-dibujo pj-mini" data-pj="{{ pj.id }}" style="--pj-hoja:url('{{ pj.hoja }}')" aria-hidden="true">
+  {{ _capas() }}
+  <svg class="pj-encima" viewBox="0 0 64 64" focusable="false">
+    <circle class="pj-insignia" cx="51" cy="51" r="16"/>
+    <use href="#ins-{{ rol }}" x="40" y="40" width="22" height="22"/>
+    <text class="pj-inicial" x="51" y="56">{{ inicial }}</text>
+  </svg>
+</span>
+{% else %}
 <svg class="pj pj-mini" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
   {{ _cuerpo(false) }}
   <text class="pj-inicial" x="31" y="47.5">{{ inicial }}</text>
   <use class="pj-rol" href="#rol-{{ rol }}" x="0" y="0" width="64" height="64"/>
 </svg>
+{% endif %}
 {% endmacro %}

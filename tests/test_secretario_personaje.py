@@ -361,12 +361,17 @@ def test_la_pose_de_cada_estado_y_de_cada_gesto_es_una_de_las_dibujadas():
     assert personaje.pose_de("hecho") == "listo" and personaje.pose_de("error") == "base"
 
 
+# Sin comentarios: el de encima de una regla quedaría pegado a su selector.
+_SIN_COMENTARIOS = re.sub(r"/\*.*?\*/", "", CSS, flags=re.S)
+
+
 def _reglas_de_capa() -> dict[str, list[str]]:
-    """pose → los selectores del CSS que encienden su capa."""
+    """pose → los selectores del CSS que encienden la capa del principal."""
     reglas: dict[str, list[str]] = {}
-    for selector, cuerpo in re.findall(r"([^{}]+)\{([^{}]*)\}", CSS):
+    for selector, cuerpo in re.findall(r"([^{}]+)\{([^{}]*)\}", _SIN_COMENTARIOS):
         m = re.search(r'\.pj-capa\[data-pose="([\w-]+)"\]\s*$', selector.strip())
-        if m and "opacity:1" in cuerpo.replace(" ", ""):
+        # Las del acompañante dibujado van aparte (C-0236): su propia prueba.
+        if m and "opacity:1" in cuerpo.replace(" ", "") and not selector.strip().startswith(".pj-acomp"):
             reglas.setdefault(m.group(1), []).append(selector.strip())
     return reglas
 
@@ -389,6 +394,69 @@ def test_el_css_enciende_la_misma_pose_que_pose_de_y_solo_una():
     assert por_estado.pop("(sin estado)") == ["base"]
     assert por_estado == {e: [p] for e, p in personaje.POSE_DE_ESTADO.items()}
     assert por_gesto == {g: [p] for g, p in personaje.POSE_DE_GESTO.items()}
+
+
+# ── los acompañantes, con el personaje elegido (C-0236) ──────────────────────
+
+def test_cada_rol_lleva_de_insignia_un_gesto_de_la_lista_y_solo_otro_va_sin_ella():
+    assert list(personaje.GESTO_DE_ROL) == list(personaje.ROLES)
+    sin = [r for r, g in personaje.GESTO_DE_ROL.items() if not g]
+    assert sin == ["otro"]
+    assert all(g in personaje.GESTOS for g in personaje.GESTO_DE_ROL.values() if g)
+
+
+def test_la_plantilla_lleva_la_misma_insignia_por_rol_y_un_simbolo_para_cada_uno():
+    lista = re.search(r"for rol, gesto in \[(.*?)\] %\}", PLANTILLA, re.S).group(1)
+    assert dict(re.findall(r"\('([\w-]+)', '([\w-]*)'\)", lista)) == personaje.GESTO_DE_ROL
+    assert 'id="ins-{{ rol }}"' in PLANTILLA
+
+
+def _enciende(sel: str, estado: str) -> bool:
+    """Si una regla de capa del acompañante vale para ese estado: o lo nombra,
+    o lo deja fuera de su `:not(…)` y entonces vale para todos los demás."""
+    fuera = re.search(r":not\(([^)]*)\)", sel)
+    if fuera:
+        return f'[data-estado="{estado}"]' not in fuera.group(1)
+    return f'[data-estado="{estado}"]' in sel
+
+
+def test_el_acompanante_dibujado_enciende_la_pose_de_pose_de_y_solo_una():
+    """Trabajando busca, en cola descansa, esperando levanta la mano: lo que
+    dice `pose_de` sin gesto, y una sola capa por estado, para cada estado que
+    les pone `avatar-secretario.js` y para uno que aún no existe (que no lo
+    deje sin capa: el cubo sí se vería)."""
+    reglas = [(m.group(1), sel.strip()) for sel, cuerpo in re.findall(r"([^{}]+)\{([^{}]*)\}", _SIN_COMENTARIOS)
+              if sel.strip().startswith(".pj-acomp") and "opacity:1" in cuerpo.replace(" ", "")
+              and (m := re.search(r'\.pj-capa\[data-pose="([\w-]+)"\]\s*$', sel.strip()))]
+    tarea = re.search(r"const ESTADO_TAREA = \{(.*?)\};", JS, re.S).group(1)
+    funcion = re.search(r"function acompanantes\(.*?\n  \}\n", JS, re.S).group(0)
+    del_js = set(re.findall(r":\s*'([\w-]+)'", tarea)) | set(re.findall(r"estado: '([\w-]+)'", funcion))
+    assert {"trabajando", "en-cola", "esperando"} <= del_js
+    for estado in sorted(del_js) + ["uno-nuevo"]:
+        poses = [pose for pose, sel in reglas if _enciende(sel, estado)]
+        assert poses == [personaje.pose_de(estado)], estado
+    assert all(" > .pj " in sel for _, sel in reglas)   # nunca la capa del principal
+
+
+def test_con_un_dibujo_la_plantilla_del_acompanante_es_el_mismo_en_pequeno(cliente):
+    """Lo que vio el dueño: su personaje dibujado investigando y, a su lado, el cubo azul."""
+    cliente.post("/secretario/personaje", data={"personaje": "rana-sombrero-hongo"}, headers=CASA)
+    for html in (cliente.get("/").text, cliente.get("/secretario").text, cliente.get("/secretario/monitor").text):
+        molde = re.search(r'<template id="pj-plantilla-acomp">(.*?)</template>', html, re.S).group(1)
+        assert 'class="pj pj-dibujo pj-mini" data-pj="rana-sombrero-hongo"' in molde
+        assert "/static/personajes/rana-sombrero-hongo.webp" in molde and 'href="#ins-__ROL__"' in molde
+        # Ni el accesorio del principal (el JS lo busca por esa clase) ni sus globos.
+        assert "pj-accesorio" not in molde and "pj-globo" not in molde and "rol-__ROL__" not in molde
+        assert 'id="ins-investigador"' in html
+    galeria = cliente.get("/secretario?p=personaje").text
+    for rol in personaje.ROLES:
+        assert re.search(rf'data-rol="{rol}" data-estado="trabajando">\s*<span class="pj pj-dibujo pj-mini"'
+                         rf'[^>]*>.*?href="#ins-{rol}"', galeria, re.S), rol
+
+
+def test_con_el_cubo_los_acompanantes_siguen_con_su_ropa(cliente):
+    molde = re.search(r'<template id="pj-plantilla-acomp">(.*?)</template>', cliente.get("/").text, re.S).group(1)
+    assert 'class="pj pj-mini"' in molde and 'href="#rol-__ROL__"' in molde and "pj-dibujo" not in molde
 
 
 def test_cada_capa_lee_su_celda_de_la_hoja_en_el_orden_de_poses():

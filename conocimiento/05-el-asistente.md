@@ -3,6 +3,10 @@
 La pestaña de abajo a la derecha. Un chat que te sigue por todas las pantallas y
 responde sobre **tus** proyectos.
 
+Si pones al secretario en todas las pantallas (Secretario → Ajustes →
+Personaje), esa pestaña pasa a ser él y el asistente queda retirado: no se
+arranca ni se le escribe. «Quitarlo de abajo», en el mismo sitio, lo devuelve.
+
 Detrás no hay ningún motor de chat: hay una ventana de tmux con `claude` dentro,
 y el hub pinta su transcript. Por eso **Compactar** y **Limpiar** son de verdad
 `/compact` y `/clear`, y el historial es el que ya guarda Claude Code: cada

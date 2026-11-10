@@ -989,6 +989,129 @@ def test_sin_pedirlo_sigue_el_asistente_como_siempre(cliente):
     assert 'id="secretario-panel"' not in cliente.get("/").text
 
 
+# ── ponerlo abajo con un botón (C-0239, decisión 403) ────────────────────────
+
+def _late():
+    con = memoria.conectar()
+    memoria.poner(con, "latido", memoria.ahora())
+    con.close()
+
+
+def _en_todo_guardado():
+    from hub.secretario import conversacion
+    con = memoria.conectar()
+    try:
+        return memoria.leer(con, conversacion.CLAVE_EN_TODO)
+    finally:
+        con.close()
+
+
+def test_ponerlo_con_el_boton_lo_lleva_a_todas_las_pantallas_sin_tocar_el_yml(cliente):
+    """Un usuario de 0.5.x seguía viendo al asistente abajo: el ajuste sólo
+    estaba en el CHANGELOG, como una línea del yml."""
+    _late()
+    yml = memoria.carpeta() / "secretario.yml"
+    yml.write_text("# mío\ncontexto: |\n  trabajo en remoto\n", encoding="utf-8")
+    html = cliente.get("/secretario?p=personaje").text
+    assert 'action="/secretario/en-todo-el-hub"' in html and "Ponerlo en todas las pantallas" in html
+    r = cliente.post("/secretario/en-todo-el-hub", data={"si": "1"}, follow_redirects=False)
+    assert r.status_code == 303 and "fugaz=1" in r.headers["location"]
+    assert 'id="secretario-panel"' in cliente.get("/").text
+    assert yml.read_text(encoding="utf-8") == "# mío\ncontexto: |\n  trabajo en remoto\n"
+
+
+def test_quitarlo_gana_a_un_yml_que_lo_pide(cliente):
+    """Borrar la clave devolvería la palabra al yml y «Quitarlo» no haría nada."""
+    _en_todo_el_hub()
+    assert "Quitarlo de abajo" in cliente.get("/secretario?p=personaje").text
+    cliente.post("/secretario/en-todo-el-hub", data={"si": "0"}, follow_redirects=False)
+    assert _en_todo_guardado() is False
+    assert 'id="secretario-panel"' not in cliente.get("/").text
+
+
+def test_sin_pulsar_nada_manda_el_yml_como_antes(cliente):
+    _en_todo_el_hub()
+    assert _en_todo_guardado() is None
+    assert 'id="secretario-panel"' in cliente.get("/").text
+
+
+def test_si_no_se_puede_leer_su_memoria_vale_lo_ultimo_leido_y_no_vuelve_el_asistente(cliente, monkeypatch):
+    """Quien lo puso con el botón no tiene nada en el yml: con un `database is
+    locked`, decidir por el yml le devolvía al asistente."""
+    import sqlite3
+    from hub import api
+    from hub.secretario import conversacion
+    con = memoria.conectar()
+    conversacion.poner_en_todo_el_hub(con, True)
+    con.close()
+    assert api.secretario_en_todo_el_hub() is True
+
+    def ilegible(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(memoria, "leer_sin_abrir", ilegible)
+    assert api.secretario_en_todo_el_hub() is True
+    assert '<aside id="asistente">' not in cliente.get("/").text
+
+
+def test_si_no_se_puede_leer_y_nunca_se_leyo_decide_el_yml(cliente, monkeypatch):
+    import sqlite3
+    from hub import api
+    _en_todo_el_hub()
+    monkeypatch.setattr(api, "_EN_TODO_LEIDO", {})
+
+    def ilegible(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(memoria, "leer_sin_abrir", ilegible)
+    assert api.secretario_en_todo_el_hub() is True
+
+
+@pytest.mark.parametrize("estado, dice", [
+    ({"activo": "inactive", "habilitado": False}, "Primero enciéndelo, con el botón de arriba"),
+    ({"activo": "active", "habilitado": True}, "arriba dice por qué no lo está"),
+    (None, "arriba dice por qué no lo está"),
+])
+def test_sin_latido_no_ofrece_ponerlo_ni_lo_pone(cliente, monkeypatch, estado, dice):
+    """Con el asistente retirado y él parado, abajo no contestaría nadie. Y
+    «enciéndelo con el botón de arriba» sólo cuando arriba hay ese botón."""
+    from hub import salud
+    monkeypatch.setattr(salud, "estado_servicio", lambda nombre: estado)
+    memoria.conectar().close()
+    html = cliente.get("/secretario?p=personaje").text
+    assert "Ponerlo en todas las pantallas" not in html and dice in html
+    r = cliente.post("/secretario/en-todo-el-hub", data={"si": "1"}, follow_redirects=False)
+    assert "fugaz=1" not in r.headers["location"] and "no está en marcha" in unquote(r.headers["location"])
+    assert _en_todo_guardado() is None
+
+
+def test_ponerlo_pide_mismo_origen(cliente):
+    _late()
+    r = cliente.post("/secretario/en-todo-el-hub", data={"si": "1"}, headers={"Origin": "https://malo.example"},
+                     follow_redirects=False)
+    assert r.status_code == 403 and _en_todo_guardado() is None
+
+
+def test_la_guia_de_arranque_manda_a_quien_esta_abajo(cliente):
+    """Con él abajo, la portada seguía diciendo «pídeselo al asistente»; él
+    también da de alta un proyecto que ya existe (`anexar_proyecto`)."""
+    html = cliente.get("/").text
+    assert "Declara un proyecto" in html and "pídeselo al secretario" not in html
+    _en_todo_el_hub()
+    html = cliente.get("/").text
+    assert "pídeselo al secretario, abajo a la" in html and "pídeselo al asistente" not in html
+    con = memoria.conectar()
+    memoria.poner(con, "nombre", "Rita")
+    con.close()
+    assert "pídeselo a Rita, abajo a la" in cliente.get("/").text
+
+
+def test_sin_ponerlo_su_pantalla_no_dice_que_te_sigue_por_todas(cliente):
+    _late()
+    html = cliente.get("/secretario?p=personaje").text
+    assert "Te sigue por todas las pantallas" not in html
+    _en_todo_el_hub()
+    assert "Te sigue por todas las pantallas" in cliente.get("/secretario?p=personaje").text
+
+
 def test_el_panel_carga_la_conversacion_y_dice_desde_que_pantalla_y_ventana_le_hablas(tmp_path):
     turnos = {"hilo": 1, "turnos": [{"id": 3, "rol": "secretario", "texto": "Hola.", "estado": "listo", "tarjetas": []}]}
     previo = (PREVIO + "nodo('sec-chat').dataset = { ultimo: '0', cargar: '1' };"

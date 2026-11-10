@@ -36,6 +36,16 @@ Sin systemd de usuario (un contenedor, WSL sin systemd), `scripts/arrancar.sh`
 arranca la web y el muestreo pero no a él: lánzalo en una terminal aparte, en
 la carpeta del hub, con `uv run python -m hub.secretario`.
 
+### Que te hable él en todas las pantallas
+
+Encendido, en su pantalla, **Ajustes → Personaje → En todas las pantallas →
+Ponerlo**: desde entonces la pestaña de abajo a la derecha de las demás
+pantallas es él, en el sitio del asistente, y sabe desde qué pantalla le hablas
+(y, en Trabajo, qué ventana miras). El asistente queda retirado; **Quitarlo de
+abajo** lo devuelve. Sólo se ofrece encendido: apagado, abajo no te contestaría
+nadie. Si lo tenías puesto con `en_todo_el_hub: true` en `secretario.yml`, sigue
+igual hasta que pulses uno de los dos botones.
+
 Si quieres que te llame por tu nombre, ponlo en
 `~/.local/share/hub/secretario/secretario.yml`:
 
@@ -51,8 +61,9 @@ dueno: Tu nombre
   en tu máquina con el mismo Whisper que usa Reuniones, así que hace falta tener
   Reuniones preparado. El texto queda en el cuadro para que lo leas antes de
   enviarlo, salvo que marques «Al terminar de hablar, mandarlo solo».
-- **Manteniendo Ctrl+Espacio** (en el PC, en cualquier pantalla y aunque el
-  cursor esté en otro campo o en la terminal): graba mientras la mantienes y,
+- **Manteniendo Ctrl+Espacio** (en el PC, en su pantalla —y en cualquiera si
+  lo pusiste en todas las pantallas— aunque el cursor esté en otro campo o en
+  la terminal): graba mientras la mantienes y,
   al soltar, se lo manda directamente. Si el panel estaba plegado, se abre. Un
   toque corto, o cambiar de ventana con la tecla pulsada, no manda nada.
 - **Con algo adjunto**: el clip a la izquierda del cuadro, **Ctrl+V** de una
@@ -140,8 +151,8 @@ tope mayor). No maneja tu navegador ni entra con tus cuentas.
 ### El personaje: qué está haciendo
 
 El secretario tiene cara: un cuadrado pequeño en el color del hub, con ojos.
-Está en la pestaña que te sigue por todas las pantallas (abajo a la derecha) y
-en la cabecera de su pantalla, y enseña lo que **de verdad** está haciendo,
+Está en la cabecera de su pantalla y, si lo pusiste en todas las pantallas, en
+la pestaña de abajo a la derecha, y enseña lo que **de verdad** está haciendo,
 con una línea debajo que lo dice:
 
 - **Te escucha** (ondas que laten con tu voz), **transcribe**, **piensa** (mira
@@ -161,6 +172,9 @@ con una línea debajo que lo dice:
   sesión que esté leyendo aparte y lo que esté investigando en la web (con la
   ropa del investigador; las que esperan, en cola). Caben tres y un «+N».
   Nunca pinta a nadie que no exista: el secretario no tiene ayudantes propios.
+  Si elegiste un personaje dibujado, cada uno es ese mismo personaje en
+  pequeño, con una insignia de lo que hace en vez de ropa: la lupa si
+  investiga, la carpeta si busca en el código, el ✓ si revisa…
 
 **Le pasa encargos a tus sesiones abiertas.** Si tienes Claude Code abierto en
 un slot y le dices «pásale esto a mi terminal de trabajo», te pide permiso con
@@ -181,7 +195,8 @@ el nombre viejo bajo el icono hasta que la reinstales.)
 
 **Puedes elegir quién es.** En **Ajustes → Personaje**, arriba, están el
 cubo de siempre y varios dibujados (ranitas, hongos y los dos juntos): pulsa
-«Usar este» y lo verás en la pestaña, en la cabecera y en todos tus aparatos.
+«Usar este» y lo verás en la cabecera, en la pestaña de abajo si lo pusiste en
+todas las pantallas y en todos tus aparatos.
 Los dibujados tienen su propia pose para escuchar, pensar, buscar, anotar,
 hablar, esperar tu sí, celebrar y dormir (si a alguno le falta una, se queda
 en su dibujo base); lo que tiene en la mano en cada
@@ -435,9 +450,10 @@ hace el agente de Reuniones, así que tiene que estar conectado y en la versión
 **Sabe consultar** tu respaldo (lo que no está subido), tus contenedores de
 docker, la salud de la máquina y tus slots.
 
-**Revisa tu PC con Windows y tu red, sólo leyendo.** Cuéntale «me salió
-pantalla azul», «se reinició sola», «la PC va lenta» o «tengo lag en el juego»
-y lo mira él, sin pedirte permiso porque no cambia nada:
+**Revisa tu PC con Windows, tu red y tus programas, sólo leyendo.** Cuéntale
+«me salió pantalla azul», «se reinició sola», «la PC va lenta», «tengo lag en
+el juego» o pregúntale qué versión tienes de algo, y lo mira él, sin pedirte
+permiso porque no cambia nada:
 
 - **Windows** (últimos 14 días): los pantallazos con su código (p. ej.
   `0x00000133 DPC_WATCHDOG_VIOLATION`) y su hora, los apagados que nadie pidió,
@@ -448,10 +464,20 @@ y lo mira él, sin pedirte permiso porque no cambia nada:
   internet, tu DNS, y la latencia y la pérdida a tu router, a 1.1.1.1, a
   8.8.8.8 y a lo que le pidas. Si le dices el programa («el juego»), mira sus
   conexiones y la latencia a lo que usa; y puede hacer un traceroute.
+- **Tus programas**: tu Windows y su versión, cada tarjeta gráfica con la
+  versión de su controlador, y los programas instalados que le nombres («¿qué
+  versión de Chrome tengo?», «¿qué tengo de AMD?»), con su versión y cuándo
+  se instalaron. La versión del programa de la gráfica (Adrenalin, por
+  ejemplo, sale como «AMD Software») no es la del controlador, y te las da
+  separadas. Y lo que escriben los procesos, medido unos segundos: los que
+  más escriben ahora o, si le dices uno («¿ese proceso está escribiendo sin
+  parar?»), lo que lleva escrito desde que arrancó y lo de ahora. Es toda la
+  entrada y salida del proceso, no sólo el disco: un techo.
 
 Tarda menos de un minuto. Lo mismo, desde la terminal:
-`uv run python -m hub.diagnostico windows` y
-`uv run python -m hub.diagnostico red --proceso <programa> --trazar 1.1.1.1`
+`uv run python -m hub.diagnostico windows`,
+`uv run python -m hub.diagnostico red --proceso <programa> --trazar 1.1.1.1` y
+`uv run python -m hub.diagnostico programas --buscar <nombre> --proceso <proceso>`
 (con `--json`, todo el detalle). Sólo funciona con el hub instalado en WSL.
 
 **Lo que no sabe hacer, no lo improvisa:** no tiene terminal ni acceso a tus

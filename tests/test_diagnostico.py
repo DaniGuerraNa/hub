@@ -155,7 +155,7 @@ def test_el_diagnostico_solo_usa_verbos_de_lectura():
     no hay operador de llamada ni `Invoke-Expression`, los métodos que se
     llaman son de formatear y no de actuar (nada de `.Kill()`), y lo único de
     .NET que se toca es la codificación de la salida."""
-    assert len(diagnostico.GUIONES) == 2
+    assert len(diagnostico.GUIONES) == 4
     for guion in diagnostico.GUIONES:
         codigo = _sin_cadenas(guion)
         verbos = set(re.findall(r"\b([A-Z][A-Za-z]*)-[A-Z][A-Za-z]+\b", codigo))
@@ -493,7 +493,7 @@ def test_el_secretario_lo_recibe_resumido_y_sabe_que_es_solo_lectura(windows_fal
     h = herramientas.todas()["diagnosticar_pc"]
     assert h.gesto == "maquina"
     assert "SÓLO LEYENDO" in h.descripcion and "pantallazo" in h.descripcion and "ping" in h.descripcion
-    assert h.esquema["properties"]["que"]["enum"] == ["windows", "red"]
+    assert h.esquema["properties"]["que"]["enum"] == ["windows", "red", "programas"]
 
     r = h.funcion(None, {"que": "windows"})
     assert isinstance(r, str) and "0x00000133" in r and len(r) < 8000
@@ -503,3 +503,224 @@ def test_el_secretario_lo_recibe_resumido_y_sabe_que_es_solo_lectura(windows_fal
 
     nombres = [x.nombre for x in herramientas.LECTURAS]
     assert nombres.index("diagnosticar_pc") == nombres.index("hub_maquina") + 1
+
+
+# ── los programas (C-0237, decisión 402) ───────────────────────────────────────
+
+PROGRAMAS = {
+    "windows": {"nombre": "Microsoft Windows 10 Pro", "version": "10.0.19045", "build": "19045"},
+    "gpus": [{"nombre": "Gráfica Ejemplo 7000", "controlador": "31.0.22044.1", "fecha": "2024-01-01"}],
+    "programas": [
+        {"nombre": "AMD Software", "version": "23.4.3", "editor": "Advanced Micro Devices, Inc.", "instalado": ""},
+        # La misma, en la clave de 32 bits: se cuenta una vez.
+        {"nombre": "AMD Software", "version": "23.4.3", "editor": "Advanced Micro Devices, Inc.", "instalado": ""},
+        {"nombre": "Ñandú Editor", "version": "2.1", "editor": "Taller Ejemplo", "instalado": "20250301"},
+        {"nombre": "Navegador", "version": "120.0", "editor": "Ejemplo SA", "instalado": "20240115"},
+        # Una actualización que Windows no enseña en «Aplicaciones»: no cuenta como programa.
+        {"nombre": "Actualización KB5000001", "version": "", "editor": "Taller Ejemplo", "instalado": "", "oculto": True},
+    ],
+    "fallos": [],
+}
+
+# Dos muestras de procesos, con la hora antes y después de su consulta. La
+# primera, en frío, tarda 4 s; la segunda, 1: entre sus mitades van 6,5 s, que
+# no es ni lo de antes (8) ni lo de después (5).
+ES = [
+    {"antes": "2026-11-10T09:59:56.0000000Z", "despues": "2026-11-10T10:00:00.0000000Z", "fallos": [], "procesos": [
+        {"nombre": "atieclxx.exe", "pid": 4368, "desde": "2026-11-06T22:50:43Z", "escrito": 0, "leido": 501830},
+        {"nombre": "ruidoso.exe", "pid": 10, "desde": "2026-11-10T09:59:52Z", "escrito": 1000, "leido": 0},
+        {"nombre": "reciclado.exe", "pid": 20, "desde": "2026-11-10T09:59:00Z", "escrito": 500, "leido": 0}]},
+    {"antes": "2026-11-10T10:00:04.0000000Z", "despues": "2026-11-10T10:00:05.0000000Z", "fallos": [], "procesos": [
+        {"nombre": "atieclxx.exe", "pid": 4368, "desde": "2026-11-06T22:50:43Z", "escrito": 0, "leido": 501830},
+        {"nombre": "ruidoso.exe", "pid": 10, "desde": "2026-11-10T09:59:52Z", "escrito": 1000 + 13000,
+         "leido": 0},
+        # El PID 20 ya es otro proceso: no se mide como si fuera el mismo.
+        {"nombre": "otro.exe", "pid": 20, "desde": "2026-11-10T10:00:02Z", "escrito": 90000, "leido": 0}]},
+]
+
+
+@pytest.fixture
+def pc_falsa(monkeypatch):
+    """Windows grabado para `programas`: el guion de programas y dos muestras
+    de procesos, en orden. Devuelve lo que se lanzó."""
+    lanzados: list[list[str]] = []
+    muestras = iter(ES)
+    monkeypatch.setattr(maquina, "encontrar", lambda nombre: f"/mnt/c/falso/{nombre}")
+    monkeypatch.setattr(diagnostico, "_dormir", lambda s: None)
+
+    def lanzar(args):
+        lanzados.append(list(args))
+        assert args[0].endswith("powershell.exe"), args
+        datos = PROGRAMAS if "Win32_VideoController" in args[-1] else next(muestras)
+        return Proceso(json.dumps(datos, ensure_ascii=False).encode("utf-8"))
+
+    monkeypatch.setattr(diagnostico, "_lanzar", lanzar)
+    return lanzados
+
+
+def test_a_powershell_no_llega_nada_de_fuera(pc_falsa):
+    """🔴 Lo que se busca se filtra en Python: los guiones que salen son los
+    fijos, tal cual, digan lo que digan `buscar` y `proceso`."""
+    diagnostico.programas("'; Stop-Computer; '", proceso="x'; kill 4")
+    assert len(pc_falsa) == 3
+    assert all(any(a[-1] is g for g in (diagnostico._PS_PROGRAMAS, diagnostico._PS_ES)) for a in pc_falsa)
+    assert not any("Stop-Computer" in x or "kill" in x for a in pc_falsa for x in a)
+
+
+def test_de_un_proceso_o_un_programa_nunca_salen_su_linea_de_ordenes_ni_rutas():
+    """La línea de órdenes puede llevar llaves (regla dura 5) y las rutas, la
+    carpeta del usuario."""
+    for guion in (diagnostico._PS_PROGRAMAS, diagnostico._PS_ES):
+        for campo in ("CommandLine", "ExecutablePath", "InstallLocation", "UninstallString", "Path ="):
+            assert campo not in guion, campo
+
+
+@pytest.mark.parametrize("buscar, nombres", [
+    ("amd", ["AMD Software"]),            # una vez, aunque esté en dos claves
+    ("ñandu", ["Ñandú Editor"]),           # sin tildes ni mayúsculas
+    ("ejemplo sa", ["Navegador"]),         # por el editor
+    ("nada así", []),
+])
+def test_busca_por_nombre_o_editor_sin_mayusculas_ni_tildes(pc_falsa, buscar, nombres):
+    d = diagnostico.programas(buscar)
+    assert [x["nombre"] for x in d["programas"]] == nombres
+    assert d["total_programas"] == 3 and d["total_entradas"] == 4
+
+
+def test_sin_buscar_solo_dice_cuantos_programas_hay(pc_falsa):
+    d = diagnostico.programas()
+    assert d["programas"] == [] and d["total_programas"] == 3
+    assert "Programas instalados: 3 en Aplicaciones de Windows (4 entradas" in diagnostico.legible(d)
+
+
+def test_un_componente_escondido_se_encuentra_pero_se_dice_que_lo_es(pc_falsa):
+    r = diagnostico.legible(diagnostico.programas("kb5000001"))
+    assert "Actualización KB5000001 (sin versión) — Taller Ejemplo (componente que Windows no enseña en Aplicaciones)" in r
+
+
+def test_lo_de_ahora_sale_de_dos_muestras_con_la_hora_de_windows(pc_falsa, monkeypatch):
+    """El intervalo va de la mitad de una consulta a la de la otra (6,5 s), no
+    lo que tardó PowerShell en arrancar según el reloj de aquí ni la hora de
+    antes de una consulta lenta (reglas duras 13 y 19)."""
+    d = diagnostico.programas(proceso="atieclxx.exe")
+    assert d["muestra_s"] == 6.5
+    (at,) = d["proceso"]["instancias"]
+    assert at["escrito"] == 0 and at["leido"] == 501830 and at["ahora_bps"] == 0 and at["media_bps"] == 0
+    assert [x["nombre"] for x in d["mas_escriben"]] == ["ruidoso.exe"]
+    assert d["mas_escriben"][0]["ahora_bps"] == 2000   # 13 000 B en 6,5 s
+
+
+def test_la_media_es_lo_escrito_entre_lo_que_lleva_en_marcha(pc_falsa):
+    """14 000 B desde las 09:59:52 hasta la mitad de la segunda consulta
+    (10:00:04,5): 12,5 s."""
+    (r,) = diagnostico.programas(proceso="ruidoso")["proceso"]["instancias"]
+    assert r["media_bps"] == 1120
+
+
+def test_un_pid_reutilizado_no_se_mide_como_el_mismo(pc_falsa):
+    d = diagnostico.programas(proceso="otro")
+    (otro,) = d["proceso"]["instancias"]
+    assert otro["ahora_bps"] is None and otro["nuevo"]
+    assert "otro.exe" not in [x["nombre"] for x in d["mas_escriben"]]
+    assert "ahora sin medir (arrancó entre las dos muestras)" in diagnostico.legible(d)
+
+
+def test_con_muchos_del_mismo_nombre_dice_cuantos_hay_de_verdad(monkeypatch):
+    """35 chrome.exe no son «20 en marcha» porque se enseñen 20 (regla dura 13)."""
+    muchos = [{"nombre": "chrome.exe", "pid": 100 + i, "desde": "2026-11-10T09:00:00Z", "escrito": 0, "leido": 0}
+              for i in range(35)]
+    m = [{"antes": "2026-11-10T10:00:00Z", "despues": "2026-11-10T10:00:00Z", "procesos": muchos},
+         {"antes": "2026-11-10T10:00:05Z", "despues": "2026-11-10T10:00:05Z", "procesos": muchos}]
+    d = diagnostico.leer_programas(PROGRAMAS, m, proceso="chrome")
+    assert d["proceso"]["en_marcha"] == 35 and len(d["proceso"]["instancias"]) == diagnostico.INSTANCIAS_MAX
+    r = diagnostico.legible(d | {"que": "programas"})
+    assert "Proceso «chrome» (35 en marcha)" in r and "… y 15 más con ese nombre" in r
+
+
+def test_si_la_primera_muestra_no_vuelve_lo_de_ahora_sale_sin_medir(monkeypatch):
+    reloj = Reloj()
+    monkeypatch.setattr(diagnostico, "_reloj", reloj)
+    monkeypatch.setattr(diagnostico, "_dormir", lambda s: pytest.fail("esperó sin primera muestra"))
+    monkeypatch.setattr(maquina, "encontrar", lambda nombre: f"/mnt/c/falso/{nombre}")
+    lanzados = []
+
+    def lanzar(args):
+        lanzados.append(args)
+        if "Win32_VideoController" in args[-1]:
+            return Proceso(json.dumps(PROGRAMAS).encode("utf-8"))
+        return Proceso(cuelga=True, reloj=reloj)
+
+    monkeypatch.setattr(diagnostico, "_lanzar", lanzar)
+    d = diagnostico.programas("amd", proceso="atieclxx")
+    assert len(lanzados) == 2 and d["muestra_s"] is None and d["mas_escriben"] == []
+    assert [x["nombre"] for x in d["programas"]] == ["AMD Software"]
+    assert d["proceso"]["instancias"] == [] and any("PowerShell no terminó" in f for f in d["fallos"])
+
+
+def test_los_programas_tambien_caben_en_el_tiempo_de_una_herramienta(monkeypatch):
+    reloj = Reloj()
+    monkeypatch.setattr(diagnostico, "_reloj", reloj)
+    monkeypatch.setattr(maquina, "encontrar", lambda nombre: f"/mnt/c/falso/{nombre}")
+    monkeypatch.setattr(diagnostico, "_lanzar", lambda args: Proceso(cuelga=True, reloj=reloj, no_suelta=True))
+    inicio = reloj.t
+    d = diagnostico.programas("amd", proceso="x")
+    assert reloj.t - inicio <= diagnostico.TOPE_S + 2.5 < 60
+    assert d["programas"] == [] and d["muestra_s"] is None
+
+
+def test_con_la_primera_muestra_lenta_y_la_segunda_colgada_tambien_cabe(monkeypatch):
+    """El peor caso que sí llega a esperar: la primera muestra vuelve casi en
+    su plazo, se espera `MUESTRA_S` y la segunda no vuelve nunca."""
+    reloj = Reloj()
+    monkeypatch.setattr(diagnostico, "_reloj", reloj)
+    monkeypatch.setattr(diagnostico, "_dormir", lambda s: setattr(reloj, "t", reloj.t + s))
+    monkeypatch.setattr(maquina, "encontrar", lambda nombre: f"/mnt/c/falso/{nombre}")
+    muestras = iter([ES[0]])
+
+    class Lenta(Proceso):
+        def communicate(self, timeout=None):
+            reloj.t += diagnostico.ESPERA_PS - 1
+            return super().communicate(timeout)
+
+    def lanzar(args):
+        if "Win32_VideoController" in args[-1]:
+            return Proceso(json.dumps(PROGRAMAS).encode("utf-8"))
+        siguiente = next(muestras, None)
+        if siguiente is None:
+            return Proceso(cuelga=True, reloj=reloj, no_suelta=True)
+        return Lenta(json.dumps(siguiente).encode("utf-8"))
+
+    monkeypatch.setattr(diagnostico, "_lanzar", lanzar)
+    inicio = reloj.t
+    d = diagnostico.programas("amd", proceso="atieclxx")
+    assert reloj.t - inicio <= diagnostico.TOPE_S + 2.5 < 60
+    assert d["muestra_s"] is None and [x["nombre"] for x in d["programas"]] == ["AMD Software"]
+    assert any("segunda muestra" in f for f in d["fallos"])
+
+
+def test_el_resumen_separa_el_controlador_del_programa_y_dice_que_es_un_techo(pc_falsa):
+    r = diagnostico.legible(diagnostico.programas("amd", proceso="atieclxx"))
+    assert "Microsoft Windows 10 Pro 10.0.19045 (build 19045)" in r
+    assert "Gráfica Ejemplo 7000 — controlador 31.0.22044.1 del 2024-01-01" in r
+    assert "no es la del programa del fabricante" in r
+    assert "AMD Software 23.4.3 — Advanced Micro Devices, Inc." in r
+    assert "0 B escritos" in r and "ahora 0 B/s (medido 6.5 s)" in r
+    assert "ruidoso.exe (pid 10): 2.0 KB/s" in r
+    assert "lo que el proceso pide leer y escribir" in r and "no lo que llega al SSD" in r
+
+
+def test_el_secretario_pregunta_por_un_programa_y_lo_que_escribe(pc_falsa):
+    """Lo que no pudo hacer: ver qué versión de Adrenalin hay y si su proceso
+    escribe sin parar."""
+    h = herramientas.todas()["diagnosticar_pc"]
+    assert "AMD Software" in h.descripcion and "buscar" in h.esquema["properties"]
+    r = h.funcion(None, {"que": "programas", "buscar": "amd", "proceso": "atieclxx"})
+    assert isinstance(r, str) and "AMD Software 23.4.3" in r and "atieclxx.exe (pid 4368" in r
+    assert h.funcion(None, {"que": "programas", "buscar": "x" * 200})["error"].startswith("argumento no válido")
+    assert herramientas.actividad("diagnosticar_pc", {"que": "programas"})["rotulo"] == \
+        "Revisando los programas de la máquina del hub"
+
+
+def test_la_cli_tambien_mira_los_programas(pc_falsa, capsys):
+    assert diagnostico.main(["programas", "--buscar", "amd"]) == 0
+    assert "AMD Software 23.4.3" in capsys.readouterr().out
