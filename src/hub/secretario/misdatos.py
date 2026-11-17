@@ -89,6 +89,10 @@ class FichaIlegible(ValueError):
     lo seguro: sin saber qué hay, lo que los sacaría pide permiso."""
 
 
+class CambioAlMirarlo(ValueError):
+    """Lo que se iba a confirmar ya no es lo que él vio (C-0430): no se confirma."""
+
+
 def ruta() -> Path:
     """Dónde viven. Sin crear la carpeta: leer no deja rastro."""
     return config.HUB_HOME / "secretario" / ARCHIVO
@@ -264,7 +268,11 @@ def _patron(valor: str) -> re.Pattern | None:
     return re.compile(r"(?<![0-9A-Za-z])" + _ENTRE.join(_letra(c) for c in compacto) + r"(?![0-9A-Za-z])")
 
 
-def tapar(cosa):
+#: Lo que queda en lugar de un dato suyo que no está en la ficha (`ademas`).
+DATO_TAPADO = "[un dato tuyo]"
+
+
+def tapar(cosa, ademas=()):
     """`cosa` (un texto o unos parámetros) para apuntarla en la memoria: cada
     valor suyo cambiado por «[tu <campo>]» y lo que tiene forma de llave,
     tapado (`ocultar_secretos`).
@@ -273,7 +281,12 @@ def tapar(cosa):
     copia catorce veces, y la bitácora no puede ser una segunda ficha. Casa
     igual que `aparece_en` y tapa de más antes que de menos. Nunca lanza: con
     la ficha ilegible no sabe qué datos hay y sólo tapa las llaves (la guarda
-    de `usar_accion` ya pidió permiso por eso)."""
+    de `usar_accion` ya pidió permiso por eso).
+
+    `ademas`: valores suyos que la ficha no tiene —el que trae una acción
+    que escribe en ella y no llegó a guardarse (C-0431)—. Se tapan como
+    `DATO_TAPADO`, por su forma y también tal cual: uno con signos que la
+    comparación sin separadores no conoce no se escapa."""
     try:
         valores = _valores()
     except FichaIlegible:
@@ -281,6 +294,10 @@ def tapar(cosa):
     patrones = [(p, f"[tu {nombre(campo).lower()}]")
                 for campo, lista in valores.items()
                 for v in sorted(lista, key=len, reverse=True) if (p := _patron(v))]
+    for v in sorted({_una_linea(x, 10 * MAX_VALOR) for x in ademas if str(x or "").strip()}, key=len, reverse=True):
+        if p := _patron(v):
+            patrones.append((p, DATO_TAPADO))
+        patrones.append((re.compile(r"\s+".join(re.escape(t) for t in v.split()), re.IGNORECASE), DATO_TAPADO))
 
     def en_texto(t: str) -> str:
         t = ocultar_secretos(t)
@@ -395,10 +412,16 @@ def proponer(campo: str, valor: str, fuente: str) -> str:
     return "propuesto"
 
 
-def confirmar(campo: str, valor: str | None = None) -> None:
+def confirmar(campo: str, valor: str | None = None, esperado: str | None = None) -> None:
     """Su sí, desde su botón. Sin `valor`, confirma lo propuesto (o la
     propuesta que espera al lado del confirmado); con `valor`, guarda ése
-    —corregido o escrito a mano— y queda confirmado porque lo escribió él."""
+    —corregido o escrito a mano— y queda confirmado porque lo escribió él.
+
+    `esperado` es lo que la pantalla le enseñaba al pulsar (C-0430): si lo
+    propuesto cambió desde entonces —el secretario corre en paralelo y la
+    pantalla no recarga—, lanza `CambioAlMirarlo` y no confirma nada. La 382
+    hace del botón el único camino a «confirmado» para que se use lo que él
+    decidió, no lo que haya en ese instante."""
     campo = _campo(campo)
     with _en_exclusiva():
         crudo = _crudo()
@@ -413,6 +436,9 @@ def confirmar(campo: str, valor: str | None = None) -> None:
                             "cuando": momento}
         elif actual is None:
             raise ValueError(f"no hay ningún {nombre(campo).lower()} que confirmar")
+        elif esperado is not None and _una_linea(esperado, MAX_VALOR) != \
+                (actual.get("propuesta") or actual)["valor"]:
+            raise CambioAlMirarlo("cambió mientras lo mirabas y no lo he confirmado: revisa el que hay ahora")
         elif actual.get("propuesta"):
             p = actual["propuesta"]
             crudo[campo] = {"valor": p["valor"], "estado": "confirmado", "fuente": p["fuente"], "cuando": momento}

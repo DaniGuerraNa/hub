@@ -104,7 +104,7 @@ def test_detectar_aplica_la_misma_regla_y_solo_pide_el_titulo_si_hace_falta(monk
 # ── los datos ───────────────────────────────────────────────────────────────
 
 def _subagentes(tmp_path, monkeypatch, cwd: str, *agentes: tuple[str, str, str]) -> None:
-    monkeypatch.setattr(transcripts, "TRANSCRIPTS", tmp_path / "projects")
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path / "projects"))
     carpeta = tmp_path / "projects" / transcripts.slug_de(cwd)
     sub = carpeta / SESION / "subagents"
     sub.mkdir(parents=True)
@@ -167,6 +167,34 @@ def test_sus_subagentes_vivos_llevan_su_rol_su_estacion_y_su_id(con, tmp_path, m
 
 def test_sin_muestra_no_hay_talleres(con):
     assert api.talleres(con)["talleres"] == []
+
+
+# C-0298: con siete subagentes en marcha la pantalla decía «0 trabajando» y
+# «quieta», y dos talleres se titulaban igual. `tui.ocupado` no cambia
+# (decisión 393): se suma otra señal, los subagentes vivos.
+
+def test_una_sesion_quieta_con_subagentes_vivos_esta_delegando(con, tmp_path, monkeypatch):
+    _subagentes(tmp_path, monkeypatch, "/srv/demo",
+                ("a1", "investigador-web", "Precios"), ("a2", "revisor", "El diff"))
+    _muestra(con, {"pane_id": "%1", "comando": "claude", "titulo": QUIETA, "claude_sesion": SESION})
+    [t] = api.talleres(con)["talleres"]
+    assert t["estado"] == "delegando"
+
+
+def test_si_ademas_espera_tu_si_manda_la_espera(con, tmp_path, monkeypatch):
+    _subagentes(tmp_path, monkeypatch, "/srv/demo", ("a1", "revisor", "El diff"))
+    _muestra(con, {"pane_id": "%1", "comando": "claude", "titulo": QUIETA, "claude_sesion": SESION})
+    avisos.anotar(con, "%1", "preguntando", "2026-11-09T10:00:00+00:00")
+    assert api.talleres(con)["talleres"][0]["estado"] == "espera"
+
+
+def test_dos_talleres_con_el_mismo_nombre_llevan_su_ventana(con):
+    _muestra(con,
+             {"pane_id": "%1", "comando": "claude", "titulo": QUIETA, "etiqueta": "Hub - Dev", "window_idx": 1},
+             {"pane_id": "%2", "comando": "claude", "titulo": QUIETA, "etiqueta": "Hub - Dev", "window_idx": 2},
+             {"pane_id": "%3", "comando": "claude", "titulo": QUIETA, "etiqueta": "Otro", "window_idx": 3})
+    nombres = sorted(t["nombre"] for t in api.talleres(con)["talleres"])
+    assert nombres == ["Hub - Dev · ventana 1", "Hub - Dev · ventana 2", "Otro"]
 
 
 # ── la pantalla ─────────────────────────────────────────────────────────────
@@ -252,6 +280,12 @@ def test_reparte_los_huecos_y_cuando_no_cabe_va_al_mas():
 def test_otro_se_pinta_neutro_con_su_inicial():
     figura = _node("H.figuraDe({rol: 'otro', inicial: 'Q'}, {figuras: {otro: null}, url: '/s/'})")
     assert figura == {"id": None, "inicial": "Q"}
+
+
+def test_delegando_cuenta_como_trabajando_en_el_resumen():
+    r = _node("""H.resumir([{estado: 'delegando', ranas: 7}, {estado: 'quieta', ranas: 0},
+                           {estado: 'trabajando', ranas: 1}, {estado: 'espera', ranas: 0}])""")
+    assert r == {"talleres": 4, "trabajando": 2, "espera": 1, "ranas": 12}
 
 
 def test_una_muestra_sin_hora_es_infinitamente_vieja():

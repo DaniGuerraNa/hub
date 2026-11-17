@@ -360,11 +360,13 @@ def _lanzar(args: list[str]) -> subprocess.Popen:
     return subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
-def _esperar(proc, fin: float) -> tuple[int | None, bytes, bytes]:
+def esperar(proc, fin: float, entrada: bytes | None = None) -> tuple[int | None, bytes, bytes]:
     """Lo que dijo, esperando como mucho hasta `fin`. Si no acabó, se mata y
-    devuelve `None` como código: el diagnóstico sigue con lo demás."""
+    devuelve `None` como código: el diagnóstico sigue con lo demás. `entrada`
+    es lo que se le escribe antes (`orden_pc` le pasa así sus datos)."""
     try:
-        salida, error = proc.communicate(timeout=max(0.05, fin - _reloj()))
+        con_entrada = {} if entrada is None else {"input": entrada}
+        salida, error = proc.communicate(timeout=max(0.05, fin - _reloj()), **con_entrada)
         return proc.returncode, salida or b"", error or b""
     except subprocess.TimeoutExpired:
         proc.kill()
@@ -379,7 +381,7 @@ def _esperar(proc, fin: float) -> tuple[int | None, bytes, bytes]:
         return None, salida or b"", error or b""
 
 
-def _texto(crudo: bytes) -> str:
+def texto_consola(crudo: bytes) -> str:
     """`ping.exe` y `tracert.exe` escriben en la página de códigos de la
     consola (850 en español), PowerShell en UTF-8 porque se le pide. Se lee lo
     que venga; lo que importa son números e IP, que son ASCII en las dos."""
@@ -410,15 +412,15 @@ def _lanzar_ps(guion: str) -> subprocess.Popen:
 def _leer_ps(proc, fin: float, que: str = "") -> tuple[dict, list[str]]:
     """Lo que devolvió un guion ya lanzado, esperando como mucho hasta `fin`.
     `que` dice cuál era, cuando hay varios: si no, no se sabe qué faltó."""
-    rc, salida, error = _esperar(proc, fin)
+    rc, salida, error = esperar(proc, fin)
     if rc is None:
         return {}, [f"PowerShell no terminó a tiempo ({que})" if que else f"PowerShell no terminó en {ESPERA_PS} s"]
-    texto = _texto(salida)
+    texto = texto_consola(salida)
     linea = next((x for x in reversed(texto.splitlines()) if x.strip().startswith("{")), "")
     try:
         return json.loads(linea), []
     except ValueError:
-        motivo = " ".join(_texto(error).split())[:200] or "salida vacía"
+        motivo = " ".join(texto_consola(error).split())[:200] or "salida vacía"
         return {}, [f"PowerShell no devolvió lo esperado (código {rc}): {motivo}"]
 
 
@@ -671,8 +673,8 @@ def red(destinos: Sequence[str] = (), proceso: str | None = None, trazar: str | 
             except OSError as exc:
                 fallos.append(f"no pude lanzar ping.exe a {d}: {exc}")
         for d, papel, p in lanzados:
-            rc, salida, _ = _esperar(p, fin)
-            r = leer_ping(_texto(salida))
+            rc, salida, _ = esperar(p, fin)
+            r = leer_ping(texto_consola(salida))
             if rc is None:
                 # Cortado en el tope: los que faltan no se perdieron, no
                 # llegaron a salir. Esa pérdida no se puede defender (regla
@@ -683,8 +685,8 @@ def red(destinos: Sequence[str] = (), proceso: str | None = None, trazar: str | 
 
     traza = None
     if traza_proc is not None:
-        rc, salida, _ = _esperar(traza_proc, fin)
-        traza = {"destino": trazar, "saltos": leer_tracert(_texto(salida)), "completa": rc is not None}
+        rc, salida, _ = esperar(traza_proc, fin)
+        traza = {"destino": trazar, "saltos": leer_tracert(texto_consola(salida)), "completa": rc is not None}
         if rc is None:
             fallos.append(f"la traza a {trazar} no terminó en {TOPE_S} s: va lo que dio")
 
@@ -817,7 +819,7 @@ def programas(buscar: str | None = None, proceso: str | None = None) -> dict:
         es1 = _lanzar_ps(_PS_ES)
     except BaseException:
         progs.kill()
-        _esperar(progs, _reloj() + 1)
+        esperar(progs, _reloj() + 1)
         raise
     primera, f1 = _leer_ps(es1, min(t0 + ESPERA_PS, fin), "la primera muestra de procesos")
     # La lista de programas, antes de esperar: su salida puede no caber en la

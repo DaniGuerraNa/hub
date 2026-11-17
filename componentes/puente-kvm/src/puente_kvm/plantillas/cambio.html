@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block pagina %}cambio{% endblock %}
+{% block contenido %}
+<div data-cambio="{{ c.id }}" data-estado="{{ c.estado }}">
+  <div class="fila" style="justify-content: space-between; align-items:flex-start">
+    <div>
+      <h1>{{ c.descripcion }}</h1>
+      <p class="sub" style="margin:0">Sobre la lectura <a href="/lecturas/{{ c.lectura }}">{{ c.lectura }}</a> · {{ c.tramos|length }} {{ 'tramo' if c.tramos|length == 1 else 'tramos' }} ·
+        {{ c.original|length }} → {{ c.nuevo|length }} líneas</p>
+    </div>
+    <div>{% include "_estado_cambio.html" %}</div>
+  </div>
+
+  <section class="tarjeta" style="margin-top:16px">
+    {% if c.sin_verificar and c.estado in ('propuesto', 'aprobado') %}
+      <p class="aviso riesgo" style="margin:0 0 14px">Ojo: la lectura de la que parte está <b>sin verificar</b> con la huella de la base. Los tramos se calcularon contra lo transcrito, y si se leyó mal algún carácter el cambio lo arrastra. Lo seguro es verificar la lectura antes de aprobar.</p>
+    {% endif %}
+    {% if c.estado == 'propuesto' %}
+      <h2>Revisa y decide</h2>
+      <p class="sub">Claude propone escribir {{ 'este tramo' if c.tramos|length == 1 else 'estos ' ~ (c.tramos|length) ~ ' tramos' }} en el editor del Mac. Nada se escribe hasta que lo apruebes, y aun aprobado, <b>nada se guarda en la base</b>: eso lo haces tú en el Mac.</p>
+      <div class="fila">
+        <button class="cta" data-aprobar>Aprobar</button>
+        <button data-rechazar>Rechazar</button>
+      </div>
+    {% elif c.estado == 'aprobado' %}
+      <h2>Aprobado: listo para escribir</h2>
+      <p class="sub">Claude puede escribirlo ahora, o puedes lanzarlo tú. Antes de teclear, el puente comprueba que la pantalla es la del documento que se leyó.</p>
+      <button class="cta" data-escribir>Escribir en el Mac ahora</button>
+    {% elif c.estado == 'escribiendo' %}
+      <h2>Escribiendo…</h2>
+      <p class="sub" id="progreso">No toques el Mac. Si algo va mal, pulsa <b>Parar</b> arriba.</p>
+    {% elif c.estado == 'escrito' %}
+      <h2>Escrito en el editor. Ahora te toca a ti</h2>
+      <ol class="sub" style="padding-left:18px">
+        <li>Revisa en el Mac los tramos (abajo tienes la captura de cada uno tras escribirlo).</li>
+        <li>Guarda o ejecuta el procedimiento en el cliente.</li>
+        <li>Saca la huella de la base y pégala aquí: si coincide con la esperada, lo guardado es exactamente lo acordado.</li>
+      </ol>
+      {% if estado.dispositivo.tipo == 'simulador' %}
+        <p><button data-sim-guardar>Simulador: guardar en la base (Cmd+S)</button>
+          {% if estado.dispositivo.huella_base %}<span class="sub">la base da <span class="huella">{{ estado.dispositivo.huella_base }}</span> <button data-copiar="{{ estado.dispositivo.huella_base }}">Usarla</button></span>{% endif %}</p>
+      {% endif %}
+      <div class="fila">
+        <input id="huella" class="mono" placeholder="Huella de la base tras guardar" value="{{ c.huella_final }}">
+        <button class="cta" data-huella-cambio>Comprobar</button>
+      </div>
+      {% if c.huella_final %}<p class="aviso riesgo" style="margin-top:10px">La última huella pegada <b>no coincide</b> con la esperada. ¿Se guardó? ¿Hay otro cambio encima?</p>{% endif %}
+    {% elif c.estado == 'verificado' %}
+      <p class="aviso ok">Verificado: la base tiene exactamente el texto acordado.</p>
+    {% elif c.estado == 'fallido' %}
+      <p class="aviso riesgo"><b>No se completó.</b> {{ c.error }}</p>
+      <p class="sub">Lo que se haya escrito sigue en el editor sin guardar: revísalo en el Mac (Cmd+Z deshace). Para reintentar, haz una lectura nueva.</p>
+    {% elif c.estado == 'rechazado' %}
+      <p class="sub">Rechazado. No se escribió nada.</p>
+    {% endif %}
+    {% if c.huella_esperada %}<p class="sub" style="margin:10px 0 0">Huella esperada tras guardar: <span class="huella">{{ c.huella_esperada }}</span></p>{% endif %}
+  </section>
+
+  <section class="tarjeta">
+    <h2>Tramos</h2>
+    {% for t in c.tramos %}
+    <div class="tramo">
+      <div class="cab">
+        <b>Tramo {{ t.i }}</b>
+        <span class="sub" style="margin:0">{% if t.hasta >= t.desde %}líneas {{ t.desde }}–{{ t.hasta }}{% else %}insertar antes de la línea {{ t.desde }}{% endif %}
+          · −{{ t.antes|length }} +{{ t.nuevas|length }}</span>
+        {% if t.estado == 'escrito' %}<span class="placa ok">escrito</span>{% endif %}
+        {% if t.captura_inestable %}<span class="placa espera" title="La pantalla aún se movía al tomarla: compruébalo en el Mac">captura con la pantalla moviéndose</span>{% endif %}
+      </div>
+      <div class="diff">
+        {% set ini = [t.desde - 3, 1]|max %}
+        {% for k in range(ini, t.desde) %}<div class="ctx"><span class="n">{{ k }}</span><span></span><span>{{ c.original[k-1] }}</span></div>{% endfor %}
+        {% for linea in t.antes %}<div class="menos"><span class="n">{{ t.desde + loop.index0 }}</span><span>−</span><span>{{ linea }}</span></div>{% endfor %}
+        {% for linea in t.nuevas %}<div class="mas"><span class="n"></span><span>+</span><span>{{ linea }}</span></div>{% endfor %}
+        {% set fin = [t.hasta + 3, c.original|length]|min %}
+        {% for k in range(t.hasta + 1, fin + 1) %}<div class="ctx"><span class="n">{{ k }}</span><span></span><span>{{ c.original[k-1] }}</span></div>{% endfor %}
+      </div>
+      {% if t.estado == 'escrito' %}
+        <details class="comprobacion-d" style="margin-top:8px"><summary>Cómo quedó en la pantalla</summary>
+          <div class="comprobacion"><img loading="lazy" src="/api/cambios/{{ c.id }}/tramos/{{ t.i }}.png" alt="Captura del tramo {{ t.i }} tras escribirlo"></div>
+        </details>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="tarjeta">
+    <h2>Historial</h2>
+    <ul class="bitacora">
+      {% for h in c.historial|reverse %}<li class="{{ h.quien }}"><span class="hora" data-t="{{ h.t }}"></span><span><span class="tipo">{{ h.quien }}</span> · {{ h.que }}</span></li>{% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

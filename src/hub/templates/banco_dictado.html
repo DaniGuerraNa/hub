@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  /* Pensada para el teléfono en una mano (C-0312): la frase grande, los
+     botones de 48 px o más y la acción principal a lo ancho. */
+  .banco { max-width: 760px; }
+  .banco-aparatos { display: flex; gap: 8px; margin: 0 0 16px; }
+  .banco-aparatos > button { flex: 1; min-height: 48px; justify-content: center; font-size: var(--letra-4); }
+  .banco-aparatos > button[aria-pressed="true"] { background: var(--elevado); color: var(--texto); font-weight: 650; }
+  .banco-aparatos .cuenta-aparato { color: var(--texto-3); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .banco-progreso { margin: 0 0 8px; color: var(--texto-2); }
+  .banco-progreso b { font-size: 22px; color: var(--texto); font-variant-numeric: tabular-nums; }
+  .banco-barra { height: 6px; background: var(--superficie2); border-radius: var(--r-input); overflow: hidden;
+                 margin: 0 0 16px; }
+  .banco-barra > i { display: block; height: 100%; width: 0; background: var(--acento); }
+  .banco-meta { font-size: var(--letra-2); color: var(--texto-3); text-transform: uppercase; letter-spacing: .08em;
+                margin: 0 0 10px; }
+  .tarjeta p.banco-texto { font-size: 26px; line-height: 1.4; font-weight: 500; color: var(--texto);
+                           margin: 0 0 16px; max-width: none; }
+  .banco-estado { min-height: 1.6em; margin: 0 0 14px; }
+  .banco-estado.grabando { color: var(--riesgo); font-weight: 600; }
+  .banco-acciones { display: flex; flex-wrap: wrap; gap: 10px; }
+  .banco-acciones > button { min-height: 52px; font-size: 16px; padding: 10px 22px; justify-content: center; }
+  .banco-acciones > button.cta { flex: 1 1 220px; font-size: var(--letra-5); }
+  .banco-acciones > button[hidden] { display: none; }
+  .tarjeta p.banco-micro { font-size: var(--letra-2); margin: 14px 0 0; }
+  .tarjeta.banco-plegable { padding-top: 8px; padding-bottom: 8px; }
+  .tarjeta.banco-plegable[open] { padding-bottom: 20px; }
+  .banco-plegable > summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex;
+                              align-items: center; gap: 8px; }
+  .banco-todas { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .banco-todas > li { display: flex; align-items: center; gap: 6px; }
+  .banco-todas > li > .banco-ir { flex: 1; min-width: 0; min-height: 44px; justify-content: flex-start;
+                                   align-items: flex-start; text-align: left; white-space: normal;
+                                   background: transparent; color: var(--texto-2); }
+  .banco-todas > li > .banco-ir::before { content: '○'; color: var(--texto-4); flex: none; }
+  .banco-todas > li.hecha > .banco-ir::before { content: '✓'; color: var(--ok); }
+  .banco-todas > li.actual > .banco-ir { background: var(--superficie2); color: var(--texto); }
+  .banco-todas > li > form { flex: none; margin: 0; }
+  .banco-todas > li > form > button { min-height: 44px; }
+  .banco-todas > li:not(.hecha) > form { display: none; }
+  .banco-orden { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--superficie2);
+                 border-radius: var(--r-input); padding: 10px 12px; font-size: 13px; }
+  .banco-medidas { overflow-x: auto; }
+  .banco-medidas table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .banco-medidas th, .banco-medidas td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--borde);
+                                         white-space: nowrap; }
+  .banco-medidas th:first-child, .banco-medidas td:first-child { text-align: left; }
+  .banco-medidas td.largo { white-space: normal; text-align: left; }
+  .banco-vaciar form > button { min-height: 48px; }
+  @media (max-width: 700px) {
+    .tarjeta p.banco-texto { font-size: 23px; }
+  }
+</style>
+
+{{ ui.cabecera_vista('Banco de dictado',
+    'Lees en voz alta la frase que sale y se guarda en esta máquina con lo que tenías que decir. Con eso se mide
+     qué Whisper te entiende mejor. Nada sale de aquí.') }}
+
+{% macro pct(x, decimales=1) %}{{ numero(x * 100, decimales) ~ ' %' if x is not none else '—' }}{% endmacro %}
+{% set f = b.frase %}
+<div class="banco" id="banco">
+  <div class="banco-aparatos" role="group" aria-label="Con qué aparato grabas">
+    {% for a in b.aparatos %}
+    <button type="button" data-elegir-aparato="{{ a.id }}" aria-pressed="{{ 'true' if a.id == b.aparato else 'false' }}">
+      {{ a.nombre }} <span class="cuenta-aparato" data-cuenta-aparato="{{ a.id }}">{{ a.hechas }}/{{ a.total }}</span>
+    </button>
+    {% endfor %}
+  </div>
+
+  <p class="banco-progreso"><b id="banco-cuenta">{{ b.hechas }}</b> de <span id="banco-total">{{ b.total }}</span>
+    grabadas en <span data-nombre-aparato>{{ (b.aparatos | selectattr('id', 'equalto', b.aparato) | first).nombre }}</span></p>
+  <div class="banco-barra" aria-hidden="true"><i id="banco-barra"
+       style="width:{{ (100 * b.hechas / b.total) | round | int if b.total else 0 }}%"></i></div>
+
+  <section class="tarjeta banco-frase" aria-label="La frase que toca">
+    {% if f %}
+    <p class="banco-meta" id="banco-meta">{{ b.categorias.get(f.categoria, f.categoria) }}</p>
+    <p class="banco-texto" id="banco-texto">{{ f.texto }}</p>
+    {% else %}
+    <p class="banco-texto" id="banco-texto">No hay frases en la lista.</p>
+    {% endif %}
+    <p class="tenue banco-estado" id="banco-estado" role="status" aria-live="polite">
+      Pulsa «Grabar» y léela en voz alta, como hablas siempre.</p>
+    <div class="banco-acciones">
+      <button type="button" class="cta" id="banco-grabar">Grabar</button>
+      <button type="button" id="banco-repetir" hidden>Repetir</button>
+      <button type="button" class="sutil" id="banco-siguiente">Saltar esta</button>
+    </div>
+    <p class="tenue banco-micro" id="banco-micro" hidden></p>
+    <noscript><p class="aviso">Grabar necesita JavaScript.</p></noscript>
+  </section>
+
+  <details class="tarjeta banco-plegable">
+    <summary>Todas las frases</summary>
+    <p class="tenue">Pulsa una para ir a ella. Una grabada se puede repetir o borrar.
+      Graba como el chat del secretario (sin eco ni ruido de fondo).</p>
+    <ol class="banco-todas">
+      {% for x in b.frases %}
+      <li data-fila-frase="{{ x.id }}" class="{{ 'hecha' if x.grabada[b.aparato] }} {{ 'actual' if f and x.id == f.id }}">
+        <button type="button" class="banco-ir" data-ir="{{ x.id }}">{{ x.texto }}</button>
+        <form method="post" action="/voz/banco/borrar" data-confirmar="Se borra la grabación de esta frase en este aparato."
+              data-confirmar-titulo="¿Borrar la grabación?" data-confirmar-ok="Borrar">
+          <input type="hidden" name="frase" value="{{ x.id }}">
+          <input type="hidden" name="aparato" value="{{ b.aparato }}" data-campo-aparato>
+          <button class="sutil peligro">Borrar</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ol>
+  </details>
+
+  <details class="tarjeta banco-plegable">
+    <summary>Medir</summary>
+    <p>Con las frases grabadas, se mide en la máquina del hub, desde una terminal en la carpeta del hub. Tarda
+      unos minutos por modelo; va de uno en uno y no empieza si Reuniones está procesando.</p>
+    <pre class="mono banco-orden">uv run python -m hub.banco_dictado medir --modelos small,large-v3-turbo</pre>
+    {% if b.resultados %}
+    {% set r = b.resultados[0] %}
+    <p class="tenue">La última, del {{ ui.cuando(r.cuando, forma='local') }}, con {{ r.grabaciones }} grabaciones{% if not r.terminada %},
+      <strong>a medias</strong>: se cortó antes de acabar{% endif %}. Error por palabras (WER): cuanto más bajo,
+      mejor. El total no lleva las cifras dichas, que Whisper puede escribir en dígitos: van en su columna.</p>
+    <div class="banco-medidas">
+      <table>
+        <thead><tr><th>Configuración</th><th>WER</th><th>Sin tildes</th><th>Términos</th><th>Cifras</th>
+          <th>Sin respuesta</th><th>p50</th><th>Carga</th></tr></thead>
+        <tbody>
+        {% for c in r.configs %}
+          {% set s = c.servidor or {} %}{% set t = c.totales or {} %}{% set cifras = (c.por_categoria or {}).get('cifras') or {} %}
+          <tr>
+            <td>{{ (c.config or {}).get('modelo') }}{% if s.get('tipo') %} · {{ s.get('tipo') }}{% endif %}{% if s.get('dispositivo') %} · {{ s.get('dispositivo') }}{% endif %}</td>
+            {% if c.error %}<td colspan="7" class="largo">no se midió: {{ c.error }}</td>{% else %}
+            <td>{{ pct(t.get('wer')) }}</td>
+            <td>{{ pct(t.get('wer_sin_tildes')) }}</td>
+            <td>{{ pct(t.get('terminos'), 0) }}</td>
+            <td>{{ pct(cifras.get('wer')) }}</td>
+            <td>{{ t.get('errores') or 0 }}</td>
+            <td>{{ t.get('ms_p50') ~ ' ms' if t.get('ms_p50') is not none else '—' }}</td>
+            <td>{{ s.get('s_carga') ~ ' s' if s.get('s_carga') is not none else '—' }}</td>
+            {% endif %}
+          </tr>
+          {% if c.dictado_cargado %}
+          <tr><td colspan="8" class="tenue largo">⚠ El Whisper del dictado estaba cargado al acabar esta: hubo dos modelos
+            a la vez y su cifra puede no ser la suya.</td></tr>
+          {% endif %}
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="tenue">Por categoría y frase a frase: <code class="mono">uv run python -m hub.banco_dictado resultados</code>.</p>
+    {% else %}
+    <p class="tenue">Todavía no se ha medido nada.</p>
+    {% endif %}
+  </details>
+
+  <details class="tarjeta banco-plegable banco-vaciar">
+    <summary>Vaciar</summary>
+    <p class="tenue">Quita todo lo grabado en este aparato; la lista de frases y las medidas se quedan. Para cambiar
+      la lista hay que vaciar antes los dos aparatos.</p>
+    <form method="post" action="/voz/banco/vaciar" data-confirmar="Se borran todas las grabaciones de este aparato. No tiene vuelta atrás."
+          data-confirmar-titulo="¿Vaciar el banco?" data-confirmar-ok="Vaciar">
+      <input type="hidden" name="aparato" value="{{ b.aparato }}" data-campo-aparato>
+      <button class="peligro">Vaciar lo de este aparato</button>
+    </form>
+  </details>
+</div>
+
+<script type="application/json" id="banco-datos">{{ {'aparato': b.aparato, 'aparatos': b.aparatos, 'frases': b.frases, 'categorias': b.categorias} | tojson }}</script>
+<script src="/static/banco-dictado.js"></script>
+{% endblock %}

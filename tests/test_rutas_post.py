@@ -694,6 +694,37 @@ def test_refrescar_vuelve_a_la_pantalla_desde_la_que_se_pidio(cliente, monkeypat
 
 
 def test_el_boton_refrescar_lleva_su_pantalla_sin_el_aviso_de_antes(cliente):
-    html = cliente.get("/servicios?aviso=Hecho&fugaz=1").text
+    html = cliente.get("/talleres?aviso=Hecho&fugaz=1").text
     i = html.index('action="/refrescar"')
-    assert 'name="destino" value="/servicios"' in html[i:i + 300]
+    assert 'name="destino" value="/talleres"' in html[i:i + 300]
+
+
+@pytest.mark.parametrize("ruta", ["/", "/talleres"])
+def test_refrescar_sale_donde_lo_que_se_ve_es_la_muestra_de_tmux(cliente, ruta):
+    assert 'action="/refrescar"' in cliente.get(ruta).text
+
+
+def test_la_ficha_de_un_proyecto_tambien_refresca_sus_paneles_abiertos(cliente, demo):
+    """«Paneles abiertos» sale de la muestra de tmux: perdió el botón con
+    C-0401 y había que irse a Panorama para tomar otra (tras la revisión)."""
+    html = cliente.get("/proyecto/demo").text
+    assert "Paneles abiertos" in html and 'action="/refrescar"' in html
+    assert 'name="destino" value="/proyecto/demo"' in html
+
+
+@pytest.mark.parametrize("ruta", ["/servicios", "/respaldo", "/maquina", "/actualizaciones", "/inventario",
+                                  "/consumo", "/canal", "/tablero"])
+def test_refrescar_no_sale_donde_no_relee_lo_que_se_ve(cliente, ruta):
+    """C-0401 (UI-21): «Refrescar» sólo toma una muestra de tmux. En Servicios
+    no relee Docker y la pantalla seguía con la lectura de hacía días: parecía
+    que el dato era de ahora. Respaldo y Servicios, que pueden volver a medir,
+    tienen su «Medir ahora»; Máquina y Consumo los mide sólo el ciclo lento."""
+    assert 'action="/refrescar"' not in cliente.get(ruta).text
+
+
+def test_servicios_mide_desde_su_cabecera_con_el_verbo_de_siempre(cliente):
+    html = cliente.get("/servicios").text
+    cabecera = html[html.index('class="cabecera-vista"'):]
+    cabecera = cabecera[:cabecera.index('<div data-region="servicios"')]
+    assert 'action="/servicios/escanear"' in cabecera and "Medir ahora" in cabecera
+    assert "Reescanear" not in html

@@ -7,6 +7,7 @@ un número inflado hace que se ignore, y uno bajo hace que se pierda trabajo.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import time
@@ -211,12 +212,12 @@ def test_un_escaneo_truncado_a_medias_conserva_lo_que_no_pudo_mirar(
 
 def test_un_git_que_falla_no_tumba_la_medicion(monkeypatch, repo):
     """Un montaje caído o un repo roto no puede dejar sin medir a los demás."""
-    repos._hay_git.cache_clear()
+    repos.hay_git.cache_clear()
     monkeypatch.setattr(repos.shutil, "which", lambda x: None)
     try:
         assert repos.estado_de(str(repo)) is None
     finally:
-        repos._hay_git.cache_clear()  # el caché no puede filtrarse a otros tests
+        repos.hay_git.cache_clear()  # el caché no puede filtrarse a otros tests
 
 
 def test_un_archivo_que_solo_cambio_de_fin_de_linea_no_cuenta_como_sucio(con_remoto):
@@ -285,3 +286,99 @@ def test_un_escaneo_truncado_no_se_come_siempre_a_los_ultimos_proyectos(
 
     medidos = {f["proyecto_id"] for f in con.execute("SELECT proyecto_id FROM repo")}
     assert "tarde" in medidos, "el proyecto del final se quedó sin medir por ir el último"
+
+
+# ── C-0295: una vuelta incompleta se dice, con la fecha de lo más viejo ──────
+#
+# Cada escaneo sella sus filas con la misma hora; lo que no midió conserva la
+# suya. /respaldo enseñaba sólo la hora más nueva —«Última medición hace 3
+# min»— aunque un tercio de los repos fuera de otra vuelta.
+
+
+def test_una_vuelta_que_no_mide_un_repo_deja_la_pantalla_diciendo_cual_es_viejo(
+    con, con_remoto, monkeypatch, tmp_path, capsys
+):
+    from fastapi.testclient import TestClient
+
+    from hub import api, db, web
+
+    segundo = tmp_path / "segundo"
+    shutil.copytree(con_remoto, segundo)
+    a = Proyecto(id="a", nombre="A", asiento=str(con_remoto))
+    b = Proyecto(id="b", nombre="B", asiento=str(segundo))
+    repos.escanear(con, [a, b])
+    primera = con.execute("SELECT medido_en FROM repo WHERE proyecto_id='b'").fetchone()[0]
+
+    original = repos.estado_de
+
+    def revienta_en_b(ruta):
+        if ruta == str(segundo):
+            raise OSError("montaje caído")
+        return original(ruta)
+
+    monkeypatch.setattr(repos, "estado_de", revienta_en_b)
+    repos.escanear(con, [a, b])
+    assert str(segundo) in capsys.readouterr().out, "el repo que lanzó no se dijo por nombre"
+
+    r = api.respaldo(con)
+    assert r["de_otra_vuelta"] == 1
+    assert r["mas_viejo"] == primera
+    assert [x["proyecto_id"] for x in r["repos"] if x["de_otra_vuelta"]] == ["b"]
+
+    con.commit()
+    ruta_db = tmp_path / "hub.db"
+    monkeypatch.setattr(web, "conexion", lambda: db.conectar(ruta_db))
+    html = TestClient(web.app).get("/respaldo").text
+    assert "incompleta" in html and "1 de 2 repos medidos en esa vuelta" in html
+    # En la hora de la casa y con cuánto hace, como toda fecha de pantalla (C-0396).
+    assert re.search(r"el más viejo, del <time [^>]*>" + re.escape(api._hora_local(primera)) + r" \(hace ", html)
+
+
+def test_un_patron_ilegible_no_borra_las_filas_de_su_proyecto(con, con_remoto, tmp_path, monkeypatch):
+    """C-0435: con OneDrive a medio sincronizar el patrón daba EIO, el proyecto
+    se quedaba sin rutas y este escaneo borraba sus filas: su cifra de respaldo
+    desaparecía sin decirlo. Lo que no se pudo leer no es «no hay»: se conserva
+    con su hora vieja (regla dura 13) y /respaldo lo enseña de otra vuelta. Al
+    volver el disco, un repo que de verdad ya no está sí se retira."""
+    import errno
+    from pathlib import Path
+
+    from hub import api, recordar, registry
+
+    ws = tmp_path / "ws"
+    r1 = ws / "ext" / "repos" / "r1"
+    shutil.copytree(con_remoto, r1)
+    otro = tmp_path / "otro"
+    shutil.copytree(con_remoto, otro)
+    yml = tmp_path / "projects.yml"
+    yml.write_text(f"proyectos:\n  - id: trabajo\n    asiento: {ws}\n    rutas:\n"
+                   f"      - patron: \"*/repos/*\"\n  - id: otro\n    asiento: {otro}\n", encoding="utf-8")
+    repos.escanear(con, registry.cargar(yml))
+    antes = con.execute("SELECT medido_en FROM repo WHERE proyecto_id='trabajo'").fetchone()[0]
+
+    roto = [True]
+    original = Path.glob
+
+    def glob_en_eio(self, *a, **k):
+        if roto[0] and str(self).startswith(str(ws)):
+            raise OSError(errno.EIO, "Input/output error", str(self))
+        return original(self, *a, **k)
+    monkeypatch.setattr(Path, "glob", glob_en_eio)
+    recordar.olvidar()   # lo peor: un proceso recién arrancado, sin lectura buena que servir
+    repos.escanear(con, registry.cargar(yml))
+    filas = con.execute("SELECT ruta, medido_en FROM repo WHERE proyecto_id='trabajo'").fetchall()
+    assert [tuple(f) for f in filas] == [(str(r1), antes)]
+    assert api.respaldo(con)["de_otra_vuelta"] == 1
+
+    roto[0] = False
+    shutil.rmtree(r1)
+    repos.escanear(con, registry.cargar(yml))
+    assert con.execute("SELECT COUNT(*) FROM repo WHERE proyecto_id='trabajo'").fetchone()[0] == 0
+
+
+def test_una_vuelta_completa_no_dice_nada_de_mas(con, con_remoto):
+    from hub import api
+    repos.escanear(con, [Proyecto(id="a", nombre="A", asiento=str(con_remoto))])
+    r = api.respaldo(con)
+    assert r["de_otra_vuelta"] == 0
+    assert not any(x["de_otra_vuelta"] for x in r["repos"])

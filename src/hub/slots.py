@@ -181,6 +181,9 @@ def abrir(con: sqlite3.Connection, slot_id: int, session: str | None = None,
 
     `comando` sustituye al del slot: es como «Retomar» abre la ventana con
     `claude --resume <id>` (decisión 290).
+
+    Y deja tomada una muestra (`_muestrear`): la ventana sale ya bajo su slot,
+    la abra quien la abra.
     """
     slot = api.obtener_slot(con, slot_id)
     if not slot:
@@ -211,7 +214,32 @@ def abrir(con: sqlite3.Connection, slot_id: int, session: str | None = None,
     if pane_id:
         vincular(con, pane_id, slot_id)
         _titular(pane_id, slot["nombre"])
+        _muestrear(con)
     return pane_id
+
+
+def _muestrear(con: sqlite3.Connection) -> None:
+    """Una muestra ya, en la puerta y no en cada llamador (C-0426).
+
+    Las rutas de la web muestreaban tras abrir; el secretario (`abrir_slot`),
+    el orquestador y los agentes de encargos no, y una sesión nueva salía hasta
+    20 s en «Sin organizar» —la fila «sin ver todavía»— aunque su ventana ya
+    estuviera atada. Con la ventana recién abierta tmux tiene al menos un
+    panel: `capturar` nunca deja un snapshot vacío (regla 4). Si falla, la
+    ventana ya está abierta y atada: llega con el latido, y se dice (regla 21).
+
+    🔴 Sólo la muestra, no el `un_ciclo` entero (revisión cruzada): eso
+    llevaba a `hub-secretario`, `hub-encargos` y `./orq` el barrido de espejos
+    y la relectura y sincronización del registro, cuyo `stat` sobre el disco
+    de Windows es lo que se cuelga, y podía dejar sordo a un relé al abrir un
+    slot (regla dura 2). De quién es cada ruta lo dice el índice
+    (`registry.atribuidor`), que el latido mantiene al día."""
+    from . import registry, snapshotter   # aquí: `snapshotter` → `orquestador` → `slots`
+
+    try:
+        snapshotter.capturar(con, registry.atribuidor(con))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[slots] la ventana se abrió, pero no se pudo muestrear: {exc}", flush=True)
 
 
 def _titular(pane_id: str, nombre: str) -> None:
@@ -265,13 +293,6 @@ def sesion_para(con: sqlite3.Connection, proyecto_id: str) -> str:
         if panel["proyecto_id"] == proyecto_id:
             return panel["session"]
     return _NO_VALIDO.sub("-", proyecto_id) or "hub-slots"
-
-
-def comando_manual(con: sqlite3.Connection, slot_id: int) -> str | None:
-    slot = api.obtener_slot(con, slot_id)
-    if not slot or not slot["ruta"]:
-        return None
-    return tmux.comando_de_apertura(slot["ruta"], slot["nombre"], _comando_de(slot))
 
 
 def _comando_de(slot) -> str | None:

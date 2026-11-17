@@ -104,20 +104,106 @@ def zona() -> str:
     return hallada or _del_enlace_de_localtime() or "UTC"
 
 
+def _en_casa(iso: str) -> datetime:
+    """Una fecha para ENSEÑAR, ya en la hora de la casa. Lanza `ValueError` si
+    no es una fecha.
+
+    Sin zona es de la casa, como la entiende `secretario.tiempo.a_utc` al
+    guardarla (y como la guardan `copia_base` o `intercambio`). Es el lector
+    de `a_local` y de `cuando`, y tiene que ser el mismo: con `instante`, que
+    lee lo de sin zona como UTC, el «hace» y la hora de la misma fecha
+    discreparían seis horas (regla 19, C-0396).
+    """
+    momento = datetime.fromisoformat(iso)
+    casa = ZoneInfo(zona())
+    if momento.tzinfo is None:
+        momento = momento.replace(tzinfo=casa)
+    return momento.astimezone(casa)
+
+
 def a_local(iso: str | None, formato: str = "%Y-%m-%d %H:%M") -> str:
     """Una fecha de la base, en la hora de la casa y con el formato que se pida.
 
     Vacía no dice nada; lo que no es una fecha sale tal cual, que enseñarlo
-    crudo es mejor que romper la página. Una fecha sin zona ya es de la casa,
-    como la entiende `secretario.tiempo.a_utc` al guardarla.
+    crudo es mejor que romper la página. Una fecha sin zona ya es de la casa.
+    Para enseñarla en una pantalla está `cuando`; esto queda para las frases y
+    los formatos que pide otro (un `datetime-local`, el prompt del modelo).
     """
     if not iso:
         return ""
     try:
-        momento = datetime.fromisoformat(iso)
+        return _en_casa(iso).strftime(formato)
     except ValueError:
         return iso
+
+
+def duracion(segundos: float) -> str:
+    """Un lapso, en la unidad en que se lee: «40 s», «12 min», «5 h», «9 d».
+
+    Cada unidad aguanta hasta dos de la siguiente —119 min y no «1 h»—
+    porque el redondeo hacia abajo en la unidad grande miente por casi la
+    mitad: «1 h» para 119 minutos. Había dos copias de esto (`salud`, la
+    fuente de WhatsApp) con cortes distintos.
+    """
+    s = int(abs(segundos))
+    if s < 120:
+        return f"{s} s"
+    if s < 7200:
+        return f"{s // 60} min"
+    if s < 172800:
+        return f"{s // 3600} h"
+    return f"{s // 86400} d"
+
+
+def cuando(valor, ahora: datetime | None = None) -> dict | None:
+    """Un instante, listo para enseñarlo: `{iso, local, dia, hora, hace, edad_s}`.
+
+    Es la puerta de toda fecha de pantalla (C-0396): había ocho formatos, la
+    mitad en UTC, y un dato de hace 62 días se leía igual que uno de hoy. Lo
+    pinta `ui.cuando` de `_ui.html`, que es quien decide qué pieza se ve.
+
+    - `valor`: ISO con o sin zona (sin zona = hora de la casa, como `a_local`),
+      sólo la fecha (`2026-11-13`), o un epoch en segundos.
+    - `local`: «13/11 14:41»; con el año si no es el de ahora; sin hora si el
+      valor no la trae. `dia` y `hora` son sus dos mitades.
+    - `hace`: «hace 3 h», «en 2 d» si está por venir, «hoy»/«ayer»/«mañana»
+      sin hora. No baja de «hace un momento»: unos segundos que cambian en
+      cada sondeo repintarían la región sin decir nada.
+    - `edad_s`: segundos desde entonces, negativa si está por venir. Es con lo
+      que `ui.cuando` compara su umbral.
+
+    `None` si está vacío o no es una fecha: la plantilla decide qué enseñar.
+    """
+    ahora = ahora or datetime.now(timezone.utc)
     casa = ZoneInfo(zona())
-    if momento.tzinfo is None:
-        momento = momento.replace(tzinfo=casa)
-    return momento.astimezone(casa).strftime(formato)
+    hoy = ahora.astimezone(casa)
+    sin_hora = False
+    try:
+        if isinstance(valor, bool) or valor is None or valor == "":
+            return None
+        if isinstance(valor, (int, float)):
+            momento = datetime.fromtimestamp(valor, timezone.utc).astimezone(casa)
+        elif isinstance(valor, str):
+            sin_hora = len(valor.strip()) == 10
+            momento = _en_casa(valor.strip())
+        else:
+            return None
+    except (ValueError, OverflowError, OSError):
+        return None
+    con_ano = "" if momento.year == hoy.year else "/%Y"
+    dia = momento.strftime("%d/%m" + con_ano)
+    if sin_hora:
+        dias = (hoy.date() - momento.date()).days
+        hace = {0: "hoy", 1: "ayer", -1: "mañana"}.get(
+            dias, f"hace {dias} d" if dias > 0 else f"en {-dias} d")
+        return {"iso": momento.date().isoformat(), "local": dia, "dia": dia, "hora": "",
+                "hace": hace, "edad_s": int((ahora - momento).total_seconds())}
+    edad = int((ahora - momento).total_seconds())
+    if abs(edad) < 60:
+        hace = "hace un momento"
+    else:
+        lapso = "1 min" if abs(edad) < 120 else duracion(edad)
+        hace = f"hace {lapso}" if edad > 0 else f"en {lapso}"
+    hora = momento.strftime("%H:%M")
+    return {"iso": momento.isoformat(timespec="seconds"), "local": f"{dia} {hora}", "dia": dia,
+            "hora": hora, "hace": hace, "edad_s": edad}

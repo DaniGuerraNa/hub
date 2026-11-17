@@ -56,8 +56,9 @@ def atender(mensaje: dict, todas: dict, con) -> None:
                     {"type": "text", "text": salida.texto},
                     {"type": "image", "data": base64.b64encode(salida.datos).decode(), "mimeType": salida.tipo}]})
                 return
-            texto = salida if isinstance(salida, str) else json.dumps(salida, ensure_ascii=False, default=str)
-            _responder(id_, {"content": [{"type": "text", "text": texto[:60000]}]})
+            # Acotado y siempre válido (C-0392): cortado a pelo, un JSON
+            # largo le llegaba al modelo roto a la mitad.
+            _responder(id_, {"content": [{"type": "text", "text": herramientas.acotar(salida)}]})
         except Exception as exc:  # una herramienta rota se dice; no tumba al servidor
             traceback.print_exc(file=sys.stderr)
             _responder(id_, {"content": [{"type": "text", "text": f"falló: {exc}"}], "isError": True})

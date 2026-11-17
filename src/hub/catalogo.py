@@ -9,6 +9,7 @@ fuente de verdad siguen siendo los archivos de cada proyecto.
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import re
 import shutil
@@ -19,7 +20,7 @@ from pathlib import Path
 
 import yaml
 
-from . import consumo
+from . import config, transcripts
 from .models import Proyecto
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
@@ -47,7 +48,7 @@ def leer_frontmatter(ruta: Path) -> dict:
     if not m:
         return {}
     try:
-        datos = yaml.safe_load(m.group(1))
+        datos = config.leer_yaml(m.group(1))
         return datos if isinstance(datos, dict) else {}
     except yaml.YAMLError:
         return {}
@@ -86,8 +87,17 @@ def capacidades_de(proyecto: Proyecto) -> list[dict]:
 # suelto en la raíz. Se cubren todas en vez de asumir una.
 _DIRS_SCRIPT = ("herramientas", "bin", "tools", "scripts", "lib")
 _DIRS_METODO = ("metodo", "metodos", "docs/equipo")
-# Meta del propio kit, no capacidades suyas.
-_DOCS_META = {"readme.md", "leeme.md", "license", "license.md", "claude.md", "agents.md"}
+# Meta del propio kit, no capacidades suyas: cómo se usa, qué cambió, qué
+# planea y por dónde va. Contarlos como «método» llenaba el inventario de
+# bitácoras que nadie aplica (C-0388). Son patrones porque los planes llevan
+# sufijo (`PLAN-REMOTO.md`); `plan*.md` a secas se llevaría por delante un
+# método que empiece así («planificar-sprints.md»).
+_DOCS_META = ("readme.md", "leeme.md", "license", "license.md", "claude.md", "agents.md",
+              "changelog.md", "pendientes.md", "estado.md", "plan.md", "plan-*.md", "plan_*.md")
+
+
+def _es_meta(archivo: Path) -> bool:
+    return any(fnmatch.fnmatch(archivo.name.lower(), patron) for patron in _DOCS_META)
 
 
 def _capacidades_de_kit(proyecto: Proyecto, raiz: Path, vistas: set) -> list[dict]:
@@ -97,7 +107,7 @@ def _capacidades_de_kit(proyecto: Proyecto, raiz: Path, vistas: set) -> list[dic
             salida.append(_capacidad(proyecto, archivo, "metodo", vistas))
     # Método suelto en la raíz, descartando la meta del kit.
     for archivo in sorted(raiz.glob("*.md")):
-        if archivo.name.lower() not in _DOCS_META:
+        if not _es_meta(archivo):
             salida.append(_capacidad(proyecto, archivo, "metodo", vistas))
 
     for carpeta in _DIRS_SCRIPT:
@@ -157,7 +167,7 @@ def enriquecer_con_registry(proyecto: Proyecto, capacidades: list[dict]) -> None
             if not candidato.is_file():
                 continue
             try:
-                datos = yaml.safe_load(candidato.read_text(encoding="utf-8")) or {}
+                datos = config.leer_yaml(candidato.read_text(encoding="utf-8")) or {}
             except (OSError, yaml.YAMLError):
                 continue
             for comp in datos.get("components", []) or []:
@@ -337,10 +347,10 @@ def medir_uso(capacidades: list[dict]) -> dict[str, str]:
     `mutar.py` y `mutar.sh` comparten nombre y no son lo mismo.
     """
     comando = buscador()
-    # La raíz la da `consumo.carpeta()`, que lee `HUB_TRANSCRIPTS` (C-0179): con
-    # una constante propia, medir recorría los transcripts reales de quien
-    # ejecuta aunque se le hubiera dicho otro sitio, también en los tests.
-    raiz = consumo.carpeta()
+    # La raíz la da `transcripts.raiz()`, que lee `HUB_TRANSCRIPTS` (C-0179,
+    # C-0049): con una constante propia, medir recorría los transcripts reales
+    # de quien ejecuta aunque se le hubiera dicho otro sitio, también en los tests.
+    raiz = transcripts.raiz()
     if not raiz.is_dir() or not comando:
         return {}
 

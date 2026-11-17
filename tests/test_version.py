@@ -404,7 +404,12 @@ def test_refrescar_el_asistente_pone_al_dia_lo_de_la_semilla_y_no_toca_lo_demas(
 
 @pytest.fixture(scope="module")
 def _venv_compartido(tmp_path_factory):
-    return tmp_path_factory.mktemp("venv-actualizar") / "venv"
+    """El entorno que monta el `uv sync` de `actualizar.sh` (77 MB), compartido
+    por el módulo y borrado al acabarlo: nadie lo mira después, ni cuando un
+    test falla (C-0325)."""
+    carpeta = tmp_path_factory.mktemp("venv-actualizar")
+    yield carpeta / "venv"
+    shutil.rmtree(carpeta, ignore_errors=True)
 
 
 @pytest.fixture
@@ -478,6 +483,240 @@ def test_actualizar_no_pisa_cambios_sin_guardar(clon_desechable):
     assert not (casa / "version.json").exists()
 
 
+# ── C-0448: copia de antes, comprobación de verdad y cómo volver ─────────────
+
+def _base_con_notas(ruta: Path, filas: int = 1) -> None:
+    """Una base cualquiera en WAL, como las que deja el hub en `HUB_HOME`."""
+    import sqlite3
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(ruta)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("CREATE TABLE IF NOT EXISTS nota (texto TEXT)")
+    con.executemany("INSERT INTO nota VALUES (?)", [("lo que sólo vive aquí",)] * filas)
+    con.commit()
+    con.close()
+
+
+def _notas(ruta: Path) -> int:
+    import sqlite3
+    con = sqlite3.connect(ruta)
+    try:
+        return con.execute("SELECT count(*) FROM nota").fetchone()[0]
+    finally:
+        con.close()
+
+
+def test_actualizar_copia_las_bases_antes_de_tocarlas_y_otra_corrida_no_las_pisa(clon_desechable):
+    destino, casa, entorno = clon_desechable
+    _base_con_notas(casa / "hub.db")
+    _base_con_notas(casa / "secretario" / "memoria.db")
+
+    r = _correr(destino / "scripts" / "actualizar.sh", entorno, "--sin-bajar", cwd=destino)
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    hoy = datetime.now().strftime("%Y%m%d")
+    copias = casa / "respaldos"
+    assert sorted(p.name for p in copias.glob("antes-*.db")) == [
+        f"antes-hub-{hoy}.db", f"antes-secretario-{hoy}.db"]
+    assert str(copias / f"antes-hub-{hoy}.db") in r.stdout
+
+    # Lo que la versión nueva escribe después no entra en la copia de antes.
+    _base_con_notas(casa / "hub.db")
+    r = _correr(destino / "scripts" / "actualizar.sh", entorno, "--sin-bajar", cwd=destino)
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _notas(casa / "hub.db") == 2
+    assert _notas(copias / f"antes-hub-{hoy}.db") == 1
+
+
+def test_si_un_paso_falla_dice_como_volver_y_donde_estan_las_copias(clon_desechable):
+    destino, casa, entorno = clon_desechable
+    primero = _git("rev-parse", "HEAD", cwd=destino).strip()
+    (destino / "scripts" / "migraciones" / f"{version.del_codigo()}.sh").write_text("exit 3\n")
+    _git("add", "-A", cwd=destino)
+    _git("commit", "-q", "-m", "paso roto", cwd=destino)
+    _base_con_notas(casa / "hub.db")
+
+    # Lo que pasa el guion viejo al nuevo cuando lo que bajó trae otro actualizar.sh.
+    r = _correr(destino / "scripts" / "actualizar.sh", {**entorno, "HUB_ACTUALIZA_DESDE": primero},
+                "--sin-bajar", cwd=destino)
+
+    assert r.returncode != 0
+    assert not (casa / "version.json").exists()
+    volver = r.stderr[r.stderr.index("Para volver a como estaba"):]
+    assert f"git checkout {primero}\n" in volver
+    assert "bash scripts/actualizar.sh --sin-bajar" in volver
+    assert str(casa / "respaldos" / f"antes-hub-{datetime.now():%Y%m%d}.db") in volver
+    assert "INSTALAR.md, «Volver a la versión anterior»" in volver
+    assert "git switch main && bash scripts/actualizar.sh" in volver
+    # 🔴 Restaurar pisa lo escrito desde la copia: eso se hace leyendo, no copiando lo impreso.
+    assert "cp " not in volver
+
+
+def test_si_el_commit_de_antes_tampoco_se_instalo_se_vuelve_a_la_etiqueta_de_la_version_apuntada(
+        clon_desechable):
+    """Un reintento que baja otro arreglo después de fallar: el commit de antes
+    de bajar es el del intento fallido, no lo que estaba instalado, y volver
+    ahí repetiría sus pasos. Manda la versión apuntada, que al fallar no
+    cambia; sin su etiqueta no se inventa un commit: se dice cómo buscarlo."""
+    destino, casa, entorno = clon_desechable
+    intento = _git("rev-parse", "HEAD", cwd=destino).strip()
+    _git("tag", "v0.4.0", intento, cwd=destino)
+    (destino / "scripts" / "migraciones" / f"{version.del_codigo()}.sh").write_text("exit 3\n")
+    _git("add", "-A", cwd=destino)
+    _git("commit", "-q", "-m", "arreglo publicado después del fallo, con un paso roto", cwd=destino)
+    (casa / "version.json").write_text(json.dumps({"version": "0.4.0", "en": "2026-11-01T10:00:00+00:00"}))
+    entorno = {**entorno, "HUB_ACTUALIZA_DESDE": intento}
+
+    r = _correr(destino / "scripts" / "actualizar.sh", entorno, "--sin-bajar", cwd=destino)
+
+    assert r.returncode != 0
+    assert "  git checkout v0.4.0\n" in r.stderr and intento not in r.stderr
+
+    _git("tag", "-d", "v0.4.0", cwd=destino)
+    r = _correr(destino / "scripts" / "actualizar.sh", entorno, "--sin-bajar", cwd=destino)
+
+    assert r.returncode != 0
+    volver = r.stderr[r.stderr.index("Para volver a como estaba"):]
+    assert "No encuentro el commit de la versión que tenías (la 0.4.0)" in volver
+    assert "git reflog" in volver and "git checkout <ese commit>" in volver
+    assert intento not in volver
+
+
+# Un systemd de usuario de mentira: apunta cada orden y contesta según los
+# archivos de su carpeta. `late` hace que el muestreo reiniciado dé su latido
+# unos segundos después, como el de verdad.
+_SYSTEMCTL_FALSO = r"""#!/bin/sh
+d="$SYSTEMCTL_FALSO"
+echo "$*" >> "$d/ordenes"
+[ "$1" = "--user" ] && shift
+orden=$1; shift
+case "$orden" in
+  show-environment|daemon-reload) exit 0 ;;
+  is-active)
+    callado=""; if [ "$1" = "--quiet" ]; then callado=1; shift; fi
+    estado=$(cat "$d/activo-$1" 2>/dev/null || echo inactive)
+    [ -n "$callado" ] || echo "$estado"
+    [ "$estado" = active ] ;;
+  is-enabled) echo enabled ;;
+  restart)
+    if [ "$1" = hub-snapshotter ] && [ -e "$d/late" ]; then
+      printf '{"en": "%s", "pid": 2}' "$(date -u -d '+3 seconds' +%Y-%m-%dT%H:%M:%S+00:00)" \
+        > "$HUB_HOME/latido-snapshotter.json"
+    fi ;;
+  *) exit 0 ;;
+esac
+"""
+
+
+@pytest.fixture
+def systemd_falso(clon_desechable, tmp_path):
+    """`actualizar.sh` con servicios sin tocar los de nadie: `systemctl` y
+    `curl` de mentira delante en el PATH, y el unit de la web en la carpeta
+    temporal. Están en marcha la web, el muestreo y el canal."""
+    destino, casa, entorno = clon_desechable
+    d = tmp_path / "systemd-falso"
+    (d / "bin").mkdir(parents=True)
+    for nombre, texto in (("systemctl", _SYSTEMCTL_FALSO), ("curl", "#!/bin/sh\nprintf 200\n")):
+        (d / "bin" / nombre).write_text(texto)
+        (d / "bin" / nombre).chmod(0o755)
+    for servicio in ("hub-web", "hub-snapshotter", "hub-canal"):
+        (d / f"activo-{servicio}").write_text("active\n")
+    unidades = Path(entorno["XDG_CONFIG_HOME"]) / "systemd" / "user"
+    unidades.mkdir(parents=True)
+    (unidades / "hub-web.service").write_text(
+        f"[Service]\nEnvironment=HUB_HOME={casa}\n"
+        "ExecStart=/x/.venv/bin/python -m uvicorn hub.web:app --host 127.0.0.1 --port 8799\n")
+    path = f"{d / 'bin'}:{os.environ['PATH']}"
+    # 🔴 Sólo si el de mentira es el primero que se encuentra: si no se pudiera
+    # ejecutar, el siguiente sería el de verdad y la prueba reiniciaría los
+    # servicios de quien corre la suite.
+    if shutil.which("systemctl", path=path) != str(d / "bin" / "systemctl"):
+        pytest.skip("el systemctl de mentira no se puede ejecutar aquí")
+    entorno = {**entorno, "PATH": path, "SYSTEMCTL_FALSO": str(d), "HUB_ESPERA_SENAL": "2",
+               "GIT_CONFIG_GLOBAL": "/dev/null"}
+    return destino, casa, entorno, d
+
+
+def _ordenes(d: Path) -> list[str]:
+    archivo = d / "ordenes"
+    return archivo.read_text().splitlines() if archivo.exists() else []
+
+
+def _publicada_un_commit_por_delante(destino: Path, tmp_path: Path) -> str:
+    """El clon, un commit por detrás de su `origin`, y ese commit trae otro
+    `actualizar.sh`: el guion viejo baja y se relanza con el nuevo. Devuelve
+    el commit en el que estaba el clon."""
+    antes = _git("rev-parse", "HEAD", cwd=destino).strip()
+    guion = destino / "scripts" / "actualizar.sh"
+    guion.write_text(guion.read_text() + "# lo que trae la versión publicada\n")
+    _git("commit", "-q", "-am", "publicada", cwd=destino)
+    publicado = tmp_path / "publicado.git"
+    _git("clone", "-q", "--bare", str(destino), str(publicado), cwd=tmp_path)
+    _git("remote", "add", "origin", str(publicado), cwd=destino)
+    _git("fetch", "-q", "origin", cwd=destino)
+    _git("branch", "-q", "--set-upstream-to=origin/main", cwd=destino)
+    _git("reset", "-q", "--hard", antes, cwd=destino)
+    return antes
+
+
+def test_si_el_muestreo_no_late_tras_reiniciarlo_la_actualizacion_falla_y_dice_como_volver(
+        systemd_falso, tmp_path):
+    """Hasta C-0448 bastaba con que la web contestara: una versión que dejaba
+    el muestreo muerto se daba por instalada (decisión 151, arrancado no es
+    funcionar)."""
+    destino, casa, entorno, d = systemd_falso
+    antes = _publicada_un_commit_por_delante(destino, tmp_path)
+
+    r = _correr(destino / "scripts" / "actualizar.sh", entorno, cwd=destino)
+
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "el actualizador también cambió" in r.stdout
+    assert "--user restart hub-snapshotter" in _ordenes(d)
+    assert "hub-snapshotter está en marcha pero no ha latido" in r.stderr
+    assert "journalctl --user -u hub-snapshotter -n 40 --no-pager" in r.stderr
+    assert "la versión NO se apunta" in r.stderr
+    assert not (casa / "version.json").exists()
+    # El commit de antes de bajar, aunque el guion que falla sea el nuevo.
+    assert f"git checkout {antes}\n" in r.stderr
+    assert "Volver a la versión anterior" in r.stderr
+
+
+def test_con_el_muestreo_latiendo_se_apunta_la_version_y_cada_servicio_dice_como_quedo(systemd_falso):
+    """El secretario que arranca pero aún no late sólo avisa: su primer
+    latido puede tardar un minuto."""
+    destino, casa, entorno, d = systemd_falso
+    (d / "late").touch()
+    (d / "activo-hub-secretario").write_text("active\n")
+
+    r = _correr(destino / "scripts" / "actualizar.sh", entorno, "--sin-bajar", cwd=destino)
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads((casa / "version.json").read_text())["version"] == version.del_codigo()
+    reiniciados = [o.split()[-1] for o in _ordenes(d) if o.startswith("--user restart ")]
+    assert reiniciados == ["hub-web", "hub-snapshotter", "hub-canal", "hub-secretario"]
+    assert "hub-snapshotter da señales de vida" in r.stdout
+    assert "hub-canal en marcha (no tiene señal propia" in r.stdout
+    assert "hub-secretario está en marcha pero aún no late" in r.stdout
+    assert "Para volver" not in r.stderr
+
+
+def test_un_servicio_reiniciado_que_no_queda_en_marcha_hace_fallar_la_actualizacion(systemd_falso):
+    destino, casa, entorno, d = systemd_falso
+    (d / "late").touch()
+    # El canal estaba en marcha, se reinicia y se cae al arrancar.
+    guion = d / "bin" / "systemctl"
+    guion.write_text(guion.read_text().replace(
+        "  restart)\n", '  restart)\n    [ "$1" = hub-canal ] && echo activating > "$d/activo-hub-canal"\n'))
+
+    r = _correr(destino / "scripts" / "actualizar.sh", entorno, "--sin-bajar", cwd=destino)
+
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "hub-canal no quedó en marcha" in r.stderr
+    assert "journalctl --user -u hub-canal -n 40 --no-pager" in r.stderr
+    assert not (casa / "version.json").exists()
+
+
 # ── C-0121: sin git no hay 500, y lo apuntado no se queda a medias ────────────
 
 
@@ -516,3 +755,62 @@ def test_lo_ultimo_que_se_supo_no_se_pierde_si_apuntar_lo_nuevo_falla(clon_con_r
 
 
 
+
+
+# ── C-0294: lo que se enseña de la consulta, y cómo se dice ──────────────────
+#
+# Un clon sin `origin` enseñaba un error apuntado tres semanas antes («La
+# última vez que se miró falló: and the repository exists.») y prometía «Se
+# mira cada hora» al lado de una fecha de hacía 21 días.
+
+
+def _apuntado_viejo(error="and the repository exists."):
+    (config.HUB_HOME / "version-remota.json").write_text(json.dumps({
+        "ultima": None, "error": error, "mirado_en": "2026-10-21T06:25:00+00:00"}))
+
+
+def test_un_clon_sin_origin_no_ensena_lo_apuntado_y_dice_que_no_busca(clon_con_remoto):
+    clon, _ = clon_con_remoto
+    _git("remote", "remove", "origin", cwd=clon)
+    _apuntado_viejo()
+    datos = version.para_la_guia(clon)
+    assert datos["sin_remoto"] is True
+    assert datos["buscar"] is False
+    assert datos["error"] is None and datos["mirado_en"] is None
+
+
+def test_lo_mirado_hace_mas_de_dos_horas_se_marca_atrasado(clon_con_remoto):
+    clon, _ = clon_con_remoto
+    _apuntado_viejo(error=None)
+    datos = version.para_la_guia(clon)
+    assert datos["atrasado"] is True
+    assert datos["mirado_local"].startswith("21/10")
+
+
+def test_del_error_de_git_se_guarda_la_linea_que_explica_no_la_ultima(clon_con_remoto):
+    clon, publicado = clon_con_remoto
+    shutil.rmtree(publicado)
+    datos = version.buscar_remota(clon, forzar=True)
+    assert datos["error"] != "and the repository exists."
+    assert datos["error"].startswith("fatal:")
+
+
+def test_actualizaciones_en_un_clon_sin_origin_no_promete_mirar_cada_hora(cliente, clon_con_remoto, monkeypatch):
+    clon, _ = clon_con_remoto
+    _git("remote", "remove", "origin", cwd=clon)
+    monkeypatch.setattr(config, "RAIZ_REPO", clon)
+    _apuntado_viejo()
+    html = cliente.get("/actualizaciones").text
+    assert "Este clon no tiene remoto" in html
+    assert "and the repository exists" not in html
+    assert "Se mira cada hora" not in html
+
+
+def test_actualizaciones_dice_el_fallo_en_espanol_y_el_de_git_dentro_de_un_detalle(cliente, clon_con_remoto, monkeypatch):
+    clon, publicado = clon_con_remoto
+    shutil.rmtree(publicado)
+    monkeypatch.setattr(config, "RAIZ_REPO", clon)
+    html = cliente.get("/actualizaciones").text
+    assert "No se pudo consultar el repositorio publicado" in html
+    visible, _, detalle = html.partition("<details")
+    assert "fatal:" not in visible and "fatal:" in detalle

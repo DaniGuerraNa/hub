@@ -90,14 +90,14 @@ def test_un_dato_propuesto_pide_confirmacion_y_no_se_usa_hasta_confirmarlo(con, 
 
     # Un «sí» suyo en el chat no lo confirma: no hay acción que lo haga.
     assert not any("confirmar" in i and "dato" in i for i in piezas.acciones())
-    assert _post(cliente, "id_fiscal", "confirmar").status_code == 303
+    assert _post(cliente, "id_fiscal", "confirmar", visto=ID_FISCAL).status_code == 303
     assert misdatos.confirmados() == {"id_fiscal": ID_FISCAL}
     assert _asunto(con, "id_fiscal").estado == "resuelta"
 
 
 def test_un_dato_confirmado_sirve_para_otro_proyecto_sin_volver_a_preguntar(con, cliente):
     _proponer(con, "domicilio_fiscal", DOMICILIO, "el registro de la tienda")
-    _post(cliente, "domicilio_fiscal", "confirmar")
+    _post(cliente, "domicilio_fiscal", "confirmar", visto=DOMICILIO)
     assert _asunto(con, "domicilio_fiscal").estado == "resuelta"
 
     # Otro proyecto lo encuentra igual (otra caja, otros espacios): no se le pregunta.
@@ -119,6 +119,45 @@ def test_un_dato_confirmado_sirve_para_otro_proyecto_sin_volver_a_preguntar(con,
     d = misdatos.leer()["domicilio_fiscal"]
     assert (d["valor"], d["fuente"], d.get("propuesta")) == (DOMICILIO, "el registro de la tienda", None)
 
+
+
+def test_confirmar_confirma_lo_que_viste_y_no_lo_que_llego_mientras_mirabas(con, cliente):
+    """C-0430: el botón mandaba sólo «confirmar» y se confirmaba lo propuesto
+    al pulsar. Si llegaba otro valor entre ver y pulsar —el secretario corre
+    en paralelo y la pantalla no recarga—, quedaba confirmado sin verlo."""
+    _proponer(con, "domicilio_fiscal", "Calle Vista 1", "un correo")
+    html = cliente.get("/secretario?p=datos").text
+    assert 'name="visto" value="Calle Vista 1"' in html
+    _proponer(con, "domicilio_fiscal", "Calle Otra 99", "otra fuente")   # mientras lo mira
+
+    aviso = _aviso(_post(cliente, "domicilio_fiscal", "confirmar", visto="Calle Vista 1"))
+    assert "cambió mientras lo mirabas" in aviso.lower()
+    assert misdatos.confirmados() == {}
+    assert misdatos.leer()["domicilio_fiscal"]["valor"] == "Calle Otra 99"
+    assert _asunto(con, "domicilio_fiscal").estado != "resuelta"
+
+    # Lo que ve ahora sí se confirma.
+    _post(cliente, "domicilio_fiscal", "confirmar", visto="Calle Otra 99")
+    assert misdatos.confirmados() == {"domicilio_fiscal": "Calle Otra 99"}
+
+
+def test_usar_el_nuevo_confirma_la_propuesta_que_viste_y_no_otra(con, cliente):
+    misdatos.confirmar("domicilio_fiscal", DOMICILIO)
+    _proponer(con, "domicilio_fiscal", "Avenida Uno 1", "un correo")
+    assert 'name="visto" value="Avenida Uno 1"' in cliente.get("/secretario?p=datos").text
+    _proponer(con, "domicilio_fiscal", "Avenida Dos 2", "otro correo")   # pisa la propuesta
+
+    aviso = _aviso(_post(cliente, "domicilio_fiscal", "confirmar", visto="Avenida Uno 1"))
+    assert "cambió mientras lo mirabas" in aviso.lower()
+    assert misdatos.confirmados()["domicilio_fiscal"] == DOMICILIO
+    assert misdatos.leer()["domicilio_fiscal"]["propuesta"]["valor"] == "Avenida Dos 2"
+
+
+def test_confirmar_sin_decir_lo_que_viste_no_confirma_nada(con, cliente):
+    _proponer(con, "telefono", "5512345678", "el chat")
+    aviso = _aviso(_post(cliente, "telefono", "confirmar"))
+    assert "recarga" in aviso.lower()
+    assert misdatos.confirmados() == {}
 
 def test_la_ficha_no_guarda_llaves_ni_campos_fuera_de_la_lista(con, cliente):
     llave = "sk-ant-api03-" + "a" * 30
@@ -211,7 +250,7 @@ def test_una_investigacion_no_lleva_tus_datos_a_la_web(con):
 
 def test_olvidar_un_dato_lo_borra_del_archivo(con, cliente):
     _proponer(con, "id_fiscal", ID_FISCAL, "tu CV")
-    _post(cliente, "id_fiscal", "confirmar")
+    _post(cliente, "id_fiscal", "confirmar", visto=ID_FISCAL)
     misdatos.confirmar("telefono", "5512345678")
     assert ID_FISCAL in misdatos.ruta().read_text(encoding="utf-8")
 
@@ -228,7 +267,7 @@ def test_olvidar_un_dato_lo_borra_del_archivo(con, cliente):
 def test_el_archivo_de_mis_datos_solo_lo_lee_el_dueno(con, cliente):
     _proponer(con, "nombre_legal", "Juana Pérez Ejemplo")
     assert stat.S_IMODE(os.stat(misdatos.ruta()).st_mode) == 0o600
-    _post(cliente, "nombre_legal", "confirmar")
+    _post(cliente, "nombre_legal", "confirmar", visto="Juana Pérez Ejemplo")
     misdatos.olvidar("nombre_legal")
     assert stat.S_IMODE(os.stat(misdatos.ruta()).st_mode) == 0o600
     # Sin temporales sueltos a la vista.
@@ -301,6 +340,127 @@ def test_lo_aprobado_se_apunta_tapado_en_la_bitacora(con):
     fila = con.execute("SELECT params, ok FROM bitacora WHERE nivel = 'aprobada'").fetchone()
     assert fila["ok"] == 1 and "Falsa" not in fila["params"] and "[tu domicilio fiscal]" in fila["params"]
 
+
+
+def test_un_dato_propuesto_no_queda_en_claro_en_la_bitacora_por_el_motivo(con):
+    """C-0431: el motivo se tapaba antes de ejecutar, cuando el dato aún no
+    estaba en la ficha, y el modelo lo escribe ahí con toda naturalidad. La
+    bitácora va a `memoria.db`, que se copia catorce veces (382)."""
+    r = herramientas.usar_accion(con, piezas.acciones()["proponer_dato"],
+                                 {"campo": "id_fiscal", "valor": ID_FISCAL, "fuente": "el chat"},
+                                 f"me dio su identificador {ID_FISCAL}")
+    assert r["hecho"]
+    fila = con.execute("SELECT params, motivo FROM bitacora WHERE accion = 'proponer_dato'").fetchone()
+    assert ID_FISCAL not in fila["params"] + fila["motivo"]
+    assert "[tu identificador fiscal]" in fila["params"] and "[tu identificador fiscal]" in fila["motivo"]
+    assert ID_FISCAL not in _todo_lo_de_la_memoria(con)
+
+
+def test_un_dato_rechazado_tampoco_queda_en_claro_en_la_bitacora(con):
+    """Uno que no se guarda (aquí, demasiado largo) no llega a la ficha, así
+    que nada lo tapaba: la fila llevaba el domicilio entero en `params`."""
+    largo = "Calle Inexistente 4321, " + "Colonia Inventada de los Ejemplos, " * 9
+    assert len(largo) > misdatos.MAX_VALOR
+    r = herramientas.usar_accion(con, piezas.acciones()["proponer_dato"],
+                                 {"campo": "domicilio_fiscal", "valor": largo, "fuente": "un correo"},
+                                 "lo saqué de un correo")
+    assert r["hecho"] is False and "largo" in r["error"]
+    # Y uno que no es de la lista, con el valor también en el motivo.
+    r = herramientas.usar_accion(con, piezas.acciones()["proponer_dato"],
+                                 {"campo": "pasaporte", "valor": "PAS1234567", "fuente": "el chat"},
+                                 "su pasaporte es PAS1234567")
+    assert r["hecho"] is False
+    assert misdatos.leer() == {}
+    filas = con.execute("SELECT params, motivo, ok FROM bitacora WHERE accion = 'proponer_dato'").fetchall()
+    assert len(filas) == 2 and not any(f["ok"] for f in filas)
+    for fila in filas:
+        assert "Inexistente" not in fila["params"] and "PAS1234567" not in fila["params"] + fila["motivo"]
+    todo = _todo_lo_de_la_memoria(con)
+    assert "Inexistente" not in todo and "PAS1234567" not in todo
+
+
+def test_un_dato_propuesto_con_permiso_y_que_falla_al_aprobarlo_tampoco_queda_en_claro(con):
+    """Por el camino de la solicitud (el modelo sin hilo, o en inglés): el
+    motivo de la solicitud y la fila de «aprobada» que falla, tapados igual."""
+    from hub.secretario import servicio
+    r = herramientas.usar_accion(con, piezas.acciones()["proponer_dato"],
+                                 {"campo": "pasaporte", "valor": "PAS1234567", "fuente": "el chat"},
+                                 "su pasaporte es PAS1234567", techo="ask")
+    assert r["solicitud"]
+    s = con.execute("SELECT motivo FROM solicitud WHERE id = ?", (r["solicitud"],)).fetchone()
+    assert "PAS1234567" not in s["motivo"]
+    memoria.resolver_solicitud(con, r["solicitud"], "aprobada")
+    servicio.ejecutar_aprobadas(con)
+    filas = con.execute("SELECT nivel, params, motivo, ok FROM bitacora").fetchall()
+    assert any(f["nivel"] == "aprobada" and not f["ok"] for f in filas)
+    for fila in filas:
+        assert "PAS1234567" not in fila["params"] + fila["motivo"]
+
+
+# ── la solicitud, una vez resuelta (C-0431, tras la revisión cruzada) ──
+
+def _pide_permiso_con_tu_domicilio(con):
+    misdatos.confirmar("domicilio_fiscal", DOMICILIO)
+    r = herramientas.usar_accion(con, piezas.acciones()["apuntar_idea"],
+                                 {"texto": f"Darse de alta con {DOMICILIO}"}, "la tienda")
+    sid = r["solicitud"]
+    # Mientras espera, en claro: es lo que se ejecuta si dice que sí.
+    assert "Falsa" in con.execute("SELECT params FROM solicitud WHERE id = ?", (sid,)).fetchone()[0]
+    return sid
+
+
+def _params(con, sid) -> str:
+    return con.execute("SELECT params FROM solicitud WHERE id = ?", (sid,)).fetchone()[0]
+
+
+def test_una_solicitud_hecha_no_guarda_tu_dato_en_claro(con):
+    """Resuelta, la solicitud sigue en `memoria.db` (y en sus 14 copias), y
+    Pendientes enseña las últimas: sus parámetros ya no hacen falta en claro."""
+    from hub.secretario import servicio
+    sid = _pide_permiso_con_tu_domicilio(con)
+    memoria.resolver_solicitud(con, sid, "aprobada")
+    assert servicio.ejecutar_aprobadas(con) == 1
+    fila = con.execute("SELECT estado, params FROM solicitud WHERE id = ?", (sid,)).fetchone()
+    assert fila["estado"] == "hecha"
+    assert "Falsa" not in fila["params"] and "[tu domicilio fiscal]" in fila["params"]
+    # Lo que se hizo, se hizo con el dato de verdad.
+    from hub import api, db as _db
+    h = _db.conectar()
+    try:
+        assert any(DOMICILIO in i["texto"] for i in api.tablero(h)["nuevas"])
+    finally:
+        h.close()
+
+
+def test_una_solicitud_rechazada_no_guarda_tu_dato_en_claro(con, cliente):
+    sid = _pide_permiso_con_tu_domicilio(con)
+    r = cliente.post(f"/secretario/solicitud/{sid}", data={"decision": "rechazar"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert con.execute("SELECT estado FROM solicitud WHERE id = ?", (sid,)).fetchone()[0] == "rechazada"
+    assert "Falsa" not in _params(con, sid) and "[tu domicilio fiscal]" in _params(con, sid)
+
+
+def test_una_solicitud_cortada_no_guarda_tu_dato_en_claro(con):
+    from hub.secretario import servicio
+    sid = _pide_permiso_con_tu_domicilio(con)
+    memoria.resolver_solicitud(con, sid, "aprobada")
+    assert memoria.resolver_solicitud(con, sid, "ejecutando", de="aprobada") is not None   # y murió a mitad
+    try:
+        assert servicio.recoger_cortadas(con) == 1
+    finally:
+        servicio._cortadas.clear()
+    assert con.execute("SELECT estado FROM solicitud WHERE id = ?", (sid,)).fetchone()[0] == "cortada"
+    assert "Falsa" not in _params(con, sid)
+
+
+def test_un_dato_propuesto_con_permiso_queda_tapado_en_la_solicitud_al_hacerse(con):
+    from hub.secretario import servicio
+    r = herramientas.usar_accion(con, piezas.acciones()["proponer_dato"],
+                                 {"campo": "id_fiscal", "valor": ID_FISCAL, "fuente": "el chat"}, techo="ask")
+    memoria.resolver_solicitud(con, r["solicitud"], "aprobada")
+    servicio.ejecutar_aprobadas(con)
+    assert misdatos.leer()["id_fiscal"]["valor"] == ID_FISCAL
+    assert ID_FISCAL not in _todo_lo_de_la_memoria(con)
 
 def test_el_regimen_fiscal_no_hace_pedir_permiso_porque_no_identifica_a_nadie(con):
     misdatos.confirmar("regimen_fiscal", "General")

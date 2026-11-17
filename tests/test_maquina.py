@@ -18,7 +18,7 @@ from hub import maquina
 @pytest.fixture
 def sin_windows(monkeypatch):
     """Una máquina sin GPU y sin Windows: Linux pelado, como un CI."""
-    for fuente in ("_gpu", "_windows", "_ups", "_tailscale", "_arranque"):
+    for fuente in ("_gpu", "_windows", "_ups", "_tailscale", "_arranque", "_encendido"):
         monkeypatch.setattr(maquina, fuente, lambda: (_ for _ in ()).throw(FileNotFoundError()))
 
 
@@ -35,7 +35,7 @@ def test_sin_gpu_se_siguen_midiendo_los_discos(sin_windows):
 def test_si_no_se_puede_medir_nada_se_dice_y_no_se_devuelve_una_lista_vacia(monkeypatch):
     """Una lista vacía se escribiría como «cero de todo». El silencio se levanta."""
     for fuente in ("_gpu", "_discos", "_memoria_y_carga", "_windows", "_ups", "_tailscale",
-                   "_arranque"):
+                   "_arranque", "_encendido"):
         monkeypatch.setattr(maquina, fuente, lambda: (_ for _ in ()).throw(OSError("no")))
 
     with pytest.raises(maquina.MaquinaNoMedida):
@@ -230,3 +230,181 @@ def test_la_ruta_del_script_de_la_tarea_se_saca_entera_y_sola(accion, script):
     salida = subprocess.run([ps, "-NoProfile", "-Command", orden], capture_output=True,
                             text=True, timeout=30).stdout
     assert salida.replace("\r", "").split("\n")[:-1] == [script]
+
+
+# ── Revisión de C-0309: el SAI lo mide sólo el latido ────────────────────────
+
+def test_el_ciclo_lento_no_pisa_la_lectura_del_sai_que_hizo_el_latido(con, monkeypatch):
+    """🔴 Con el ciclo lento en su hilo, `medir()` leía el SAI al principio y
+    lo guardaba al final, segundos después, con la fecha del guardado: si en
+    medio el latido había leído «sobre batería», la lectura vieja lo pisaba
+    hasta un minuto, y los avisos de luz veían un «volvió» y un «se fue»
+    que no pasaron (decisión 249)."""
+    lecturas = iter([[maquina.Medida("ups.estado", maquina.CON_CORRIENTE, "con corriente")],
+                     [maquina.Medida("ups.estado", maquina.SOBRE_BATERIA, "sobre batería")]])
+    leido = []
+
+    def ups():
+        leido.append(1)
+        return next(lecturas)
+
+    for fuente in ("_gpu", "_windows", "_tailscale", "_arranque", "_encendido"):
+        monkeypatch.setattr(maquina, fuente, lambda: [])
+    monkeypatch.setattr(maquina, "_ups", ups)
+
+    # El hilo lento empieza su medida (leería «con corriente»)…
+    lentas = maquina.medir(sai=False)
+    # …el latido lee el SAI entre medias, dos veces: la última, sobre batería…
+    maquina.escanear_ups(con)
+    maquina.escanear_ups(con)
+    # …y el hilo lento guarda lo suyo al acabar.
+    maquina._guardar(con, lentas)
+
+    assert len(leido) == 2, "el ciclo lento no tiene que leer el SAI"
+    assert not [m for m in lentas if m.clave.startswith("ups.")]
+    assert maquina.ultimas(con)["ups.estado"]["texto"] == "sobre batería"
+
+
+def test_escanear_sin_sai_mide_lo_demas_y_con_el_todo_como_siempre(con, monkeypatch):
+    for fuente in ("_gpu", "_windows", "_tailscale", "_arranque", "_encendido"):
+        monkeypatch.setattr(maquina, fuente, lambda: [])
+    monkeypatch.setattr(maquina, "_ups", lambda: [maquina.Medida("ups.carga", 80.0, unidad="%")])
+
+    assert maquina.escanear(con, sai=False) > 0
+    assert "ups.carga" not in maquina.ultimas(con) and "memoria.libre" in maquina.ultimas(con)
+    maquina.escanear(con)
+    assert maquina.ultimas(con)["ups.carga"]["valor"] == 80.0
+
+
+# ── C-0381: el último arranque, cruzado ──────────────────────────────────────
+
+def _systemctl(monkeypatch, sistema="@1794005473", usuario="@1794005509"):
+    """`systemctl show … --timestamp=unix`, grabado del arranque del 6-nov:
+    Linux a las 22:51:13Z y los servicios del usuario a las 22:51:49Z."""
+    pedidos = []
+
+    def salida(comando):
+        pedidos.append(comando)
+        return usuario if "--user" in comando else sistema
+
+    monkeypatch.setattr(maquina, "_hay_systemd", lambda: True)
+    monkeypatch.setattr(maquina, "_salida", salida)
+    return pedidos
+
+
+def test_el_arranque_de_wsl_y_del_hub_salen_de_systemd_en_hora_de_pared(monkeypatch):
+    """🔴 De `systemctl`, no de `/proc/stat`: medido el 13-nov, el `btime` de
+    WSL salía cinco horas tarde porque no cuenta la VM en pausa (regla 19)."""
+    pedidos = _systemctl(monkeypatch)
+    medidas = {m.clave: m.texto for m in maquina._encendido()}
+    assert medidas == {"encendido.wsl": "2026-11-06T22:51:13Z", "encendido.hub": "2026-11-06T22:51:49Z"}
+    # El de los servicios del usuario, no el de `hub-web`: ése cambia en cada
+    # reinicio del servicio y dejaría de ser el del arranque.
+    assert all("hub-web" not in " ".join(c) for c in pedidos)
+    assert all("--timestamp=unix" in c for c in pedidos)
+
+
+@pytest.mark.parametrize("crudo", ["", "n/a", "@0", "Fri 2026-11-06 16:51:13 CST"])
+def test_un_instante_vacio_o_raro_no_se_guarda(monkeypatch, crudo):
+    _systemctl(monkeypatch, sistema=crudo, usuario=crudo)
+    assert maquina._encendido() == []
+
+
+def test_sin_systemd_no_se_mide_y_no_es_un_fallo(monkeypatch):
+    monkeypatch.setattr(maquina, "_hay_systemd", lambda: False)
+    monkeypatch.setattr(maquina, "_salida", lambda c: pytest.fail(f"lanzó {c}"))
+    with pytest.raises(maquina.NoHay):
+        maquina._encendido()
+
+
+def test_el_encendido_va_en_la_medida_del_ciclo_lento(monkeypatch):
+    for fuente in ("_gpu", "_windows", "_ups", "_tailscale", "_arranque"):
+        monkeypatch.setattr(maquina, fuente, lambda: [])
+    _systemctl(monkeypatch)
+    assert {"encendido.wsl", "encendido.hub"} <= {m.clave for m in maquina.medir(sai=False)}
+
+
+def _guardadas(con, medido_en="2026-11-07T00:00:00+00:00", **textos):
+    for clave, texto in textos.items():
+        con.execute("INSERT INTO maquina (clave, valor, texto, unidad, medido_en) VALUES (?,?,?,?,?)",
+                    (clave.replace("_", "."), None, texto, "", medido_en))
+
+
+def test_maquina_cruza_cuanto_tardaron_wsl_y_el_hub_tras_encender_windows(con):
+    """Lo del 6-nov: Windows 22:50:24Z, WSL 49 s después, el hub a los 85 s."""
+    from hub import api
+    _guardadas(con, windows_arranque="2026-11-06T22:50:24Z", encendido_wsl="2026-11-06T22:51:13Z",
+               encendido_hub="2026-11-06T22:51:49Z")
+    a = api.maquina(con)["arranque"]
+    assert (a["wsl_s"], a["hub_s"], a["wsl"], a["hub"]) == (49, 85, "49 s", "85 s")
+
+
+def test_lo_de_vueltas_distintas_o_que_no_cuadra_no_se_cruza(con):
+    """Regla dura 13: un arranque de Windows de otra vuelta (PowerShell falló
+    en la última) o un WSL anterior a Windows darían una cifra falsa."""
+    from hub import api
+    _guardadas(con, medido_en="2026-11-01T00:00:00+00:00", windows_arranque="2026-11-01T08:00:00Z")
+    _guardadas(con, encendido_wsl="2026-11-06T22:51:13Z", encendido_hub="2026-11-06T22:51:49Z")
+    assert api.maquina(con)["arranque"] is None
+    con.execute("DELETE FROM maquina")
+    _guardadas(con, windows_arranque="2026-11-06T22:52:00Z", encendido_wsl="2026-11-06T22:51:13Z")
+    assert api.maquina(con)["arranque"] is None
+
+
+def test_sin_los_servicios_del_hub_se_cruza_solo_wsl_y_una_espera_larga_se_dice_en_horas(con):
+    from hub import api
+    _guardadas(con, windows_arranque="2026-11-06T22:50:24Z", encendido_wsl="2026-11-07T01:20:24Z")
+    a = api.maquina(con)["arranque"]
+    assert (a["wsl"], a["hub"]) == ("2 h 30 min", "")
+
+
+def test_la_pantalla_dice_el_ultimo_arranque(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from hub import db, web
+    ruta = tmp_path / "hub.db"
+
+    def conexion():
+        c = db.conectar(ruta)
+        db.inicializar(c)
+        return c
+
+    monkeypatch.setattr(web, "conexion", conexion)
+    c = conexion()
+    _guardadas(c, windows_arranque="2026-11-06T22:50:24Z", encendido_wsl="2026-11-06T22:51:13Z",
+               encendido_hub="2026-11-06T22:51:49Z")
+    c.close()
+    html = TestClient(web.app).get("/maquina").text
+    assert "Tras el último arranque" in html
+    assert "WSL a los <strong>49 s</strong>" in html and "el hub a los <strong>85 s</strong>" in html
+
+
+def test_el_encendido_y_los_apagones_de_windows_salen_en_la_hora_de_la_casa(con, tmp_path, monkeypatch):
+    """C-0396, tras la revisión: «Windows arrancó», «Último apagón» y «Último
+    reinicio» pintaban el texto crudo (`2026-11-06T22:51:13Z`), en UTC y a seis
+    horas de la «Última lectura» de al lado."""
+    import re
+
+    from fastapi.testclient import TestClient
+    from hub import db, web
+    monkeypatch.setenv("TZ", "America/Mexico_City")
+    _guardadas(con, windows_arranque="2026-11-06T22:50:24Z", windows_apagon="2026-11-05T03:10:00Z",
+               windows_reinicio="2026-11-04T12:00:00Z")
+    con.commit()
+    monkeypatch.setattr(web, "conexion", lambda: db.conectar(tmp_path / "hub.db"))
+
+    html = TestClient(web.app).get("/maquina").text
+
+    assert not re.search(r"\d{4}-\d\d-\d\dT", re.sub(r'datetime="[^"]*"', "", html))
+    for local in ("06/11(/2026)? 16:50", "04/11(/2026)? 21:10", "04/11(/2026)? 06:00"):
+        assert re.search(r"<time [^>]*>" + local + r" \(hace ", html), local
+
+
+def test_sin_apagones_registrados_se_dice_y_no_sale_una_raya(con, tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from hub import db, web
+    _guardadas(con, windows_arranque="2026-11-06T22:50:24Z")
+    con.commit()
+    monkeypatch.setattr(web, "conexion", lambda: db.conectar(tmp_path / "hub.db"))
+
+    assert "ninguno registrado" in TestClient(web.app).get("/maquina").text

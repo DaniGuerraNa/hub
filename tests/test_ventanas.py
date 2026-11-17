@@ -7,8 +7,11 @@ quien esté atacado en la terminal nativa.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
+import arnes_tmux
 from hub import tmux
 
 LISTADO = "\t".join(["0", "back", "1", "1", "claude", "⠂ Motor fiscal", "/tmp/a"]) + "\n" + \
@@ -210,7 +213,9 @@ def test_una_ventana_nueva_va_detras_de_la_ultima_aunque_haya_un_hueco(tmp_path)
 def test_cerrar_por_el_panel_con_tmux_de_verdad(tmp_path, monkeypatch):
     """Con un servidor propio: la ventana del panel muere, las otras no, y el
     segundo clic dice «ya estaba cerrada» en vez de matar otra (C-0227)."""
-    monkeypatch.setenv("HUB_TMUX_SOCKET", f"cerrar-panel-{tmp_path.name}"[:60])
+    # Con el pid y no con el nombre del test, que es el mismo en dos pasadas a la vez.
+    zocalo = f"cerrar-panel-{os.getpid()}"
+    monkeypatch.setenv("HUB_TMUX_SOCKET", zocalo)
     sesion = "cerrar-prueba"
     tmux._correr(["new-session", "-d", "-s", sesion, "-n", "a", "-c", str(tmp_path)])
     try:
@@ -228,7 +233,7 @@ def test_cerrar_por_el_panel_con_tmux_de_verdad(tmp_path, monkeypatch):
         assert tmux.cerrar_ventana_de(b["pane_id"], b["servidor"]) is False
         assert [v["nombre"] for v in tmux.listar_ventanas(sesion)] == ["a", "d", "c"]
     finally:
-        tmux._correr(["kill-server"])
+        arnes_tmux.apagar(zocalo)
 
 
 def test_cerrar_la_ultima_ventana_no_se_anuncia_como_una_sesion_perdida(tmp_path, monkeypatch):
@@ -237,7 +242,8 @@ def test_cerrar_la_ultima_ventana_no_se_anuncia_como_una_sesion_perdida(tmp_path
     (arquitecto, C-0227). Con tmux de verdad en su propio servidor."""
     from hub import api, snapshotter, web
 
-    monkeypatch.setenv("HUB_TMUX_SOCKET", f"cerrar-ultima-{tmp_path.name}"[:60])
+    zocalo = f"cerrar-ultima-{os.getpid()}"
+    monkeypatch.setenv("HUB_TMUX_SOCKET", zocalo)
     tmux._correr(["new-session", "-d", "-s", "sola", "-c", str(tmp_path)])
     try:
         con = web.conexion()
@@ -256,7 +262,36 @@ def test_cerrar_la_ultima_ventana_no_se_anuncia_como_una_sesion_perdida(tmp_path
         assert api.recuperacion_pendiente(con) is None
         con.close()
     finally:
-        try:
-            tmux._correr(["kill-server"])
-        except (tmux.TmuxNoDisponible, RuntimeError):
-            pass
+        arnes_tmux.apagar(zocalo)
+
+
+# ── la actividad de las ventanas: un fallo de tmux se dice (regla 21) ────────
+
+def test_si_tmux_falla_al_leer_la_actividad_se_dice_una_vez_por_racha(monkeypatch, capsys):
+    """Revisión cruzada de C-0352: `actividad_de_ventanas` se tragaba el
+    `RuntimeError` y la lista de shells sin usar desaparecía sin decir por
+    qué. Sin servidor no hay nada que decir; un error de tmux, sí, al empezar
+    la racha y al acabar, no en cada carga de la página."""
+    respuesta = {"error": "unknown format: pane_pid"}
+
+    def falso(args):
+        if respuesta["error"] == "sin servidor":
+            raise tmux.TmuxNoDisponible("no server running")
+        if respuesta["error"]:
+            raise RuntimeError(respuesta["error"])
+        return "100\tw\t0\t100\t%1\t5\tbash\n"
+    monkeypatch.setattr(tmux, "_correr", falso)
+    monkeypatch.setattr(tmux, "_FALLO_DE_ACTIVIDAD", None, raising=False)
+
+    for _ in range(3):
+        assert tmux.actividad_de_ventanas() == (None, {})
+    dicho = capsys.readouterr().out
+    assert dicho.count("unknown format: pane_pid") == 1
+
+    respuesta["error"] = ""
+    assert tmux.actividad_de_ventanas()[0] == 100
+    assert "vuelve" in capsys.readouterr().out
+
+    respuesta["error"] = "sin servidor"
+    assert tmux.actividad_de_ventanas() == (None, {})
+    assert capsys.readouterr().out == ""

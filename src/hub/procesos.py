@@ -105,6 +105,39 @@ def vivo(h: dict | None) -> bool:
     return bool(campos) and campos[19] == h.get("arranque") and campos[0] not in ("Z", "X")
 
 
+# Lo que puede llevar una shell interactiva en su línea de órdenes y seguir
+# siendo sólo eso. Con cualquier otra cosa —un guion, `-c "…"`— está
+# ejecutando algo, aunque tmux la llame `bash`.
+_OPCIONES_DE_SHELL = frozenset({"-l", "-i", "-il", "-li", "--login", "--norc", "--noprofile",
+                                "--noediting", "--posix"})
+
+
+def shell_en_reposo(pid: int, shells: frozenset[str] | set[str]) -> bool:
+    """Si `pid` es una shell interactiva sin nada en marcha (C-0352, revisión
+    cruzada).
+
+    `pane_current_command` dice `bash` con `bash x.sh` o con un comando
+    compuesto, y con eso las «shells sin usar» se inflaban (regla 13). Dos
+    señales de /proc, baratas y sin `pgrep`: su línea de órdenes es la de una
+    shell a secas (su nombre, con el `-` de login, y opciones de
+    `_OPCIONES_DE_SHELL`) y no tiene ningún hijo (`/proc/pid/task/*/children`:
+    ni en primer plano ni en segundo, ni un trabajo parado). Lo que no se puede
+    leer cuenta como no en reposo: mejor quedarse corto que cerrar algo vivo.
+    """
+    try:
+        argv = [a.decode(errors="replace")
+                for a in Path(f"/proc/{int(pid)}/cmdline").read_bytes().split(b"\0") if a]
+        hilos = list(Path(f"/proc/{int(pid)}/task").iterdir())
+        if any((h / "children").read_text().strip() for h in hilos):
+            return False
+    except (OSError, ValueError):
+        return False
+    if not argv or not hilos:
+        return False
+    return (Path(argv[0]).name.lstrip("-") in shells
+            and all(a in _OPCIONES_DE_SHELL for a in argv[1:]))
+
+
 def _stat(pid: int) -> list[str] | None:
     """Los campos de /proc/pid/stat a partir del estado (campo 3).
 

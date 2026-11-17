@@ -4,20 +4,20 @@
 <style>
   /* Una columna: qué tienes, qué hay, el botón y lo que va pasando. */
   .act { display:grid; gap:14px; max-width:860px; }
-  .act .tarjeta h2 { margin:0 0 10px; font-size:15px; }
+  .act .tarjeta h2 { margin:0 0 10px; font-size:var(--letra-4); }
   .act p { margin:0 0 8px; color:var(--texto-2); font-size:14px; max-width:72ch; }
   .act .cifras { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px; margin-bottom:10px; }
   .act .cifra { background:var(--lienzo); border:1px solid var(--borde); border-radius:var(--r-input); padding:10px 12px; }
-  .act .cifra > span:not(.placa) { display:block; font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--texto-4); }
+  .act .cifra > span:not(.placa) { display:block; font-size:var(--letra-1); text-transform:uppercase; letter-spacing:.08em; color:var(--texto-4); }
   .act .cifra strong { font-size:18px; font-weight:600; font-variant-numeric:tabular-nums; }
   .act .acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px; }
   .act pre { background:var(--lienzo); border:1px solid var(--borde); border-radius:var(--r-input);
-             padding:10px 12px; overflow-x:auto; font-size:12.5px; white-space:pre-wrap; margin:0;
+             padding:10px 12px; overflow-x:auto; font-size:var(--letra-2); white-space:pre-wrap; margin:0;
              /* Una ruta larga sin espacios (un cambio sin guardar) no se parte
                 con `pre-wrap` y sacaba la página de lado en el móvil. */
              overflow-wrap:anywhere; }
   .act #registro { max-height:420px; overflow-y:auto; }
-  .act .marca { font-size:11px; padding:1px 8px; border-radius:999px; }
+  .act .marca { font-size:var(--letra-1); padding:1px 8px; border-radius:var(--r-pildora); }
   .act .marca.ok { color:var(--ok); background:color-mix(in srgb, var(--ok) 14%, transparent); }
   .act .marca.mal { color:var(--riesgo); background:color-mix(in srgb, var(--riesgo) 14%, transparent); }
   .act .marca.espera { color:var(--espera); background:color-mix(in srgb, var(--espera) 14%, transparent); }
@@ -42,12 +42,29 @@
         {% if vers.url_novedades %}<a href="{{ vers.url_novedades }}" rel="noopener" target="_blank">Qué trae</a>.{% endif %}</p>
     {% elif vers.publicada %}
       <p><span class="marca ok">al día</span> No hay ninguna más nueva que la tuya.</p>
+    {% endif %}
+    {% if vers.sin_remoto %}
+      <p>Este clon no tiene remoto (<code>origin</code>): no busca versiones nuevas.</p>
     {% elif not vers.buscar %}
       <p>No se buscan versiones nuevas (<code>HUB_BUSCAR_VERSIONES=0</code>).</p>
     {% endif %}
-    {% if vers.error %}<p class="tenue">La última vez que se miró falló: {{ vers.error }}</p>{% endif %}
-    <p class="tenue" style="font-size:12.5px">Se mira cada hora y al entrar aquí{% if vers.mirado_en %}; la última vez,
-      {{ vers.mirado_en | replace('T', ' ') | truncate(16, true, '') }} (UTC){% endif %}.</p>
+    {# Lo que se dice va en español; lo que contestó git, tal cual pero plegado:
+       sirve para buscar la causa, no para leerlo de pasada (C-0294). #}
+    {% if vers.error %}
+      <p><span class="marca mal">sin mirar</span> No se pudo consultar el repositorio publicado
+        {%- if vers.mirado_en %} la última vez que se intentó, el {{ ui.cuando(vers.mirado_en, forma='local') }}{% endif %}: sin red,
+        o el remoto ya no está donde estaba.</p>
+      <details class="tenue"><summary>Lo que contestó git</summary><pre>{{ vers.error }}</pre></details>
+    {% endif %}
+    {% if vers.buscar %}
+      {% if vers.atrasado %}
+      <p><span class="marca mal">atrasado</span> No se ha mirado desde el {{ ui.cuando(vers.mirado_en, forma='local') }}: debería
+        mirarse cada hora, así que el muestreo no está corriendo o no consigue apuntarlo.</p>
+      {% else %}
+      <p class="tenue" style="font-size:var(--letra-2)">Se mira cada hora y al entrar aquí{% if vers.mirado_en %}; la
+        última vez, el {{ ui.cuando(vers.mirado_en, forma='local') }}{% endif %}.</p>
+      {% endif %}
+    {% endif %}
     <div class="acciones">
       <form method="post" action="/actualizaciones/comprobar"><button class="boton">Comprobar ahora</button></form>
     </div>

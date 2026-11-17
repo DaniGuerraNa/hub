@@ -76,6 +76,16 @@ Entra cada carpeta que encaje **y tenga `.git`**; lo demás no se mide. Un patr�
 sin coincidencias no es un error: un workspace recién instalado está vacío. Ese
 asiento no necesita `git init` ni documento de estado: deja `estado_ref` vacío.
 
+Lo que encuentra el patrón se recuerda un minuto, porque recorrer el disco en cada
+lectura costaba medio segundo: un repo que acabas de clonar ahí dentro tarda hasta
+un minuto en aparecer. Lo demás de `projects.yml` —un guardrail, una ruta, quitar
+el patrón— vale desde la lectura siguiente.
+
+Si la carpeta no se deja leer un rato (una carpeta de nube a medio sincronizar da
+error de lectura), el hub sigue con lo último que encontró y lo dice en su
+registro; en **Respaldo**, esos repos conservan su última cifra con la hora de
+entonces, en vez de desaparecer como si no hubiera nada.
+
 ### Repos que no puedes modificar
 
 Es el mismo patrón, y resuelve un caso concreto: repos de otro equipo, o sin una
@@ -115,6 +125,9 @@ El hub saca de él tres cosas, buscándolas por su encabezado o en el frontmatte
 
 Reconoce las variantes normales («situación», «siguientes pasos», «qué espera
 decisión»…). Si no encuentra nada, lo dice en vez de inventárselo.
+
+La ficha del proyecto enseña un resumen de cada una. Si es largo, termina en
+una palabra entera con «…», y **Leer entero** lo despliega ahí mismo.
 
 Ejemplo de documento que el hub lee bien:
 

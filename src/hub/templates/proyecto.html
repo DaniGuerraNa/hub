@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
+{# «Paneles abiertos» sale de la muestra de tmux: aquí también se puede tomar otra (C-0401). #}
+{% block refrescar %}{{ ui.refrescar(request) }}{% endblock %}
 {% block contenido %}
 
 <style>
@@ -25,7 +27,7 @@
   .campo { display:flex; flex-direction:column; gap:1px; padding:5px 12px;
            background:var(--superficie); border:1px solid var(--borde);
            border-radius:var(--r-nav); }
-  .campo .que { font-size:11px; text-transform:uppercase; letter-spacing:.09em;
+  .campo .que { font-size:var(--letra-1); text-transform:uppercase; letter-spacing:.09em;
                 color:var(--texto-3); }
   .campo .val { font-size:14px; color:var(--texto-2); font-weight:500; }
   /* En columnas y no en lista: un proyecto medido tenía seis rutas, y apiladas empujaban
@@ -38,6 +40,12 @@
   .ficha .rutas { display:grid;
                   grid-template-columns:repeat(auto-fill, minmax(min(600px, 100%), 1fr));
                   gap:2px 32px; }
+  /* «Leer entero» (C-0353). Abierto, el texto entero ocupa el sitio del
+     resumen en vez de repetirlo debajo. */
+  .estado-campo { margin:0 0 14px; }
+  .estado-campo p { margin:0; white-space:pre-wrap; }
+  .estado-campo:has(> .estado-entero[open]) > .estado-corto { display:none; }
+  .estado-entero > summary { margin-top:4px; }
 
 </style>
 
@@ -125,10 +133,21 @@
     {% for clave, titulo in [('estado','Estado'), ('proxima_accion','Próxima acción'), ('bloqueado_por','Bloqueado por')] %}
       {% if estado.campos[clave] %}
         <label style="margin-top:0">{{ titulo }}</label>
+        {% set entero = (estado.enteros or {}).get(clave) %}
+        {% if entero and entero != estado.campos[clave] %}
+        {# El resumen se corta en una palabra con «…»; el resto, aquí mismo:
+           cortado a media palabra y sin forma de leerlo, el dato se perdía
+           justo donde estaba (C-0353). #}
+        <div class="estado-campo">
+          <p class="estado-corto">{{ estado.campos[clave] }}</p>
+          <details class="estado-entero"><summary>Leer entero</summary><p>{{ entero }}</p></details>
+        </div>
+        {% else %}
         <p style="margin:0 0 14px;white-space:pre-wrap">{{ estado.campos[clave] }}</p>
+        {% endif %}
       {% endif %}
     {% endfor %}
-    <span class="mono dato" data-que="documento">{{ estado.ruta }}{% if estado.modificado %} · editado {{ estado.modificado[:10] }}{% endif %}</span>
+    <span class="mono dato" data-que="documento">{{ estado.ruta }}{% if estado.modificado %} · editado {{ ui.cuando(estado.modificado, forma='dia') }}{% endif %}</span>
   {% endif %}
 
   <div class="barra" style="margin-top:14px">
@@ -205,8 +224,8 @@
       {# La ventana va también aquí y no sólo en `/consumo`: quien entra por la
          ficha de un proyecto no ha pasado por la otra pantalla, y sin la fecha
          estas cifras se leen como el histórico del proyecto. #}
-      <span class="mono dato" data-que="ventana">del {{ consumo.desde[:10] }}
-        al {{ consumo.hasta[:10] }} — Claude Code poda su registro a los 30 días</span>
+      <span class="mono dato" data-que="ventana">del {{ ui.cuando(consumo.primer_dia, forma='dia') }}
+        al {{ ui.cuando(consumo.ultimo_dia, forma='dia') }} (días en UTC) — Claude Code poda su registro a los 30 días</span>
     </span>
   </div>
   <div class="fila">
@@ -229,20 +248,24 @@
 {% if servicios.total %}
 <section class="seccion" id="sec-servicios">
 {% set corriendo = servicios.contenedores | selectattr('estado', 'equalto', 'running') | list | length %}
-<h2 class="con-placa">{{ ui.placa('pilas', 'ok' if corriendo else 'neutro') }}
+{# Una lectura que no es de ahora se dice con su fecha, no como «corriendo» (C-0293). #}
+{% set vigente = servicios.vigente %}
+<h2 class="con-placa">{{ ui.placa('pilas', 'ok' if corriendo and vigente else 'neutro') }}
   <span>Servicios</span>
-  <span class="apunte">{{ corriendo }} de {{ servicios.contenedores | length }} corriendo
+  <span class="apunte">{{ corriendo }} de {{ servicios.contenedores | length }}
+    {{ 'corriendo' if vigente else 'corrían el ' ~ servicios.visto }}
     · <a href="/servicios">ver todo</a></span></h2>
 <div class="panel">
   {% for c in servicios.contenedores %}
-  <div class="fila {{ 'apagada' if c.estado != 'running' }}">
-    {{ ui.placa('punto', 'ok' if c.estado == 'running' else 'neutro') }}
+  <div class="fila {{ 'apagada' if c.estado != 'running' or not vigente }}">
+    {{ ui.placa('punto', 'ok' if c.estado == 'running' and vigente else 'neutro') }}
     <span class="pila">
       <span class="etiqueta">{{ c.contenedor }}</span>
       <span class="mono dato" data-que="imagen">{{ c.imagen }}</span>
     </span>
     <span class="der">
-      {{ ui.estado('servicio', c.estado) }}
+      {% if vigente %}{{ ui.estado('servicio', c.estado) }}
+      {% else %}<span class="insignia neutro" title="{{ servicios.motivo }}">visto el {{ servicios.visto }}</span>{% endif %}
       <span class="insignia neutro">{{ c.detalle }}</span>
     </span>
   </div>
@@ -304,7 +327,7 @@
       <span class="etiqueta">{{ s.nombre }} {% if s.status == 'archivado' %}<span class="chip">archivado</span>{% endif %}</span>
       {% if s.ruta %}<span class="mono dato" data-que="ruta">{{ s.ruta }}</span>{% endif %}
       <span class="tenue">
-        {% if s.ultima_actividad %}última actividad {{ s.ultima_actividad[:16] }}{% else %}sin actividad registrada{% endif %}
+        {% if s.ultima_actividad %}última actividad {{ ui.cuando(s.ultima_actividad, forma='local', con_hace=false) }}{% else %}sin actividad registrada{% endif %}
       </span>
     </div>
     <div class="barra">

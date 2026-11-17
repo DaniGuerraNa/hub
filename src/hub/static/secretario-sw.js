@@ -15,9 +15,13 @@ self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
 
 function leer(e) {
-  try { return e.data ? e.data.json() : {}; } catch (err) {
+  let d;
+  try { d = e.data ? e.data.json() : {}; } catch (err) {
     return { notification: { title: 'Secretario', body: e.data ? e.data.text() : '' } };
   }
+  // `null`, un número o una lista son JSON válido y no son un aviso: con
+  // `null`, `d.notification` reventaba y no se enseñaba nada (LLA-13).
+  return d && typeof d === 'object' && !Array.isArray(d) ? d : {};
 }
 
 self.addEventListener('push', (e) => {
@@ -28,7 +32,7 @@ self.addEventListener('push', (e) => {
     body: n.body || '',
     icon: '/static/icono-192.png',
     badge: '/static/icono-192.png',
-    data: { url: n.navigate || '/secretario', solicitud: s.solicitud || null },
+    data: { url: n.navigate || '/secretario', solicitud: s.solicitud || null, compromiso: s.compromiso || null },
   };
   if (s.solicitud) {
     // Una por solicitud: si se repite, sustituye a la anterior en vez de apilarse.
@@ -36,6 +40,12 @@ self.addEventListener('push', (e) => {
     opciones.requireInteraction = true;
     // Lo que no tiene vuelta atrás llega sin botones: se decide con la app abierta.
     if (s.decidir) opciones.actions = [{ action: 'aprobar', title: 'Aprobar' }, { action: 'rechazar', title: 'Rechazar' }];
+  } else if (s.compromiso) {
+    // Un recordatorio se cierra o se aplaza sin abrir la app (C-0407): de 20,
+    // 11 seguían abiertos. Son los gestos de Pendientes («Hecho» tampoco
+    // pregunta allí). Sin `tag` a propósito: no cambia cómo suena, y el de
+    // «En 1 h» no debe llegar mudo sustituyendo a otro.
+    opciones.actions = [{ action: 'hecho', title: 'Hecho' }, { action: 'aplazar', title: 'En 1 h' }];
   }
   e.waitUntil(self.registration.showNotification(n.title || 'Secretario', opciones));
 });
@@ -54,27 +64,41 @@ async function abrir(url) {
   return self.clients.openWindow(url);
 }
 
-async function decidir(solicitud, decision, url) {
+// Lo que se contesta desde el propio aviso: un POST con JSON a la API del hub
+// (el navegador pone el `Origin`, que el hub exige en todo POST) y otro aviso
+// con lo que pasó, sólo cuando el hub lo confirma.
+async function contestar(ruta, cuerpo, bien, tag, url) {
   try {
-    const r = await fetch(`/api/secretario/solicitud/${solicitud}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision }),
+    const r = await fetch(ruta, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo),
     });
     const d = await r.json();
-    const texto = d.ok ? (decision === 'aprobar' ? 'Aprobado: lo hace en unos segundos.' : 'Rechazado.')
-                       : `No se pudo: ${d.error || r.status}`;
-    await self.registration.showNotification('Secretario', { body: texto, tag: `decision-${solicitud}`,
-                                                             icon: '/static/icono-192.png', data: { url } });
+    const texto = d.ok ? bien : `No se pudo: ${d.error || r.status}`;
+    await self.registration.showNotification('Secretario', { body: texto, tag, icon: '/static/icono-192.png',
+                                                             data: { url } });
   } catch (err) {
-    // Sin red o sin sesión (fuera de casa sin Acceso): se abre la app para decidir ahí.
+    // Sin red o sin sesión (fuera de casa sin Acceso): se abre la app para hacerlo ahí.
     await abrir(url);
   }
 }
 
+const decidir = (solicitud, decision, url) => contestar(
+  `/api/secretario/solicitud/${solicitud}`, { decision },
+  decision === 'aprobar' ? 'Aprobado: lo hace en unos segundos.' : 'Rechazado.', `decision-${solicitud}`, url);
+
+const aplazarOCerrar = (compromiso, accion, url) => contestar(
+  `/api/secretario/compromiso/${compromiso}`, { accion },
+  accion === 'hecho' ? 'Hecho.' : 'Te lo vuelvo a recordar en una hora.', `compromiso-${compromiso}`, url);
+
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const { url, solicitud } = e.notification.data || {};
+  const { url, solicitud, compromiso } = e.notification.data || {};
   if (solicitud && (e.action === 'aprobar' || e.action === 'rechazar')) {
     e.waitUntil(decidir(solicitud, e.action, url || '/secretario?p=pendientes'));
+    return;
+  }
+  if (compromiso && (e.action === 'hecho' || e.action === 'aplazar')) {
+    e.waitUntil(aplazarOCerrar(compromiso, e.action, url || '/secretario?p=pendientes'));
     return;
   }
   e.waitUntil(abrir(url || '/secretario'));

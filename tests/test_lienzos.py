@@ -6,6 +6,7 @@ import os
 import time
 
 import pytest
+import yaml
 
 from hub import lienzos
 
@@ -317,3 +318,232 @@ def test_el_buscador_SI_encuentra_los_archivados():
 
 def test_archivar_algo_que_no_existe_no_revienta():
     assert lienzos.archivar("pedidos", "no-existe") is None
+
+
+# ── un valor por línea (C-0387) ──────────────────────────────────────────────
+#
+# El panel lee el cuerpo línea a línea (`static/lienzos.js`): un valor escrito
+# en bloque YAML se pintaba como «>-» y el texto se perdía. La puerta de
+# publicar lo garantiza: en `decisiones` lo pasa a una línea; en las demás
+# plantillas lo rechaza diciendo dónde y cómo escribirlo.
+
+
+_CON_BLOQUES = """puntos:
+  - id: n1
+    punto: "contador en memoria"
+    justificacion: >-
+      dos procesos dan
+      el mismo número
+    decision: no
+  # un comentario que se queda
+  - id: n2
+    punto: el IVA
+    justificacion: |
+      está en tres sitios:
+      «factura», «ticket» y «resumen»
+    decision: pendiente
+    campo_de_manana: 42
+otra_cosa: "sin tocar"
+"""
+
+
+def _cuerpo_publicado(titulo: str) -> str:
+    return lienzos.leer("pedidos", lienzos.slug(titulo)).cuerpo
+
+
+def test_un_valor_en_bloque_se_publica_en_una_linea_con_el_texto_entero():
+    lienzos.escribir("pedidos", "Con bloques", _CON_BLOQUES, plantilla="decisiones")
+    cuerpo = _cuerpo_publicado("Con bloques")
+
+    assert ">-" not in cuerpo and "|\n" not in cuerpo
+    assert '    justificacion: "dos procesos dan el mismo número"\n' in cuerpo
+    assert ('    justificacion: "está en tres sitios:\\n«factura», «ticket» y «resumen»\\n"\n'
+            in cuerpo)
+    # Lo leído es lo mismo antes y después: sólo cambia cómo va escrito.
+    antes = yaml.load(_CON_BLOQUES, Loader=yaml.BaseLoader)
+    assert yaml.load(cuerpo, Loader=yaml.BaseLoader) == antes
+
+
+def test_un_valor_que_sigue_en_la_linea_de_abajo_tambien():
+    cuerpo = ("puntos:\n  - id: n1\n    punto: esto es plano\n      y sigue aquí\n"
+              "    decision: pendiente\n")
+    lienzos.escribir("pedidos", "Sigue abajo", cuerpo, plantilla="decisiones")
+
+    assert _cuerpo_publicado("Sigue abajo") == (
+        'puntos:\n  - id: n1\n    punto: "esto es plano y sigue aquí"\n'
+        "    decision: pendiente\n")
+
+
+def test_un_cuerpo_que_ya_va_en_lineas_no_cambia_ni_un_byte():
+    """Ni las comillas, ni los comentarios, ni un lienzo que YAML estricto no
+    acepta pero el panel lee bien (dos puntos dentro de un valor sin comillas:
+    hay uno así entre los de verdad)."""
+    for cuerpo in (
+        'puntos:\n  - id: n1\n    punto: \'simple\'   # nota\n    decision: si\n',
+        "puntos:\n  - id: n1\n    punto: el plazo: viernes\n    decision: pendiente\n",
+        "- Validar en el servidor\n- Avisar en la misma pantalla\n",
+        "texto suelto\nque no es YAML de nada\n",
+    ):
+        assert lienzos.normalizar_cuerpo("decisiones", cuerpo) == cuerpo
+
+
+def test_decision_no_sigue_siendo_no_tras_normalizar():
+    """Con `safe_load`, `decision: no` sería `False`: se carga todo como texto
+    (`BaseLoader`) y además esa línea ni se reescribe."""
+    cuerpo = lienzos.normalizar_cuerpo("decisiones", _CON_BLOQUES)
+    assert "    decision: no\n" in cuerpo
+    assert "False" not in cuerpo and "false" not in cuerpo
+
+
+def test_los_campos_que_el_hub_no_conoce_sobreviven_a_normalizar():
+    cuerpo = lienzos.normalizar_cuerpo("decisiones", _CON_BLOQUES)
+    assert "    campo_de_manana: 42\n" in cuerpo
+    assert 'otra_cosa: "sin tocar"\n' in cuerpo
+    assert "  # un comentario que se queda\n" in cuerpo
+
+
+_GRAFO_CON_BLOQUE = ("orientacion: >-\n  vertical\npiezas:\n"
+                     "  - {id: a, tipo: entrada, nombre: A}\n")
+
+
+@pytest.mark.parametrize("plantilla, cuerpo, linea, clave", [
+    ("comparativa", "criterios: [coste, rapidez]\nopciones:\n  - nombre: A\n"
+                    "    nota: >-\n      la barata\n      pero lenta\n", 4, "nota"),
+    ("pasos", _GRAFO_CON_BLOQUE, 1, "orientacion"),
+    ("arquitectura", _GRAFO_CON_BLOQUE, 1, "orientacion"),
+])
+def test_un_bloque_en_otra_plantilla_se_rechaza_diciendo_la_linea_y_como_escribirlo(
+        plantilla, cuerpo, linea, clave):
+    """Sólo en una clave que el panel lee: ahí se pintaría el «>-»."""
+    with pytest.raises(ValueError) as exc:
+        lienzos.escribir("pedidos", "Comparar", cuerpo, plantilla=plantilla)
+    mensaje = str(exc.value)
+    assert f"línea {linea}" in mensaje and f"«{clave}»" in mensaje
+    assert "en una línea" in mensaje and "\\n" in mensaje
+    assert lienzos.leer("pedidos", "comparar") is None
+
+
+def test_un_bloque_que_yaml_no_entiende_se_rechaza_y_no_se_publica():
+    cuerpo = "puntos:\n  - id: n1\n    justificacion: |\n      uno\n   - dos: [\n"
+    with pytest.raises(ValueError, match="«justificacion»"):
+        lienzos.escribir("pedidos", "Roto", cuerpo, plantilla="decisiones")
+    assert lienzos.leer("pedidos", "roto") is None
+
+
+# ── Sólo lo que rompe al panel (C-0387, tras la revisión cruzada) ────────────
+#
+# Un lienzo que antes se publicaba y se veía bien no puede empezar a
+# rechazarse. La puerta sólo mira las claves que el panel lee de cada
+# plantilla; fuera de `decisiones`, sólo rechaza un indicador de bloque.
+
+_COMPARATIVA_EN_HTML = """<table class="opciones">
+<style>
+  .opciones td {
+    font-family: "Inter",
+      sans-serif;
+  }
+</style>
+<tr><td>A</td><td>B</td></tr>
+</table>
+"""
+
+_ARQUITECTURA_CON_NOTA = """plantilla: arquitectura
+nota: lo que falta por decidir
+  - si la cola va antes
+  - quién la vigila
+piezas:
+  - {id: a, tipo: entrada, nombre: "A"}
+  - {id: b, tipo: computo, nombre: "B"}
+flujo:
+  - a -> b
+"""
+
+
+@pytest.mark.parametrize("plantilla, cuerpo", [
+    ("comparativa", _COMPARATIVA_EN_HTML),
+    ("arquitectura", _ARQUITECTURA_CON_NOTA),
+])
+def test_un_cuerpo_que_el_panel_leia_bien_se_sigue_publicando_tal_cual(plantilla, cuerpo):
+    """Los dos casos del revisor: daban 400. El panel los enseñaba (crudo el
+    HTML, dibujada la arquitectura: `nota` no la lee)."""
+    lienzos.escribir("pedidos", "Tal cual", cuerpo, plantilla=plantilla)
+    assert lienzos.leer("pedidos", "tal-cual").cuerpo == cuerpo
+
+
+def test_en_decisiones_lo_que_el_panel_no_lee_tampoco_se_toca():
+    """El HTML o el markdown publicados con la plantilla por omisión se ven
+    crudos: un valor partido de algo que no es un punto no se reescribe ni
+    tumba la publicación."""
+    lienzos.escribir("pedidos", "Html", _COMPARATIVA_EN_HTML, plantilla="decisiones")
+    assert lienzos.leer("pedidos", "html").cuerpo == _COMPARATIVA_EN_HTML
+
+
+#: Los ejemplos de las plantillas del kit `lienzos`, tal cual (13-nov).
+_EJEMPLOS_DEL_KIT = {
+    "decisiones": """puntos:
+  - id: n1
+    punto: "Las facturas se numeran con un contador en memoria"
+    justificacion: "Dos procesos a la vez dan el mismo número. Ya pasó: dos facturas con el 1042."
+    propone: "Pasar el contador a una secuencia de la base."
+    decision: pendiente
+  - id: n2
+    punto: "Los importes son float"
+    justificacion: "0,1 + 0,2 no da 0,3. Acaba en un descuadre que nadie sabe explicar."
+    propone: "Migrar a decimal. Toca la base y el modelo."
+    decision: pendiente
+""",
+    "arquitectura": """plantilla: arquitectura
+orientacion: auto          # auto | horizontal | vertical  (opcional)
+piezas:
+  - {id: apigw, tipo: entrada, nombre: "API Gateway /pedidos"}
+  - {id: l1, tipo: computo, nombre: "λ validar"}
+  - {id: q1, tipo: cola, nombre: "SQS pedidos"}
+  - {id: db1, tipo: almacen, nombre: "Aurora pedidos"}
+flujo:
+  - apigw -> l1        # flujo: lo que empuja el trabajo hacia adelante
+  - l1 -> q1
+  - l1 ~> db1          # lectura: consulta algo y sigue
+""",
+    "comparativa": """plantilla: comparativa
+criterios: [coste, "a quién bloquea", reversible]
+opciones:
+  - nombre: "Migrar ahora"
+    valores: ["2 días", "a todo el equipo", "no"]
+    nota: "hay que parar los despliegues"
+  - nombre: "Migrar por módulos"
+    valores: ["2 semanas", "a nadie", "sí"]
+  - nombre: "No migrar"
+    valores: ["0", "a nadie", "sí"]
+    nota: "la deuda sigue creciendo"
+eleccion: "Migrar por módulos"
+porque: "es el único reversible sin parar a nadie"
+""",
+    "pasos": """plantilla: pasos
+piezas:
+  - {id: from, tipo: entrada, nombre: "1 · FROM / JOIN"}
+  - {id: where, tipo: computo, nombre: "2 · WHERE"}
+  - {id: select, tipo: cola, nombre: "5 · SELECT"}
+flujo:
+  - from -> where
+  - where -> select
+""",
+}
+
+
+@pytest.mark.parametrize("plantilla", sorted(_EJEMPLOS_DEL_KIT))
+def test_los_ejemplos_de_las_plantillas_del_kit_se_publican_sin_cambiar(plantilla):
+    cuerpo = _EJEMPLOS_DEL_KIT[plantilla]
+    assert lienzos.normalizar_cuerpo(plantilla, cuerpo) == cuerpo
+
+
+def test_las_claves_que_mira_la_puerta_son_las_que_lee_el_panel():
+    """La puerta decide con `CLAVES_DEL_PANEL`; si el panel deja de leer una
+    clave o la renombra, esto lo dice en vez de rechazar por algo que ya no
+    rompe nada."""
+    import re
+    from pathlib import Path
+
+    js = (Path(lienzos.__file__).parent / "static" / "lienzos.js").read_text(encoding="utf-8")
+    for plantilla, claves in lienzos.CLAVES_DEL_PANEL.items():
+        for clave in claves:
+            assert re.search(rf"\b{clave}\b", js), (plantilla, clave)

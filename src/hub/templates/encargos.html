@@ -10,7 +10,7 @@
      desde el suyo, y el aviso de que hay algo esperando llega ahí—, y una fila
      de tres columnas de ancho fijo saca la página del viewport en horizontal. */
   .linea-reg { display:grid; grid-template-columns:150px 64px 1fr; gap:10px;
-               padding:5px 0; border-bottom:1px solid var(--borde); font-size:12.5px; }
+               padding:5px 0; border-bottom:1px solid var(--borde); font-size:var(--letra-2); }
   .linea-reg .cuerpo { color:var(--texto-3); white-space:pre-wrap; word-break:break-word; }
   /* `falla` es la única línea del registro que se busca con prisa, así que es la
      única que se tiñe. La clase se escribe también en /canal, pero allí no está
@@ -32,13 +32,13 @@
   .enc-fila { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
   .enc-nom { flex:1; min-width:0; font-weight:600; overflow-wrap:anywhere; }
   .enc-met { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
-             font-size:12.5px; color:var(--texto-3); }
+             font-size:var(--letra-2); color:var(--texto-3); }
 
   /* La ficha: el nombre del dato encima del valor. «panadería de barrio» sin
      sujeto no dice a qué pregunta contesta. */
   .hueco-ficha { border-top:1px solid var(--borde); padding:11px 0; }
   .hueco-ficha:first-child { border-top:0; padding-top:0; }
-  .hueco-ficha .que { font-size:11px; text-transform:uppercase; letter-spacing:.09em;
+  .hueco-ficha .que { font-size:var(--letra-1); text-transform:uppercase; letter-spacing:.09em;
                       color:var(--texto-4); }
   .hueco-ficha .val { white-space:pre-wrap; overflow-wrap:anywhere; margin-top:3px; }
   /* `pre-wrap` es para lo que contó ELLA, que trae sus propios saltos de línea.
@@ -66,11 +66,11 @@
               background:color-mix(in srgb, var(--acento) 12%, var(--superficie)); }
   .msg .txt { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.4; }
   .msg .met { display:flex; gap:8px; flex-wrap:wrap; align-items:baseline;
-              justify-content:flex-end; font-size:11px; color:var(--texto-4);
+              justify-content:flex-end; font-size:var(--letra-1); color:var(--texto-4);
               margin-top:3px; }
   .msg.entra .met { justify-content:flex-start; }
   .msg .muestras { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:4px; }
-  .msg .muestra { font-size:12.5px; padding:3px 9px; border-radius:999px;
+  .msg .muestra { font-size:var(--letra-2); padding:3px 9px; border-radius:var(--r-pildora);
                   background:var(--superficie); border:1px solid var(--borde); }
   .chat .dia { align-self:center; font-size:11.5px; color:var(--texto-4);
                margin:8px 0 2px; }
@@ -85,14 +85,11 @@
      «1 esperando» ocupaba tres veces su sitio. */
   .indice .cuenta.urge { color:var(--alerta); font-weight:600; }
 
-  /* El `label` del sistema es el rótulo de un campo: bloque, 10px y versalitas.
-     Éste va DENTRO de la fila y pegado a su casilla, y en versalitas ocupaba el
-     doble de ancho — lo bastante para echar el botón «Guardar» a una línea
-     propia. Se le devuelven las minúsculas y su tamaño; el color sigue siendo
-     el del sistema. */
+  /* Va DENTRO de la fila y pegado a su casilla: las minúsculas ya se las da
+     base.html a toda casilla con su texto (C-0341); aquí, el tamaño y el
+     hueco justos para que «Guardar» no salte a una línea propia. */
   .marca-dueno { display:flex; align-items:center; gap:6px; margin:0; flex:none;
-                 font-size:13px; text-transform:none; letter-spacing:-.01em;
-                 color:var(--texto-3); }
+                 font-size:13px; color:var(--texto-3); }
   .marca-dueno input { width:auto; }
   /* El alias es lo único de la fila que puede encoger, así que es lo que se
      reparte el sitio que sobra. Con un ancho fijo, «Guardar» se caía a una
@@ -206,14 +203,19 @@
     {% endif %}
   </div>
 
-  <div class="fila" style="margin-top:14px;justify-content:flex-start;gap:8px">
+  <div class="fila enc-acciones" style="margin-top:14px;justify-content:flex-start;gap:8px">
     {# El degradado —aquí, el acento sólido— es exclusivo de lanzar agentes
        (§6.6), y esto es exactamente eso: abre la ventana donde corre el
        entrevistador. #}
     {# Abren una ventana de tmux y tardan: el botón se apaga y lo dice (C-0230). #}
+    {# Sólo si queda entrevista: publicado o descartado, el entrevistador
+       contesta que no hay nada que seguir, y la acción principal sería la que
+       no toca (C-0384). #}
+    {% if entrevista_abierta %}
     <form method="post" action="/encargos/{{ enc.id }}/agente" data-una-vez="Abriendo…">
       <button class="cta">{{ ui.icono('agente', 15) }} Abrir el entrevistador</button>
     </form>
+    {% endif %}
     {% if enc.estado == 'publicado' and enc.etapa == 'maqueta' %}
     {# La maqueta ya está como la quiere: el sistema de verdad, con base de
        datos y acceso, lo abre esto (decisión 244). Es un gate humano más. #}
@@ -223,9 +225,13 @@
     {% endif %}
     <a class="sutil boton" href="/encargos">← Todos los encargos</a>
   </div>
-  <p class="tenue" style="margin:8px 0 0;font-size:12.5px">
+  <p class="tenue" style="margin:8px 0 0;font-size:var(--letra-2)">
+    {% if entrevista_abierta %}
     El hub no ejecuta el agente: abre una ventana de tmux donde corre, y lo
     aparcado entra ahí en cuanto el panel puede recibirlo.
+    {% else %}
+    Está {{ enc.estado }}: no queda entrevista que seguir.
+    {% endif %}
   </p>
 </div>
 
@@ -313,7 +319,7 @@
   </summary>
   {% for d in dicho %}
   <div class="hueco-ficha" style="margin-top:8px">
-    <span class="que">{{ d.fase or 'sin fase' }} · {{ d.cuando[:16] | replace('T', ' ') }}</span>
+    <span class="que">{{ d.fase or 'sin fase' }} · {{ ui.cuando(d.cuando, forma='local') }}</span>
     <div class="val">{{ d.texto }}</div>
   </div>
   {% endfor %}
@@ -332,8 +338,11 @@
 <div class="chat">
 {% set ns = namespace(dia='', tira=[]) %}
 {% for m in conversacion %}
-  {% if m.recibido_en[:10] != ns.dia %}
-    {% set ns.dia = m.recibido_en[:10] %}
+  {# Por día de la casa y no por el de UTC: a las seis de la tarde de aquí
+     ya era «mañana» y la conversación se partía a media tarde (C-0396). #}
+  {% set c = m.recibido_en | cuando %}
+  {% if (c.dia if c else m.recibido_en) != ns.dia %}
+    {% set ns.dia = c.dia if c else m.recibido_en %}
     <div class="dia">{{ ns.dia }}</div>
   {% endif %}
   {# Las muestras consecutivas se juntan en una sola burbuja. #}
@@ -347,7 +356,7 @@
         {% for f in ns.tira %}<span class="muestra">🖼 {{ f.texto }}</span>{% endfor %}
       </div>
       <div class="met">
-        <span class="mono">{{ ns.tira[-1].recibido_en[11:16] }}</span>
+        <span class="mono">{{ ui.cuando(ns.tira[-1].recibido_en, forma='hora') }}</span>
         {% if ns.tira[-1].estado not in ('enviado', 'entregado') %}
         <span class="insignia {{ tono_mensaje(ns.tira[-1].estado) }}">{{ ns.tira[-1].estado }}</span>
         {% endif %}
@@ -364,7 +373,7 @@
   {% endif %}
   <div class="met">
     {% if m.clase == 'audio' and m.texto %}<span>🎤 transcrito</span>{% endif %}
-    <span class="mono">{{ m.recibido_en[11:16] }}</span>
+    <span class="mono">{{ ui.cuando(m.recibido_en, forma='hora') }}</span>
     {% if m.estado not in ('enviado', 'entregado') %}
     <span class="insignia {{ tono_mensaje(m.estado) }}">{{ m.estado }}</span>
     {% endif %}
@@ -399,7 +408,7 @@
 
 {% for r in registro %}
 <div class="linea-reg">
-  <span class="tenue mono">{{ r.momento[:19] | replace('T', ' ') }}</span>
+  <span class="tenue mono">{{ ui.cuando(r.momento, forma='local') }}</span>
   <span class="{{ 'urge' if r.direccion == 'falla' }}">{{ r.direccion }}</span>
   <span class="cuerpo">{{ r.detalle }}{% if r.cuerpo %} — {{ r.cuerpo }}{% endif %}</span>
 </div>
@@ -640,7 +649,7 @@
 
 {% for r in registro %}
 <div class="linea-reg">
-  <span class="tenue mono">{{ r.momento[:19] | replace('T', ' ') }}</span>
+  <span class="tenue mono">{{ ui.cuando(r.momento, forma='local') }}</span>
   <span class="{{ 'urge' if r.direccion == 'falla' }}">{{ r.direccion }}</span>
   <span class="cuerpo">
     {%- if r.encargo_id %}<span class="mono">{{ r.encargo_id }}</span> {% endif -%}

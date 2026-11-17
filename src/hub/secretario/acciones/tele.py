@@ -49,6 +49,9 @@ COMO_CONFIGURAR = ("No sé dónde está la tele: falta su IP. Ponla en secretari
                    "secretario, dentro de HUB_HOME) así:\n"
                    "tele:\n  ip: 192.168.1.50\n  entradas:\n    pc: InputHDMI2\n"
                    "La IP está en la tele, en Ajustes → Red → Acerca de; resérvala en el router para que no cambie.")
+#: Lo mismo, en una línea, para Confianza mientras no esté (C-0390).
+EN_CONFIANZA = ("Falta la IP de la tele: añádela en secretario.yml, en la carpeta secretario de tu HUB_HOME "
+                "(tele: con su ip). Paso a paso en conocimiento/13-secretario.md, «La tele».")
 
 
 def _normal(t: str) -> str:
@@ -61,9 +64,15 @@ def configuracion() -> dict:
     return c if isinstance(c, dict) else {}
 
 
+def configurada() -> bool:
+    """Si sabe dónde está la tele. Sin su IP, cada acción sólo puede fallar:
+    no se le ofrecen al modelo (C-0390)."""
+    return bool(str(configuracion().get("ip") or "").strip())
+
+
 def tele() -> roku.Tele:
     c = configuracion()
-    if not str(c.get("ip") or "").strip():
+    if not configurada():
         raise roku.TeleError(COMO_CONFIGURAR)
     return roku.Tele(str(c["ip"]), int(c.get("puerto") or roku.PUERTO))
 
@@ -128,7 +137,15 @@ def _exige_encendida(t: roku.Tele) -> None:
         raise roku.TeleError(f"la tele está en espera ({e['power_mode']}): enciéndela primero con tele_encender")
 
 
-class TeleEstado(Accion):
+class _DeLaTele(Accion):
+    """Lo que comparten las cinco: sin IP no se le ofrecen al modelo, y
+    Confianza dice dónde se pone (C-0390)."""
+
+    disponible = staticmethod(configurada)
+    como_configurar = EN_CONFIANZA
+
+
+class TeleEstado(_DeLaTele):
     id = "tele_estado"
     gesto = "tele"
     nombre = "Mirar cómo está la tele"
@@ -156,7 +173,7 @@ class TeleEstado(Accion):
         return "tele " + "; ".join(partes)
 
 
-class TeleEncender(Accion):
+class TeleEncender(_DeLaTele):
     id = "tele_encender"
     gesto = "tele"
     nombre = "Encender la tele"
@@ -180,7 +197,7 @@ class TeleEncender(Accion):
         return f"tele encendida y en {_poner_entrada(t, tecla)}"
 
 
-class TeleApagar(Accion):
+class TeleApagar(_DeLaTele):
     id = "tele_apagar"
     gesto = "tele"
     nombre = "Apagar la tele"
@@ -207,7 +224,7 @@ class TeleApagar(Accion):
             time.sleep(PAUSA_S)
 
 
-class TeleEntrada(Accion):
+class TeleEntrada(_DeLaTele):
     id = "tele_entrada"
     gesto = "tele"
     nombre = "Cambiar la entrada de la tele"
@@ -225,7 +242,7 @@ class TeleEntrada(Accion):
         return f"tele en {_poner_entrada(t, tecla)}"
 
 
-class TeleApp(Accion):
+class TeleApp(_DeLaTele):
     id = "tele_app"
     gesto = "tele"
     nombre = "Abrir una app en la tele"

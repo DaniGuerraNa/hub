@@ -79,7 +79,7 @@ Nunca `0.0.0.0` ni internet.
 | `POST /api/slot` | `{proyecto_id, nombre, ruta?}` | Un slot |
 | `POST /api/nota` | `{texto, slot_id?}` | Una nota. Sin `slot_id`, en el slot del panel donde estás |
 | `POST /api/programado` | `{slot_id, texto, cuando}` | Un mensaje programado; `cuando` con zona horaria |
-| `POST /api/lienzo` | `{proyecto_id, titulo, cuerpo, plantilla?, slot?}` | Un lienzo. Si ya existe y lo editaste tú, contesta 409 |
+| `POST /api/lienzo` | `{proyecto_id, titulo, cuerpo, plantilla?, slot?}` | Un lienzo. Si ya existe y lo editaste tú, contesta 409. Cada valor va en su línea: en `decisiones` uno escrito en bloque (`>-`, `\|`) se pasa a una; en las demás, si una clave que se pinta lleva `>-` o `\|`, contesta 400 diciendo la línea |
 
 En `proyecto/nuevo`, `estado_ref` vale `ESTADO.md` si no lo mandas, y `rutas`
 es una lista (o un texto con una ruta por línea). `dominio` vale `personal` y

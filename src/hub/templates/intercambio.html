@@ -1,54 +1,30 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
 {% block contenido %}
-{% macro fila_archivo(a, i, paneles) %}
-  <div class="inter-fila">
-    <div class="fila" style="gap:10px;align-items:flex-start">
-      <div class="pila" style="flex:1;min-width:0;gap:2px">
-        <span class="nombre">{% if a.subcarpeta and i.por != 'proyecto' %}<span class="sub">{{ a.subcarpeta }}/</span>{% endif %}{{ a.archivo }}</span>
-        <span class="tenue" style="font-size:12px">
-          {% if a.nuevo %}<span class="inter-tipo inter-nuevo">nuevo</span>{% endif %}
-          {% if a.caduca_local %}<span class="inter-tipo inter-caduca" title="Lo pegaste o soltaste en la terminal: es de paso">se borra el {{ a.caduca_local }}</span>{% endif %}
-          {% if i.por != 'tipo' %}<span class="inter-tipo">{{ a.tipo }}</span>{% endif %}
-          {{ a.tamano }} · {{ a.cuando_local }}
-        </span>
-      </div>
-      <a class="boton principal" href="/intercambio/bajar/{{ a.nombre | urlencode }}">Bajar</a>
-    </div>
-
-    <details class="inter-mas">
-      <summary>Más</summary>
-      {# Pasarle la RUTA a una sesión es lo que convierte «lo subí» en «Claude
-         puede usarlo»: lee archivos por su ruta, y esa ruta no se teclea en un
-         móvil. Se escribe sin Enter, para que añadas a mano qué quieres que
-         haga con él. #}
-      {% if paneles %}
-      <form method="post" action="/intercambio/a-la-sesion" data-sin-recarga class="barra"
-            style="margin-top:8px;gap:6px;flex-wrap:wrap">
-        <input type="hidden" name="nombre" value="{{ a.nombre }}">
-        <select name="pane_id" aria-label="A qué sesión" style="width:auto;flex:1;min-width:170px">
-          {% for p in paneles %}
-          <option value="{{ p.pane_id }}">
-            {{ p.proyecto_nombre or p.proyecto_id or 'sin proyecto' }} · {{ p.slot_nombre or ('slot ' ~ p.slot_id) }}
-          </option>
-          {% endfor %}
-        </select>
-        <button class="boton">Escribir la ruta ahí</button>
-      </form>
-      {% endif %}
-      <div class="barra" style="margin-top:8px;gap:8px;align-items:flex-start">
-        <p class="tenue mono" style="margin:0;font-size:12px;word-break:break-all;flex:1">{{ a.ruta }}</p>
-        <form method="post" action="/intercambio/borrar" class="enlinea" data-sin-recarga
-              data-confirmar-titulo="Borrar «{{ a.archivo }}»"
-              data-confirmar-ok="Borrarlo"
-              data-confirmar="Se borra del disco de casa y no se puede recuperar.">
-          <input type="hidden" name="nombre" value="{{ a.nombre }}">
-          <button class="declinar peligro-sutil">Borrar</button>
-        </form>
-      </div>
-    </details>
-  </div>
-{% endmacro %}
+{#- Una fila por archivo, y con 163 son 163: cada byte de aquí cuenta por
+    cientos, por eso va sin sangría de plantilla (C-0385).
+    Miniatura sólo de lo que `/intercambio/ver` sirve en línea y hasta un
+    tamaño: lo decide `api.intercambio` (`a.imagen`), nunca el tipo
+    «Imágenes». Las acciones van a los formularios comunes de arriba
+    (`form=`): un `<select>` de sesiones por fila eran 3.311 `<option>` y
+    718 KB con 163 archivos. Pasarle la RUTA a una sesión es lo que convierte
+    «lo subí» en «Claude puede usarlo», y se escribe sin Enter. -#}
+{% macro fila_archivo(a, i, paneles) -%}
+<div class="inter-fila"><div class="fila">
+{%- if a.imagen %}<a class="inter-mini" href="/intercambio/ver/{{ a.nombre | urlencode }}" target="_blank" rel="noopener"><img src="/intercambio/ver/{{ a.nombre | urlencode }}" alt="{{ a.archivo }}" loading="lazy" width="44" height="44"></a>{% endif -%}
+<div class="pila"><span class="nombre">{% if a.subcarpeta and i.por != 'proyecto' %}<span class="sub">{{ a.subcarpeta }}/</span>{% endif %}{{ a.archivo }}</span>
+<span class="tenue inter-met">
+{%- if a.nuevo %}<span class="inter-tipo inter-nuevo">nuevo</span> {% endif -%}
+{%- if a.caduca_local %}<span class="inter-tipo inter-caduca" title="Lo pegaste o soltaste en la terminal: es de paso">se borra el {{ a.caduca_local }}</span> {% endif -%}
+{%- if i.por != 'tipo' %}<span class="inter-tipo">{{ a.tipo }}</span> {% endif -%}
+{{ a.tamano }} · {{ a.cuando_local }}</span></div>
+<a class="boton principal" href="/intercambio/bajar/{{ a.nombre | urlencode }}">Bajar</a>
+{% call ui.menu('Más acciones con «' ~ a.archivo ~ '»') -%}
+<p class="tenue mono inter-ruta">{{ a.ruta }}</p>
+{%- if paneles %}<button form="inter-a-sesion" name="nombre" value="{{ a.nombre }}">Escribir la ruta en la sesión elegida</button>{% endif -%}
+<div class="separador"></div><button form="inter-borrar" name="nombre" value="{{ a.nombre }}" class="peligro" data-confirmar-titulo="Borrar «{{ a.archivo }}»" data-confirmar-ok="Borrarlo" data-confirmar="Se borra del disco de casa y no se puede recuperar.">Borrar</button>
+{%- endcall %}</div></div>
+{%- endmacro %}
 
 
 {{ ui.cabecera_vista('Intercambio',
@@ -63,17 +39,21 @@
 {% endif %}
 
 <div class="tarjeta">
+  {# El selector nativo dice «Choose File» en inglés y no se puede traducir:
+     se esconde y lo abre su etiqueta, sin JavaScript (C-0385). Sin `required`:
+     escondido, el navegador bloquearía el envío sin decir por qué. #}
   <form method="post" action="/intercambio/subir" enctype="multipart/form-data"
-        class="barra" style="gap:10px;flex-wrap:wrap" data-sin-recarga>
-    <input type="file" name="archivo" required
-           style="width:auto;flex:1;min-width:180px">
+        id="inter-subida" class="barra" style="gap:10px;flex-wrap:wrap" data-sin-recarga>
+    <label class="boton">{{ ui.icono('carpeta', 15) }} Elegir archivos
+      <input type="file" name="archivo" id="inter-archivo" multiple class="solo-lector"></label>
     <select name="destino" aria-label="De qué proyecto o slot es" style="width:auto;flex:1;min-width:170px">
       <option value="">Sin proyecto</option>
       {% for d in destinos %}<option value="{{ d.valor }}">{{ d.etiqueta }}</option>{% endfor %}
     </select>
-    <button class="boton principal">Subir</button>
+    <button class="boton principal" id="inter-subir">Subir</button>
+    <span class="tenue inter-elegidos" id="inter-elegidos" aria-live="polite"></span>
   </form>
-  <p class="tenue" style="margin:8px 0 0;font-size:12.5px">
+  <p class="tenue" style="margin:8px 0 0;font-size:var(--letra-2)">
     Hasta {{ limite }} por archivo. Van a <code>{{ carpeta }}</code>, en la
     subcarpeta del proyecto y slot que elijas: es del hub, no se escribe nunca
     dentro de tus proyectos.
@@ -84,7 +64,7 @@
   .inter-herr { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:10px 0 4px; }
   .inter-herr form { display:flex; gap:6px; flex:1; min-width:200px; }
   .inter-por { display:flex; gap:6px; flex-wrap:wrap; }
-  .inter-por a { font-size:12px; padding:3px 10px; border-radius:9999px; text-decoration:none;
+  .inter-por a { font-size:12px; padding:3px 10px; border-radius:var(--r-pildora); text-decoration:none;
     color:var(--texto-2); background:var(--superficie); }
   .inter-por a.aqui { color:var(--texto); background:color-mix(in srgb, var(--acento) 22%, transparent); }
   .inter-grupo { margin-top:10px; }
@@ -96,15 +76,25 @@
   .inter-grupo .titulo { font-weight:600; flex:1; min-width:0; overflow-wrap:anywhere; }
   .inter-grupo .inter-cifra { color:var(--texto-4); font-size:12px; font-variant-numeric:tabular-nums; }
   .inter-fila { padding:8px 14px; border-top:1px solid color-mix(in srgb, var(--texto) 8%, transparent); }
+  .inter-fila > .fila { gap:10px; align-items:flex-start; }
+  .inter-fila .pila { flex:1; min-width:0; gap:2px; }
+  .inter-met { font-size:12px; }
   .inter-fila .nombre { overflow-wrap:anywhere; }
   .inter-fila .sub { color:var(--texto-4); }
-  .inter-tipo { font-size:11px; padding:1px 7px; border-radius:9999px; color:var(--texto-3);
+  .inter-tipo { font-size:var(--letra-1); padding:1px 7px; border-radius:var(--r-pildora); color:var(--texto-3);
     background:color-mix(in srgb, var(--texto) 7%, transparent); white-space:nowrap; }
   .inter-tanda { padding:8px 14px 4px; font-size:11.5px; letter-spacing:.03em; color:var(--texto-3);
     border-top:1px solid color-mix(in srgb, var(--texto) 12%, transparent);
     background:color-mix(in srgb, var(--texto) 3%, transparent); }
   .inter-nuevo { color:var(--texto); background:color-mix(in srgb, var(--acento) 26%, transparent); }
-  .inter-mas > summary { cursor:pointer; font-size:12px; color:var(--texto-3); margin-top:4px; }
+  .inter-mini { flex:none; display:block; line-height:0; }
+  .inter-mini img { width:44px; height:44px; object-fit:cover; border-radius:var(--r-boton);
+    background:var(--superficie2); }
+  .inter-ruta { margin:4px 10px 6px; font-size:12px; word-break:break-all; max-width:260px; }
+  .inter-sesion { margin:6px 0 4px; max-width:420px; }
+  .inter-sesion label { margin-top:0; }
+  .inter-elegidos { font-size:12px; flex:1 1 100%; overflow-wrap:anywhere; }
+  .inter-elegidos:empty { display:none; }
   .inter-seccion { padding:8px 14px 4px; font-size:12px; font-weight:600; color:var(--texto-2);
     border-top:1px solid color-mix(in srgb, var(--texto) 12%, transparent);
     background:color-mix(in srgb, var(--texto) 3%, transparent); display:flex; gap:8px; }
@@ -112,7 +102,7 @@
 </style>
 
 {{ ui.seccion('carpeta', 'Lo que hay ahora', 'Por proyecto y slot.') }}
-<p class="tenue" style="font-size:12.5px;margin:0 0 6px">
+<p class="tenue" style="font-size:var(--letra-2);margin:0 0 6px">
   Es una carpeta de paso: lo que arrastras o pegas en la terminal se borra solo
   a los {{ caducan }} días. Lo demás se queda hasta que lo borres. Lo que quieras
   conservar, guárdalo en tu proyecto.
@@ -134,8 +124,28 @@
   </form>
 </div>
 {% if i.q %}
-<p class="tenue" style="font-size:12.5px;margin:4px 0">{{ i.encontrados }} de {{ i.total }} con «{{ i.q }}».</p>
+<p class="tenue" style="font-size:var(--letra-2);margin:4px 0">{{ i.encontrados }} de {{ i.total }} con «{{ i.q }}».</p>
 {% endif %}
+
+{# Un formulario por acción, fuera de la región que se repinta: cada fila
+   manda su archivo con su botón (`form=`, `name=nombre`). `data-conserva`:
+   la sesión elegida se queda para el siguiente archivo; si se vaciara, la
+   segunda ruta iría a la primera sesión de la lista. Que ahí siga corriendo
+   un agente lo comprueba `entrega` al escribir, no esto (regla dura 15). #}
+{% if paneles %}
+<form method="post" action="/intercambio/a-la-sesion" id="inter-a-sesion" class="inter-sesion"
+      data-sin-recarga data-conserva>
+  <label for="inter-pane">Sesión a la que pasar rutas</label>
+  <select name="pane_id" id="inter-pane">
+    {% for p in paneles %}
+    <option value="{{ p.pane_id }}">
+      {{ p.proyecto_nombre or p.proyecto_id or 'sin proyecto' }} · {{ p.slot_nombre or ('slot ' ~ p.slot_id) }}
+    </option>
+    {% endfor %}
+  </select>
+</form>
+{% endif %}
+<form method="post" action="/intercambio/borrar" id="inter-borrar" hidden data-sin-recarga></form>
 
 {# El grupo con lo más nuevo se abre solo: se viene aquí a por lo último. Los
    demás, plegados, para que la lista no crezca sin fin. Buscando, abiertos
@@ -188,5 +198,27 @@
   archivo cruza.
   </div>
 </div>
+
+<script>
+// «Subir» se enciende cuando hay algo elegido, y lo elegido se ve por su
+// nombre: el campo nativo, que lo decía, va escondido (C-0385). Gemelo del
+// del tablero; si lo pide una tercera pantalla, sube a `hub-ui.js`.
+(() => {
+  const entrada = document.getElementById('inter-archivo');
+  const subir = document.getElementById('inter-subir');
+  const elegidos = document.getElementById('inter-elegidos');
+  if (!entrada || !subir) return;
+  const pintar = () => {
+    const n = entrada.files ? entrada.files.length : 0;
+    subir.disabled = !n;
+    if (elegidos) elegidos.textContent = n
+      ? Array.from(entrada.files).map(f => f.name).join(' · ') : '';
+  };
+  entrada.addEventListener('change', pintar);
+  // Subido sin recargar, el formulario se vacía: lo elegido también.
+  if (entrada.form) entrada.form.addEventListener('reset', () => setTimeout(pintar));
+  pintar();
+})();
+</script>
 
 {% endblock %}

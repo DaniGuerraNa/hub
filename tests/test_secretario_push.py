@@ -140,6 +140,17 @@ def test_una_solicitud_lleva_su_id_y_si_se_puede_decidir_desde_el_aviso(con, apa
     assert _descifrar(envio["cuerpo"], navegador, auth)["secretario"] == {"solicitud": 7, "decidir": True}
 
 
+def test_un_recordatorio_lleva_su_compromiso_para_cerrarlo_desde_el_aviso(con, aparato, servicio_push):
+    """C-0407: con el id, el service worker le pone «Hecho» y «En 1 h»."""
+    navegador, auth = aparato
+    cid = memoria.comprometer(con, "Llamar a Ana", recordar_en="2020-01-01T00:00:00+00:00")
+    assert recordatorios.revisar(con) == 1
+    envio = servicio_push["envios"][0]
+    datos = _descifrar(envio["cuerpo"], navegador, auth)
+    assert datos["secretario"] == {"compromiso": cid}
+    assert datos["notification"]["title"] == "⏰ Recordatorio" and envio["urgente"] is False
+
+
 def test_lo_irreversible_llega_sin_botones(con, aparato, servicio_push, monkeypatch):
     from hub.secretario import herramientas, piezas
 
@@ -222,3 +233,86 @@ def test_una_suscripcion_sin_https_o_sin_claves_no_se_guarda(con):
         memoria.suscribir(con, "http://push.ejemplo.org/x", "a", "b")
     with pytest.raises(ValueError):
         memoria.suscribir(con, "https://push.ejemplo.org/x", "", "b")
+
+
+# ── lo que cabe en un aviso (C-0432) ──
+
+def test_un_aviso_con_emoji_y_un_titulo_largo_se_recorta_por_bytes_y_llega(con, aparato, servicio_push):
+    """El tope contaba caracteres: 1 500 emoji son 6 000 bytes y el título no
+    tenía tope. Los servicios de push admiten 4 096 bytes de cuerpo cifrado
+    (lo que garantiza el RFC 8030), así que el aviso no llegaba por la app."""
+    navegador, auth = aparato
+    assert avisos.mandar("😀" * 1500, titulo="Un disparador con nombre muy largo " * 150) == "webpush"
+    cuerpo = servicio_push["envios"][0]["cuerpo"]
+    assert len(cuerpo) <= 4096
+    datos = _descifrar(cuerpo, navegador, auth)   # JSON válido: no se partió ningún carácter
+    n = datos["notification"]
+    assert n["body"].endswith("…") and set(n["body"][:-1]) == {"😀"}
+    assert n["title"].endswith("…") and len(n["title"]) <= webpush.TOPE_TITULO
+    assert n["navigate"].endswith("/secretario")
+
+
+def test_un_aviso_de_texto_no_latino_tambien_cabe_y_aprovecha_el_sitio(con, aparato, servicio_push):
+    navegador, auth = aparato
+    avisos.mandar("€" * 1500, titulo="Factura")
+    cuerpo = servicio_push["envios"][0]["cuerpo"]
+    assert len(cuerpo) <= 4096
+    n = _descifrar(cuerpo, navegador, auth)["notification"]
+    assert n["title"] == "Factura" and n["body"].endswith("…")
+    # Recorta lo justo: con un «€» más ya no cabría.
+    assert len(cuerpo) > 4096 - 3
+
+
+def test_un_aviso_que_cabe_no_se_toca(con, aparato, servicio_push):
+    navegador, auth = aparato
+    texto = "Revisión del presupuesto con el cliente a las 17:00 " * 20
+    avisos.mandar(texto, titulo="⏰ Recordatorio")
+    n = _descifrar(servicio_push["envios"][0]["cuerpo"], navegador, auth)["notification"]
+    assert n["body"] == texto and n["title"] == "⏰ Recordatorio"
+
+
+# ── un aparato roto no deja sin aviso a los demás (C-0433) ──
+
+def test_una_suscripcion_mal_formada_no_deja_sin_aviso_a_los_demas_aparatos(con, monkeypatch):
+    """Sin doblar `_enviar`: el servicio se finge a nivel de `urlopen`, que
+    construye la conexión igual que el de verdad. Con `https://x:abc/`
+    (puerto no numérico) eso lanza `http.client.InvalidURL`, que no es
+    `OSError` ni `ValueError`: cortaba el bucle sin probar los otros dos y
+    sin apuntar el fallo en ninguno."""
+    import http.client
+    import urllib.request
+    from urllib.parse import urlsplit
+
+    webpush.preparar()
+    llegados = []
+
+    class Respuesta:
+        status = 201
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    def urlopen(req, timeout=None):
+        http.client.HTTPSConnection(urlsplit(req.full_url).netloc, timeout=timeout)
+        llegados.append(req.full_url)
+        return Respuesta()
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+
+    def aparato(endpoint, nombre):
+        clave = ec.generate_private_key(ec.SECP256R1())
+        memoria.suscribir(con, endpoint, cp.b64(cp.publica_cruda(clave)), cp.b64(os.urandom(16)), nombre,
+                          "https://hub.ejemplo.ts.net")
+
+    aparato("https://x:abc/", "el roto")
+    aparato("https://push.ejemplo.org/uno", "teléfono")
+    aparato("https://push.ejemplo.org/dos", "tableta")
+
+    assert avisos.mandar("hola") == "webpush"
+    assert llegados == ["https://push.ejemplo.org/uno", "https://push.ejemplo.org/dos"]
+    por_nombre = {s["aparato"]: s for s in memoria.suscripciones(con)}
+    assert por_nombre["el roto"]["fallos"] == 1 and "port" in por_nombre["el roto"]["error"]
+    assert por_nombre["teléfono"]["ultimo_ok"] and por_nombre["tableta"]["ultimo_ok"]

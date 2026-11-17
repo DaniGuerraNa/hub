@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
+{% block refrescar %}{{ ui.refrescar(request) }}{% endblock %}
 {% block contenido %}
+{# El terminal es la pantalla: el título sólo se oye (C-0347). #}
+<h1 class="solo-lector">Trabajo</h1>
 <link rel="stylesheet" href="/static/xterm.css">
 
 <style>
@@ -203,18 +206,18 @@
   .con-js .proyecto.plegado > .hijos { display:none; }
   /* Plegado, el número dice cuánto hay debajo: una lista que se esconde sin
      decir cuánto esconde se lee como una lista vacía. */
-  .cuenta-slots { font-size:11px; color:var(--texto-3); padding-right:8px; }
+  .cuenta-slots { font-size:var(--letra-1); color:var(--texto-3); padding-right:8px; }
   /* Si el slot es persistente (se reabre al volver a encender): en el raíl, sólo la marca; en la
      cabecera, el botón que la cambia. Apagado se ve tenue, no tachado: no es
      un error, es una elección. */
-  .marca-vuelve { color:var(--acento); margin-left:5px; font-size:11px; }
+  .marca-vuelve { color:var(--acento); margin-left:5px; font-size:var(--letra-1); }
   .vuelve { white-space:nowrap; }
   .vuelve:not(.on) { color:var(--texto-3); }
   .vuelve.on { color:var(--acento); }
   .proyecto:not(.plegado) .cuenta-slots { display:none; }
   /* La guía vertical dice «esto cuelga de lo de arriba» sin gastar una palabra. */
   .proyecto > .hijos { margin-left:16px; padding-left:8px; border-left:1px solid var(--borde); }
-  .vacio { padding:4px 10px; font-size:11px; color:var(--texto-3); font-style:italic; }
+  .vacio { padding:4px 10px; font-size:var(--letra-1); color:var(--texto-3); font-style:italic; }
   /* Crear, en el raíl (22-oct). El «+ Slot nuevo» va como una fila más de
      la lista pero en tono de acción, para que se lea como el sitio donde
      nacen los slots y no como uno de ellos. */
@@ -225,7 +228,7 @@
     padding:5px 10px; font-size:12px; color:var(--acento); background:none; border:0;
     border-radius:var(--r-nav); cursor:pointer; }
   .nuevo-slot:hover { background:var(--superficie); }
-  .guia-vacia { padding:4px 10px 8px; font-size:12.5px; display:flex; flex-direction:column; gap:8px; }
+  .guia-vacia { padding:4px 10px 8px; font-size:var(--letra-2); display:flex; flex-direction:column; gap:8px; }
   .guia-vacia p { margin:0; }
   /* Las ventanas bajo su slot (decisión 291): un nivel más hondo, más
      pequeñas, con su propio punto de estado. */
@@ -254,7 +257,7 @@
   .item:hover { background:var(--superficie); color:var(--texto); text-decoration:none; }
   .item.activo { background:var(--elevado); color:var(--acento);  }
   .item.activo .sub { color:var(--texto-2); }
-  .item .sub { display:block; font-size:11px; color:var(--texto-3); }
+  .item .sub { display:block; font-size:var(--letra-1); color:var(--texto-3); }
   .punto { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--acento); margin-right:5px; vertical-align:middle; }
 
   /* El estado del slot. Lo único que se mueve es «trabajando»: si el detenido
@@ -271,18 +274,18 @@
   /* La ruta se alinea con el nombre, no con el punto. */
   .item .sub { padding-left:11px; }
 
-  /* La fila de una ventana suelta lleva su acción de ocultar al lado, y sólo
-     aparece al pasar por encima: son diez filas, y diez botones «Ocultar»
-     permanentes compiten con lo único que se hace casi siempre, que es abrir.
-     Con el teclado sí se ve siempre —`:focus-within`—, porque quien no usa el
-     ratón no tiene forma de descubrir lo que sólo sale al pasar. */
-  .fila-suelta { display:flex; align-items:center; gap:4px; }
+  /* La fila de una ventana suelta: el enlace y, a la derecha, sus acciones
+     bajo ⋯ (C-0349). Iban en fila con `opacity:0` hasta pasar por encima:
+     invisibles pero ocupando 96 px de 219, así que el nombre salía partido en
+     cinco líneas, y con el dedo —sin `hover`— se pulsaba un «Cerrar» que no se
+     veía. El ⋯ es más pequeño que el del resto del hub porque el raíl es
+     denso; con el dedo, el suelo de 44 px de `base.html` sigue mandando. El
+     desplegable, a lo ancho de lo que dice: el raíl puede estrecharse a 140 px
+     y con los 194 de siempre se saldría por la izquierda. */
+  .fila-suelta { display:flex; align-items:center; gap:2px; }
   .fila-suelta > .item { flex:1; min-width:0; }
-  .fila-suelta .ocultar-una { opacity:0; transition:opacity .12s; }
-  .fila-suelta:hover .ocultar-una,
-  .fila-suelta:focus-within .ocultar-una { opacity:1; }
-  .fila-suelta .ocultar-una button { font-size:11px; padding:2px 6px; }
-  .fila-suelta .peligro-sutil:hover { color:var(--alerta); }
+  .fila-suelta > .menu > summary { width:24px; height:24px; }
+  .fila-suelta .menu-pop { min-width:0; width:max-content; }
 
   .slot-vacio { padding:24px; max-width:52ch; display:flex; flex-direction:column; gap:10px; }
   .slot-vacio p { margin:0; }
@@ -290,7 +293,7 @@
      título arriba y cuándo debajo, como un menú. */
   /* El resumen del menú es un icono de 30 px; éste lleva texto. */
   .menu.conversaciones > summary { width:auto; height:auto; display:inline-flex; white-space:nowrap;
-    font-size:12.5px; padding:4px 9px; color:var(--texto-2); }
+    font-size:var(--letra-2); padding:4px 9px; color:var(--texto-2); }
   .conversaciones > summary::-webkit-details-marker { display:none; }
   .pop-conv { width:min(380px, 86vw); max-height:60vh; overflow-y:auto; }
   .pop-conv .conv { align-items:flex-start !important; justify-content:flex-start !important;
@@ -307,13 +310,27 @@
   .conv-nota { margin:6px 4px 2px !important; font-size:11.5px; color:var(--texto-3); }
 
   details.ocultas { padding:2px 10px; }
-  details.ocultas > summary { font-size:11px; color:var(--texto-3); cursor:pointer;
+  details.ocultas > summary { font-size:var(--letra-1); color:var(--texto-3); cursor:pointer;
                               font-style:italic; list-style:none; }
   details.ocultas > summary::before { content:"+ "; }
-  .fila-oculta { display:flex; align-items:center; gap:6px; padding:3px 0; font-size:11px; }
+  .fila-oculta { display:flex; align-items:center; gap:6px; padding:3px 0; font-size:var(--letra-1); }
   .fila-oculta > .mono { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
                          white-space:nowrap; color:var(--texto-3); }
-  .fila-oculta button { font-size:11px; padding:2px 6px; }
+  .fila-oculta button { font-size:var(--letra-1); padding:2px 6px; }
+  /* Las shells sin usar (C-0352): plegadas como lo oculto, con su casilla. */
+  details.quietas { padding:2px 10px; }
+  details.quietas > summary { font-size:12px; color:var(--texto-3); cursor:pointer; list-style:none; }
+  details.quietas > summary::before { content:"+ "; }
+  details.quietas[open] > summary::before { content:"− "; }
+  details.quietas > form { display:flex; flex-direction:column; gap:2px; margin-top:6px; }
+  details.quietas .vacio { padding:2px 0 6px; }
+  /* Sin el margen de rótulo de `label` (12 px arriba): medido en Chromium,
+     cada casilla ocupaba ~50 px de alto en una lista que puede tener doce. */
+  .fila-quieta { align-items:flex-start; gap:8px; margin:0; padding:3px 0; font-size:12px; color:var(--texto-2); }
+  .fila-quieta > input { margin-top:2px; flex:none; }
+  .fila-quieta > .txt { min-width:0; overflow-wrap:anywhere; }
+  .fila-quieta .sub { display:block; font-size:var(--letra-1); color:var(--texto-3); }
+  details.quietas button.peligro { align-self:flex-start; margin-top:6px; font-size:12px; padding:4px 10px; }
   @keyframes latido { 0%, 100% { opacity:1; } 50% { opacity:.2; } }
   @media (prefers-reduced-motion: reduce) { .punto.trabajando { animation:none; } }
 
@@ -331,7 +348,7 @@
      donde parece»— y el tono apagado que este sistema usa para lo secundario. */
   .pestana.huerfana, .pestana.ajena { color:var(--texto-4); }
   .pestana .marca { font-size:10px; letter-spacing:.04em; padding:1px 6px;
-                    border-radius:999px; background:var(--superficie2);
+                    border-radius:var(--r-pildora); background:var(--superficie2);
                     color:var(--espera); flex:none; white-space:nowrap; }
   .pestana.huerfana.activa, .pestana.ajena.activa { color:var(--texto-2); }
   .pestana .cerrar { opacity:0; padding:0 2px; border-radius:3px; }
@@ -412,14 +429,14 @@
      al píxel y meterle un elemento en el flujo le quitaría una fila. */
   #copiado { position:absolute; right:14px; bottom:10px; padding:3px 9px;
              border-radius:var(--r-nav); background:var(--elevado); color:var(--texto-2);
-             font-size:11px; opacity:0; transition:opacity .15s; pointer-events:none; }
+             font-size:var(--letra-1); opacity:0; transition:opacity .15s; pointer-events:none; }
   #copiado.visible { opacity:.92; }
 
   /* El campo de respuesta libre de un punto: no compite con los tres botones,
      los acompaña. */
-  .dresp { width:100%; margin-top:6px; font-size:12.5px; min-height:44px;
+  .dresp { width:100%; margin-top:6px; font-size:var(--letra-2); min-height:44px;
            resize:vertical; }
-  .dresp-estado { font-size:11px; }
+  .dresp-estado { font-size:var(--letra-1); }
 
   /* Archivar un lienzo: discreto hasta que pasas por encima. Es una acción
      reversible y frecuente, no una que deba pedir atención. */
@@ -430,7 +447,7 @@
 
   /* Las consultas del slot: una pregunta, su estado y lo que contestaron. */
   .consulta { padding:9px 0; border-bottom:1px solid var(--borde); }
-  .consulta .quien { font-size:11px; color:var(--texto-3); }
+  .consulta .quien { font-size:var(--letra-1); color:var(--texto-3); }
   .consulta .texto { font-size:13px; margin:3px 0; white-space:pre-wrap; }
   .consulta .resp { font-size:13px; color:var(--texto-2); border-left:2px solid var(--ok);
                     padding-left:8px; margin-top:5px; white-space:pre-wrap; }
@@ -445,11 +462,11 @@
   #programar-texto { width:100%; min-height:64px; font-size:13px; resize:vertical; }
   #programar-cuando { width:100%; }
   .programado .cancelar { float:right; background:none; border:0; padding:0 2px;
-    color:var(--texto-4); cursor:pointer; font-size:11px; }
+    color:var(--texto-4); cursor:pointer; font-size:var(--letra-1); }
   .programado .cancelar:hover { color:var(--alerta); }
-  .programado .motivo { font-size:11px; color:var(--texto-3); margin-top:3px; }
+  .programado .motivo { font-size:var(--letra-1); color:var(--texto-3); margin-top:3px; }
 
-  #lienzos-buscar { width:100%; margin-bottom:8px; font-size:12.5px; }
+  #lienzos-buscar { width:100%; margin-bottom:8px; font-size:var(--letra-2); }
   #lienzos-lista { overflow-y:auto; max-height:44%; }
   .lienzo-item { border:1px solid var(--borde); border-radius:var(--r-nav); padding:8px 10px;
     margin-bottom:6px; cursor:pointer; }
@@ -457,8 +474,8 @@
   .lienzo-item.on { border-color:var(--acento); background:var(--superficie2); }
   .lienzo-item .tt { font-size:13px; display:flex; gap:6px; align-items:center; }
   .lienzo-item .tt b { flex:1; font-weight:500; }
-  .lienzo-item .mm { font-size:11px; color:var(--texto-4); margin-top:2px; }
-  .et-tuyo { font-size:10.5px; padding:1px 7px; border-radius:999px; flex:none;
+  .lienzo-item .mm { font-size:var(--letra-1); color:var(--texto-4); margin-top:2px; }
+  .et-tuyo { font-size:10.5px; padding:1px 7px; border-radius:var(--r-pildora); flex:none;
     background:color-mix(in srgb, var(--espera) 17%, transparent); color:var(--espera); }
 
   #lienzos-vista { flex:1; min-height:0; overflow-y:auto; margin-top:10px;
@@ -468,11 +485,11 @@
 
   /* La plantilla `decisiones`: todo plegado, y se abre lo que toca decidir. */
   .dec { border:1px solid var(--borde); border-radius:var(--r-boton); margin-bottom:6px; }
-  .dec > summary { padding:8px 10px; cursor:pointer; font-size:12.5px;
+  .dec > summary { padding:8px 10px; cursor:pointer; font-size:var(--letra-2);
     display:flex; gap:8px; align-items:center; list-style:none; }
   .dec > summary::-webkit-details-marker { display:none; }
   .dec .dtt { flex:1; }
-  .dec .dst { font-size:10.5px; padding:1px 8px; border-radius:999px; flex:none;
+  .dec .dst { font-size:10.5px; padding:1px 8px; border-radius:var(--r-pildora); flex:none;
     background:var(--superficie2); color:var(--texto-4); }
   .dec[data-e="si"]    { border-color:color-mix(in srgb, var(--ok) 55%, var(--borde)); }
   .dec[data-e="no"]    { border-color:color-mix(in srgb, var(--riesgo) 45%, var(--borde)); }
@@ -480,8 +497,10 @@
   .dec[data-e="si"] .dst    { background:color-mix(in srgb, var(--ok) 18%, transparent); color:var(--ok); }
   .dec[data-e="no"] .dst    { background:color-mix(in srgb, var(--riesgo) 18%, transparent); color:var(--riesgo); }
   .dec[data-e="luego"] .dst { background:color-mix(in srgb, var(--espera) 18%, transparent); color:var(--espera); }
-  .dec .djj { padding:0 10px 9px; font-size:12.5px; color:var(--texto-2);
-    border-top:1px solid var(--borde); padding-top:9px; }
+  /* `pre-line`: un valor que llegó en bloque (`|`) trae sus saltos, y
+     juntarlos en una línea pierde la lista que eran (C-0387). */
+  .dec .djj { padding:0 10px 9px; font-size:var(--letra-2); color:var(--texto-2);
+    border-top:1px solid var(--borde); padding-top:9px; white-space:pre-line; }
   .dec .dbb { display:flex; gap:6px; padding:0 10px 10px; }
   .dec .dbb button { padding:3px 11px; font-size:12px; }
   .lienzo-crudo { font:11.5px/1.6 var(--mono, ui-monospace, monospace);
@@ -510,7 +529,7 @@
   .lienzo-svg marker.flu path { fill:var(--acento); }
   .lienzo-svg marker.lec path { fill:var(--texto-4); }
 
-  .lienzo-leyenda { display:flex; gap:10px; flex-wrap:wrap; font-size:11px;
+  .lienzo-leyenda { display:flex; gap:10px; flex-wrap:wrap; font-size:var(--letra-1);
     color:var(--texto-4); margin-bottom:4px; }
   .lienzo-leyenda i { display:inline-block; width:9px; height:9px; border-radius:3px;
     margin-right:4px; vertical-align:-1px; border:1.5px solid var(--texto-4);
@@ -541,14 +560,14 @@
   .lienzo-tabla table { border-collapse:collapse; font-size:12px; width:100%; }
   .lienzo-tabla th, .lienzo-tabla td { border:1px solid var(--borde); padding:5px 8px;
     text-align:left; vertical-align:top; }
-  .lienzo-tabla thead th { color:var(--texto-3); font-weight:600; font-size:11px;
+  .lienzo-tabla thead th { color:var(--texto-3); font-weight:600; font-size:var(--letra-1);
     text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
   .lienzo-tabla tbody th { font-weight:500; color:var(--texto); }
   .lienzo-tabla td { color:var(--texto-2); }
-  .lienzo-tabla .nota-op { font-size:11px; color:var(--texto-4); margin-top:2px;
+  .lienzo-tabla .nota-op { font-size:var(--letra-1); color:var(--texto-4); margin-top:2px;
     font-weight:400; }
   .lienzo-tabla tr.elegida { background:color-mix(in srgb, var(--acento) 10%, transparent); }
-  .et-eleccion { font-size:10px; padding:1px 7px; border-radius:999px; margin-left:5px;
+  .et-eleccion { font-size:10px; padding:1px 7px; border-radius:var(--r-pildora); margin-left:5px;
     background:color-mix(in srgb, var(--acento) 18%, transparent); color:var(--acento); }
   .lienzo-porque { font-size:12px; color:var(--texto-2); margin:0 0 8px; }
   /* Las dos acciones de un slot cerrado, en una sola fila: «Lanzar» es lo que
@@ -612,6 +631,14 @@
    un slot recién creado decía «aún no hay lienzos en este proyecto» —falso, no
    sabía de qué proyecto preguntar— y eso es peor que no decir nada. #}
 <div class="taller" id="taller" data-proyecto="{{ slot.proyecto_id if slot else '' }}">
+{# Con la barra plegada (C-0450, interfaz nueva) la lista sale ya escondida.
+   Puesta por el script de la vista, al final, se veía dos fotogramas y se
+   iba (medido a 1200 px, regla dura 20). Es su misma clase, `sin-rail`, y
+   desde ahí la lleva `ponerRail`. Sin sesión ese script no llega a correr
+   —no hay terminal a la que dar sitio—, y entonces la lista se queda. #}
+{% if session %}<script data-antes-de-pintar>
+if (document.documentElement.dataset.barra === 'plegada') document.getElementById('taller').classList.add('sin-rail');
+</script>{% endif %}
 
   {# Dos niveles, y la barra tiene que enseñar CUÁL es cuál. Antes el nombre del
      proyecto usaba el mismo estilo que el rótulo «Sesiones tmux», así que
@@ -648,15 +675,27 @@
        mismo `data-nuevo-slot`, y las abre `slot-nuevo.js` al elegirlas; con
        `value=""` el selector no navega a ninguna parte. #}
     {% set en_uso = proyectos | selectattr('en_uso') | list %}
+    {# 🔴 La opción marcada es lo que se ve (C-0350). Si nada de la lista lo
+       es —una ventana oculta, un slot archivado, una sesión aún sin
+       muestrear—, el navegador marcaba la primera y el teléfono decía un slot
+       con la terminal de otra cosa debajo. Entonces va una primera opción que
+       dice qué se está mirando. #}
+    {% set marca = namespace(hay=false) %}
+    {% for p in en_uso %}{% for s in p.slots %}{% if slot and s.id == slot.id %}{% set marca.hay = true %}{% endif %}{% endfor %}{% endfor %}
+    {% for v in sueltas %}{% if v.session == session and v.ventana == ventana and not slot %}{% set marca.hay = true %}{% endif %}{% endfor %}
     <select id="ir-a" aria-label="Ir a un slot o ventana">
       {# Con «crear» como única opción, elegirla no cambia nada y no llega el
          `change`: va detrás de una que ya está elegida. #}
-      {% if not en_uso and not sueltas %}
+      {% if not marca.hay and (slot or session) %}
+      <option value="" selected disabled>Viendo: {% if slot %}{{ slot.nombre }}{% else %}{{ session }}{% if ventana is not none %}:{{ ventana }} · sin slot{% endif %}{% endif %}</option>
+      {% elif not en_uso and not sueltas %}
       <option value="" selected disabled>Nada abierto todavía</option>
       {% endif %}
       {% for p in en_uso %}
       <optgroup label="{{ p.nombre }}">
-        {% for s in p.slots %}
+        {# Los que tienen ventana, primero: son a los que se va. #}
+        {% for s in (p.slots | rejectattr('estado', 'equalto', 'cerrado') | list)
+                    + (p.slots | selectattr('estado', 'equalto', 'cerrado') | list) %}
         <option value="/trabajo?slot={{ s.id }}"
                 {% if slot and s.id == slot.id %}selected{% endif %}>
           {{ s.nombre }}{% if s.estado == 'cerrado' %} · sin ventana{% endif %}</option>
@@ -836,13 +875,14 @@
            aquí: para lo segundo había que ir a las pestañas, y allí la × se
            escondía justo cuando la sesión tenía una sola ventana — que es la
            forma de casi todo lo que se acumula en esta bandeja. #}
-        <form method="post" action="/panel/accion" class="ocultar-una">
+        {% call ui.menu('Acciones sobre esta ventana') %}
+        <form method="post" action="/panel/accion">
           <input type="hidden" name="pane_id" value="{{ v.pane_id }}">
           <input type="hidden" name="accion" value="ocultar">
           <input type="hidden" name="destino" value="/trabajo?session={{ session }}{% if ventana is not none %}&ventana={{ ventana }}{% endif %}">
-          <button class="sutil" title="Quitarla de la bandeja sin cerrarla: sigue corriendo">Ocultar</button>
+          <button title="Quitarla de la bandeja sin cerrarla: sigue corriendo">Ocultar</button>
         </form>
-        <form method="post" action="/panel/accion" class="ocultar-una" data-una-vez="Cerrando…"
+        <form method="post" action="/panel/accion" data-una-vez="Cerrando…"
               data-confirmar-titulo="{% if v.ultima %}Cerrar «{{ v.session }}»{% else %}Cerrar la ventana {{ v.session }}:{{ v.ventana }}{% endif %}"
               data-confirmar-ok="{% if v.ultima %}Cerrar la sesión{% else %}Cerrar la ventana{% endif %}"
               data-confirmar="«{{ v.etiqueta }}»{% if v.ultima %} es la única ventana de «{{ v.session }}», así que se cierra la sesión entera.{% endif %} Muere todo lo que esté corriendo dentro.">
@@ -853,8 +893,9 @@
              volver aquí: la sesión puede haber muerto con ella y quedaría un
              terminal atado a algo que ya no existe. #}
           <input type="hidden" name="destino" value="{% if v.session == session %}/trabajo{% else %}/trabajo?session={{ session }}{% if ventana is not none %}&ventana={{ ventana }}{% endif %}{% endif %}">
-          <button class="sutil peligro-sutil" title="{% if v.ultima %}Cierra la ventana y con ella la sesión «{{ v.session }}»{% else %}Cierra la ventana y mata lo que corra dentro{% endif %}">Cerrar</button>
+          <button class="peligro" title="{% if v.ultima %}Cierra la ventana y con ella la sesión «{{ v.session }}»{% else %}Cierra la ventana y mata lo que corra dentro{% endif %}">{% if v.ultima %}Cerrar la sesión{% else %}Cerrar la ventana{% endif %}</button>
         </form>
+        {% endcall %}
         {% endif %}
       </div>
       {% else %}
@@ -884,11 +925,40 @@
       </details>
       {% endif %}
     </div>
+
+    {# Las shells que nadie ha usado desde que arrancó tmux (C-0352): tras
+       una restauración vuelven como `bash` las ventanas de todo lo que había
+       y el ruido tapa lo vivo. Se OFRECEN: ninguna va marcada, cada una se
+       marca a mano y se confirma (regla dura 3), y el servidor revisa al
+       cerrar que sigan quietas. Plegado: es limpieza, no trabajo. #}
+    {% if quietas and quietas.ventanas %}
+    <div class="grupo">
+      <details class="quietas">
+        <summary>{{ quietas.ventanas | length }} shell{{ 's' if quietas.ventanas | length != 1 }} sin usar desde el arranque</summary>
+        <form method="post" action="/trabajo/cerrar-quietas" data-una-vez="Cerrando…"
+              data-confirmar-titulo="Cerrar las shells marcadas"
+              data-confirmar-ok="Cerrarlas"
+              data-confirmar="Se cierran las ventanas que hayas marcado: shells sin actividad desde que arrancó tmux ({{ quietas.arranque }}). Si alguna es la última de su sesión, la sesión se cierra con ella. Los slots y sus notas no se tocan, y la que hayas usado desde que abriste la página se deja.">
+          <input type="hidden" name="servidor" value="{{ servidor or '' }}">
+          <div class="vacio">Sin actividad desde que arrancó tmux ({{ quietas.arranque }}). Marca las que quieras cerrar.</div>
+          {% for v in quietas.ventanas %}
+          <label class="fila-quieta" title="{{ v.session }}:{{ v.ventana }}{% if v.ruta_corta %} · {{ v.ruta_corta }}{% endif %}">
+            <input type="checkbox" name="pane_id" value="{{ v.pane_id }}">
+            <span class="txt">{{ v.etiqueta }}
+              <span class="sub mono">{{ v.session }}:{{ v.ventana }}{% if v.slot_nombre %} · {{ v.slot_nombre }}{% endif %}</span></span>
+          </label>
+          {% endfor %}
+          <button class="peligro" type="submit">Cerrar las marcadas</button>
+        </form>
+      </details>
+    </div>
+    {% endif %}
   </nav>
 
   <div class="tirador izq" data-lado="rail"></div>
 
-  <main class="centro">
+  {# Un `div` y no `main`: el `main` de la página es el de base.html (C-0347). #}
+  <div class="centro">
     <div class="barra-term">
       <strong style="font-size:14px;font-weight:500">{{ slot.nombre if slot else session or '—' }}</strong>
       {% if slot and slot.ruta %}<span class="mono">{{ slot.ruta }}</span>{% endif %}
@@ -996,7 +1066,7 @@
     {# Con el panel plegado, por dónde se vuelve: en el borde, donde estaba. #}
     <button type="button" class="desplegar-lado" id="desplegar-lado"
             title="Abrir el panel de nota, lienzos, consultas y programados">‹ Nota</button>
-  </main>
+  </div>
 
   <div class="tirador der" data-lado="nota"></div>
 
@@ -1181,7 +1251,7 @@
     no la ha muestreado. Aparecerá aquí en unos segundos.</p>
 
     {% if not ventanas_estado %}
-      <p class="tenue">Elige un slot en la izquierda para ver y editar su nota.</p>
+      <p class="tenue">Elige un slot para ver y editar su nota.</p>
     {% endif %}
     </div>
 
@@ -1292,6 +1362,14 @@
   let ws = null, intentos = 0, cerradoAposta = false;
   const codificador = new TextEncoder();
 
+  // Fondo, cursor y selección, de los tokens de `:root` (C-0403): eran literales
+  // de la paleta violeta, así que el cursor seguía violeta junto al acento y,
+  // con la interfaz nueva, la terminal no seguía al juego de colores. Se leen
+  // una vez: cambiar de colores recarga la página. El de detrás es el de la
+  // interfaz de siempre, por si un navegador no diera el token.
+  const raiz = getComputedStyle(document.documentElement);
+  const token = (nombre, siNo) => ((raiz.getPropertyValue && raiz.getPropertyValue(nombre)) || '').trim() || siNo;
+
   const term = new Terminal({
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
     fontSize: guardado.get('fuente', 13),
@@ -1301,10 +1379,11 @@
     // El texto base va NEUTRO a propósito. Teñirlo de azul (#c9d3ee) hacía que
     // el azul de Claude y las negritas no despegaran del texto normal: el color
     // debe pertenecer a lo que Claude resalta, no al fondo sobre el que resalta.
-    // La paleta ANSI usa los tonos del sistema, separados en luminancia.
+    // La paleta ANSI usa los tonos del sistema, separados en luminancia; ella y
+    // el texto son la excepción declarada a «colores desde los tokens».
     theme: {
-      background: '#0f101a', foreground: '#d8dade', cursor: '#98a4f7',
-      selectionBackground: '#2a3050',
+      background: token('--lienzo', '#0d1117'), foreground: '#d8dade',
+      cursor: token('--acento', '#3fb9d4'), selectionBackground: token('--elevado', '#243040'),
       black:   '#3a4054', red:     '#e8917c', green:   '#7ec8a9', yellow:  '#d9b57e',
       blue:    '#8fb8d9', magenta: '#c2a7e6', cyan:    '#86c9c9', white:   '#c9d3ee',
       brightBlack:   '#646e87', brightRed:     '#ffab94',
@@ -1800,6 +1879,17 @@
     foco:   { fuente: 13, rail: false, nota: false },
   };
 
+  /* La barra plegada de la interfaz nueva (C-0450) se lleva la lista con
+   * ella. El estado efectivo lo pone el marco en `<html data-barra>` y avisa
+   * con `hub:barra`; se lee de ahí y no de lo guardado: con la interfaz de
+   * siempre no hay atributo, ni botón con el que volver a abrirla. */
+  const barraPlegada = () => document.documentElement.dataset.barra === 'plegada';
+  let preset = 'comodo';
+  function ponerRail() {
+    taller.classList.toggle('sin-rail', !PRESETS[preset].rail || barraPlegada());
+  }
+  document.addEventListener('hub:barra', () => { ponerRail(); reajustar(); });
+
   /* `conFuente` distingue ELEGIR un preset de RESTAURARLO al cargar, y esa
    * distinción es todo el arreglo.
    *
@@ -1815,7 +1905,8 @@
    * de un tamaño ilegible sin tener que acertar cuántas veces dar a «+». */
   function aplicarPreset(nombre, conFuente = true) {
     const p = PRESETS[nombre]; if (!p) return;
-    taller.classList.toggle('sin-rail', !p.rail);
+    preset = nombre;
+    ponerRail();
     taller.classList.toggle('sin-nota', !p.nota);
     guardado.set('preset', nombre);
     guardado.set('sinNota', !p.nota);
@@ -1977,56 +2068,64 @@
    * (`/api/voz`, el mismo transcriptor que los encargos) y el texto se PEGA en
    * la terminal, sin Enter. Una transcripción equivocada que se envía sola es
    * el error que no se ve; así se lee antes de mandarlo. Sale por el mismo
-   * socket que el tecleo: es la persona escribiendo (regla dura 6). */
-  let grabadora = null;
+   * socket que el tecleo: es la persona escribiendo (regla dura 6).
+   *
+   * Graba y sube con `HubGrabar` (`grabar.js`, C-0311): con eso hereda decir
+   * por qué no hay micrófono, reintentar la subida y calentar el Whisper. Aquí
+   * se quedan sus textos, sus restricciones (`llano`) y qué hace con el texto. */
+  let toma = null;
   const botonesDictar = document.querySelectorAll('[data-dictar]');
   const marcarDictado = (grabando) => botonesDictar.forEach(b => {
     b.classList.toggle('on', grabando);
     b.textContent = grabando ? 'Parar' : 'Dictar';
   });
-  async function transcribirDictado(trozos, tipo) {
+  async function transcribirDictado(audio) {
     estado.textContent = 'transcribiendo…';
-    const ext = tipo.includes('ogg') ? 'ogg' : tipo.includes('mp4') ? 'm4a' : 'webm';
-    const datos = new FormData();
-    datos.append('audio', new Blob(trozos, { type: tipo }), 'dictado.' + ext);
-    try {
-      const r = await fetch('/api/voz', { method: 'POST', body: datos });
-      const d = await r.json();
-      if (!d.ok) { estado.textContent = `no se transcribió: ${d.error}`; return; }
+    // Quién dicta, para medir cada voz por separado (C-0246).
+    const d = await HubGrabar.subir(audio, { campos: { origen: 'terminal' } });
+    if (d.red) {
+      estado.textContent = 'no se transcribió: el hub no contesta';
+    } else if (!d.ok) {
+      estado.textContent = `no se transcribió: ${d.error}`;
+      return;
+    } else {
       term.paste(d.texto);
       estado.textContent = 'dictado escrito: revísalo y pulsa Enter';
-    } catch (e) {
-      estado.textContent = 'no se transcribió: el hub no contesta';
     }
     term.focus();
   }
+  /* `abriendo`: el segundo clic de un doble clic llega mientras el micrófono
+   * se abre, con `toma` aún vacía, y abría otro; «Parar» cerraba uno y el otro
+   * seguía grabando sin botón que lo parara (C-0427). */
+  let abriendo = false;
   async function dictar() {
-    if (grabadora) { grabadora.stop(); return; }
-    if (!navigator.mediaDevices || !window.MediaRecorder) {
+    if (toma) { toma.parar(); return; }
+    if (abriendo) return;
+    if (!HubGrabar.puede()) {
       estado.textContent = 'este navegador no deja grabar aquí (hace falta HTTPS o localhost)';
       return;
     }
-    let flujo;
+    // Que el Whisper se vaya cargando mientras hablas (C-0292).
+    HubGrabar.calentar();
+    let esta;
+    abriendo = true;
     try {
-      flujo = await navigator.mediaDevices.getUserMedia({ audio: true });
+      esta = await HubGrabar.grabar({ restricciones: HubGrabar.RESTRICCIONES.llano });
     } catch (e) {
-      estado.textContent = 'sin permiso para el micrófono';
+      // Sin permiso, sin micrófono u ocupado se arreglan distinto (C-0290).
+      estado.textContent = e.message;
       return;
+    } finally {
+      abriendo = false;
     }
-    const trozos = [];
-    const esta = new MediaRecorder(flujo);
-    grabadora = esta;
-    esta.addEventListener('dataavailable', ev => { if (ev.data && ev.data.size) trozos.push(ev.data); });
-    esta.addEventListener('stop', () => {
-      flujo.getTracks().forEach(p => p.stop());
-      grabadora = null;
-      marcarDictado(false);
-      if (trozos.length) transcribirDictado(trozos, esta.mimeType || 'audio/webm');
-      else estado.textContent = 'no se grabó nada';
-    });
-    esta.start();
+    toma = esta;
     marcarDictado(true);
     estado.textContent = 'grabando… pulsa «Parar» para terminar';
+    const audio = await esta.terminado;
+    if (toma === esta) toma = null;
+    marcarDictado(false);
+    if (audio) transcribirDictado(audio);
+    else estado.textContent = 'no se grabó nada';
   }
   botonesDictar.forEach(b => {
     b.addEventListener('pointerdown', e => e.preventDefault());

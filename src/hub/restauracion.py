@@ -234,7 +234,60 @@ def plan_de_restauracion(con: sqlite3.Connection, existe=None,
         if slot["id"] not in con_ventana:
             comando = slot["comando"] or (comando_claude(None) if modo_claude() != "nada" else "")
             plan.append({**_entrada(slot, slot["ruta"], comando, "slot", existe), "reanuda": False})
-    return plan
+    return _restar_lo_abierto(plan, ventanas_abiertas(con))
+
+
+def ventanas_abiertas(con: sqlite3.Connection) -> list[dict]:
+    """Las ventanas de slot que hay abiertas AHORA, una por ventana de tmux.
+
+    Es la misma regla que `api.snapshot_actual` —la última muestra, y sólo si
+    no está preservada: una preservada es de un tmux que murió y nada suyo
+    sigue abierto—, escrita aquí porque `api` importa este módulo y no al revés
+    (decisión 206).
+    """
+    ultima = con.execute(
+        "SELECT id, preservado FROM snapshot ORDER BY id DESC LIMIT 1").fetchone()
+    if ultima is None or ultima["preservado"]:
+        return []
+    abiertas, vistas = [], set()
+    for f in con.execute(
+        """SELECT slot_id, session, window_idx, cwd FROM panel
+           WHERE snapshot_id=? AND slot_id IS NOT NULL
+           ORDER BY session, window_idx, pane_idx""",
+        (ultima["id"],),
+    ):
+        if (f["session"], f["window_idx"]) in vistas:
+            continue
+        vistas.add((f["session"], f["window_idx"]))
+        abiertas.append({"slot_id": f["slot_id"], "ruta": normalizar_ruta(f["cwd"] or "")})
+    return abiertas
+
+
+def _restar_lo_abierto(plan: list[dict], abiertas: list[dict]) -> list[dict]:
+    """El plan menos lo que ya está abierto (C-0299).
+
+    🔴 Tras un reinicio, tmux-continuum devuelve las ventanas por su cuenta y el
+    muestreo las vuelve a atar a sus slots; el plan, armado sólo desde la
+    muestra preservada, las ofrecía otra vez y un clic las duplicaba. Cada
+    ventana abierta cubre UNA del plan de su slot, en la ruta que se pedía o en
+    la que se resolvió (una ventana que tmux devolvió en la ruta guardada es
+    ésa aunque el plan la mandara a la del slot). La del contrato de la 165
+    (`origen: slot`) es una por slot: si el slot ya tiene alguna, está cumplida.
+    """
+    libres: dict[int, list[str]] = {}
+    for a in abiertas:
+        libres.setdefault(a["slot_id"], []).append(a["ruta"])
+    queda = []
+    for paso in plan:
+        rutas = libres.get(paso["slot_id"])
+        if rutas is not None and paso["origen"] == "slot":
+            continue
+        cubre = next((r for r in rutas or [] if r and r in (paso["ruta"], paso["ruta_pedida"])), None)
+        if cubre is not None:
+            rutas.remove(cubre)
+            continue
+        queda.append(paso)
+    return queda
 
 
 def es_refugio(ruta: str) -> bool:

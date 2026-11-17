@@ -8,25 +8,38 @@
     lento, así que lo que ves es la última lectura, con su hora.') }}
 
 {# La salud del propio hub (decisión 289): lo que tiene que estar en pie para
-   que un apagón tenga vuelta. Lo peor primero, y cada cosa con su arreglo. #}
-{{ ui.seccion('escudo', 'Salud del hub', 'Lo que tiene que estar en pie para que el hub recupere tu trabajo al reiniciar.') }}
-<div class="tarjeta" id="salud" style="padding:0;margin-bottom:18px">
-  {% for r in salud %}
+   que un apagón tenga vuelta. Lo peor primero, y cada cosa con su arreglo.
+   Lo que está bien va plegado en una línea (C-0378): diez «bien» seguidos
+   empujaban debajo justo lo que fallaba. #}
+{% macro fila_salud(r) %}
   <div class="salud-fila">
-    <span class="insignia {{ {'mal': 'riesgo', 'aviso': 'espera', 'ok': 'ok'}[r.estado] }}">{{ {'mal': 'mal', 'aviso': 'aviso', 'ok': 'bien'}[r.estado] }}</span>
+    {{ ui.estado('salud', r.estado) }}
     <div style="flex:1;min-width:0">
       <strong>{{ r.nombre }}</strong>
       <div class="tenue" style="font-size:13px">{{ r.detalle }}</div>
-      {% if r.arreglo %}<div style="font-size:12.5px;margin-top:3px">Arreglo: <code>{{ r.arreglo }}</code></div>{% endif %}
+      {% if r.arreglo %}<div style="font-size:var(--letra-2);margin-top:3px">Arreglo: <code>{{ r.arreglo }}</code></div>{% endif %}
     </div>
   </div>
-  {% endfor %}
+{% endmacro %}
+{{ ui.seccion('escudo', 'Salud del hub', 'Lo que tiene que estar en pie para que el hub recupere tu trabajo al reiniciar.') }}
+<div class="tarjeta" id="salud" style="padding:0;margin-bottom:18px">
+  {% for r in salud_atencion %}{{ fila_salud(r) }}{% endfor %}
+  {% if salud_en_pie %}
+  {% set n = salud_en_pie | length %}
+  <details class="salud-pie">
+    <summary>{{ ui.estado('salud', 'ok') }}
+      <span>{{ 'Lo demás en pie' if salud_atencion else 'Todo en pie' }} · {{ n }} comprobaci{{ 'ón' if n == 1 else 'ones' }}</span></summary>
+    {% for r in salud_en_pie %}{{ fila_salud(r) }}{% endfor %}
+  </details>
+  {% endif %}
 </div>
 <style>
   .salud-fila { display:flex; gap:12px; align-items:flex-start; padding:10px 14px;
                 border-bottom:1px solid var(--borde); }
   .salud-fila:last-child { border-bottom:none; }
   .salud-fila code { overflow-wrap:anywhere; }
+  .salud-pie > summary { display:flex; gap:12px; align-items:center; padding:10px 14px; }
+  .salud-pie[open] > summary { border-bottom:1px solid var(--borde); }
 </style>
 
 {% if not medidas %}
@@ -53,7 +66,9 @@
 </div>
 
 <p class="tenue" style="margin-top:10px">
-  Última lectura {{ medido_en[:19] | replace('T', ' ') }} UTC ·
+  {#- Sin umbral: no hay «Medir ahora» aquí (lo mide el ciclo lento), y un color
+      sin nada que hacer al lado es ruido. #}
+  Última lectura {{ ui.cuando(medido_en, forma='ambos') }} ·
   la temperatura sale de <code>nvidia-smi</code>, que es del driver y existe
   aunque no haya ninguna sesión de Windows abierta.
 </p>
@@ -66,26 +81,95 @@
 <div class="tarjeta">
   <div class="fila">
     <span>Windows arrancó</span><div style="flex:1"></div>
-    <span class="mono tenue">{{ medidas.get('windows.arranque', {}).get('texto') or '—' }}</span>
+    {# En la hora de la casa, como la «Última lectura»: el texto crudo es ISO en
+       UTC y salía seis horas por delante (C-0396, tras la revisión). #}
+    <span class="mono tenue">{{ ui.cuando(medidas.get('windows.arranque', {}).get('texto'), forma='ambos') }}</span>
   </div>
+  {# Cuánto tardó en volver todo tras encender (C-0381): sólo si las horas son
+     de la misma lectura y cuadran (`api._ultimo_arranque`, regla dura 13). #}
+  {% if arranque %}
+  <div class="fila" style="margin-top:6px;flex-wrap:wrap;gap:4px 10px">
+    <span>Tras el último arranque</span><div style="flex:1"></div>
+    <span class="tenue">WSL a los <strong>{{ arranque.wsl }}</strong>{% if arranque.hub %} · el hub a los <strong>{{ arranque.hub }}</strong>{% endif %}</span>
+  </div>
+  {% endif %}
   <div class="fila" style="margin-top:6px">
     <span>Último apagón <em class="tenue">no pedido</em></span><div style="flex:1"></div>
-    <span class="mono tenue">{{ medidas.get('windows.apagon', {}).get('texto') or 'ninguno registrado' }}</span>
+    {% set apagon = medidas.get('windows.apagon', {}).get('texto') %}
+    <span class="mono tenue">{{ ui.cuando(apagon, forma='ambos') if apagon else 'ninguno registrado' }}</span>
   </div>
   <div class="fila" style="margin-top:6px">
     <span>Último reinicio <em class="tenue">pedido</em></span><div style="flex:1"></div>
-    <span class="mono tenue">{{ medidas.get('windows.reinicio', {}).get('texto') or '—' }}</span>
+    <span class="mono tenue">{{ ui.cuando(medidas.get('windows.reinicio', {}).get('texto'), forma='ambos') }}</span>
   </div>
 </div>
 
 {% endif %}
+
+{# ── El diagnóstico de la PC, a petición (C-0209) ────────────────────────── #}
+{# Justo tras un pantallazo, esta pantalla tiene que ayudar a ver qué pasó. Por
+   la misma puerta que la CLI y el secretario (`hub.diagnostico`, 386) y sólo
+   cuando se pulsa: son segundos de PowerShell (regla dura 14). Sin
+   `data-sin-recarga`: contesta con la página y el resultado, que no se guarda. #}
+{{ ui.seccion('lupa', 'Diagnóstico de la PC',
+   'Tras un pantallazo o con la red rara: lo que dice Windows, leído en el momento.') }}
+
+<div class="tarjeta" id="diagnostico">
+  <form method="post" action="/maquina/diagnosticar#diagnostico" data-una-vez="Diagnosticando…"
+        data-confirmar-titulo="Diagnosticar la PC" data-confirmar-ok="Diagnosticar"
+        data-confirmar="Lee en Windows los pantallazos, los apagados y los volcados recientes, y mide la latencia a la puerta de enlace y a dos servidores de referencia. Sólo lectura: no cambia nada. Tarda unos segundos y no se guarda.">
+    <div class="fila" style="flex-wrap:wrap;gap:10px">
+      <span class="tenue" style="flex:1;min-width:16ch">
+        {%- if diagnostico_en_marcha %}Ya hay un diagnóstico en marcha: no se lanza otro. Su resultado sale en la pestaña que lo pidió; si era ésta y la recargaste, pídelo otra vez cuando acabe (tarda hasta un minuto).
+        {%- elif diagnostico %}Leído el {{ ui.cuando(diagnostico.hecho_en, forma='local') }}{% if diagnostico.segundos %}, en {{ diagnostico.segundos }} s{% endif %}. No se guarda: al recargar la pantalla, se va.
+        {%- else %}Pantallazos, volcados y latencia. Sólo lectura, y sólo cuando lo pulsas.{% endif -%}
+      </span>
+      <button class="boton">{{ 'Diagnosticar otra vez' if diagnostico else 'Diagnosticar ahora' }}</button>
+    </div>
+  </form>
+  {% if diagnostico %}{% set dg = diagnostico %}
+    {% if dg.sin_windows %}
+    <p class="diag-p">{{ dg.sin_windows }}</p>
+    {% endif %}
+    {% if dg.windows %}
+    <div class="diag-h">Pantallazos{% if dg.dias %} de los últimos {{ dg.dias }} días{% endif %}</div>
+    {% if dg.pantallazos %}
+    <ul class="limpia">{% for p in dg.pantallazos %}
+      <li><span class="mono">{{ ui.cuando(p.hora, forma='local') }}</span> · <strong>{{ p.codigo }}</strong>{% if p.nombre %} {{ p.nombre }}{% endif %}
+        {%- if p.cayo %} <span class="tenue">— se cayó a las {{ p.cayo }} (según el 6008)</span>{% endif %}</li>{% endfor %}
+    </ul>
+    <p class="tenue diag-p">La hora es la de cuando volvió a arrancar, no la de la caída.</p>
+    {% else %}<p class="tenue diag-p">Ninguno.</p>{% endif %}
+    {% if dg.volcados %}
+    <p class="tenue diag-p">Volcados (sin abrir): {% for v in dg.volcados %}{{ v.nombre }} · {{ v.mb }} MB · {{ ui.cuando(v.fecha, forma='local') }}{{ '; ' if not loop.last }}{% endfor %}</p>
+    {% endif %}
+    {% if dg.equipo %}<p class="tenue diag-p">{{ dg.equipo }}</p>{% endif %}
+    {% endif %}
+    {% if dg.red %}
+    <div class="diag-h">Latencia</div>
+    <ul class="limpia">{% for x in dg.latencias %}
+      <li><span class="mono">{{ x.destino }}</span> <span class="tenue">({{ x.papel }})</span> ·
+        {% if x.recibidos %}media {{ '<1' if x.media == 0 else x.media }} ms · máx {{ '<1' if x.max == 0 else x.max }} ms · {% endif %}{{ x.perdida }}</li>{% endfor %}
+    </ul>
+    {% for a in dg.adaptadores %}<p class="tenue diag-p">{{ a.nombre }}: {{ a.descripcion }}, {{ a.velocidad }}</p>{% endfor %}
+    {% endif %}
+    {% for e in dg.errores %}<p class="diag-p" style="color:var(--riesgo)">No se pudo: {{ e }}</p>{% endfor %}
+    {% for f in dg.fallos %}<p class="tenue diag-p">No se pudo: {{ f }}</p>{% endfor %}
+    {% for s in dg.sin_permiso %}<p class="tenue diag-p">Sin permiso para listar {{ s }}: hace falta ser administrador de Windows.</p>{% endfor %}
+  {% endif %}
+</div>
+<style>
+  #diagnostico .diag-h { margin:14px 0 2px; font-weight:600; font-size:var(--letra-3); }
+  #diagnostico .diag-p { margin:6px 0 0; font-size:13px; overflow-wrap:anywhere; }
+  #diagnostico ul.limpia li { font-size:var(--letra-3); overflow-wrap:anywhere; }
+</style>
 
 {# ── Las alarmas ─────────────────────────────────────────────────────────── #}
 {{ ui.seccion('aviso', 'Alarmas',
    'Lo único que el hub manda solo sobre la máquina, y sólo al dueño. Se ven aquí
     para no tener que suponer que llegarían.') }}
 
-<div class="tarjeta">
+<div class="tarjeta" id="alarmas">
   <div class="fila">
     <span>Temperatura de la GPU</span><div style="flex:1"></div>
     <span class="tenue">avisa a partir de <strong>{{ limites.temperatura | round | int }} °C</strong></span>

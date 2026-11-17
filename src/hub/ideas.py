@@ -54,8 +54,41 @@ def _proyecto_valido(proyecto: str | None) -> str | None:
     return proyecto
 
 
+#: La marca de una idea que nace de algo que el secretario no supo hacer
+#: (C-0252): última línea del detalle, para que Confianza la reconozca sin una
+#: columna nueva. Lo que sigue es el texto del hueco tal como se apuntó.
+MARCA_HUECO = "Hueco: "
+
+
+def clave_hueco(texto: str) -> str:
+    """Cómo se reconoce un mismo hueco: minúsculas y espacios, sin agrupar por
+    sentido (eso sería inventar). Una sola: la usan Confianza, el tablero y el
+    ciclo del secretario, y con dos un hueco dejaría de casar con su idea."""
+    return " ".join(str(texto or "").lower().split())
+
+
+def hueco_de(idea: dict) -> str:
+    """El hueco del que nació la idea, o «» si no nació de uno."""
+    lineas = (idea.get("detalle") or "").rstrip().splitlines()
+    if lineas and lineas[-1].startswith(MARCA_HUECO):
+        return lineas[-1][len(MARCA_HUECO):].strip()
+    return ""
+
+
+def de_huecos(con: sqlite3.Connection) -> dict[str, dict]:
+    """Las ideas que nacieron de un hueco, por su `clave_hueco`. Si un mismo
+    hueco tiene varias, la más reciente: es la que sigue viva. Sólo lectura."""
+    out: dict[str, dict] = {}
+    for f in con.execute("SELECT * FROM idea WHERE detalle LIKE ? ORDER BY id", (f"%{MARCA_HUECO}%",)):
+        idea = dict(f)
+        hueco = hueco_de(idea)
+        if hueco:
+            out[clave_hueco(hueco)] = idea
+    return out
+
+
 def apuntar(con: sqlite3.Connection, texto: str, detalle: str = "", proyecto: str | None = None,
-            origen: str = "web") -> int:
+            origen: str = "web", hueco: str = "") -> int:
     texto = " ".join((texto or "").split())
     if not texto:
         raise ValueError("una idea vacía no se apunta")
@@ -63,6 +96,11 @@ def apuntar(con: sqlite3.Connection, texto: str, detalle: str = "", proyecto: st
         raise ValueError(f"la idea va en una línea (hasta {LARGO_TEXTO} caracteres); lo demás, en el detalle")
     if origen not in ORIGENES:
         raise ValueError(f"origen desconocido: {origen}")
+    hueco = " ".join((hueco or "").split())
+    if hueco:
+        # La marca se añade después de recortar: un detalle largo no se la come.
+        marca = MARCA_HUECO + hueco
+        detalle = ((detalle or "").strip()[:LARGO_DETALLE - len(marca) - 1] + "\n" + marca).strip()
     cursor = con.execute(
         "INSERT INTO idea (texto, detalle, proyecto, origen, estado, creada) VALUES (?, ?, ?, ?, 'nueva', ?)",
         (texto, (detalle or "").strip()[:LARGO_DETALLE], _proyecto_valido(proyecto), origen, ahora()))

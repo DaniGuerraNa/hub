@@ -36,7 +36,7 @@ def test_su_carpeta_cuelga_de_la_del_secretario(monkeypatch, tmp_path):
     preguntársela a `memoria.carpeta()`."""
     from hub.secretario import memoria
 
-    monkeypatch.setattr(memoria, "carpeta", lambda: tmp_path / "otra")
+    monkeypatch.setattr(memoria, "carpeta", lambda crear=True: tmp_path / "otra")
     assert wx.carpeta() == tmp_path / "otra" / "whatsapp-exportado"
 
 

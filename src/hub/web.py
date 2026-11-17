@@ -20,20 +20,26 @@ import shlex
 import sqlite3
 import subprocess
 import sys
+import threading
+import time
 
+import jinja2
 from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                PlainTextResponse, RedirectResponse)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.exception_handlers import http_exception_handler
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES, GZipMiddleware
 
 from . import consumo as _consumo_mod
 from . import (acceso, agentes, api, asistente, busqueda, canal, catalogo,
                comandos, config, conversaciones, db, encargos, entrega, entrevistador, ideas, insignias,
-               intercambio, lienzos, navegador, orquestador,
+               interfaz, intercambio, lienzos, maquetas, navegacion, navegador, opcionales, orquestador,
                programados, registry, restauracion, rele, rele_encargos, salud, servicios,
-               slots, snapshotter, terminal, tmux, transcripts)
+               slots, snapshotter, terminal, tiempos, tmux, transcripts)
 from . import conexiones as conexiones_mod
 from . import repos as repos_git
 
@@ -156,6 +162,102 @@ def _hosts_validos() -> tuple[str, ...]:
         return (*acceso.HOSTS_LOCALES, *_hosts_de_prueba())
 
 
+# ── Registro de lo que importa (C-0245) ───────────────────────────────────────
+#
+# `hub-web` corre con `--no-access-log`: el 98 % del journal eran accesos «200
+# OK» y sólo cabían seis días de historia. En su lugar, una línea cuando sirve:
+# respuesta de error o petición lenta. ASGI puro y no `BaseHTTPMiddleware`, que
+# retiene el cuerpo y rompería el streaming (SSE). Se mide hasta que **arranca**
+# la respuesta, no hasta que acaba: una SSE dura lo que dura la pestaña y no es
+# lentitud. Nunca se apunta la cadena de consulta ni el cuerpo.
+#
+# Y aquí se abre la cuenta de tiempos de la petición (C-0310, `hub.tiempos`):
+# sale en la cabecera `Server-Timing` de toda respuesta que pasa la puerta y, si se apunta, al
+# final de su línea. Va en este registro y no en `_la_puerta`: el registro ve
+# el arranque de la respuesta ya comprimida (la compresión va por dentro de
+# él), así que lo que añade no lo reescribe nadie después.
+UMBRAL_LENTA_S = 1.0
+
+
+def _con_server_timing(mensaje: dict, tramos: dict, segundos: float) -> dict:
+    """El arranque de la respuesta con su `Server-Timing` añadido."""
+    try:
+        valor = tiempos.cabecera(tramos, total=segundos).encode("latin-1")
+    except Exception:  # noqa: BLE001 - medir no puede romper la petición
+        return mensaje
+    return {**mensaje, "headers": [*mensaje.get("headers", ()), (b"server-timing", valor)]}
+
+
+class _RegistroDeAcceso:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, recibir, enviar):
+        if scope["type"] != "http":
+            await self.app(scope, recibir, enviar)
+            return
+        inicio = time.monotonic()
+        tramos = tiempos.empezar()
+        dicho = False
+
+        def apuntar(estado: int, nota: str = "") -> None:
+            nonlocal dicho
+            if dicho:
+                return
+            dicho = True
+            ms = int((time.monotonic() - inicio) * 1000)
+            try:
+                medido = tiempos.resumen(tramos)
+                print(f"[web] {scope.get('method', '?')} {scope.get('path', '?')} "
+                      f"-> {estado} en {ms} ms{nota}" + (f" · {medido}" if medido else ""),
+                      flush=True)
+            except Exception:  # noqa: BLE001 - registrar no puede romper la petición
+                pass
+
+        async def enviar_midiendo(mensaje):
+            nonlocal dicho
+            if mensaje["type"] == "http.response.start":
+                estado = mensaje.get("status", 0)
+                segundos = time.monotonic() - inicio
+                mensaje = _con_server_timing(mensaje, tramos, segundos)
+                if estado >= 400 or segundos > UMBRAL_LENTA_S:
+                    apuntar(estado)
+                else:
+                    dicho = True  # rápida y buena: no se dice nada
+            await enviar(mensaje)
+
+        try:
+            await self.app(scope, recibir, enviar_midiendo)
+        except Exception as exc:
+            # `Exception` y no `BaseException`: una petición que el navegador
+            # corta llega como `CancelledError`, y eso no es un 500.
+            if not dicho:
+                apuntar(500, f" (excepción {type(exc).__name__})")
+            raise
+
+
+# ── Comprimir lo que viaja (C-0278) ───────────────────────────────────────────
+#
+# Las pantallas salían sin comprimir: `/trabajo` 290 KB, `/intercambio` 750,
+# cada una con su CSS en línea; desde el teléfono por la red privada se nota en
+# cada navegación. Sólo a quien lo pide (`Accept-Encoding`): urllib —el agente
+# de reuniones, los relés— y `curl` a secas siguen recibiendo lo de siempre.
+# Va por DENTRO de las otras dos (se añade antes): `_la_puerta` es un
+# `BaseHTTPMiddleware` y reenvía el cuerpo por trozos, y por fuera de ella la
+# compresión no sabía el tamaño de nada —comprimía hasta una respuesta de 30
+# bytes y quitaba el `Content-Length` de todas—. Sólo HTTP: el WebSocket de la
+# terminal no pasa por aquí, y las SSE (`text/event-stream`), imágenes, audio y
+# vídeo, y las respuestas parciales, ya las excluye Starlette. Lo que se baja
+# de Intercambio (`octet-stream`) tampoco: suele ir ya comprimido, y
+# recomprimirlo al vuelo quita el tamaño, que es lo que pinta el progreso.
+# Nivel 6 y no 9: casi lo mismo de tamaño y bastante menos CPU por página.
+app.add_middleware(
+    GZipMiddleware, minimum_size=1024, compresslevel=6,
+    exclude_content_types=(*DEFAULT_EXCLUDED_CONTENT_TYPES, "application/octet-stream"),
+)
+app.add_middleware(_RegistroDeAcceso)
+
+
 @app.middleware("http")
 async def _la_puerta(request: Request, siguiente):
     """Quién puede hablarle al hub: el nombre, el origen y el dispositivo.
@@ -191,6 +293,7 @@ async def _la_puerta(request: Request, siguiente):
     if respuesta is not None:
         return respuesta
     return await siguiente(request)
+
 
 
 def _es_de_casa(host: str | None, cliente: str | None) -> bool:
@@ -293,21 +396,57 @@ def _puerta_de_dispositivo(request: Request):
     )
 
 _AQUI = Path(__file__).parent
-plantillas = Jinja2Templates(directory=str(_AQUI / "templates"))
 
 
-# Los dos formateadores viven en `consumo`, que es donde nacieron y el único
-# sitio que hoy los usa. Se registran aquí como globales de Jinja porque una
-# plantilla no importa módulos; si algún día los pide una segunda pantalla, se
-# mudan a su propio módulo y esta línea no cambia.
-plantillas.env.globals["millones"] = _consumo_mod.millones
-plantillas.env.globals["numero"] = _consumo_mod.numero
-plantillas.env.globals["tamano"] = navegador.tamano
-# Disponible en TODA plantilla sin pasarla por el contexto de cada vista: si
-# hubiera que acordarse de inyectarla, la vista que se olvide pinta el estado
-# mudo y nadie lo nota. El arnés de tests llama a la MISMA función sobre su
-# entorno, para no acabar probando plantillas distintas de las que se sirven.
-insignias.registrar(plantillas.env)
+def _entorno(*delante: Path) -> Jinja2Templates:
+    """Un entorno de plantillas: las de siempre, con `delante` por encima.
+
+    Sin `delante` es el de toda la vida. Con una carpeta delante (C-0169), una
+    plantilla que esté en ella gana a la del mismo nombre de `templates/`, y
+    las demás se sirven tal cual: la interfaz nueva sólo trae su `base.html`,
+    y las pantallas —que hacen `{% extends "base.html" %}`— la heredan sin
+    tocarse. Esa base hereda a su vez de la de siempre por `@clasica/base.html`,
+    que es como se nombra «la que hay debajo» sin que el cargador se devuelva
+    a sí misma.
+    """
+    clasicas = _AQUI / "templates"
+    if delante:
+        cargador = jinja2.ChoiceLoader([
+            jinja2.FileSystemLoader([*(str(c) for c in delante), str(clasicas)]),
+            jinja2.PrefixLoader({"@clasica": jinja2.FileSystemLoader(str(clasicas))}),
+        ])
+        entorno = Jinja2Templates(env=jinja2.Environment(
+            loader=cargador, autoescape=jinja2.select_autoescape()))
+    else:
+        entorno = Jinja2Templates(directory=str(clasicas))
+    # Los dos formateadores viven en `consumo`, que es donde nacieron y el único
+    # sitio que hoy los usa. Se registran aquí como globales de Jinja porque una
+    # plantilla no importa módulos; si algún día los pide una segunda pantalla, se
+    # mudan a su propio módulo y esta línea no cambia.
+    entorno.env.globals["millones"] = _consumo_mod.millones
+    entorno.env.globals["numero"] = _consumo_mod.numero
+    entorno.env.globals["tamano"] = navegador.tamano
+    # En qué sección y en qué pantalla se está: lo pregunta el marco nuevo.
+    entorno.env.globals["seccion_de"] = navegacion.de_pantalla
+    entorno.env.globals["pantalla_actual"] = navegacion.pantalla_actual
+    # Disponible en TODA plantilla sin pasarla por el contexto de cada vista: si
+    # hubiera que acordarse de inyectarla, la vista que se olvide pinta el estado
+    # mudo y nadie lo nota. El arnés de tests llama a la MISMA función sobre su
+    # entorno, para no acabar probando plantillas distintas de las que se sirven.
+    # Trae también el filtro `cuando` (`reloj.cuando`, C-0396): por eso se
+    # registra allí y no aquí.
+    insignias.registrar(entorno.env)
+    return entorno
+
+
+#: Un entorno por interfaz (C-0169). El de la nueva sólo existe donde están sus
+#: plantillas; `interfaz.elegida` no la devuelve si no.
+_PLANTILLAS: dict[str, Jinja2Templates] = {interfaz.CLASICA: _entorno()}
+if interfaz.disponible():
+    _PLANTILLAS[interfaz.NUEVA] = _entorno(interfaz.carpeta(interfaz.NUEVA))
+#: El de siempre, con su nombre de siempre: lo usan el arnés de pruebas y quien
+#: quiera leer una plantilla sin pasar por una petición.
+plantillas = _PLANTILLAS[interfaz.CLASICA]
 
 
 def _con_rail(datos: dict) -> dict:
@@ -327,7 +466,89 @@ def _con_rail(datos: dict) -> dict:
 
 
 def _vista(request: Request, plantilla: str, datos: dict):
-    return plantillas.TemplateResponse(request, plantilla, _con_rail(datos))
+    datos = _con_rail(datos)
+    # Con qué interfaz se pinta lo decide el aparato (C-0169): sin su cookie,
+    # la de siempre. Va en el contexto para que la guía sepa qué botón ofrecer.
+    elegida = interfaz.elegida(request.cookies)
+    # Los entornos se montan al arrancar: si las plantillas de la nueva llegan
+    # después, hasta el siguiente arranque se sigue sirviendo la de siempre.
+    if elegida not in _PLANTILLAS:
+        elegida = interfaz.CLASICA
+    datos = {**datos, "interfaz": {"elegida": elegida,
+                                   "disponible": interfaz.NUEVA in _PLANTILLAS and interfaz.disponible(),
+                                   # Con qué colores (fase 1b): sólo los usa la nueva.
+                                   "colores": interfaz.colores_elegidos(request.cookies),
+                                   "juegos": interfaz.COLORES}}
+    # Pintar también cuesta (C-0310): sin su tramo, lo que tarda Jinja quedaba
+    # en `Server-Timing` como un hueco sin nombre entre `total` y lo medido.
+    with tiempos.tramo("pintar"):
+        return _PLANTILLAS[elegida].TemplateResponse(request, plantilla, datos)
+
+
+@app.post("/interfaz")
+def interfaz_elegir(request: Request, cual: str = Form("", alias="interfaz"),
+                    destino: str = Form("/")):
+    """Enciende o apaga la interfaz nueva EN ESTE APARATO (C-0169).
+
+    Es una cookie y nada más: no se guarda en la base ni en ningún archivo, y
+    otro aparato no se entera. Volver a la de siempre la borra, que es dejarlo
+    como viene de fábrica. Un valor que no está en la lista no se guarda.
+    """
+    if not interfaz.valida(cual):
+        return _volver(destino, "No se conoce esa interfaz: no se ha cambiado nada.")
+    if cual == interfaz.NUEVA and not (interfaz.disponible() and interfaz.NUEVA in _PLANTILLAS):
+        return _volver(destino, "La interfaz nueva no está en esta instalación.")
+    if cual == interfaz.CLASICA:
+        respuesta = _volver(destino, "Has vuelto a la interfaz de siempre en este aparato.", fugaz=True)
+        respuesta.delete_cookie(interfaz.COOKIE, path="/")
+        return respuesta
+    respuesta = _volver(destino, "Interfaz nueva encendida en este aparato. "
+                                 "Se apaga en Ajustes → Guía.", fugaz=True)
+    _cookie_de_aparato(request, respuesta, interfaz.COOKIE, cual)
+    return respuesta
+
+
+def _cookie_de_aparato(request: Request, respuesta, nombre: str, valor: str) -> None:
+    """Deja en este aparato una elección de cómo se ve el hub (C-0169).
+
+    Una sola forma de escribirlas, para que la interfaz y sus colores no
+    acaben con atributos distintos.
+    """
+    respuesta.set_cookie(
+        nombre, valor,
+        max_age=interfaz.DIAS_DE_COOKIE * 24 * 3600,
+        httponly=True,   # la página no la necesita: la lee el servidor al pintar
+        samesite="lax",  # que no viaje en una petición nacida en otro sitio
+        # Segura sólo si se entró por https, como la del alta: marcarla siempre
+        # la tiraría al encenderla desde casa por http.
+        secure=_esquema(request) == "https",
+        path="/",
+    )
+
+
+@app.post("/interfaz/colores")
+def interfaz_colores(request: Request, cual: str = Form("", alias="colores"),
+                     destino: str = Form("/guia#interfaz")):
+    """Elige el juego de colores de la interfaz nueva EN ESTE APARATO (C-0169, fase 1b).
+
+    Otra cookie y nada más. El de fábrica la borra, igual que volver a la
+    interfaz de siempre; uno que no está en el catálogo no se guarda.
+    """
+    if not interfaz.colores_validos(cual):
+        return _volver(destino, "No se conocen esos colores: no se ha cambiado nada.")
+    # Los colores son de la interfaz nueva: con la de siempre no pintan nada,
+    # y decir «Colores de este aparato: Brasa» sería mentir.
+    if interfaz.elegida(request.cookies) != interfaz.NUEVA or interfaz.NUEVA not in _PLANTILLAS:
+        return _volver(destino, "Los colores se eligen con la interfaz nueva encendida en este aparato.")
+    nombre = interfaz.COLORES[cual].nombre
+    respuesta = _volver(destino, f"Colores de este aparato: {nombre}.", fugaz=True)
+    if cual == interfaz.DE_FABRICA:
+        respuesta.delete_cookie(interfaz.COOKIE_COLORES, path="/")
+    else:
+        _cookie_de_aparato(request, respuesta, interfaz.COOKIE_COLORES, cual)
+    return respuesta
+
+
 class _EstaticosSinCache(StaticFiles):
     """Estáticos que SIEMPRE se revalidan.
 
@@ -465,6 +686,36 @@ async def _objeto_json(request: Request) -> dict:
     return datos
 
 
+@app.exception_handler(StarletteHTTPException)
+async def _no_existe(request: Request, exc: StarletteHTTPException):
+    """Una dirección que no lleva a nada, dicha en una página del hub (C-0300).
+
+    Sólo un 404 pedido por el navegador como página: la API sigue contestando
+    su JSON (lo leen scripts y el asistente) y un estático que falta sigue
+    siendo un 404 a secas. Si el detalle lo escribió una ruta del hub —«Ese
+    encargo no existe»— se enseña; el genérico de FastAPI, en inglés, no.
+    Si pintar la página con su raíl falla (la base, por ejemplo), cae a lo de
+    siempre: un 404 no puede convertirse en un 500.
+    """
+    ruta = request.url.path
+    # 🔴 Tampoco bajo lo que la puerta deja pasar sin aparato (`SIN_PUERTA`,
+    # decisión 183): `/acceso/alta/x/y` no casa con nada y pintaba esta página,
+    # con su raíl y sus cifras, a un aparato sin alta. Quien no ha entrado sólo
+    # recibe el 404 desnudo; la lista se sigue, por si crece.
+    if (exc.status_code != 404 or ruta.startswith(("/api/", *SIN_PUERTA))
+            or "text/html" not in request.headers.get("accept", "")):
+        return await http_exception_handler(request, exc)
+    motivo = exc.detail if isinstance(exc.detail, str) and exc.detail != "Not Found" else ""
+    try:
+        respuesta = await run_in_threadpool(_vista, request, "no_existe.html", {
+            "titulo": "No existe", "seccion": "", "ruta": ruta, "motivo": motivo})
+    except Exception as fallo:  # noqa: BLE001 — en voz alta y con el 404 de siempre
+        print(f"[web] no se pudo pintar la página de «no existe»: {fallo}", flush=True)
+        return await http_exception_handler(request, exc)
+    respuesta.status_code = 404
+    return respuesta
+
+
 @app.exception_handler(_CuerpoNoEsObjeto)
 def _cuerpo_no_es_objeto(request: Request, exc: Exception):
     return JSONResponse({"ok": False, "error": 'el cuerpo tiene que ser un objeto JSON: {"campo": valor}'},
@@ -506,14 +757,8 @@ def inicio(request: Request, muestra: int | None = None):
     con = conexion()
     try:
         datos = api.resumen(con, muestra)
-        # Cuántos proyectos DECLARA el registro, que no es lo mismo que cuántos
-        # hay indexados. Si el índice está vacío y el registro no, decir «no hay
-        # proyectos en projects.yml» es mentira, y de las que hacen perder una
-        # tarde: manda a arreglar el único archivo que estaba bien.
-        try:
-            declarados = len(registry.cargar())
-        except Exception:  # noqa: BLE001 — la portada se pinta igual
-            declarados = 0
+        # Cuántos DECLARA el registro, que no es cuántos hay indexados.
+        declarados = api.proyectos_declarados()
         return _vista(
             request, "index.html",
             {"r": datos, "declarados": declarados,
@@ -529,7 +774,9 @@ def proyecto(request: Request, proyecto_id: str, archivados: int = 0):
     try:
         p = api.obtener_proyecto(con, proyecto_id)
         if not p:
-            return _volver()
+            # Un enlace viejo llevaba al panorama sin decir por qué (C-0300).
+            return _volver("/", f"No hay ningún proyecto «{proyecto_id[:80]}»: puede que se "
+                                "haya quitado del registro o cambiado de nombre.")
         abiertos = [
             x for x in api.paneles_abiertos(con) if x["proyecto_id"] == proyecto_id
         ]
@@ -869,7 +1116,6 @@ def servicios_vista(request: Request, docker: str = "", proyecto: str = ""):
             {
                 "s": api.servicios(con, proyecto or None),
                 "proyecto": proyecto,
-                "hay_docker": servicios.disponible(),
                 "docker_mudo": docker == "no",
                 "titulo": "Servicios",
                 "seccion": "servicios",
@@ -1006,13 +1252,8 @@ def archivos_vista(request: Request, ruta: str = ""):
             {
                 "d": datos,
                 "error": error,
-                # Las plantillas con huecos (decisión 251). Se leen aquí y no en
-                # el módulo de la pantalla porque la costura de lectura es
-                # `api.py` y sus vecinos, nunca la plantilla.
-                "comandos": [
-                    {**c, "huecos": comandos.huecos(c["plantilla"])}
-                    for c in comandos.leer()
-                ],
+                # Las plantillas con huecos (decisión 251).
+                "comandos": api.comandos_preparados(),
                 "titulo": "Archivos",
                 "seccion": "archivos",
             },
@@ -1037,6 +1278,37 @@ def maquina_vista(request: Request):
     try:
         return _vista(request, "maquina.html", {
             **api.maquina(con), "titulo": "Máquina", "seccion": "maquina",
+        })
+    finally:
+        con.close()
+
+
+#: Un diagnóstico a la vez (revisión cruzada de C-0209): cada uno ocupa un
+#: hilo hasta ~50 s y lanza PowerShell y pings, y F5 sobre la página del
+#: resultado repite el POST. No bloqueante: el segundo no espera, se le dice.
+_DIAGNOSTICANDO = threading.Lock()
+
+
+@app.post("/maquina/diagnosticar")
+def maquina_diagnosticar(request: Request):
+    """«Diagnosticar ahora» (C-0209): lee Windows y la red por `api.diagnosticar_pc`
+    y contesta con la pantalla y el resultado. No se guarda (386), así que no
+    hay 303 que seguir: es la misma página con la tarjeta llena. `def` y no
+    `async`: tarda segundos y va en el hilo de FastAPI, sin parar el bucle.
+
+    Si ya hay uno en marcha, contesta la página diciéndolo y no lanza otro.
+    """
+    resultado, en_marcha = None, not _DIAGNOSTICANDO.acquire(blocking=False)
+    if not en_marcha:
+        try:
+            resultado = api.diagnosticar_pc()
+        finally:
+            _DIAGNOSTICANDO.release()
+    con = conexion()
+    try:
+        return _vista(request, "maquina.html", {
+            **api.maquina(con), "diagnostico": resultado, "diagnostico_en_marcha": en_marcha,
+            "titulo": "Máquina", "seccion": "maquina",
         })
     finally:
         con.close()
@@ -1078,24 +1350,48 @@ def intercambio_vista(request: Request, aviso: str = "", por: str = "proyecto", 
 
 
 @app.post("/intercambio/subir")
-async def intercambio_subir(archivo: UploadFile = File(...), destino: str = Form("")):
+def intercambio_subir(archivo: list[UploadFile] = File(...), destino: str = Form("")):
     """Lo que llega del móvil aterriza en la carpeta del hub y en ningún otro sitio.
 
-    En la subcarpeta del proyecto o slot elegido (decisión 288).
+    En la subcarpeta del proyecto o slot elegido (decisión 288). Varios a la
+    vez (C-0385), cada uno por `intercambio.guardar` y de uno en uno: el que no
+    cabe se dice con su motivo y no impide subir los demás.
+
+    🔴 `def` y no `async def`: leer y escribir varios archivos de hasta 64 MB
+    es disco síncrono, y en una ruta `async` paraba el bucle de eventos, con
+    la terminal dentro (revisión cruzada de C-0385). Así FastAPI la corre en
+    su reserva de hilos, y `UploadFile.file` se lee ahí sin esperar a nadie.
     """
     con = conexion()
     try:
-        dentro = api.subcarpeta_intercambio(con, destino)
+        dentro = intercambio.destino(con, destino)
     finally:
         con.close()
-    try:
-        datos = await archivo.read()
-        destino = intercambio.guardar(archivo.filename or "archivo", datos, dentro)
-    except ValueError as exc:
-        return _volver("/intercambio", f"No se subió: {exc}")
-    # Fugaz porque salió bien (`_volver`), y además es la señal con la que
-    # `sin-recarga.js` sabe que puede vaciar el formulario (C-0167).
-    return _volver("/intercambio", f"Subido como «{destino.name}».", fugaz=True)
+    subidos: list[str] = []
+    fallos: list[str] = []
+    for uno in archivo:
+        nombre = uno.filename or "archivo"
+        try:
+            subidos.append(intercambio.guardar(nombre, uno.file.read(), dentro).name)
+        except ValueError as exc:
+            fallos.append(f"«{nombre}»: {exc}")
+    if len(subidos) == 1:
+        hecho = f"Subido como «{subidos[0]}»."
+    else:
+        # Los nombres, hasta cinco: el aviso viaja en la dirección de vuelta.
+        nombres = ", ".join(f"«{n}»" for n in subidos[:5])
+        resto = f" y {len(subidos) - 5} más" if len(subidos) > 5 else ""
+        hecho = f"Subidos {len(subidos)}: {nombres}{resto}."
+    if not fallos:
+        # Fugaz porque salió bien (`_volver`), y además es la señal con la que
+        # `sin-recarga.js` sabe que puede vaciar el formulario (C-0167).
+        return _volver("/intercambio", hecho, fugaz=True)
+    no = "No se subió " + "; ".join(fallos) + "."
+    if not subidos:
+        return _volver("/intercambio", no)
+    # Lo que entró, entró: `hecho` deja vaciar el formulario, y volver a
+    # pulsar no lo sube dos veces.
+    return _volver("/intercambio", f"{hecho} {no}", hecho=True)
 
 
 @app.post("/api/terminal/adjuntar")
@@ -1114,7 +1410,7 @@ async def terminal_adjuntar(archivo: UploadFile = File(...), pegado: str = Form(
     """
     con = conexion()
     try:
-        dentro = api.subcarpeta_intercambio(
+        dentro = intercambio.destino(
             con, session=session, ventana=int(ventana) if ventana.isdigit() else None,
             slot_id=int(slot) if slot.isdigit() else None)
     finally:
@@ -1161,6 +1457,45 @@ def intercambio_ver(nombre: str):
         return PlainTextResponse("sólo se ven en línea imágenes; bájalo", status_code=415)
     return FileResponse(destino, media_type=tipo, headers={
         "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"})
+
+
+# ── Maquetas: prototipos HTML, sólo para mirarlos (C-0249) ──
+#
+# 🔴 Sólo GET, y nunca por `/intercambio/ver`, que sigue sin servir HTML: la
+# única puerta que sirve una página con scripts es ésta, porque es la única que
+# la encierra en su `sandbox` (`maquetas.CABECERAS`; el porqué, en el módulo).
+# Pasa por `_la_puerta` como cualquier otra pantalla: desde fuera, sólo un
+# aparato dado de alta.
+
+
+@app.get("/maquetas")
+def maquetas_raiz():
+    """Con la barra: sin ella, los enlaces relativos del índice saldrían de la
+    carpeta. El camino es relativo a propósito: detrás de `tailscale serve` el
+    hub ve `http`, y una redirección absoluta mandaría al teléfono a un
+    `http://` que nadie sirve."""
+    return RedirectResponse("/maquetas/", status_code=307)
+
+
+@app.get("/maquetas/{ruta:path}")
+def maqueta(ruta: str):
+    """Una maqueta de la carpeta, con sus hojas y guiones incrustados.
+
+    Cualquier fallo es un 404 en texto plano y sin más detalle que el motivo:
+    lo que no está, lo que no es `.html`, lo que se sale de la carpeta y la
+    carpeta que no existe (el producto, donde `maquetas/` no viaja).
+    """
+    try:
+        if ruta and not ruta.endswith("/") and maquetas.es_carpeta(ruta):
+            return RedirectResponse(f"/maquetas/{quote(ruta)}/", status_code=307)
+        cuerpo = maquetas.pagina(ruta)
+    except ValueError as exc:
+        return PlainTextResponse(str(exc), status_code=404)
+    except OSError:
+        # `maquetas` ya traduce los suyos; si alguno se escapa, su texto lleva
+        # rutas del disco y no sale.
+        return PlainTextResponse("esa maqueta no se puede abrir", status_code=404)
+    return HTMLResponse(cuerpo, headers=maquetas.CABECERAS)
 
 
 @app.post("/intercambio/borrar")
@@ -1320,6 +1655,68 @@ async def orquestador_detener(request: Request):
     return _volver(f"/orquestador?tarea={quote(tarea_id)}", "Detenida." + extra, fugaz=True)
 
 
+@app.post("/orquestador/cerrar-restos")
+def orquestador_cerrar_restos(
+    tarea_id: str = Form(""),
+    pane_id: list[str] = Form([]),
+    servidor: str = Form(""),
+):
+    """Recoge lo que dejó abierto una tarea cerrada: cierra sus ventanas y
+    archiva sus slots (C-0351). Es el botón del dueño, con su confirmación
+    (regla dura 3); el orquestador no lo hace nunca solo, y `orquestador.py`
+    sólo se lee.
+
+    Con la tarea viva no se toca nada: esas ventanas son su trabajo. Sólo se
+    cierran las ventanas que se pintaron y que SIGUEN siendo de sus slots
+    (por su panel y su servidor, 396, y por `_cerrar_ventanas`), y un slot se
+    archiva sólo si se queda sin ventanas: archivado con una viva, la ventana
+    dejaría de salir en Trabajo por ningún sitio.
+
+    🔴 Y lo que usa la tarea EN CURSO no se toca, aunque llegue en el
+    formulario (revisión cruzada): la siguiente reutiliza la sesión del
+    proyecto, y la página pudo pintarse antes de que la tomara. Se vuelve a
+    mirar aquí, al cerrar y al archivar, y se dice."""
+    from . import orquestador as orq
+
+    destino = f"/orquestador?tarea={quote(tarea_id)}"
+    try:
+        tarea = orq.cargar(tarea_id)
+    except ValueError:
+        tarea = None
+    if not tarea:
+        return _volver("/orquestador", "No se recogió nada: esa tarea no existe.")
+    if tarea["estado"] not in orq.CERRADAS:
+        return _volver(destino, "No se recogió nada: la tarea sigue viva y sus ventanas son su trabajo.")
+    con = conexion()
+    try:
+        restos = api.restos_de_tarea(con, tarea)
+        ocupados = {s["id"]: s["nombre"] for s in restos["slots"] if s["en_uso"]}
+        suyas = {v["pane_id"] for s in restos["slots"] if not s["en_uso"] for v in s["ventanas"]}
+        elegidas = [p for p in dict.fromkeys(pane_id) if p in suyas]
+        cerradas, fallo = _cerrar_ventanas(elegidas, servidor)
+        archivados, con_ventanas = 0, []
+        for s in api.restos_de_tarea(con, tarea)["slots"]:
+            if s["en_uso"] or s["id"] in ocupados:
+                ocupados[s["id"]] = s["nombre"]
+            elif s["ventanas"]:
+                con_ventanas.append(s["nombre"])
+            elif s["activo"]:
+                slots.archivar(con, s["id"])
+                archivados += 1
+    finally:
+        con.close()
+    partes = [f"{cerradas} ventana{'s' if cerradas != 1 else ''} cerrada{'s' if cerradas != 1 else ''} y "
+              f"{archivados} slot{'s' if archivados != 1 else ''} archivado{'s' if archivados != 1 else ''}."]
+    if ocupados:
+        partes.append("No se tocó " + ", ".join(f"«{n}»" for n in ocupados.values())
+                      + ": lo usa la tarea en curso.")
+    if con_ventanas:
+        partes.append("Sin archivar, porque siguen con ventanas: " + ", ".join(f"«{n}»" for n in con_ventanas) + ".")
+    if fallo:
+        partes.append(fallo)
+    return _volver(destino, " ".join(partes), fugaz=not (ocupados or con_ventanas or fallo))
+
+
 @app.get("/reuniones")
 def reuniones_vista(request: Request, aviso: str = ""):
     """Grabar una reunión en otro monitor mientras se trabaja, y lo procesado."""
@@ -1342,6 +1739,39 @@ def reunion_vista(request: Request, id_: str):
         return _volver("/reuniones", str(exc))
     return _vista(request, "reunion.html", {"d": d, "titulo": (d.get("resumen") or {}).get("titulo") or id_,
                                             "seccion": "reuniones"})
+
+
+@app.post("/reuniones/{id_}/compromisos")
+def reunion_compromisos(id_: str, estado: str = Form(""), id: list[str] = Form([])):  # noqa: A002
+    """Cierra de una vez los compromisos abiertos que salieron de esta reunión
+    (C-0380), por la puerta de compromisos del secretario. Lo pulsa el dueño y
+    lo confirma en la pantalla (regla dura 3); van los ids que él vio, y sólo
+    se cierran los que sigan abiertos y sean de esta reunión."""
+    from . import reuniones
+    from .secretario import memoria
+    from .secretario.fuentes.hub import FuenteHub, clave_reunion
+
+    if not reuniones.ID.match(id_ or ""):
+        return _volver("/reuniones", "Esa reunión no existe.")
+    destino = f"/reuniones/{id_}"
+    try:
+        ids = [int(x) for x in id]
+    except ValueError:
+        return _volver(destino, "No se cerró nada: un compromiso no se reconoce.")
+    # Sin memoria no hay compromisos, y abrirla la crearía.
+    if not memoria.existe():
+        return _volver(destino, "No se cerró nada: el secretario no tiene memoria todavía.")
+    con = memoria.conectar()
+    try:
+        evento = memoria.id_evento(con, FuenteHub.id, clave_reunion(id_))
+        n = memoria.cerrar_compromisos(con, ids, estado, evento=evento) if evento is not None else 0
+        if n:
+            _recontar_asuntos(con)
+    except ValueError as exc:
+        return _volver(destino, f"No se cerró nada: {exc}.")
+    finally:
+        con.close()
+    return _volver(destino, f"Cerrado{'s' if n != 1 else ''} {n} compromiso{'s' if n != 1 else ''}.", fugaz=True)
 
 
 @app.get("/reuniones/{id_}/foto/{segundo}")
@@ -1396,7 +1826,7 @@ async def componentes_preparar(request: Request):
     from . import componentes
     f = await request.form()
     nombre = str(f.get("nombre") or "")
-    volver = "/navegante" if nombre == "navegador-lab" else "/reuniones"
+    volver = componentes.PANTALLA.get(componentes.ALIAS.get(nombre, nombre), "/")
     try:
         hecho = componentes.preparar(nombre)
     except (ValueError, RuntimeError, tmux.TmuxNoDisponible) as exc:
@@ -1410,6 +1840,44 @@ async def componentes_preparar(request: Request):
 @app.get("/api/componentes")
 def api_componentes():
     return {"ok": True, **api.componentes()}
+
+
+@app.get("/puente")
+def puente_vista(request: Request):
+    """El Puente KVM, si está encendido: cómo está y cómo se abre (decisión 438).
+
+    Abrirlo sólo se ofrece desde la PC donde corre. Con el mismo criterio que
+    la terminal: el nombre de casa **y** la conexión desde esta máquina, y sin
+    `Host` no cuenta como de casa. Detrás de `tailscale serve` la conexión es
+    de loopback pero el nombre es el de fuera, y ahí la web del puente no
+    llega: escucha sólo en 127.0.0.1 y no pasa por la puerta de /acceso."""
+    anfitrion = request.headers.get("host")
+    local = bool(anfitrion) and _es_de_casa(anfitrion, _ip(request))
+    return _vista(request, "puente.html", {"p": api.puente(local), "titulo": "Puente KVM",
+                                           "seccion": "puente"})
+
+
+@app.post("/opcionales")
+def opcionales_poner(clave: str = Form(""), encendida: str = Form(""),
+                     destino: str = Form("/guia#opcionales")):
+    """Enciende o apaga una herramienta opcional EN ESTA INSTALACIÓN (decisión 438).
+
+    Lista cerrada (`opcionales.OPCIONALES`): una clave que no está no se
+    guarda. Encender sólo hace que salga en los menús; no arranca nada."""
+    if encendida not in ("si", "no"):
+        return _volver(destino, "No se entiende si encenderla o apagarla: no se ha cambiado nada.")
+    try:
+        opcionales.poner(clave, encendida == "si")
+    except ValueError:
+        return _volver(destino, "No se conoce esa herramienta: no se ha cambiado nada.")
+    except opcionales.Ilegible as exc:
+        return _volver(destino, f"No se ha cambiado nada: {exc}.")
+    except OSError as exc:
+        return _volver(destino, f"No se pudo guardar: {exc}")
+    nombre = opcionales.OPCIONALES[clave].nombre
+    if encendida == "si":
+        return _volver(destino, f"{nombre} encendido: ya sale en el menú.", fugaz=True)
+    return _volver(destino, f"{nombre} apagado: ya no sale en ningún menú.", fugaz=True)
 
 
 @app.post("/api/componentes/preparar")
@@ -1639,18 +2107,115 @@ def orquestador_audio(audio: UploadFile = File(...)):
 
 
 @app.post("/api/voz")
-def api_voz(audio: UploadFile = File(...), idioma: str = Form("es")):
+def api_voz(audio: UploadFile = File(...), idioma: str = Form("es"), origen: str = Form("")):
     """Dictar en la terminal: devuelve el texto y no manda nada (decisión 295).
 
     `def` y no `async def`, como `/orquestador/audio`: transcribir tarda
-    segundos y bloquearía el bucle de eventos, terminal incluida."""
+    segundos y bloquearía el bucle de eventos, terminal incluida.
+
+    Mide cada dictado y lo deja en UNA línea del journal (C-0246). El código
+    HTTP sigue siendo 200 aunque falle: los tres clientes leen `ok` del JSON
+    y la línea dice el `resultado`. Sin el texto, nunca (regla dura 22).
+    """
+    import time
+
+    from . import transcribir
+
+    medidas: dict = {"origen": transcribir.origen_valido(origen), "resultado": "fallo"}
+    t0 = time.perf_counter()
+    try:
+        texto = transcribir.dictado(audio.file.read(), audio.filename or "audio.webm", idioma, medidas)
+        medidas["resultado"] = "ok"
+        medidas["caracteres"] = len(texto)
+        respuesta = {"ok": True, "texto": texto}
+    except (ValueError, transcribir.SinTranscriptor, transcribir.NoSeEntendio) as exc:
+        respuesta = {"ok": False, "error": str(exc)}
+        if isinstance(exc, transcribir.NoSeEntendio):
+            medidas["resultado"] = "nada"
+            # No haber oído palabras (una tos, una puerta) no es un fallo: el
+            # modo voz pregunta y sigue escuchando en vez de pausarse (C-0286).
+            respuesta["nada"] = True
+    medidas["ms_total"] = round((time.perf_counter() - t0) * 1000)
+    print(transcribir.linea_de_medidas(medidas), flush=True)
+    return JSONResponse({**respuesta, "medidas": {k: v for k, v in medidas.items() if k != "caracteres"}})
+
+
+@app.get("/voz/banco")
+def voz_banco(request: Request, aparato: str = ""):
+    """El banco de dictado (C-0312): una frase cada vez, para leerla en voz
+    alta y medir después qué Whisper entiende mejor a quien lo usa."""
+    return _vista(request, "banco_dictado.html", {"b": api.banco_dictado(aparato or None),
+                                                  "titulo": "Banco de dictado", "seccion": "banco"})
+
+
+@app.post("/api/voz/banco")
+def api_voz_banco(audio: UploadFile = File(...), frase: str = Form(...), aparato: str = Form(...),
+                  texto: str = Form(""), micro: str = Form("")):
+    """Guarda una toma del banco con su referencia. **No transcribe**: grabar
+    no necesita Whisper ni GPU (C-0312). `def`: escribe en disco. El `Origin`
+    lo mira el middleware, como en todo POST."""
+    from . import banco_dictado, transcribir
+
+    try:
+        ajustes = json.loads(micro) if micro else {}
+    except ValueError:
+        ajustes = {}
+    try:
+        progreso = banco_dictado.guardar(aparato, frase, audio.file.read(transcribir.LIMITE_AUDIO + 1),
+                                         audio.filename or "audio.webm", ajustes, esperado=texto or None)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)})
+    return JSONResponse({"ok": True, "progreso": progreso})
+
+
+def _volver_al_banco(aparato: str, aviso: str, fugaz: bool = False):
+    from . import banco_dictado
+    destino = f"/voz/banco?aparato={aparato}" if aparato in banco_dictado.APARATOS else "/voz/banco"
+    return _volver(destino, aviso, fugaz=fugaz)
+
+
+@app.post("/voz/banco/borrar")
+def voz_banco_borrar(frase: str = Form(...), aparato: str = Form(...)):
+    from . import banco_dictado
+
+    try:
+        quitada = banco_dictado.borrar(aparato, frase)
+    except ValueError as exc:
+        return _volver_al_banco(aparato, str(exc))
+    return _volver_al_banco(aparato, "Borrada: vuelve a grabarla cuando quieras." if quitada
+                            else "Esa frase no tenía nada grabado en este aparato.", fugaz=quitada)
+
+
+@app.post("/voz/banco/vaciar")
+def voz_banco_vaciar(aparato: str = Form(...)):
+    """Quita lo grabado en UN aparato; la lista y las medidas se quedan."""
+    from . import banco_dictado
+
+    try:
+        n = banco_dictado.vaciar(aparato)
+    except ValueError as exc:
+        return _volver_al_banco(aparato, str(exc))
+    return _volver_al_banco(aparato, f"Vaciado: {n} grabaciones menos.", fugaz=True)
+
+
+@app.post("/api/voz/calentar")
+def api_voz_calentar():
+    """Al empezar a grabar, que el Whisper cargado se vaya cargando (C-0292).
+
+    No transcribe nada ni recibe audio: arranca el servidor si no está, y la
+    frase que se está dictando ya no va por el camino frío. `def`, como
+    `/api/voz`: lanzar el servidor toca disco. El `Origin` lo mira el
+    middleware, como en todo POST."""
     from . import transcribir
 
     try:
-        texto = transcribir.dictado(audio.file.read(), audio.filename or "audio.webm", idioma)
-    except (ValueError, transcribir.SinTranscriptor, transcribir.NoSeEntendio) as exc:
+        estado = transcribir.calentar()
+    except Exception as exc:  # noqa: BLE001 — calentar es un adelanto: el dictado sigue igual sin él
+        # En voz alta (regla 21): un `encargos.yml` roto o una carpeta sin
+        # permisos se verían aquí y en ningún otro sitio hasta el dictado.
+        print(f"[voz] no se pudo calentar el Whisper: {exc}", flush=True)
         return JSONResponse({"ok": False, "error": str(exc)})
-    return JSONResponse({"ok": True, "texto": texto})
+    return JSONResponse({"ok": True, "estado": estado})
 
 
 @app.post("/archivos/terminal")
@@ -1689,7 +2254,7 @@ async def archivos_terminal(request: Request):
             except comandos.ComandoInvalido as exc:
                 return _volver(volver, f"no se escribió nada: {exc}")
 
-        proyecto_id = api.atribuidor(con).atribuir(str(destino))
+        proyecto_id = registry.atribuidor(con).atribuir(str(destino))
         session = slots.sesion_para(con, proyecto_id) if proyecto_id else "hub"
         try:
             slots.abrir_en(str(destino), destino.name or "archivos", session, texto)
@@ -1914,7 +2479,7 @@ async def api_pregunta(request: Request):
 def api_ver_pregunta(pregunta_id: int):
     con = conexion()
     try:
-        pregunta = canal.ver_pregunta(con, pregunta_id)
+        pregunta = api.pregunta(con, pregunta_id)
         if not pregunta:
             return {"ok": False, "error": f"no hay ninguna pregunta {pregunta_id}"}
         return {"ok": True, "pregunta": pregunta}
@@ -1926,8 +2491,7 @@ def api_ver_pregunta(pregunta_id: int):
 def api_preguntas(proyecto: str = "", estado: str = "", slot: int | None = None):
     con = conexion()
     try:
-        return {"ok": True,
-                "preguntas": canal.preguntas(con, proyecto or None, estado or None, slot)}
+        return {"ok": True, "preguntas": api.preguntas(con, proyecto, estado, slot)}
     finally:
         con.close()
 
@@ -1968,7 +2532,7 @@ def api_buscar(q: str = "", limite: int = 20):
     """Alimenta la paleta de comandos. Devuelve destino, no sólo coincidencia."""
     con = conexion()
     try:
-        return busqueda.buscar(con, q, max(1, min(limite, 50)))
+        return api.buscar(con, q, limite)
     finally:
         con.close()
 
@@ -2260,24 +2824,6 @@ def api_kits():
 # mantener sincronizado.
 
 
-def _ficha_lienzo(lienzo, con_cuerpo: bool = False) -> dict:
-    ficha = {
-        "id": lienzo.id,
-        "titulo": lienzo.titulo,
-        "plantilla": lienzo.plantilla,
-        "proyecto_id": lienzo.proyecto_id,
-        "slot": lienzo.slot,
-        "publicado_en": lienzo.publicado_en,
-        "archivado_en": lienzo.archivado_en,
-        # Lo que decide si Claude puede republicar encima. Va en la ficha para
-        # que el panel lo pueda enseñar sin una segunda llamada.
-        "tuyo": lienzo.editado_por_el_usuario(),
-    }
-    if con_cuerpo:
-        ficha["cuerpo"] = lienzo.cuerpo
-    return ficha
-
-
 @app.get("/api/lienzos")
 def api_lienzos(proyecto: str = "", q: str = "", archivados: int = 0):
     """Los del proyecto, o los que casen con `q` en todos los proyectos.
@@ -2287,23 +2833,21 @@ def api_lienzos(proyecto: str = "", q: str = "", archivados: int = 0):
     archivados**: archivar los quita de la lista, no de la memoria.
     """
     try:
-        hallados = (lienzos.buscar(q) if q
-                    else (lienzos.listar(proyecto, archivados=bool(archivados))
-                          if proyecto else []))
+        fichas = api.lienzos(proyecto, q, archivados=bool(archivados))
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-    return {"ok": True, "lienzos": [_ficha_lienzo(l) for l in hallados]}
+    return {"ok": True, "lienzos": fichas}
 
 
 @app.get("/api/lienzo/{proyecto_id}/{lienzo_id}")
 def api_lienzo(proyecto_id: str, lienzo_id: str):
     try:
-        lienzo = lienzos.leer(proyecto_id, lienzo_id)
+        ficha = api.lienzo(proyecto_id, lienzo_id)
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-    if lienzo is None:
+    if ficha is None:
         return JSONResponse({"ok": False, "error": "no existe"}, status_code=404)
-    return {"ok": True, "lienzo": _ficha_lienzo(lienzo, con_cuerpo=True)}
+    return {"ok": True, "lienzo": ficha}
 
 
 @app.post("/api/lienzo")
@@ -2338,7 +2882,7 @@ async def api_lienzo_publicar(request: Request):
                             status_code=409)
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-    return {"ok": True, "lienzo": _ficha_lienzo(lienzo)}
+    return {"ok": True, "lienzo": api.ficha_lienzo(lienzo)}
 
 
 @app.post("/api/lienzo/{proyecto_id}/{lienzo_id}/archivar")
@@ -2352,7 +2896,7 @@ async def api_lienzo_archivar(proyecto_id: str, lienzo_id: str, request: Request
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     if lienzo is None:
         return JSONResponse({"ok": False, "error": "no existe"}, status_code=404)
-    return {"ok": True, "lienzo": _ficha_lienzo(lienzo)}
+    return {"ok": True, "lienzo": api.ficha_lienzo(lienzo)}
 
 
 @app.post("/api/lienzo/{proyecto_id}/{lienzo_id}")
@@ -2361,6 +2905,10 @@ async def api_lienzo_guardar(proyecto_id: str, lienzo_id: str, request: Request)
 
     No toca `publicado_en`: esa marca es de la última vez que escribió Claude, y
     es contra ella contra la que se protege la edición.
+
+    Con `base` (la `version` que leyó el panel), si el lienzo cambió desde
+    entonces contesta **409** con el de ahora y no escribe nada (C-0383): el
+    panel lo repinta en vez de pisar la corrección que llegó mientras tanto.
     """
     datos = await _objeto_json(request)
     try:
@@ -2369,8 +2917,15 @@ async def api_lienzo_guardar(proyecto_id: str, lienzo_id: str, request: Request)
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     if lienzo is None:
         return JSONResponse({"ok": False, "error": "no existe"}, status_code=404)
-    lienzos.guardar_edicion(lienzo, datos.get("cuerpo") or "")
-    return {"ok": True, "lienzo": _ficha_lienzo(lienzo)}
+    base = datos.get("base")
+    try:
+        lienzos.guardar_edicion(lienzo, datos.get("cuerpo") or "",
+                                base=str(base) if base is not None else None)
+    except lienzos.Conflicto as exc:
+        return JSONResponse({"ok": False, "error": str(exc), "conflicto": True,
+                             "lienzo": api.ficha_lienzo(lienzo, con_cuerpo=True)},
+                            status_code=409)
+    return {"ok": True, "lienzo": api.ficha_lienzo(lienzo, con_cuerpo=True)}
 
 
 @app.delete("/api/lienzo/{proyecto_id}/{lienzo_id}")
@@ -2383,14 +2938,6 @@ def api_lienzo_borrar(proyecto_id: str, lienzo_id: str):
     if not borrado:
         return JSONResponse({"ok": False, "error": "no existe"}, status_code=404)
     return {"ok": True}
-
-
-def _ventana_activa(session: str) -> int | None:
-    """Qué ventana de esa sesión está en primer plano, según tmux."""
-    try:
-        return next(v["indice"] for v in tmux.listar_ventanas(session) if v["activa"])
-    except (StopIteration, tmux.DestinoInvalido):
-        return None
 
 
 @app.get("/actualizaciones")
@@ -2477,14 +3024,14 @@ def trabajo(
     """El espacio de trabajo: slots a la izquierda, terminal en medio, nota a la derecha."""
     con = conexion()
     try:
-        sesiones = terminal.sesiones_disponibles()
+        sesiones = api.sesiones_tmux()
         # Entrar por `?session=` sin decir ventana es lo normal desde la bandeja
         # y desde el panorama. Se le pregunta a tmux cuál está activa: sin eso,
         # el servidor no sabe qué ventana se está mirando y no puede ni resolver
         # su slot ni ofrecer vincularla — y elegir la primera escribiría la nota
         # en el trabajo equivocado.
         if session and ventana is None:
-            ventana = _ventana_activa(session)
+            ventana = api.ventana_activa(session)
         ctx = api.contexto_trabajo(con, slot, session or None, ventana)
         # 🔴 «Si no hay sesión, enseña la primera» vale para entrar a /trabajo
         # sin pedir nada, y SÓLO para eso. Con un slot pedido a mano y sin
@@ -2500,8 +3047,13 @@ def trabajo(
         # existe —la página llevaba horas abierta y se borró— no tiene nombre
         # que enseñar en la barra, así que ahí no hay nada que contradecir y el
         # respaldo sigue siendo lo mejor que se puede hacer.
+        #
+        # Y con su ventana activa, como al entrar por `?session=` (C-0350): sin
+        # ella la cabecera nombraba la sesión, la terminal abría su ventana y
+        # el selector del teléfono, sin nada que marcar, enseñaba otra cosa.
         if not ctx["session"] and sesiones and not ctx["slot"]:
-            ctx["session"] = sesiones[0]["session"]
+            primera = sesiones[0]["session"]
+            ctx = api.contexto_trabajo(con, None, primera, api.ventana_activa(primera))
         # La barra lista VENTANAS sueltas, una por fila. Por sesión, una
         # medio organizada salía arriba bajo su slot y abajo como pendiente:
         # dos sitios diciendo cosas distintas de la misma cosa.
@@ -2513,6 +3065,9 @@ def trabajo(
                 **ctx,
                 "sueltas": sueltas,
                 "ocultas": tapadas,
+                # Las shells sin usar desde que arrancó tmux, para ofrecer
+                # cerrarlas (C-0352). Ofrecer: cerrar es su botón.
+                "quietas": api.shells_quietas(con, ctx["paneles"]),
                 "slot_id": slot,
                 "ancho_completo": True,
                 "seccion": "trabajo",
@@ -2598,8 +3153,8 @@ async def api_nueva_ventana(session: str, request: Request):
             try:
                 slot = api.obtener_slot(con, slot_id)
                 if slot and slot["status"] == "activo":
+                    # Abrir ya deja tomada la muestra (C-0426).
                     slots.abrir(con, slot_id, session=session)
-                    snapshotter.un_ciclo(con)
                     return {"ok": True}
             finally:
                 con.close()
@@ -2610,35 +3165,87 @@ async def api_nueva_ventana(session: str, request: Request):
 
 
 def _cerrar_ventana(pane_id: str, servidor: str | int | None) -> tuple[bool, str]:
-    """Cierra la ventana de `pane_id` y vuelve a mirar tmux antes de contestar
-    (decisión 396). Devuelve `(ok, qué decir)`; con `ok` y sin texto, cerrada.
+    """Cierra la ventana de `pane_id` (`_cerrar_ventanas` con una). Devuelve
+    `(ok, qué decir)`; con `ok` y sin texto, cerrada."""
+    cerradas, fallo = _cerrar_ventanas([pane_id], servidor)
+    if fallo:
+        return False, fallo
+    return True, "" if cerradas else "Esa ventana ya estaba cerrada."
+
+
+def _cerrar_ventanas(panes: list[str], servidor: str | int | None) -> tuple[int, str]:
+    """Cierra la ventana de cada `pane_id` y vuelve a mirar tmux UNA vez antes
+    de contestar (decisión 396). Devuelve `(cuántas se cerraron, qué falló)`;
+    al primer fallo se para, y lo cerrado hasta ahí cerrado queda.
 
     Sin la muestra, la página a la que se vuelve seguía enseñando la ventana
     hasta el siguiente ciclo (20 s): se pulsaba otra vez y no se sabía si se
-    había cerrado (C-0227). La muestra va en su propio `try`: la ventana ya
-    está cerrada, y un fallo al mirar no puede contarse como «no se cerró»."""
-    try:
-        cerrada = tmux.cerrar_ventana_de(pane_id, servidor)
-    except tmux.ServidorDistinto:
-        return False, ("tmux se reinició desde que abriste esta página: "
-                       "recárgala y vuelve a intentarlo.")
-    except (tmux.DestinoInvalido, tmux.TmuxNoDisponible, RuntimeError) as exc:
-        return False, f"No se pudo cerrar: {exc}"
+    había cerrado (C-0227). Una sola al final aunque sean varias (C-0352): el
+    latido rápido no se repite por ventana (regla 14). La muestra va en su
+    propio `try`: lo cerrado ya está cerrado, y un fallo al mirar no puede
+    contarse como «no se cerró»."""
+    if not panes:
+        return 0, ""
+    cerradas, fallo = 0, ""
+    for pane_id in panes:
+        try:
+            cerradas += bool(tmux.cerrar_ventana_de(pane_id, servidor))
+        except tmux.ServidorDistinto:
+            fallo = ("tmux se reinició desde que abriste esta página: "
+                     "recárgala y vuelve a intentarlo.")
+            break
+        except (tmux.DestinoInvalido, tmux.TmuxNoDisponible, RuntimeError) as exc:
+            fallo = f"No se pudo cerrar: {exc}"
+            break
+    if fallo and not cerradas:
+        return 0, fallo
     con = conexion()
     try:
         snapshotter.un_ciclo(con)
         # La última ventana se lleva el servidor de tmux con ella, y el
         # muestreo lo toma por una caída: cerrar a propósito no es un corte.
         # Sólo la de ESE servidor: una pendiente de antes es un corte de verdad.
-        if cerrada and tmux.servidor_pid() is None:
+        if cerradas and tmux.servidor_pid() is None:
             perdida = api.recuperacion_pendiente(con)
             if perdida and str(perdida["server_pid"]) == str(servidor):
                 api.marcar_recuperacion_revisada(con, perdida["id"])
-    except Exception as exc:  # noqa: BLE001 — cerrada está; lo que falla se dice (regla 21)
-        print(f"[web] tras cerrar {pane_id}, la muestra falló: {exc}", flush=True)
+    except Exception as exc:  # noqa: BLE001 — cerradas están; lo que falla se dice (regla 21)
+        print(f"[web] tras cerrar {', '.join(panes)}, la muestra falló: {exc}", flush=True)
     finally:
         con.close()
-    return True, "" if cerrada else "Esa ventana ya estaba cerrada."
+    return cerradas, fallo
+
+
+@app.post("/trabajo/cerrar-quietas")
+def trabajo_cerrar_quietas(
+    pane_id: list[str] = Form([]),
+    servidor: str = Form(""),
+    destino: str = Form("/trabajo"),
+):
+    """Cierra las shells sin usar que el dueño marcó en /trabajo (C-0352).
+
+    Las que pidió, ni una más, y sólo si SIGUEN quietas ahora: entre pintar la
+    página y pulsar pudo usar una, y lo que confirmó fue cerrar shells sin
+    nada en marcha. Ésas se dejan y se dice. Cerrar va por la puerta de
+    siempre (`_cerrar_ventanas`, 396); los slots no se tocan."""
+    pedidas = list(dict.fromkeys(p for p in pane_id if p))
+    if not pedidas:
+        return _volver(destino, "No marcaste ninguna ventana: no se cerró nada.")
+    con = conexion()
+    try:
+        quietas = {v["pane_id"] for v in api.shells_quietas(con, api.paneles_abiertos(con))["ventanas"]}
+    finally:
+        con.close()
+    elegidas = [p for p in pedidas if p in quietas]
+    dejadas = len(pedidas) - len(elegidas)
+    cerradas, fallo = _cerrar_ventanas(elegidas, servidor)
+    partes = [f"{cerradas} ventana{'s' if cerradas != 1 else ''} cerrada{'s' if cerradas != 1 else ''}."]
+    if dejadas:
+        partes.append(f"{dejadas} ya no estaba{'n' if dejadas != 1 else ''} sin usar (o ya no "
+                      f"existía{'n' if dejadas != 1 else ''}): no se toc{'aron' if dejadas != 1 else 'ó'}.")
+    if fallo:
+        partes.append(fallo)
+    return _volver(destino, " ".join(partes), fugaz=not (dejadas or fallo))
 
 
 @app.post("/api/sesion/{session}/ventana/{indice}")
@@ -3074,8 +3681,8 @@ def slot_nuevo(
         if ir == "trabajo":
             destino = f"/trabajo?slot={slot_id}"
             try:
+                # Abrir ya deja tomada la muestra (C-0426): el panel se encuentra.
                 pane_id = slots.abrir(con, slot_id)
-                snapshotter.un_ciclo(con)
                 panel = api.panel_por_id(con, pane_id) if pane_id else None
                 if panel:
                     destino = f"/trabajo?session={panel['session']}&ventana={panel['window_idx']}"
@@ -3178,12 +3785,12 @@ def slot_abrir(
     con = conexion()
     aviso = None
     try:
+        # 🔴 `abrir` deja tomada una muestra, no dentro de hasta 20 s: el
+        # estado del slot sale del último muestreo, y sin ella la página a la
+        # que se vuelve lo pintaba todavía «cerrado», con su «Lanzar» a la
+        # vista. Se volvía a pulsar y cada pulsación abría otra ventana
+        # (21-oct). Muestreaba esta ruta; ahora lo hace la puerta (C-0426).
         slots.abrir(con, slot_id, session.strip() or None)
-        # 🔴 Una muestra ya, no dentro de hasta 20 s: el estado del slot sale
-        # del último muestreo, y sin esto la página a la que se vuelve lo
-        # pintaba todavía «cerrado», con su «Lanzar» a la vista. Se volvía a
-        # pulsar y cada pulsación abría otra ventana (21-oct).
-        snapshotter.un_ciclo(con)
     except (tmux.TmuxNoDisponible, RuntimeError, ValueError) as exc:
         # Se dice, no se traga (regla dura 21). Hasta el 3-sep un `except:
         # pass` aquí convertía «no hay servidor de tmux» en un botón que no
@@ -3214,9 +3821,9 @@ def slot_retomar(slot_id: int, sesion: str = Form(...)):
     destino, aviso = f"/trabajo?slot={slot_id}", None
     try:
         ficha = conversaciones.retomable(con, slot_id, sesion.strip())
+        # Abrir ya deja tomada la muestra (C-0426).
         pane_id = slots.abrir(con, slot_id,
                               comando=restauracion.comando_claude(ficha["id"], "reanudar"))
-        snapshotter.un_ciclo(con)
         panel = api.panel_por_id(con, pane_id) if pane_id else None
         if panel:
             destino = f"/trabajo?session={panel['session']}&ventana={panel['window_idx']}"
@@ -3238,6 +3845,13 @@ def restaurar_todo(destino: str = Form(""), muestra: int | None = Form(None)):
     con = conexion()
     try:
         resultado = slots.restaurar(con, muestra)
+        # Una muestra ya: el plan resta lo que está abierto (C-0299), y sin
+        # ella la portada seguía ofreciendo las mismas ventanas hasta el
+        # siguiente latido; un segundo clic las duplicaba.
+        try:
+            snapshotter.un_ciclo(con)
+        except Exception as exc:  # noqa: BLE001 — restaurar ya salió; la muestra llega con el latido
+            print(f"[web] no se pudo muestrear tras restaurar: {exc}", flush=True)
     except (tmux.TmuxNoDisponible, RuntimeError) as exc:
         return _volver(destino.strip() or "/", f"No se pudo restaurar: {exc}")
     finally:
@@ -3464,11 +4078,7 @@ def api_sesiones(proyecto: str = "", desde: str = "", limite: int = 30):
     se completó una sesión de 7 h 51 min, y al día siguiente quieres que el
     asistente te diga qué se hizo. Esto es por dónde empieza.
     """
-    return {
-        "sesiones": transcripts.listar_sesiones(
-            registry.cargar(), proyecto or None, desde or None, min(limite, 200)
-        )
-    }
+    return {"sesiones": api.sesiones(proyecto, desde, limite)}
 
 
 @app.get("/api/sesion/{session_id}")
@@ -3479,12 +4089,10 @@ def api_sesion(session_id: str, desde: str = "", hasta: str = "", crudo: int = 0
     que es donde vive casi todo el volumen, y conserva **todo el texto**. Con
     `crudo=1` o con un tramo `desde`/`hasta` se baja al detalle.
     """
-    ruta = transcripts.ruta_de_sesion(session_id)
-    if not ruta:
+    contenido = api.sesion(session_id, desde, hasta, bool(crudo))
+    if contenido is None:
         return {"ok": False, "error": f"sesión desconocida: {session_id}"}
-    if crudo or desde or hasta:
-        return {"ok": True, **transcripts.zoom(ruta, desde or None, hasta or None)}
-    return {"ok": True, **transcripts.esqueleto(ruta)}
+    return {"ok": True, **contenido}
 
 
 # ─────────────────────────────── el asistente ───────────────────────────────
@@ -3728,7 +4336,7 @@ async def api_crear_slot(request: Request):
 # (decisión 298). Ninguna ruta de aquí llama a una fuente ni a una acción.
 
 _PESTANAS_SECRETARIO = ("conversacion", "pendientes", "memoria", "avisos", "fuentes", "confianza", "disparadores",
-                        "personaje", "datos")
+                        "personaje", "voz", "datos")
 
 
 def _volver_secretario(volver: str, defecto: str) -> str:
@@ -3737,16 +4345,21 @@ def _volver_secretario(volver: str, defecto: str) -> str:
 
 
 @app.get("/secretario")
-def secretario_vista(request: Request, p: str = "conversacion", aviso: str = ""):
+def secretario_vista(request: Request, p: str = "conversacion", aviso: str = "", q: str = "", hilo: str = "",
+                     tema: str = "", sin_salir: str = ""):
     if p == "ajustes":
         p = "avisos"
     pestana = p if p in _PESTANAS_SECRETARIO else "conversacion"
-    s = api.secretario(pestana)
+    # `q` busca en todas sus notas (SEC-35), y `tema` y `sin_salir` las
+    # filtran (C-0424); sólo en su pestaña.
+    en_memoria = pestana == "memoria"
+    s = api.secretario(pestana, notas_q=q if en_memoria else "", notas_tema=tema if en_memoria else "",
+                       notas_sin_salir=en_memoria and sin_salir == "1")
     extra: dict = {}
     if pestana == "pendientes":
         # «Te espera» (C-0201): con `hub.db`, de donde salen las sesiones, el
-        # canal y hasta dónde llega el orquestador en cada proyecto. Después
-        # de `api.secretario`, que es quien abre (y la primera vez crea) su memoria.
+        # canal y hasta dónde llega el orquestador en cada proyecto. Sólo lee
+        # la memoria, como `api.secretario`: ninguna de las dos la crea (C-0099).
         con = conexion()
         try:
             extra["asuntos"] = api.secretario_asuntos(con)
@@ -3755,6 +4368,9 @@ def secretario_vista(request: Request, p: str = "conversacion", aviso: str = "")
     return _vista(request, "secretario.html", {
         "s": s, "aviso": aviso,
         "titulo": s.get("nombre") or "Secretario", "seccion": "secretario",
+        # Una conversación de la lista (C-0393): el chat carga hasta ella. Lo
+        # que no sea un número se ignora, sin un 422 que tumbe la pantalla.
+        "ir_hilo": int(hilo) if hilo.isascii() and hilo.isdigit() and len(hilo) <= 18 and int(hilo) > 0 else None,
         # La galería del personaje (C-0166): todos sus estados, gestos y skins.
         **({"catalogo": api.personaje_catalogo()} if pestana == "personaje" else {}),
         # Sus datos para los trámites (decisión 382): sólo en su pestaña.
@@ -3812,7 +4428,8 @@ async def api_secretario_mensaje(request: Request):
     try:
         r = conversacion.recibir(con, str(datos.get("texto") or ""), str(datos.get("pantalla") or ""),
                                  voz=datos.get("voz") is True, enfoque=str(datos.get("enfoque") or ""),
-                                 adjuntos=datos.get("adjuntos") or [])
+                                 adjuntos=datos.get("adjuntos") or [], responde_a=datos.get("responde_a"),
+                                 dictado=datos.get("dictado") is True)
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     finally:
@@ -3849,6 +4466,13 @@ def api_secretario_turnos(desde: int = 0):
         con.close()
 
 
+@app.get("/api/secretario/anteriores")
+def api_secretario_anteriores(antes_de: int = 0, n: int = api.ANTERIORES_POR_PAGINA):
+    """Lo ya hablado, por páginas hacia atrás (C-0393). Sólo lee: no es el
+    sondeo, y lo pide el chat una vez al abrirse y con «Ver lo anterior»."""
+    return JSONResponse(api.secretario_anteriores(antes_de, n))
+
+
 @app.post("/secretario/nuevo")
 def secretario_nuevo(volver: str = Form("")):
     from .secretario import conversacion, memoria
@@ -3864,33 +4488,68 @@ def secretario_nuevo(volver: str = Form("")):
     return _volver(destino, "Conversación nueva: la anterior se resume y se guarda.", fugaz=True)
 
 
-def _decidir_solicitud(sid: int, decision: str) -> str | None:
+#: Cuánto de lo que pedía la solicitud repite el «No lo hago…»: con dos de la
+#: misma acción, el nombre solo no dice cuál (C-0395).
+QUE_PEDIA = 120
+
+
+def _decidir_solicitud(sid: int, decision: str, por_que: str = "") -> str | None:
     """Aprobar o rechazar. Aprobar sólo la marca: la ejecuta `hub-secretario`.
-    Devuelve el error, dicho para el dueño, o None."""
-    from .secretario import conversacion, memoria
+    Devuelve el error, dicho para el dueño, o None. La única que deciden las
+    dos rutas (la del formulario y la de la tarjeta o la notificación).
+
+    `por_que`, sólo al rechazar (C-0395): lo que el dueño dice que estaba mal.
+    Entra tal cual como un mensaje suyo (`conversacion.recibir`, 351) que cita
+    el «No lo hago…» (406), y queda pendiente para que el secretario lo
+    conteste. 🔴 No se copia a la solicitud ni a la bitácora: vive una vez, en
+    su turno, y la bitácora guarda el puntero. Vacío, rechazo a secas."""
+    from .secretario import conversacion, memoria, piezas
 
     if decision not in ("aprobar", "rechazar"):
         return "Decisión no válida."
+    por_que = (por_que or "").strip() if decision == "rechazar" else ""
     con = memoria.conectar()
     try:
-        s = memoria.resolver_solicitud(con, sid, "aprobada" if decision == "aprobar" else "rechazada",
-                                       solo_pendiente=True)
-        if decision == "rechazar" and s is not None:
-            memoria.apuntar(con, s["accion"], nivel="rechazada", motivo=s["motivo"], resultado="el dueño dijo que no")
-            if s["hilo"]:
-                conversacion.decir(con, s["hilo"], f"No lo hago: rechazaste «{s['accion']}».")
+        # Todo o nada (tras la revisión): la conexión va en autocommit, y un
+        # fallo a mitad dejaba la solicitud rechazada, el «No lo hago…» sin su
+        # motivo y la bitácora vacía. Dentro, `decir` y `recibir` no abren
+        # otra (`_a_solas` mira `in_transaction`), y `BEGIN IMMEDIATE` deja a
+        # quien reclama esperando, como antes (C-0315).
+        with db.transaccion(con):
+            # Aprobada, se ejecuta con sus parámetros: en claro. Rechazada, no
+            # se ejecutará nunca y no los necesita: se quedan tapados (C-0431).
+            # Primero se decide: sólo si la fila cambió se escribe en el chat,
+            # y una que ya estaba resuelta no deja el motivo suelto.
+            s = memoria.resolver_solicitud(con, sid, "aprobada" if decision == "aprobar" else "rechazada",
+                                           solo_pendiente=True,
+                                           params=None if decision == "aprobar" else piezas.solicitud_tapada(con, sid))
+            if decision == "rechazar" and s is not None:
+                resultado = "el dueño dijo que no"
+                # Sin hilo (nació en un disparador) y sin motivo, como siempre:
+                # nada en el chat. Con motivo, al hilo abierto o a uno nuevo (360).
+                if s["hilo"] or por_que:
+                    que = conversacion.extracto(s["motivo"] or "", QUE_PEDIA).rstrip(" .")
+                    tid = conversacion.decir(con, s["hilo"],
+                                             f"No lo hago: rechazaste «{piezas.nombre_de_accion(s['accion'])}»"
+                                             + (f" ({que})." if que else "."))
+                    if por_que:
+                        suyo = conversacion.recibir(con, por_que, responde_a=tid)
+                        resultado += f", y dijo por qué (turno {suyo['turno']})"
+                memoria.apuntar(con, s["accion"], nivel="rechazada", motivo=s["motivo"], resultado=resultado)
     finally:
         con.close()
     return None if s is not None else "Esa solicitud ya estaba resuelta."
 
 
 @app.post("/secretario/solicitud/{sid}")
-def secretario_solicitud(sid: int, decision: str = Form(...), volver: str = Form("")):
+def secretario_solicitud(sid: int, decision: str = Form(...), volver: str = Form(""), por_que: str = Form("")):
     destino = _volver_secretario(volver, "/secretario?p=pendientes")
-    error = _decidir_solicitud(sid, decision)
+    error = _decidir_solicitud(sid, decision, por_que)
     if error:
         return _volver(destino, error)
-    return _volver(destino, "Aprobada: el secretario la hace en unos segundos." if decision == "aprobar" else "Rechazada.",
+    if decision == "aprobar":
+        return _volver(destino, "Aprobada: el secretario la hace en unos segundos.", fugaz=True)
+    return _volver(destino, "Rechazada: tu porqué le llega en la conversación." if por_que.strip() else "Rechazada.",
                    fugaz=True)
 
 
@@ -3899,7 +4558,9 @@ async def api_secretario_solicitud(sid: int, request: Request):
     """Lo mismo, desde los botones de la notificación (el service worker no
     sigue redirecciones de formulario: necesita una respuesta que leer)."""
     datos = await _objeto_json(request)
-    error = _decidir_solicitud(sid, str(datos.get("decision") or ""))
+    # El porqué, de la tarjeta del chat (C-0395); la notificación no lo manda.
+    por_que = datos.get("por_que") if isinstance(datos.get("por_que"), str) else ""
+    error = _decidir_solicitud(sid, str(datos.get("decision") or ""), por_que)
     return JSONResponse({"ok": not error, "error": error})
 
 
@@ -3935,6 +4596,72 @@ def secretario_compromiso(cid: int, estado: str = Form(...), volver: str = Form(
     finally:
         con.close()
     return _volver(destino, None)
+
+
+#: «En 1 h» en el aviso de un recordatorio (C-0407).
+APLAZAR_MIN = 60
+
+
+@app.post("/api/secretario/compromiso/{cid}")
+async def api_secretario_compromiso(cid: int, request: Request):
+    """«Hecho» y «En 1 h» desde el aviso de un recordatorio (C-0407): las
+    mismas puertas que los dos formularios de Pendientes, contestadas en JSON
+    porque el service worker no sigue redirecciones. El `Origin` lo mira el
+    middleware, como en todo POST."""
+    from .secretario import memoria
+
+    accion = str((await _objeto_json(request)).get("accion") or "")
+    if accion not in ("hecho", "aplazar"):
+        return JSONResponse({"ok": False, "error": "Acción no válida."})
+    con = memoria.conectar()
+    try:
+        if accion == "hecho":
+            memoria.cerrar_compromiso(con, cid, "hecho", solo_abierto=True)
+        else:
+            memoria.aplazar_aviso(con, cid, APLAZAR_MIN)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)})
+    finally:
+        con.close()
+    return JSONResponse({"ok": True, "error": None})
+
+
+@app.post("/secretario/compromisos/cerrar")
+def secretario_compromisos_cerrar(ids: list[str] = Form([]), estado: str = Form(""), volver: str = Form("")):
+    """«Vencidos o de hoy» de Pendientes: los marcados, hechos o descartados
+    de una vez (SEC-34, C-0373). Por la misma puerta que el botón de cada uno,
+    `memoria.cerrar_compromiso`, una vez por compromiso; y sólo los que siguen
+    en esa lista y abiertos: uno que se movió o se cerró en otra pestaña no se
+    toca. Nada se cierra sin que él lo marque. `def` y no `async`, como sus
+    hermanas: SQLite bloquea, y en el bucle de eventos pararía la terminal. El
+    `Origin` lo comprueba el middleware, como en todo POST."""
+    from .secretario import memoria
+
+    destino = _volver_secretario(volver, "/secretario?p=pendientes")
+    if estado not in ("hecho", "descartado"):
+        return _volver(destino, "Eso no se puede hacer con varios a la vez: hecho o descartado.")
+    try:
+        marcados = {int(x) for x in ids}
+    except ValueError:
+        return _volver(destino, "Eso no es un compromiso.")
+    if not marcados:
+        return _volver(destino, "Marca primero los que quieras cerrar.")
+    con = memoria.conectar()
+    try:
+        cerrar = [c["id"] for c in memoria.vencidos_o_de_hoy(con) if c["id"] in marcados]
+        for cid in cerrar:
+            memoria.cerrar_compromiso(con, cid, estado)
+    finally:
+        con.close()
+    n, sobran = len(cerrar), len(marcados) - len(cerrar)
+    if not n:
+        return _volver(destino, "Ninguno de los marcados seguía vencido o de hoy: no se tocó nada.")
+    aviso = (f"{n} {'cerrado' if n == 1 else 'cerrados'} como {'hecho' if n == 1 else 'hechos'}."
+             if estado == "hecho" else f"{n} {'descartado' if n == 1 else 'descartados'}.")
+    if sobran:
+        aviso += (f" {sobran} ya no {'estaba' if sobran == 1 else 'estaban'} entre los vencidos o de hoy:"
+                  " no se tocó.")
+    return _volver(destino, aviso, fugaz=not sobran)
 
 
 # ── «Te espera»: los asuntos (C-0201, decisiones 379-381) ──
@@ -4073,9 +4800,12 @@ def secretario_asuntos_accion(clave: str = Form(""), como: str = Form(""), volve
 
 
 @app.post("/secretario/nota/{nid}")
-def secretario_nota(nid: int, texto: str = Form(""), borrar: str = Form("")):
+def secretario_nota(nid: int, texto: str = Form(""), borrar: str = Form(""), volver: str = Form("")):
     from .secretario import memoria
 
+    # A la misma búsqueda de notas, si venía de una (SEC-35): sin ella, la
+    # nota vieja que se acababa de corregir desaparecía de la vista.
+    destino = _volver_secretario(volver, "/secretario?p=memoria")
     con = memoria.conectar()
     try:
         antes = con.total_changes
@@ -4084,24 +4814,29 @@ def secretario_nota(nid: int, texto: str = Form(""), borrar: str = Form("")):
         elif texto.strip():
             memoria.editar_nota(con, nid, texto)
         else:
-            return _volver("/secretario?p=memoria", "No se guardó: una nota no se queda vacía; para quitarla, bórrala.")
+            return _volver(destino, "No se guardó: una nota no se queda vacía; para quitarla, bórrala.")
         # `memoria` no dice si la nota estaba, y la conexión sí cuenta las filas
         # que tocó: sin esto salía «Nota guardada.» sobre una que ya no existía
         # (C-0175).
         if con.total_changes == antes:
-            return _volver("/secretario?p=memoria", "Esa nota ya no existe.")
+            return _volver(destino, "Esa nota ya no existe.")
     finally:
         con.close()
-    return _volver("/secretario?p=memoria", "Nota borrada." if borrar else "Nota guardada.", fugaz=True)
+    return _volver(destino, "Nota borrada." if borrar else "Nota guardada.", fugaz=True)
 
 
 @app.post("/secretario/datos/{campo}")
-def secretario_dato(campo: str, como: str = Form(...), valor: str = Form(""), volver: str = Form("")):
+def secretario_dato(campo: str, como: str = Form(...), valor: str = Form(""), volver: str = Form(""),
+                    visto: str = Form("")):
     """Su sí sobre uno de sus datos (decisión 382): `confirmar` lo propuesto,
     `corregir` (o escribirlo a mano: queda confirmado porque lo escribe él) u
     `olvidar`, que lo borra del archivo. Es el único camino a «confirmado»:
     el secretario sólo propone. Después, el asunto `dato:<campo>` queda
-    resuelto, si lo había."""
+    resuelto, si lo había.
+
+    `confirmar` lleva `visto`, el valor que la pantalla enseñaba (C-0430): si
+    ya no es el propuesto, no se confirma y se dice. Sin él no se confirma:
+    no se sabe qué vio."""
     from .secretario import asuntos, memoria, misdatos
 
     destino = _volver_secretario(volver, "/secretario?p=datos")
@@ -4110,7 +4845,10 @@ def secretario_dato(campo: str, como: str = Form(...), valor: str = Form(""), vo
     nombre = misdatos.nombre(campo)
     try:
         if como == "confirmar":
-            misdatos.confirmar(campo)
+            if not visto.strip():
+                return _volver(destino, f"{nombre}: no sé qué valor tenías delante. Recarga la página y "
+                                        "vuelve a pulsar Confirmar.")
+            misdatos.confirmar(campo, esperado=visto)
             hecho = f"{nombre}: confirmado. Te pedirá permiso antes de mandarlo a otro sitio."
         elif como == "corregir":
             misdatos.confirmar(campo, valor)

@@ -97,6 +97,23 @@ def test_lo_que_está_fuera_del_índice_no_se_explora(con, arbol):
         api.explorar(con, str(arbol / "fuera"))
 
 
+def test_quitar_una_ruta_del_registro_la_saca_del_confín_sin_esperar_al_plazo(con, arbol):
+    """Se recuerda cómo se resuelve cada ruta declarada (C-0310), no la lista:
+    la lista sale del índice en cada petición."""
+    asiento = str(arbol / "proyectos")
+    assert api.explorar(con, asiento)["entradas"]
+    con.execute("DELETE FROM proyecto_ruta WHERE ruta = ?", (asiento,))
+    with pytest.raises(navegador.FueraDeRaiz):
+        api.explorar(con, asiento)
+    # El repo declarado aparte sigue, que es lo que el índice dice.
+    assert api.explorar(con, f"{asiento}/api-clientes")["ruta"].endswith("api-clientes")
+
+
+def test_la_portada_de_memoria_es_la_misma_que_leyendo(con, arbol):
+    primera = api.explorar(con, "")
+    assert api.explorar(con, "") == primera
+
+
 # ─────────────────────────── la pantalla servida ───────────────────────────
 
 
@@ -130,6 +147,24 @@ def test_un_dotfile_no_se_lista_pero_se_dice_que_está(cliente, arbol):
     # equivocado deja de avisar el día que importa.
     assert ".env</span>" not in r.text
     assert "oculta" in r.text
+
+
+def test_en_el_telefono_el_filtro_baja_debajo_del_texto_a_todo_el_ancho(cliente):
+    """C-0386: a 390 px el filtro, de ancho fijo, se quedaba al lado y «Por
+    dónde empezar» iba en una columna de unos 90 px, de una a tres palabras por
+    línea. Por debajo de 600 px el filtro baja y ocupa la fila entera. Su
+    medida va en la hoja y no en `style=`: un `style=` en la etiqueta gana a
+    cualquier `@media` y la regla no haría nada."""
+    import re
+
+    html = cliente.get("/archivos").text
+    assert "Por dónde empezar" in html
+    etiqueta = re.search(r'<input[^>]*id="filtro-arch"[^>]*>', html).group(0)
+    assert "style=" not in etiqueta
+    estrecho = [b for b in re.findall(r"@media \(max-width: 600px\)\s*\{(.*?)\}\s*\}", html, re.S)
+                if "#filtro-arch" in b]
+    assert estrecho, "falta la regla del teléfono"
+    assert "100%" in estrecho[0]
 
 
 def test_pedir_algo_de_fuera_avisa_en_vez_de_dar_un_500(cliente, arbol):

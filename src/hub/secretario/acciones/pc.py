@@ -12,6 +12,10 @@
 - **Escribirle a la sesión de un slot** (C-0225, decisión 395): el mensaje que
   el dueño le pidió pasar a su Claude Code ya abierto, para seguir él después
   en esa misma sesión. Por `entrega.entregar`, con su sí a ese texto.
+- **Mirar y cambiar en su Windows con una orden de PowerShell** (C-0240,
+  decisión 404): `mirar_en_pc` sólo corre lo que `orden_pc` admite como
+  lectura del estado del sistema; `cambiar_en_pc`, lo demás, con su sí a esa
+  orden exacta y caducado a los 15 min. Las dos, sólo con él delante.
 
 🔴 Todas comprueban que salió (regla dura 17): abrir en la PC espera a que el
 agente confirme que la abrió; abrir un slot, a que tmux devuelva el panel; y
@@ -22,7 +26,8 @@ from __future__ import annotations
 
 import time
 
-from ... import api, db, entrega, orquestador, reuniones, slots, tmux, tui
+from ... import api, db, entrega, orden_pc, orquestador, reuniones, slots, tmux, tui
+from .. import memoria
 from ..piezas import Accion
 
 #: La primera línea de lo que el secretario escribe en una sesión. Lo redacta
@@ -240,4 +245,78 @@ class PararGrabacion(Accion):
         return f"parada la grabación {o.get('id')}; se procesa sola cuando el agente cierre los archivos"
 
 
-ACCIONES = [EscribirEnSesion(), AbrirEnPc(), AbrirSlot(), GrabarReunion(), PararGrabacion()]
+_PUEDE_MIRAR = ", ".join(sorted(orden_pc.CMDLETS_LECTURA))
+_CLASES = ", ".join(sorted(orden_pc.CLASES_LECTURA))
+_PROGRAMAS = "; ".join(" o ".join("«" + " ".join((n, *f)) + "»" for f in formas)
+                       for n, formas in orden_pc.NATIVOS_LECTURA.items())
+
+
+class MirarEnPc(Accion):
+    id = "mirar_en_pc"
+    gesto = "pc"
+    nombre = "Mirar en tu PC"
+    resumen = ("Corre en tu Windows una orden de PowerShell que sólo mira (monitores, aparatos, controladores, "
+               "discos, red, servicios) y te dice lo que sale. Lo que no sea sólo mirar no lo corre.")
+    descripcion = ("Corre en el Windows del dueño una orden de PowerShell que SÓLO MIRA el estado del sistema y "
+                   "devuelve lo que escribe: modelos de monitores (Get-CimInstance WmiMonitorID -Namespace root\\wmi), "
+                   "aparatos (Get-PnpDevice -Class Monitor|USB|Keyboard…), controladores, discos, red, servicios, "
+                   "procesos, eventos y el registro (Get-ItemProperty 'HKLM:\\…'). Admite estos comandos y sus alias "
+                   f"de siempre: {_PUEDE_MIRAR}; y solos, exactamente así: {_PROGRAMAS}. Con Get-CimInstance o "
+                   f"Get-WmiObject, sólo estas clases (sin mayúsculas importa): {_CLASES}. Los argumentos, escritos "
+                   "tal cual (sin $variables ni (expresiones)), salvo en Select-Object, Where-Object, ForEach-Object, "
+                   "Sort-Object y Format-*; el valor separado del parámetro (-Path X, no -Path:X). Sin métodos "
+                   "(.Algo()), sin `>`, sin -ComputerName, sin $env:, ForEach-Object sólo con { … }; Get-ChildItem y "
+                   "Get-ItemProperty sólo en el registro. No lee archivos (para eso, leer_archivo). Si la orden no "
+                   "es sólo mirar, no corre y te dice por qué: entonces, si hace falta, cambiar_en_pc. Para "
+                   "pantallazos, red o programas instalados ya está diagnosticar_pc. Tarda unos segundos.")
+    parametros = {"type": "object", "properties": {"comando": {"type": "string"}}, "required": ["comando"]}
+    riesgo = "lectura"
+    nivel_inicial = "auto"
+    solo_con_el_dueno = True
+
+    def ejecutar(self, con, params):
+        try:
+            r = orden_pc.leer(str(params.get("comando") or ""))
+        except orden_pc.NoEsLectura as exc:
+            raise RuntimeError(f"{exc}. Si de verdad hace falta, pídela con cambiar_en_pc: la aprueba él") from None
+        # Lo que escribe la PC puede llevar una llave: no sale al modelo (302).
+        return memoria.ocultar_secretos(orden_pc.legible(r))
+
+
+class CambiarEnPc(Accion):
+    id = "cambiar_en_pc"
+    gesto = "pc"
+    nombre = "Cambiar algo en tu PC"
+    resumen = ("Corre en tu Windows una orden de PowerShell que cambia algo. Siempre con tu sí a esa orden "
+               "exacta, que ves entera; si apruebas pasados 15 minutos, no la corre.")
+    descripcion = ("Corre en el Windows del dueño una orden de PowerShell que cambia algo, o que mirar_en_pc no "
+                   "admite. SIEMPRE pide su sí a la orden exacta, que él lee entera antes: escríbela clara, sin "
+                   "abreviar ni codificar, con rutas enteras (sin cd ni Set-Location) y una sola cosa por orden. Corre "
+                   "en la carpeta temporal de Windows. En `motivo`, qué hace y por qué. No se aceptan "
+                   "ni con su sí: las carpetas de sus proyectos (o una que las contenga), puertos, cortafuegos o "
+                   "tailscale, docker, volver a WSL (wsl, bash, \\\\wsl$), pedir administrador (RunAs) ni "
+                   "Invoke-Expression o nada codificado. Dile que se lo pediste, no que ya está.")
+    parametros = {"type": "object", "properties": {"comando": {"type": "string"}}, "required": ["comando"]}
+    riesgo = "irreversible"
+    nivel_inicial = "ask"
+    # Sólo `ejecutar_aprobadas` sabe que la aprobó (como `encargar_al_orquestador`).
+    quiere_aprobacion = True
+    solo_con_el_dueno = True
+    caduca_s = 15 * 60
+
+    def comprobar(self, params):
+        v = orden_pc.clasificar(str(params.get("comando") or ""))
+        if v.nunca:
+            raise ValueError(f"esa orden no se puede ni pedir: {v.nunca}")
+        # Lo que la hace no ser lectura, sacado del analizador: lo lee el dueño.
+        return "sólo mira: podías correrla sin preguntar" if v.lectura else "; ".join(v.motivos[:4])
+
+    def ejecutar(self, con, params, aprobada: bool = False):
+        if not aprobada:
+            raise RuntimeError("esto sólo se hace con el sí del dueño a esta orden")
+        r = orden_pc.cambiar(str(params.get("comando") or ""))
+        return memoria.ocultar_secretos(orden_pc.legible(r))
+
+
+ACCIONES = [EscribirEnSesion(), AbrirEnPc(), AbrirSlot(), GrabarReunion(), PararGrabacion(), MirarEnPc(),
+            CambiarEnPc()]

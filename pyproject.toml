@@ -1,6 +1,6 @@
 [project]
 name = "hub"
-version = "0.5.2"
+version = "0.6.0"
 description = "Índice central de proyectos, sesiones de trabajo y capacidades"
 requires-python = ">=3.12"
 dependencies = [
@@ -42,4 +42,8 @@ testpaths = ["tests"]
 pythonpath = ["src", "tests"]
 markers = [
     "navegador: abre las pantallas en Chromium; necesita el grupo `navegador` (uv run --group navegador pytest -m navegador)",
+    "espera_de_arranque_real: el test necesita la espera de verdad de `entrevistador.comprobar_arranque` (conftest la pone a 0)",
 ]
+# Lo temporal de un test que pasa se borra al acabarlo; el de uno que falla se
+# queda para mirarlo. Con «all», cada pasada dejaba 0,8-1,0 GB en /tmp (C-0325).
+tmp_path_retention_policy = "failed"

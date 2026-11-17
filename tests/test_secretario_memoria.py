@@ -74,6 +74,29 @@ def test_las_notas_tambien_se_encuentran_y_al_editarlas_se_busca_lo_nuevo(con):
     assert memoria.buscar(con, "dólares") == []
 
 
+def test_buscar_trae_primero_las_notas_y_desempata_por_lo_mas_reciente(con):
+    """SEC2-20: bm25 de `evento_fts` y de `nota_fts` no se comparan (cada
+    índice tiene sus estadísticas), y con 20 mensajes que casan la nota se
+    perdía entre ellos. Primero las notas (hasta 4), luego los mensajes; y de
+    dos iguales, el más nuevo (crecen 600 al día)."""
+    for i in range(20):
+        memoria.guardar_evento(con, _ev(100 + i, f"el presupuesto {i} del proyecto de facturación con muchas palabras "
+                                                 "de relleno que bajan su puntuación",
+                                        fecha=f"2026-10-0{i % 9 + 1}T10:00:00+00:00"))
+    memoria.guardar_evento(con, _ev(1, "presupuesto aprobado", fecha="2026-10-10T10:00:00+00:00"))
+    memoria.guardar_evento(con, _ev(2, "presupuesto aprobado", fecha="2026-10-12T10:00:00+00:00"))
+    for i in range(6):
+        memoria.anotar(con, f"Nota {i}: el presupuesto se revisa los lunes")
+
+    r = memoria.buscar(con, "presupuesto", n=12)
+
+    assert [x["tipo"] for x in r] == ["nota"] * 4 + ["mensaje"] * 8
+    mensajes = [x for x in r if x["tipo"] == "mensaje"]
+    assert [m["fecha"][:10] for m in mensajes[:2]] == ["2026-10-12", "2026-10-10"], "de dos iguales, el más nuevo"
+    # Sin notas que casen, todo el hueco es para los mensajes.
+    assert len(memoria.buscar(con, "facturación", n=12)) == 12
+
+
 def test_un_compromiso_igual_no_se_duplica_y_las_fechas_nuevas_mandan(con):
     """Medido el 2026-10-24: «recuérdamelo el lunes» sobre uno vencido se quedaba
     con la fecha vieja y el modelo, viéndolo vencido, lo descartó."""

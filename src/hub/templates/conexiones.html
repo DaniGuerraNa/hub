@@ -5,25 +5,19 @@
 <style>
   /* El estado del puntero: lo único propio de esta pantalla. El resto —panel,
      filas, insignias— viene del sistema. */
-  .puntero { display:flex; align-items:baseline; gap:10px; margin-top:7px; font-size:12.5px; }
+  .puntero { display:flex; align-items:baseline; gap:10px; margin-top:7px; font-size:var(--letra-2); }
 </style>
 
 {{ ui.cabecera_vista('Conexiones',
     'Dónde despliega cada cosa y dónde vive su credencial — nunca la credencial.') }}
 
-<div class="aviso" style="border-left-color:var(--acento)">
-  {{ ui.placa('llave', '', 'lg') }}
-  <div style="flex:1;min-width:0">
-  <h2>El hub nunca guarda el secreto</h2>
-  <p class="tenue" style="margin:0">
-    Aquí sólo viven datos de conexión y un <strong style="color:var(--texto-2)">puntero</strong>
-    a dónde está la credencial —la config de ssh, un gestor de secretos, un <code>.env</code>.
-    Un índice de proyectos no es un almacén de credenciales: convertirlo en uno multiplica
-    el radio de daño de cualquier fallo. Lo único que se comprueba del puntero es si existe;
-    nunca se abre.
-  </p>
-  </div>
-</div>
+{% call ui.porque('Aquí vive el puntero a la credencial, nunca la credencial.') %}
+  <p><strong>El hub nunca guarda el secreto.</strong> Aquí sólo viven datos de
+    conexión y un puntero a dónde está la credencial —la config de ssh, un gestor
+    de secretos, un <code>.env</code>. Un índice de proyectos no es un almacén de
+    credenciales: convertirlo en uno multiplica el radio de daño de cualquier fallo.
+    Lo único que se comprueba del puntero es si existe; nunca se abre.</p>
+{% endcall %}
 
 {% if error %}
 <div class="aviso" style="border-left-color:var(--alerta)">
@@ -72,7 +66,7 @@
     <label>Referencia del secreto — un puntero, nunca la credencial</label>
     <input type="text" name="referencia_secreto" autocomplete="off"
            placeholder="~/.ssh/config#vps-pruebas  ·  ~/proyecto/.env  ·  op://boveda/item">
-    <p class="tenue" style="margin:6px 0 0;font-size:12.5px">
+    <p class="tenue" style="margin:6px 0 0;font-size:var(--letra-2)">
       El hub sólo comprueba si eso existe; no lo abre nunca. Si escribes aquí una
       contraseña, quedará en un archivo de texto plano — para eso no es.
     </p>
@@ -80,8 +74,7 @@
     <label>Proyectos que la usan</label>
     <div class="barra" style="flex-wrap:wrap;gap:6px 16px">
       {% for p in proyectos %}
-      <label style="display:inline-flex;align-items:center;gap:6px;margin:0;
-                    text-transform:none;letter-spacing:0;font-size:13.5px;color:var(--texto-2)">
+      <label style="display:inline-flex;gap:6px;margin:0;font-size:var(--letra-3)">
         <input type="checkbox" name="proyectos" value="{{ p.id }}" style="width:auto">
         {{ p.nombre }}
       </label>
@@ -94,7 +87,7 @@
 
     <div class="barra" style="margin-top:16px">
       <button class="cta" type="submit">Añadir a projects.yml</button>
-      <span class="tenue" style="font-size:12.5px">
+      <span class="tenue" style="font-size:var(--letra-2)">
         Se escribe en el archivo real, conservando lo que ya hay.
       </span>
     </div>

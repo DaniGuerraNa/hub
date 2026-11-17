@@ -79,6 +79,7 @@
   'intercambio': '<path d="M5 13.5V4.5M5 4.5L2.5 7M5 4.5L7.5 7"/><path d="M13 4.5v9M13 13.5l2.5-2.5M13 13.5L10.5 11"/>',
   'ondas': '<path d="M3 7.5v3M6 5v8M9 3v12M12 5v8M15 7.5v3"/>',
   'secretario': '<path d="M8 2.5l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z"/><path d="M14 11.5v4M12 13.5h4"/>',
+  'teclado': '<rect x="1.8" y="4.5" width="14.4" height="9" rx="2"/><path d="M5 7.6h.01M7.7 7.6h.01M10.3 7.6h.01M13 7.6h.01M6 10.6h6"/>',
 } -%}
 {%- set d = trazos.get(nombre) -%}
 {%- if d -%}
@@ -120,6 +121,34 @@
     </div>
     {% if caller %}<div class="acciones-vista">{{ caller() }}</div>{% endif %}
   </div>
+{% endmacro %}
+
+{# ── El porqué de una pantalla ────────────────────────────────────────────
+   Una línea bajo la cabecera, y el texto largo detrás de «¿Por qué así?»
+   (C-0399). Como primera tarjeta servía la primera vez y luego empujaba el
+   contenido: en Canal y Conexiones ocupaba la primera pantalla del teléfono.
+   Lo que PIDE algo —la terminal abierta, un token caído— no va aquí: sigue a
+   la vista como aviso. El texto largo vive también en `producto/conocimiento/`,
+   para que el secretario lo pueda contar.
+
+   Uso:  {% call ui.porque('Aquí se para de uno en uno.') %}<p>…</p>{% endcall %} #}
+{% macro porque(resumen, etiqueta='¿Por qué así?') %}
+  <details class="porque">
+    <summary>{{ resumen }} <span class="porque-mas">{{ etiqueta }}</span></summary>
+    <div class="porque-texto">{{ caller() }}</div>
+  </details>
+{% endmacro %}
+
+{# ── Refrescar: una muestra de tmux ───────────────────────────────────────
+   Sólo en las pantallas cuyo contenido sale del muestreo, dentro de su
+   `{% block refrescar %}` de la cabecera (C-0401). Vuelve a la pantalla en
+   la que estabas, sin el aviso de la acción anterior, que si no saldría otra
+   vez (C-0230). #}
+{% macro refrescar(request=none) %}
+  {%- set _q = request.query_params.multi_items() | rejectattr('0', 'in', ['aviso', 'fugaz', 'hecho']) | list if request else [] -%}
+  <form method="post" action="/refrescar" class="enlinea">
+    <input type="hidden" name="destino" value="{% if request %}{{ request.url.path }}{% if _q %}?{{ _q | urlencode }}{% endif %}{% else %}/{% endif %}">
+    <button class="sutil">Refrescar</button></form>
 {% endmacro %}
 
 {# ── Qué sección se ve, antes del primer pintado (C-0167) ──────────────────
@@ -201,6 +230,25 @@
   </details>
 {% endmacro %}
 
+{# ── Editar una fila en su sitio ───────────────────────────────────────────
+   La fila se lee; su formulario de siempre va detrás de «Editar» (C-0370).
+   Cincuenta formularios abiertos uno por fila se leían como cincuenta cosas
+   por hacer, y una nota se cambiaba sin querer.
+
+   `<details>` y no JS, como el menú: sin script se abre igual. Dentro va UN
+   formulario: al guardar bien, `sin-recarga.js` cierra el plegable que tiene
+   uno solo (la edición acabó); lo destructivo va aparte, en `ui.menu`. Por
+   eso no hay «abierto de partida»: lo que tiene que seguir a la vista tras
+   guardar (una persona pendiente del canal) no va dentro de esto.
+
+   Uso:  {% call ui.editar() %}<form>…</form>{% endcall %} #}
+{% macro editar(etiqueta='Editar') %}
+  <details class="editar-fila">
+    <summary class="boton">{{ etiqueta }}</summary>
+    {{ caller() }}
+  </details>
+{% endmacro %}
+
 {# ── Nombre editable en su sitio ───────────────────────────────────────────
    Renombrar se hace SOBRE el nombre, con un lápiz al lado, no en una caja de
    texto aparte que está siempre ahí.
@@ -263,6 +311,49 @@
 {% endmacro %}
 
 
+{# ── Un instante ───────────────────────────────────────────────────────────
+   Toda fecha de pantalla pasa por aquí (C-0396): había ocho formatos, la
+   mitad en UTC, y un dato de hace 62 días se leía igual que uno de hoy. Las
+   piezas las da `reloj.cuando` (filtro `cuando`), en la hora de la casa.
+
+   `forma`: `hace` («hace 3 h»), `local` («13/11 14:41»), `ambos` («13/11
+   14:41 (hace 3 h)»), `dia` («13/11») u `hora` («14:41»). El `title` lleva
+   sólo la fecha exacta, y sólo si el texto no la dice entera: es estable, y
+   un «hace 3 min» en él cambiaba cada minuto y dentro de un `data-region`
+   anulaba el «sin cambios no se toca» de `sin-recarga.js`. El «hace» va en
+   el texto, donde se enseña. Y el `title` no se ve en el teléfono: `hace` a
+   secas sólo donde la hora exacta no importa.
+
+   `con_hace=false` no dice cuánto hace en ningún sitio (con `hace` o
+   `ambos`, enseña la fecha): para lo que espera al dueño (un compromiso vencido, una
+   solicitud), donde contar cuánto lleva es justo lo que la regla dura 3
+   no deja, y para la actividad de un slot, proyecto o idea, donde «hace
+   5 d» es «llevas cinco días sin tocarlo» (principio 9).
+
+   `umbral`, en segundos: pasado, se pinta en color de espera. 🔴 SÓLO para
+   mediciones (última lectura, latido, copia, escaneo). Nunca sobre la
+   actividad de un slot, proyecto o idea (`ultima_actividad`, `creada`,
+   `movida`): sería «llevas X días sin tocar» pintado, que el principio 9
+   prohíbe. Lo vigila `tests/test_fechas_plantillas.py`.
+
+   El filtro va dentro del `if` a propósito: así un entorno sin él (un test
+   que sólo pinta `seccion_previa`) puede seguir importando este archivo. #}
+{% macro cuando(valor, umbral=none, forma='hace', con_hace=true) %}
+  {%- if valor is none or valor == '' -%}—
+  {%- else -%}
+    {%- set c = valor | cuando -%}
+    {%- if not c -%}{{ valor }}
+    {%- else -%}
+      {%- set forma = 'local' if not con_hace and forma in ('hace', 'ambos') else forma -%}
+      {%- set texto = {'local': c.local, 'dia': c.dia, 'hora': c.hora or c.dia,
+                       'ambos': c.local ~ ' (' ~ c.hace ~ ')'}.get(forma, c.hace) -%}
+      {%- set pista = none if forma in ('local', 'ambos') or texto == c.local else c.local -%}
+      <time class="cuando{{ ' viejo' if umbral is not none and c.edad_s > umbral }}" datetime="{{ c.iso }}"
+            {%- if pista %} title="{{ pista }}"{% endif %}>{{ texto }}</time>
+    {%- endif -%}
+  {%- endif -%}
+{% endmacro %}
+
 {# Las barras apiladas. Es un macro porque la ficha de un proyecto pinta la
    misma gráfica con sus propios datos: dos copias del mismo SVG se separan al
    primer retoque y entonces las dos pantallas dejan de decir lo mismo. #}
@@ -282,6 +373,6 @@
   {% endfor %}
 </svg>
 <div class="eje">
-  <span>{{ g.columnas[0].dia }}</span><span>{{ g.columnas[-1].dia }}</span>
+  <span>{{ cuando(g.columnas[0].dia, forma='dia') }}</span><span>{{ cuando(g.columnas[-1].dia, forma='dia') }}</span>
 </div>
 {% endmacro %}

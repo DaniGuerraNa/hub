@@ -4,6 +4,7 @@ import os
 
 import pytest
 
+import arnes_tmux
 from hub import config, db, tmux
 
 
@@ -21,9 +22,33 @@ def _tmux_aparte():
 
     `-L` levanta un servidor de tmux distinto, con socket propio: lo que pase
     dentro no ve ni toca lo de fuera.
+
+    🔴 Y es de esta pasada: al nombre que se pida (o `hub-tests`) se le añade
+    el pid, y al acabar se apaga y se borra su socket (C-0325). Con un nombre
+    compartido no se podía limpiar —dos pasadas a la vez con el mismo
+    `HUB_TMUX_SOCKET` se habrían tumbado las sesiones la una a la otra— y cada
+    nombre dejaba su socket muerto en `/tmp/tmux-<uid>`.
     """
-    os.environ.setdefault("HUB_TMUX_SOCKET", "hub-tests")
+    zocalo = f"{os.environ.get('HUB_TMUX_SOCKET') or 'hub-tests'}-{os.getpid()}"
+    os.environ["HUB_TMUX_SOCKET"] = zocalo
     yield
+    arnes_tmux.apagar(zocalo)
+
+
+@pytest.fixture(autouse=True)
+def _arranque_sin_espera(request, monkeypatch):
+    """Una ventana de agente abierta en un test no espera su arranque (C-0325).
+
+    `entrevistador.comprobar_arranque` duerme 1,5 s para ver si el agente
+    murió al arrancar, y en la suite el agente es `cat`, que no muere: esa
+    espera costaba 1,5 s por ventana abierta de verdad. El test que sí
+    necesita verla —el de la ventana que muere al arrancar— lleva la marca
+    `espera_de_arranque_real` y la tiene entera.
+    """
+    if request.node.get_closest_marker("espera_de_arranque_real"):
+        return
+    from hub import entrevistador
+    monkeypatch.setattr(entrevistador, "ESPERA_ARRANQUE", 0)
 
 
 @pytest.fixture(autouse=True)
@@ -91,11 +116,12 @@ def _datos_aparte(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", casa / "hub.db")
     monkeypatch.setattr(config, "HUB_KITS", casa / "kits")
     # 🔴 Y el registro de Claude Code, por lo mismo y en la dirección segura.
-    # `consumo.carpeta()` cae por omisión a `~/.claude/projects`, o sea 1,5 GB
+    # `transcripts.raiz()` cae por omisión a `~/.claude/projects`, o sea 1,5 GB
     # de transcripts REALES de quien ejecuta la suite: un test que se olvidara de
     # apuntarlo a otro sitio no fallaría, tardaría diez segundos y daría cifras
     # distintas en cada máquina. Apuntando a una carpeta que no existe, el que se
-    # olvide se lleva un `ConsumoNoMedido` y se entera.
+    # olvide se lleva un `ConsumoNoMedido` (o ninguna conversación) y se entera.
+    # Desde C-0049 vale para todo lo que lee transcripts, no sólo para Consumo.
     monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path / "registro-que-no-existe"))
     # Y el laboratorio del navegador: en la máquina de quien ejecuta puede haber
     # preguntas pendientes de verdad, y el raíl las contaría en cada pantalla.
@@ -109,6 +135,11 @@ def _datos_aparte(tmp_path, monkeypatch):
     # dependía de su máquina.
     monkeypatch.setenv("NAV_LAB", str(tmp_path / "laboratorio-que-no-existe"))
     monkeypatch.setenv("REUNIONES_PROYECTO", str(tmp_path / "procesado-que-no-existe"))
+    # Y el Puente KVM (decisión 438): su clon y su puerto. En la máquina de
+    # quien ejecuta puede haber un puente de verdad escuchando, y /puente le
+    # preguntaría. El puerto 1 no lo escucha nadie: «no contesta» al momento.
+    monkeypatch.setenv("PUENTE_KVM", str(tmp_path / "puente-que-no-existe"))
+    monkeypatch.setenv("PUENTE_PUERTO", "1")
     # Y el estado que Claude Code escribe de cada sesión viva (decisión 270): el
     # orquestador lo consulta en cada espera, y en la máquina de quien ejecuta
     # la suite hay sesiones reales en paneles `%5` de verdad.
@@ -119,6 +150,11 @@ def _datos_aparte(tmp_path, monkeypatch):
     # `git ls-remote` al repo publicado. La suite no sale a internet; los tests
     # de `version` la encienden a propósito contra un repo local.
     monkeypatch.setenv("HUB_BUSCAR_VERSIONES", "0")
+    # Y las copias de la base (decisión 277, C-0417): con `HUB_RESPALDO_EXTRA`
+    # en el entorno de quien ejecuta, cada test que copia una base dejaría la
+    # suya en su otro disco de verdad, y podaría las suyas por el nombre.
+    monkeypatch.delenv("HUB_RESPALDO", raising=False)
+    monkeypatch.delenv("HUB_RESPALDO_EXTRA", raising=False)
     # Y las llaves del secretario (decisiones 304 y 311): por omisión viven en
     # `~/.secretos/` de quien ejecuta, y la de Web Push existe en cuanto el
     # servicio arrancó una vez. Un test no lee ni crea llaves reales.
@@ -128,6 +164,19 @@ def _datos_aparte(tmp_path, monkeypatch):
     # Telegram fija su carpeta al importarse: se mueve el atributo, no sólo la variable.
     from hub.secretario.fuentes import telegram as _telegram
     monkeypatch.setattr(_telegram, "POR_OMISION", tmp_path / "secretos" / "telegram")
+
+
+@pytest.fixture(autouse=True)
+def _sin_recuerdos():
+    """Cada test empieza sin nada recordado (`hub.recordar`, C-0310).
+
+    Lo recordado vive en la memoria del proceso, y la suite es un solo
+    proceso: un test que cambia `HOME` o reescribe un archivo con el mismo
+    tamaño en el mismo instante heredaría lo que leyó el anterior."""
+    from hub import recordar
+    recordar.olvidar()
+    yield
+    recordar.olvidar()
 
 
 @pytest.fixture

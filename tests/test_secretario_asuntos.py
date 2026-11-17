@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -466,3 +468,99 @@ def test_lo_que_vence_hoy_es_un_asunto_y_lo_de_pasado_manana_no(con):
     memoria.comprometer(con, "Pasado mañana", vence=a_las(mediodia + timedelta(days=2)))
     [hoy] = asuntos.reunir(con, momento=mediodia).asuntos
     assert hoy.texto == "Para hoy (15:00): Hoy a las tres"
+
+
+# ── el navegante en «Te espera» (C-0423) ─────────────────────────────────────
+
+URL_CON_LLAVE = "https://apigateway.us-east-1.amazonaws.com/restapis/x?token=sk-abcdefghijklmnop1234567890"
+
+
+@pytest.fixture
+def lab(tmp_path, monkeypatch):
+    """Un laboratorio de mentira en una carpeta temporal, con su guardián vivo."""
+    d = tmp_path / "navegador-lab"
+    (d / "aprobaciones").mkdir(parents=True)
+    (d / "vigilancia").mkdir()
+    (d / "vigilancia" / "a.json").write_text(json.dumps({"pid": os.getpid()}))
+    monkeypatch.setenv("NAV_DATOS", str(d))
+    return d
+
+
+def _pregunta_del_navegante(lab, pid="014946-a9a0ba", estado="pendiente", url=URL_CON_LLAVE):
+    ruta = lab / "aprobaciones" / f"{pid}.json"
+    ruta.write_text(json.dumps({"id": pid, "estado": estado, "creada": 1792396186.18, "accion": "DeleteRestApi",
+                                "metodo": "POST", "url": url, "politica": "aws-lectura"}))
+    return ruta
+
+
+def test_una_pregunta_pendiente_del_navegante_es_un_asunto_con_su_enlace(con, lab):
+    _pregunta_del_navegante(lab)
+    [a] = _de(asuntos.reunir(con), "navegante")
+    assert a.clave == "navegante:014946-a9a0ba"
+    assert a.enlace == "/navegante#preguntas"
+    assert a.texto == "El navegante pide permiso: DeleteRestApi en apigateway.us-east-1.amazonaws.com"
+    assert a.solo_el and a.fecha.endswith("+00:00")
+
+
+def test_contestada_o_caducada_la_pregunta_deja_de_salir(con, lab):
+    ruta = _pregunta_del_navegante(lab)
+    _pregunta_del_navegante(lab, pid="otra", estado="caducada")
+    assert len(_de(asuntos.reunir(con), "navegante")) == 1
+    from hub import navegante
+    navegante.responder("014946-a9a0ba", aprobar=False)
+    assert ruta.exists() and _de(asuntos.reunir(con), "navegante") == []
+
+
+def test_la_direccion_entera_y_su_consulta_no_salen_en_el_asunto(con, lab):
+    _pregunta_del_navegante(lab)
+    [a] = _de(asuntos.reunir(con), "navegante")
+    for campo in (a.texto, a.detalle, a.origen, a.enlace):
+        assert "token" not in campo and "sk-" not in campo and "restapis" not in campo
+
+
+def test_el_host_con_pinta_de_llave_pasa_por_ocultar_secretos(con, lab):
+    _pregunta_del_navegante(lab, url="https://sk-abcdefghijklmnop1234567890.ejemplo.com/x")
+    [a] = _de(asuntos.reunir(con), "navegante")
+    assert "sk-abcdefghijklmnop1234567890" not in a.texto
+
+
+def test_lo_del_navegante_no_se_calla_ni_se_resuelve_marcandolo(con, lab):
+    _pregunta_del_navegante(lab)
+    [a] = _de(asuntos.reunir(con), "navegante")
+    for estado in ("callada", "resuelta", "anotada", "delegada"):
+        with pytest.raises(ValueError):
+            asuntos.marcar(con, a.clave, estado)
+    assert asuntos.marcar(con, a.clave, "vista") == "vista", "verla sí cuenta: deja de ser nueva"
+
+
+def test_sin_laboratorio_la_fuente_da_lista_vacia_y_no_es_un_fallo(con):
+    r = asuntos.reunir(con, clases=("navegante",))
+    assert r.asuntos == [] and r.fallos == []
+
+
+def test_si_el_guardian_no_esta_en_marcha_la_fila_lo_dice_y_no_se_esconde(con, lab):
+    (lab / "vigilancia" / "a.json").write_text(json.dumps({"pid": 2 ** 22 + 12345}))
+    _pregunta_del_navegante(lab)
+    [a] = _de(asuntos.reunir(con), "navegante")
+    assert "el guardián no está en marcha" in a.texto
+    assert a.clave == "navegante:014946-a9a0ba", "es la misma pregunta: no cambia de clave"
+
+
+def test_el_parte_de_la_manana_no_incluye_al_navegante(con, lab, monkeypatch):
+    from hub import api, transcripts
+    monkeypatch.setattr(api, "salud", lambda h: [])
+    monkeypatch.setattr(transcripts, "listar_sesiones", lambda *a, **k: [])
+    _pregunta_del_navegante(lab)
+    assert "navegante" not in asuntos.DEL_PARTE
+    t = resumen.del_dia(con, noche=True)
+    assert "navegante" not in t.lower() and "DeleteRestApi" not in t
+    assert "Esperan tu sí" not in resumen.del_dia(con), "ni en la cifra de lo que espera"
+
+
+def test_ninguna_accion_del_secretario_puede_aprobar_lo_del_navegante():
+    """Trinquete (256): el permiso del navegador lo da el dueño en /navegante."""
+    import hub.secretario as paquete
+    carpeta = Path(paquete.__file__).parent
+    for ruta in [*carpeta.glob("*.py"), *(carpeta / "acciones").glob("*.py")]:
+        texto = ruta.read_text(encoding="utf-8")
+        assert not re.search(r"\bnav(egante)?\.responder\b|navegante import [^\n]*\bresponder", texto), ruta.name

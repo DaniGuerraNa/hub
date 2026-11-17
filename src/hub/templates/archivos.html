@@ -32,7 +32,13 @@
   .abrir-aqui { display:flex; flex-wrap:wrap; gap:8px; align-items:center;
                 margin-top:10px; padding-top:10px; border-top:1px solid var(--borde) }
   .abrir-aqui select { width:auto; flex:none; max-width:260px }
-  #filtro-arch { margin:0 }
+  #filtro-arch { margin:0; width:auto; flex:none; max-width:190px }
+  /* En el teléfono el filtro baja debajo del texto y ocupa la fila: a su
+     lado, con ancho fijo, «Por dónde empezar» quedaba en una columna de unos
+     90 px (C-0386). Su medida vive aquí y no en `style=`, que ganaría. */
+  @media (max-width: 600px) {
+    #filtro-arch { flex:1 1 100%; max-width:none }
+  }
 </style>
 
 {{ ui.cabecera_vista('Archivos',
@@ -60,14 +66,13 @@
     {% else %}
     <div style="flex:1;min-width:0">
       <strong style="font-weight:550">Por dónde empezar</strong>
-      <p class="tenue" style="margin:3px 0 0;font-size:12.5px">
+      <p class="tenue" style="margin:3px 0 0;font-size:var(--letra-2)">
         Las rutas que declara <code>projects.yml</code>. El navegador no sale de
         aquí: lo que no esté bajo una de ellas, el hub no lo enseña.
       </p>
     </div>
     {% endif %}
-    <input type="text" id="filtro-arch" placeholder="Filtrar…" autocomplete="off"
-           style="width:auto;flex:none;max-width:190px">
+    <input type="text" id="filtro-arch" placeholder="Filtrar…" autocomplete="off">
   </div>
 
   {# Abrir una terminal AQUÍ, que es lo que faltaba: ver que el repo no está y
@@ -134,7 +139,7 @@
   <p class="tenue" style="padding:14px 13px;margin:0">Esta carpeta está vacía.</p>
   {% endif %}
 
-  <p class="tenue" id="pie-arch" style="padding:11px 13px 0;margin:0;font-size:12.5px">
+  <p class="tenue" id="pie-arch" style="padding:11px 13px 0;margin:0;font-size:var(--letra-2)">
     {% if d.truncado %}
       Se enseñan {{ d.entradas | length }} y quedan <strong>{{ d.truncado }}</strong> sin
       listar. Una carpeta con tantas entradas no se recorre desde aquí: búscala por nombre.
@@ -147,7 +152,7 @@
 </div>
 
 {% if d.ruta %}
-<p class="tenue mono" style="margin-top:12px;font-size:12.5px;word-break:break-all">{{ d.ruta }}</p>
+<p class="tenue mono" style="margin-top:12px;font-size:var(--letra-2);word-break:break-all">{{ d.ruta }}</p>
 {% endif %}
 
 <script src="/static/archivos.js"></script>

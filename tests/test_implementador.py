@@ -192,16 +192,23 @@ def app_en_local(escena):
         def address_string(self):
             return "app"
 
+    import shutil
     import tempfile
-    # Corto: un socket Unix no admite rutas de más de 108 caracteres.
+    # Corto: un socket Unix no admite rutas de más de 108 caracteres. Y se
+    # borra al acabar: fuera de `tmp_path`, nadie más lo quita (C-0325).
     enchufe = Path(tempfile.mkdtemp(prefix="enc-")) / "app.sock"
     servidor = PorSocket(str(enchufe), EcoUnix)
-    threading.Thread(target=servidor.serve_forever, daemon=True).start()
+    # `shutdown` espera a que el bucle mire si debe parar: con el sondeo por
+    # omisión (0,5 s), medio segundo por test sin hacer nada (C-0325).
+    threading.Thread(target=servidor.serve_forever, kwargs={"poll_interval": 0.05},
+                     daemon=True).start()
     estado = encargos_cli._estado_servir("encargo-1")
     estado.parent.mkdir(parents=True, exist_ok=True)
     estado.write_text(json.dumps({"huella": procesos.huella(os.getpid()), "socket": str(enchufe)}))
     yield escena
     servidor.shutdown()
+    servidor.server_close()
+    shutil.rmtree(enchufe.parent, ignore_errors=True)
 
 
 def _api(con, *argv):

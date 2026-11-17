@@ -574,7 +574,7 @@ def test_la_respuesta_se_lee_del_transcript_por_la_marca(tmp_path, monkeypatch):
                      "text": "Listo.\nRESUMEN\n- hecho: todo"}]}},
     ]
     (directorio / "sesion.jsonl").write_text("\n".join(json.dumps(l) for l in lineas))
-    monkeypatch.setattr(transcripts, "TRANSCRIPTS", registro)
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(registro))
     monkeypatch.setattr(orq.tmux, "listar_paneles",
                         lambda: [{"pane_id": "%5", "cwd": "/tmp/alfa"}])
 
@@ -1206,7 +1206,7 @@ def test_compactar_escribe_compact_y_espera_a_que_quede_libre(escena, sesion_lib
 
 
 def test_el_contexto_se_mide_del_ultimo_turno_del_transcript(tmp_path, monkeypatch):
-    monkeypatch.setattr(transcripts, "TRANSCRIPTS", tmp_path)
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path))
     d = tmp_path / transcripts.slug_de("/tmp/alfa")
     d.mkdir()
     lineas = [
@@ -1223,7 +1223,7 @@ def test_el_contexto_se_mide_del_ultimo_turno_del_transcript(tmp_path, monkeypat
 
 
 def test_tras_compactar_el_contexto_es_lo_que_quedo_y_no_el_ultimo_turno(tmp_path, monkeypatch):
-    monkeypatch.setattr(transcripts, "TRANSCRIPTS", tmp_path)
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path))
     d = tmp_path / transcripts.slug_de("/tmp/alfa")
     d.mkdir()
     lineas = [

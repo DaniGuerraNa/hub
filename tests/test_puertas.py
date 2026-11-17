@@ -26,7 +26,9 @@ DUENOS = {
     "encargo_registro": {"encargos.py"},
     # La memoria del secretario (C-0064): su módulo, y la conversación su hilo.
     **{t: {"secretario/memoria.py"} for t in ("evento", "suscripcion", "fuente_estado", "estado", "nota",
-                                              "compromiso", "bitacora", "llamada", "persona")},
+                                              "compromiso", "bitacora", "llamada", "persona",
+                                              # qué notas se le sirven al modelo: `apuntar_lectura` (C-0424)
+                                              "nota_uso")},
     "hilo": {"secretario/conversacion.py"},
     "idea": {"ideas.py"},  # el tablero: web, secretario y CLI entran por ideas.apuntar (342)
     "asunto": {"secretario/asuntos.py"},  # lo que espera del dueño: sólo sus marcas y lo propio (380)
@@ -101,12 +103,20 @@ def test_solo_la_puerta_lanza_procesos_que_sobreviven_al_servicio():
     proceso que moría al reiniciar el servicio (C-0148). La puerta es
     `procesos.desasir` (344). `encargos_cli servir` ya pasa por `encierro`,
     que lanza por ella (C-0145). Preguntar si existe (`which("systemd-run")`)
-    no es lanzar."""
+    no es lanzar. Un grupo de procesos propio (`process_group`) tampoco saca
+    del cgroup y también se vigila: sólo `secretario/motor.py`, que lo usa
+    para matar a `claude` con su servidor MCP al cortar una llamada (C-0241),
+    no para que sobreviva."""
     assert SRC.is_dir()
-    permitidos = {"procesos.py"}
-    fuera = [str(a.relative_to(SRC)) for a in SRC.rglob("*.py")
-             if str(a.relative_to(SRC)) not in permitidos
-             and re.search(r"start_new_session|\[\s*[\"']systemd-run[\"']", a.read_text(encoding="utf-8"))]
+    vigilado = r"start_new_session|process_group|\[\s*[\"']systemd-run[\"']"
+    # Lo que cada uno puede usar de eso: la puerta, todo; el motor, su grupo.
+    permitido = {"procesos.py": vigilado, "secretario/motor.py": r"process_group=0"}
+    fuera = []
+    for a in SRC.rglob("*.py"):
+        nombre = str(a.relative_to(SRC))
+        texto = re.sub(permitido.get(nombre, r"(?!)"), "", a.read_text(encoding="utf-8"))
+        if re.search(vigilado, texto):
+            fuera.append(nombre)
     assert not fuera, f"lanzan por su cuenta en vez de por procesos.desasir: {fuera}"
 
 
@@ -185,6 +195,24 @@ def test_el_id_de_una_conversacion_se_comprueba_en_un_solo_sitio():
     assert not fuera, f"comprueban un id de conversación por su cuenta: {fuera}"
 
 
+@pytest.mark.parametrize("patron", [
+    r"""["']\.claude["']\s*/\s*["']projects["']""",   # la raíz, armada a trozos
+    r"""\.claude/projects["']""",                      # o en una sola cadena
+    r"""HUB_TRANSCRIPTS["']""",                        # la variable, leída por su cuenta
+    r"\bTRANSCRIPTS\b",                                # la constante de antes
+    r"\bslug_de\(",                                    # la carpeta de un cwd, armada a mano
+])
+def test_la_carpeta_de_los_transcripts_se_arma_en_un_solo_sitio(patron):
+    """La raíz se definía en tres sitios y sólo uno leía `HUB_TRANSCRIPTS`
+    (C-0049), y la carpeta de un cwd se armaba a mano en cuatro (C-0091). Las
+    puertas son `transcripts.raiz` y `transcripts.directorio_de`."""
+    assert SRC.is_dir()
+    fuera = sorted(str(a.relative_to(SRC)) for a in SRC.rglob("*.py")
+                   if a.relative_to(SRC) != Path("transcripts.py")
+                   and re.search(patron, a.read_text(encoding="utf-8")))
+    assert not fuera, f"`{patron}` fuera de transcripts.py: {fuera}"
+
+
 def test_nadie_le_habla_a_tmux_saltandose_el_adaptador():
     """`terminal.py` llamaba siete veces a `tmux._correr` con órdenes armadas a
     mano (C-0087): eso se salta la validación del destino (regla dura 9) y
@@ -219,6 +247,66 @@ def test_solo_el_encierro_crea_namespaces():
     assert not fuera, f"crean namespaces por su cuenta: {fuera}"
 
 
+def test_solo_tres_modulos_lanzan_powershell():
+    """Una orden libre en su Windows va por `orden_pc`, con el analizador y el
+    sí del dueño (C-0240, 404); los guiones fijos, por `diagnostico`; `maquina`
+    sólo lo encuentra. Otro módulo que lo lanzara sería una terminal sin nada
+    de eso."""
+    fuera = [str(a.relative_to(SRC)) for a in SRC.rglob("*.py")
+             if a.name not in ("diagnostico.py", "maquina.py", "orden_pc.py")
+             and re.search(r"powershell(\.exe)?[\"']", a.read_text(encoding="utf-8"), re.I)]
+    assert not fuera, f"lanzan PowerShell por su cuenta: {fuera}"
+
+
+def test_el_puerto_del_puente_solo_aparece_en_su_modulo_y_ahi_no_hay_post():
+    """Al Puente KVM sólo se le hace un GET a loopback, desde `puente.py`
+    (438): dar el control y aprobar son de la persona en su pantalla. Su
+    puerto escrito en otro sitio sería un segundo camino hacia él, y un POST
+    o su archivo de entorno en su módulo, justo lo que no debe hacer."""
+    textos = [a for a in SRC.rglob("*") if a.is_file() and a.suffix in (".py", ".html", ".js")]
+    con_puerto = sorted(str(a.relative_to(SRC)) for a in textos
+                        if re.search(r"\b8794\b|PUENTE_PUERTO", a.read_text(encoding="utf-8")))
+    assert con_puerto == ["puente.py"], con_puerto
+    propio = (SRC / "puente.py").read_text(encoding="utf-8")
+    codigo = re.sub(r'""".*?"""|#[^\n]*', "", propio, flags=re.S)
+    # Una sola petición, escrita entera: un GET a su estado y nada más.
+    assert re.findall(r'"GET /api/estado HTTP/1\.0', codigo) == ['"GET /api/estado HTTP/1.0'], \
+        "el vigía ya no ve la petición"
+    assert len(re.findall(r"\.send(all)?\(", codigo)) == 1, "puente.py manda algo más que su GET"
+    for prohibido in (r"\bPOST\b", r"\bPUT\b", r"\bDELETE\b", r"\bPATCH\b", r"urlopen", r"http\.client",
+                      r"body\s*=", r"\.config", r"entorno", r"open\("):
+        assert not re.search(prohibido, codigo), f"puente.py: {prohibido}"
+
+
+def test_solo_la_costura_de_lectura_le_pregunta_al_puente():
+    """`puente.estado` se llama al pintar /puente, por `api.puente`, y en
+    ningún otro sitio: ni el raíl ni el muestreo le preguntan (438)."""
+    vigia = re.compile(r"from\s+\.+\s+import[^\n]*\bpuente\b|import\s+hub\.puente|\bpuente\.estado\(")
+    fuera = sorted(str(a.relative_to(SRC)) for a in SRC.rglob("*.py")
+                   if a.name not in ("api.py", "puente.py")
+                   and vigia.search(re.sub(r'""".*?"""|#[^\n]*', "", a.read_text(encoding="utf-8"), flags=re.S)))
+    assert not fuera, f"le preguntan al puente por su cuenta: {fuera}"
+    assert vigia.search((SRC / "api.py").read_text(encoding="utf-8")), "el vigía ya no ve a api.puente"
+
+
+def test_las_pantallas_solo_se_recorren_por_navegacion_visibles():
+    """`navegacion.SECCIONES` lleva también las pantallas de las herramientas
+    opcionales: recorrerlas a pelo para enseñarlas o buscarlas las deja
+    asomar apagadas, como le pasó a «dónde está» del secretario (438). Fuera
+    de `navegacion.py`, nadie nombra `SECCIONES` en el código: se pide
+    `navegacion.visibles(encendidas)` (o `con_cifras`, que va por ella)."""
+    vigia = re.compile(r"\bSECCIONES\b")
+    sin_comentarios = re.compile(r'""".*?"""|#[^\n]*|\{#.*?#\}', re.S)
+    fuera = sorted(str(a.relative_to(SRC)) for a in SRC.rglob("*")
+                   if a.is_file() and a.suffix in (".py", ".html", ".js") and a.name != "navegacion.py"
+                   and vigia.search(sin_comentarios.sub("", a.read_text(encoding="utf-8"))))
+    assert not fuera, f"recorren las secciones a pelo: {fuera}"
+    # Y dentro de `navegacion.py`, lo que enseña pasa por `visibles`.
+    propio = sin_comentarios.sub("", (SRC / "navegacion.py").read_text(encoding="utf-8"))
+    cuerpo = propio.split("def con_cifras", 1)[1]
+    assert "visibles(" in cuerpo and "SECCIONES" not in cuerpo, "con_cifras ya no pasa por visibles"
+
+
 # ── Un privado de otro módulo no es una puerta (C-0088) ─────────────────────
 #
 # `agentes._confiar` lo llamaban seis módulos: era una puerta sin serlo, sin
@@ -234,7 +322,6 @@ PRIVADOS_AJENOS_PENDIENTES = {
     ("constructor._slot_llamado", "entrevistador.py"),            # C-0136
     ("constructor._slot_llamado", "implementador.py"),            # C-0136
     ("orquestador._sesiones_de_claude", "snapshotter.py"),        # C-0082
-    ("repos._hay_git", "api.py"),                                 # sin ficha: apuntado en C-0088
     ("secretario.conversacion._dueno", "secretario/servicio.py"),  # C-0071
 }
 
@@ -306,3 +393,90 @@ def test_el_vigia_de_privados_ve_cada_forma_de_importar(tmp_path, monkeypatch):
     assert _privados_ajenos(paquete / "a.py", modulos) == set()
     for nombre in ("b.py", "c.py", "d.py", "sub/e.py"):
         assert _privados_ajenos(paquete / nombre, modulos) == {("a._x", nombre)}, nombre
+
+
+# ── Lo que pinta la UI sale de `api.py` (C-0382, C-0101) ─────────────────────
+#
+# «Una sola costura de lectura»: el MCP se monta sobre `api.py`, y una ruta GET
+# que lee por su cuenta es una lectura que el MCP no ve. Se mira el cuerpo de
+# cada ruta GET de `web.py` (con `ast`, no con texto: un comentario que nombre
+# `lienzos.leer` no es una llamada).
+
+#: Módulos que una ruta GET no llama directamente: su lectura tiene función en `api`.
+LECTURAS_DE_API = {
+    "lienzos": "api.lienzos / api.lienzo",
+    "transcripts": "api.sesiones / api.sesion",
+    "registry.cargar": "api (el registro lo lee la costura)",
+}
+
+#: Rutas que no se miran, con su porqué.
+FUERA_DE_LA_COSTURA = {
+    # El asistente se retira (C-0101 lo deja fuera a propósito): sus rutas no
+    # se tocan aquí.
+    "/api/asistente", "/api/asistente/conversaciones",
+}
+
+
+def _rutas_get_que_leen_por_fuera(vigilados: dict[str, str]) -> list[str]:
+    import ast
+
+    arbol = ast.parse((SRC / "web.py").read_text(encoding="utf-8"))
+    intrusos = []
+    for nodo in arbol.body:
+        if not isinstance(nodo, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        rutas = [d.args[0].value for d in nodo.decorator_list
+                 if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+                 and d.func.attr == "get" and d.args]
+        if not rutas or rutas[0] in FUERA_DE_LA_COSTURA:
+            continue
+        for n in ast.walk(nodo):
+            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and isinstance(n.func.value, ast.Name)):
+                continue
+            modulo, funcion = n.func.value.id, n.func.attr
+            if modulo in vigilados or f"{modulo}.{funcion}" in vigilados:
+                intrusos.append(f"{rutas[0]} → {modulo}.{funcion} (va por {vigilados.get(modulo) or vigilados[f'{modulo}.{funcion}']})")
+    return intrusos
+
+
+def test_ninguna_ruta_get_lee_lienzos_sesiones_ni_el_registro_por_su_cuenta():
+    intrusos = _rutas_get_que_leen_por_fuera(LECTURAS_DE_API)
+    assert not intrusos, "lecturas que se saltan api.py:\n" + "\n".join(intrusos)
+
+
+#: Lo que C-0101 apuntó el 3-nov, sin las rutas del asistente.
+LECTURAS_DE_API_C0101 = {
+    "busqueda": "api.buscar",
+    "canal.ver_pregunta": "api.pregunta",
+    "canal.preguntas": "api.preguntas",
+    "comandos": "api.comandos_preparados",
+    "terminal": "api.sesiones_tmux",
+    "tmux": "api (`ventana_activa`, `ventanas_de_sesion`…)",
+}
+
+
+def test_ninguna_ruta_get_busca_pregunta_ni_mira_tmux_por_su_cuenta():
+    """C-0101: la paleta de búsqueda, las preguntas del canal, los comandos
+    preparados de /archivos y las sesiones de /trabajo, por `api`, para que el
+    MCP vea lo mismo que la CLI. Y lo que una ruta GET llama de `web.py` sin
+    módulo delante (un `_ayudante`) también cuenta: ahí se escondía el `tmux`
+    de /trabajo."""
+    import ast
+
+    arbol = ast.parse((SRC / "web.py").read_text(encoding="utf-8"))
+    ayudantes = {n.name: n for n in arbol.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    intrusos = list(_rutas_get_que_leen_por_fuera(LECTURAS_DE_API_C0101))
+    for nodo in ayudantes.values():
+        rutas = [d.args[0].value for d in nodo.decorator_list
+                 if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+                 and d.func.attr == "get" and d.args]
+        if not rutas or rutas[0] in FUERA_DE_LA_COSTURA:
+            continue
+        for n in ast.walk(nodo):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in ayudantes:
+                for m in ast.walk(ayudantes[n.func.id]):
+                    if (isinstance(m, ast.Call) and isinstance(m.func, ast.Attribute)
+                            and isinstance(m.func.value, ast.Name) and m.func.value.id == "tmux"):
+                        intrusos.append(f"{rutas[0]} → {n.func.id} → tmux.{m.func.attr}")
+    assert not intrusos, "lecturas que se saltan api.py:\n" + "\n".join(intrusos)

@@ -389,6 +389,32 @@ def test_la_conversacion_se_lee_en_orden_y_con_las_dos_direcciones(con, encargo)
     assert [m["direccion"] for m in buzon.conversacion(con, encargo)] == ["sale", "entra"]
 
 
+def test_si_al_lote_se_le_quitaron_caracteres_de_control_el_registro_lo_dice(
+        con, con_agente, monkeypatch):
+    """Regla dura 21 (C-0428): la puerta limpia lo que se pega, y lo que quitó
+    no se calla. Con un texto normal la línea del registro es la de siempre."""
+    monkeypatch.setattr(buzon.entrega.tmux, "pegar_en_panel", lambda *a, **k: 0)
+    monkeypatch.setattr(buzon.entrega, "panel_apto", lambda pane_id: (True, ""))
+    monkeypatch.setattr(buzon.entrega, "quien_hay",
+                        lambda pane_id: (entrega.tui.CLAUDE, ""))
+    monkeypatch.setattr(buzon.entrega.asistente, "despachar", lambda *a, **k: True)
+
+    buzon.aparcar(con, con_agente, 77, "abro a las siete")
+    assert buzon.drenar(con, con_agente)["resultado"] == "entregado"
+    buzon.aparcar(con, con_agente, 77, "hola\x1b[201~\rTexto fuera del marco\x00")
+    assert buzon.drenar(con, con_agente)["resultado"] == "entregado"
+
+    con_veneno, normal = [
+        r["detalle"] for r in encargos.registro(con, encargo_id=con_agente)
+        if "entregados al agente" in r["detalle"]
+    ]
+    assert normal == "1 mensaje(s) entregados al agente en un lote"
+    assert con_veneno == (
+        "1 mensaje(s) entregados al agente en un lote; "
+        "se quitaron 2 caracteres de control"
+    )
+
+
 def _no_apto(motivo: str):
     def _entregar(pane_id: str, texto: str) -> None:
         raise entrega.PanelNoApto(motivo)

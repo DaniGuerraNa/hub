@@ -45,8 +45,10 @@ class ResumenDelDia(Accion):
     id = "resumen_del_dia"
     gesto = "avisar"
     nombre = "Mandarte el resumen del día"
-    resumen = ("Agenda, lo que vence hoy, lo vencido y lo que espera tu sí, al teléfono. Con «noche», también lo "
-               "que pasó y lo que falló en 24 h; con «en_chat», entero al chat y al teléfono sólo su primera línea.")
+    # Lo que se lee en Confianza: sin las claves de los parámetros (UI-36).
+    resumen = ("Agenda, lo que vence hoy, lo vencido y lo que espera tu sí, al teléfono. Como parte de la mañana, "
+               "también lo que pasó y lo que falló en 24 h; si lo pides en el chat, entero ahí y al teléfono sólo "
+               "su primera línea.")
     descripcion = ("Manda al dueño el resumen del día (agenda, compromisos de hoy y vencidos, permisos pendientes, "
                    "notas nuevas): al teléfono, o con `en_chat` entero a este chat y al teléfono sólo la primera "
                    "línea. Con `noche`, es el parte: además lo que pasó, lo que falló y lo que le espera de las "

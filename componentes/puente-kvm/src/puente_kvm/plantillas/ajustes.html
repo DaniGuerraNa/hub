@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block pagina %}ajustes{% endblock %}
+{% block contenido %}
+<h1>Ajustes</h1>
+<p class="sub">El aparato al que se conecta el puente y cómo es el programa del Mac donde se lee y escribe.</p>
+
+<form id="ajustes" class="rejilla-2" autocomplete="off">
+  <section class="tarjeta">
+    <h2>Aparato</h2>
+    <label for="tipo">Tipo</label>
+    <select id="tipo" name="dispositivo.tipo">
+      <option value="simulador" {{ 'selected' if ajustes.dispositivo.tipo == 'simulador' }}>Simulador (Mac de prueba, sin aparato)</option>
+      <option value="jetkvm" {{ 'selected' if ajustes.dispositivo.tipo == 'jetkvm' }}>JetKVM</option>
+    </select>
+    <label for="url">Dirección del JetKVM</label>
+    <input id="url" name="dispositivo.url" value="{{ ajustes.dispositivo.url }}" placeholder="http://192.168.1.50">
+    <label for="clave_env">Variable de entorno con la contraseña</label>
+    <input id="clave_env" name="dispositivo.clave_env" class="mono" value="{{ ajustes.dispositivo.clave_env }}">
+    <p class="sub" style="margin:6px 0 0">La contraseña no se guarda aquí; el servicio la lee de esa variable.
+      {% if clave_puesta %}<span class="placa ok">la variable tiene valor</span>{% else %}<span class="placa espera">la variable está vacía</span>{% endif %}</p>
+    <p class="sub" style="margin:10px 0 0">Ojo: el JetKVM admite una sola sesión. Al conectar el puente, si tenías abierta su web en el navegador, ésta se desconecta.</p>
+
+    <h2 style="margin-top:20px">Teclado</h2>
+    <label for="distribucion">Distribución del Mac mientras Claude teclea</label>
+    <select id="distribucion" name="perfil.distribucion">
+      {% for d in distribuciones %}<option value="{{ d }}" {{ 'selected' if ajustes.perfil.distribucion == d }}>{{ 'macOS «U.S.»' if d == 'mac-us' else d }}</option>{% endfor %}
+    </select>
+    <p class="sub" style="margin:6px 0 0">Añade la fuente de entrada «U.S.» en el Mac y cámbiala (Ctrl+Espacio) antes de dar el control: con la española, <code>{ } [ ] | \ ~</code> salen distintos.</p>
+    <label for="retardo">Pausa entre teclas (ms)</label>
+    <input id="retardo" name="perfil.retardo_tecla_ms" type="number" min="2" max="200" value="{{ ajustes.perfil.retardo_tecla_ms }}">
+
+    <h2 style="margin-top:20px">Claude Code</h2>
+    <label for="modelo">Modelo de Claude</label>
+    <select id="modelo" name="claude.modelo">
+      {% for id, texto in modelos %}<option value="{{ id }}" {{ 'selected' if ajustes.claude.modelo == id }}>{{ texto }}{{ ' (' ~ id ~ ')' if id }}</option>{% endfor %}
+    </select>
+    <p class="sub" style="margin:6px 0 0">Se aplica a la siguiente conversación nueva o retomada; la abierta sigue con el suyo hasta que la reabras.
+      Va por su nombre exacto, nunca por un alias. Fable 5.2 necesita Claude Code 2.1.322 o posterior. «El de mi Claude Code» no le pasa ninguno: usa el que tengas configurado.</p>
+  </section>
+
+  <section class="tarjeta">
+    <h2>Programa del Mac: {{ ajustes.perfil.nombre }}</h2>
+    <input type="hidden" name="perfil.nombre" value="{{ ajustes.perfil.nombre }}">
+    <div class="rejilla-2" style="gap:10px">
+      <div><label>Ir al principio</label><input class="mono" name="perfil.inicio_documento" value="{{ ajustes.perfil.inicio_documento }}"></div>
+      <div><label>Ir al final</label><input class="mono" name="perfil.fin_documento" value="{{ ajustes.perfil.fin_documento }}"></div>
+      <div><label>Página abajo</label><input class="mono" name="perfil.pagina_abajo" value="{{ ajustes.perfil.pagina_abajo }}"></div>
+      <div><label>Ir a la línea</label><input class="mono" name="perfil.ir_a_linea" value="{{ ajustes.perfil.ir_a_linea }}"></div>
+      <div><label>Fin de línea</label><input class="mono" name="perfil.fin_de_linea" value="{{ ajustes.perfil.fin_de_linea }}"></div>
+      <div><label>Aparcar el ratón en (x, y)</label><input class="mono" name="perfil.aparcar_raton" value="{{ ajustes.perfil.aparcar_raton|join(', ') }}"></div>
+    </div>
+    <label>Región del editor (x, y, ancho, alto)</label>
+    <div class="fila">
+      <input class="mono" id="region-campo" name="perfil.region_editor" value="{{ ajustes.perfil.region_editor|join(', ') }}">
+      <button type="button" data-marcar-region>Marcarla en la pantalla</button>
+    </div>
+    <p class="sub" style="margin:6px 0 10px">Arrastra sobre la captura para rodear el editor <b>con su columna de números</b> y sin la barra de estado.</p>
+    <div class="pantalla" id="pantalla-ajustes" data-ancho="{{ estado.dispositivo.ancho or 1920 }}" data-alto="{{ estado.dispositivo.alto or 1080 }}" style="cursor:crosshair">
+      <img id="captura-ajustes" src="/api/pantalla.jpg?ancho=1600" alt="Captura de la pantalla del Mac" draggable="false">
+      <div class="region" id="region"></div>
+      <div class="seleccion" id="seleccion" hidden></div>
+    </div>
+    <p class="aviso riesgo" id="sin-imagen" hidden><b>No hay imagen del aparato</b>, así que aún no se puede marcar la región.
+      Conéctalo (guarda los ajustes o pulsa «Reconectar el aparato») y vuelve a pulsar «Marcarla en la pantalla».
+      {% if estado.error_conexion %}<br>Motivo: {{ estado.error_conexion }}{% endif %}</p>
+  </section>
+  <div style="grid-column: 1 / -1" class="fila">
+    <button type="submit" class="cta">Guardar ajustes</button>
+    <button type="button" data-reconectar>Reconectar el aparato</button>
+  </div>
+</form>
+<script>window.PERFIL = {{ estado.perfil | tojson }};</script>
+{% endblock %}

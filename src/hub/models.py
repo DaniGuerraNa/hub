@@ -47,6 +47,11 @@ class Proyecto(BaseModel):
     # La atribución arranca por prefijo y se corrige a mano aquí: en el
     # Docker del usuario conviven contenedores de cinco proyectos distintos.
     contenedores: list[str] = Field(default_factory=list)
+    # Los `patron` que no se dejaron leer en ESTA carga (C-0435: OneDrive a
+    # medio sincronizar da EIO). Lo que falta por ellos no es «no hay»: quien
+    # retira lo derivado de un proyecto (`repos.escanear`) no se lo retira
+    # mientras tanto. Es de esta lectura: no va al índice.
+    patrones_sin_leer: list[str] = Field(default_factory=list)
 
     def todas_las_rutas(self) -> list[str]:
         rutas = [r.ruta for r in self.rutas]

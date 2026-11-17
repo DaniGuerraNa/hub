@@ -114,14 +114,6 @@ def test_borrar_es_definitivo(escena):
     assert api.obtener_slot(escena, slot_id) is None
 
 
-def test_comando_manual_para_copiar_a_mano(escena):
-    slot_id = slots.crear(escena, "demo", "back", ruta="/tmp/demo", autostart_claude=True)
-    comando = slots.comando_manual(escena, slot_id)
-    assert "tmux new-window" in comando
-    assert "/tmp/demo" in comando
-    assert comando.endswith("claude")
-
-
 # --------------------------------------------------------------------------- #
 # Resolver el slot al entrar por una sesión
 # --------------------------------------------------------------------------- #
@@ -184,6 +176,29 @@ def test_con_un_solo_slot_en_la_sesion_sin_ventana_si_se_resuelve(con, proyecto_
     _panel(con, "%2", "work", 1)
 
     assert api.contexto_trabajo(con, session="work")["slot"]["id"] == slot_id
+
+
+def test_pulsar_otra_ventana_del_slot_la_ensena_a_ella_y_no_la_primera(con, proyecto_demo):
+    """C-0242, lo que vio el dueño el 11-nov: un slot con ventanas en dos
+    sesiones (la suya en `mesa:0`, ocho más en `work:5…13`). El
+    raíl enlaza cada una con `?session=work&ventana=N`; se resolvía su slot y
+    luego se cambiaba la ventana pedida por la primera del slot, así que
+    cualquiera que pulsara le devolvía a `mesa:0`."""
+    slot_id = slots.crear(con, proyecto_demo, "Trabajo")
+    _panel(con, "%55", "mesa", 0, slot_id=slot_id)
+    for i, n in enumerate((5, 6, 8, 11)):
+        _panel(con, f"%{24 + i}", "work", n, slot_id=slot_id)
+
+    ctx = api.contexto_trabajo(con, session="work", ventana=11)
+    assert (ctx["session"], ctx["ventana"]) == ("work", 11)
+    assert ctx["slot"]["id"] == slot_id and ctx["slot"]["abierto"] is True
+    # Pedir el slot sin decir ventana sigue llevando a la primera, como siempre.
+    ctx = api.contexto_trabajo(con, slot_id=slot_id)
+    assert (ctx["session"], ctx["ventana"]) == ("mesa", 0)
+    # Y una ventana que no es de ese slot no se cuela por pedir el slot.
+    _panel(con, "%99", "work", 20)
+    ctx = api.contexto_trabajo(con, slot_id=slot_id, session="work", ventana=20)
+    assert (ctx["session"], ctx["ventana"]) == ("mesa", 0)
 
 
 # --------------------------------------------------------------------------- #

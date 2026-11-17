@@ -35,9 +35,10 @@ el asistente nunca lee la base ni escanea el disco por su cuenta.
                                   deja en /trabajo una ventana en ese proyecto
                                   con el encargo escrito y SIN Enter: lo lanza
                                   la persona y revisa ahí los cambios
-  hub componentes                 qué les falta a Navegante y Reuniones, paso
-                                  a paso, medido en esta máquina
-  hub preparar <navegante|reuniones>
+  hub componentes                 qué les falta a Navegante, Reuniones y el
+                                  Puente KVM (si está encendido), paso a paso,
+                                  medido en esta máquina
+  hub preparar <navegante|reuniones|puente>
                                   deja en /trabajo una ventana en su carpeta
                                   con Claude y el encargo de prepararlo, SIN
                                   Enter: lo lanza la persona
@@ -612,10 +613,18 @@ def cmd_kit(args):
 
 
 def cmd_componentes(args: list[str]) -> None:
-    """`hub componentes`: los mismos pasos que pintan /navegante y /reuniones."""
+    """`hub componentes`: los mismos pasos que pintan /navegante, /reuniones y /puente.
+
+    El Puente KVM es una herramienta opcional: apagado, sólo se dice dónde se
+    enciende. Si contesta no se mide aquí: lo dice su pantalla."""
     r = pedir("/api/componentes")
-    for nombre in ("navegante", "reuniones"):
-        c = r[nombre]
+    for nombre in ("navegante", "reuniones", "puente"):
+        c = r.get(nombre)
+        if c is None:
+            continue
+        if c.get("encendida") is False:
+            print(f"{nombre}: herramienta opcional apagada; se enciende en Ajustes → Guía")
+            continue
         print(f"{nombre}: {'listo' if c['listo'] else 'sin preparar'} · {c['pantalla']}")
         for p in c["pasos"]:
             marca = "✓" if p["hecho"] else ("·" if p["opcional"] else "✗")
@@ -623,9 +632,9 @@ def cmd_componentes(args: list[str]) -> None:
 
 
 def cmd_preparar(args: list[str]) -> None:
-    """`hub preparar <navegante|reuniones>`: prepara la ventana, no la lanza."""
+    """`hub preparar <navegante|reuniones|puente>`: prepara la ventana, no la lanza."""
     if len(args) != 1:
-        salir("uso: hub preparar <navegante|reuniones>")
+        salir("uso: hub preparar <navegante|reuniones|puente>")
     r = pedir("/api/componentes/preparar", {"nombre": args[0]})
     if not r.get("ok"):
         salir(r.get("error", "no se pudo preparar"))

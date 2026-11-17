@@ -62,6 +62,22 @@ def test_no_duplica_cuando_una_ruta_esta_dos_veces(tmp_path):
     assert len(catalogo.capacidades_de(p)) == 1
 
 
+def test_la_bitacora_los_planes_y_el_estado_de_un_kit_no_cuentan_como_metodo(tmp_path):
+    """C-0388: el inventario contaba `CHANGELOG.md`, `PLAN.md` o `PENDIENTES.md`
+    de la raíz de un kit como «método». Son la meta del propio kit, como el
+    README; lo demás de la raíz sí es método, aunque empiece por «plan»."""
+    raiz = tmp_path / "kit"
+    for nombre in ("CHANGELOG.md", "PLAN.md", "PLAN-REMOTO.md", "plan_v2.md",
+                   "PENDIENTES.md", "ESTADO.md", "README.md"):
+        _escribir(raiz / nombre, "# meta\n")
+    _escribir(raiz / "flujo-de-trabajo.md", "# método\n")
+    _escribir(raiz / "planificar-sprints.md", "# método\n")
+    kit = Proyecto(id="kit", nombre="Kit", tipo="kit", asiento=str(raiz))
+
+    metodos = sorted(c["nombre"] for c in catalogo.capacidades_de(kit) if c["tipo"] == "metodo")
+    assert metodos == ["flujo-de-trabajo", "planificar-sprints"]
+
+
 # ───────────────────────── deriva de kits ─────────────────────────
 
 

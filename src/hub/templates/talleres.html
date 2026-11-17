@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block refrescar %}{{ ui.refrescar(request) }}{% endblock %}
 {% block cabeza %}
 <link rel="stylesheet" href="/static/talleres.css">
 {% endblock %}
@@ -24,7 +26,7 @@
     <ul class="tll-texto" data-texto>
       {% for t in datos.talleres %}
       <li><b>{{ t.proyecto }}{% if t.proyecto %} · {% endif %}{{ t.nombre }}</b>
-        <span class="tll-chip {{ t.estado }}">{{ {"trabajando": "trabajando", "quieta": "quieta", "espera": "espera tu sí", "neutro": t.agente}[t.estado] }}</span>
+        <span class="tll-chip {{ t.estado }}">{{ {"trabajando": "trabajando", "delegando": "delegando", "quieta": "quieta", "espera": "espera tu sí", "neutro": t.agente}[t.estado] }}</span>
         {% if t.subagentes %} — {% for s in t.subagentes %}{{ s.tipo or "subagente" }}{% if s.que %}: {{ s.que }}{% endif %}{% if not loop.last %}; {% endif %}{% endfor %}{% endif %}
       </li>
       {% endfor %}

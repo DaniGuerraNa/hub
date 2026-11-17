@@ -17,6 +17,10 @@
   let resultados = [];
   let marcado = 0;
   let peticion = 0;
+  // Lo que se buscó y si la búsqueda contestó: con la lista vacía y sin
+  // texto no se distinguía «no hay» de «se ha roto» (C-0354).
+  let buscado = '';
+  let fallo = false;
 
   const CLASES = {
     proyecto: 'proyecto', slot: 'slot', capacidad: 'capacidad',
@@ -25,6 +29,7 @@
 
   function pintar() {
     lista.textContent = '';
+    if (!resultados.length) return pintarVacio();
     resultados.forEach((r, i) => {
       const li = document.createElement('li');
       if (i === marcado) li.className = 'marcado';
@@ -43,17 +48,56 @@
     });
   }
 
+  /* Una fila que no es un resultado: ni se marca ni lleva a ningún sitio.
+   * Repite lo buscado, así que mientras llega la respuesta a la tecla
+   * siguiente no se lee como la de ahora. */
+  function pintarVacio() {
+    if (!buscado) return;
+    const li = document.createElement('li');
+    li.className = 'vacio';
+    const texto = document.createElement('span');
+    texto.className = 'nada';
+    texto.textContent = fallo ? 'No se pudo buscar: prueba otra vez en un momento.'
+                              : `Nada con «${buscado}».`;
+    li.append(texto);
+    // Sólo existe donde el secretario es la voz y su panel está en la página.
+    const secretario = window.HubSecretario;
+    if (!fallo && secretario && typeof secretario.preguntar === 'function') {
+      const q = buscado;
+      const boton = document.createElement('button');
+      boton.type = 'button';
+      boton.className = 'sutil';
+      boton.textContent = 'Preguntárselo ' + aQuien();
+      // Al pulsar y no con Enter: preguntarle llama al modelo, y un Enter
+      // dado por costumbre sobre una búsqueda vacía no debe gastarlo.
+      boton.addEventListener('click', () => {
+        dlg.close();
+        secretario.preguntar(`Busco «${q}» en el hub y la búsqueda no lo encuentra. ¿Dónde está?`);
+      });
+      li.append(boton);
+    }
+    lista.appendChild(li);
+  }
+
+  function aQuien() {
+    const panel = document.getElementById('secretario-panel');
+    const nombre = panel && panel.getAttribute('aria-label');
+    return nombre && nombre !== 'Secretario' ? `a ${nombre}` : 'al secretario';
+  }
+
   async function buscar() {
     const q = campo.value.trim();
-    if (q.length < 2) { resultados = []; marcado = 0; return pintar(); }
+    if (q.length < 2) { resultados = []; marcado = 0; buscado = ''; return pintar(); }
     // Contador de secuencia: sin él, una respuesta lenta de una consulta vieja
     // puede llegar después de una rápida y pisar resultados más nuevos.
     const mia = ++peticion;
     const r = await fetch(`/api/buscar?q=${encodeURIComponent(q)}`)
-      .then((r) => r.json())
-      .catch(() => []);
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
     if (mia !== peticion) return;
-    resultados = Array.isArray(r) ? r : [];
+    fallo = !Array.isArray(r);
+    resultados = fallo ? [] : r;
+    buscado = q;
     marcado = 0;
     pintar();
   }
@@ -68,6 +112,7 @@
     dlg.showModal();
     campo.value = '';
     resultados = [];
+    buscado = '';
     pintar();
     campo.focus();
   }

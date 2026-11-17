@@ -31,7 +31,7 @@
                          fx: { u: 0.6, v: 0.2 } },
     'rana-bardo': { pasos: [['f1', 520], ['f2', 470], ['f0', 380]], fx: null },
   };
-  const TEXTO_ESTADO = { trabajando: 'trabajando', quieta: 'quieta', espera: 'espera tu sí' };
+  const TEXTO_ESTADO = { trabajando: 'trabajando', delegando: 'delegando', quieta: 'quieta', espera: 'espera tu sí' };
 
   // ── Lo puro ──────────────────────────────────────────────────────────────
 
@@ -75,6 +75,17 @@
   function figuraDe(sub, escena) {
     const id = (escena.figuras || {})[sub.rol];
     return id ? { id, img: `${escena.url}ranas/${id}.webp` } : { id: null, inicial: sub.inicial || '?' };
+  }
+
+  /* Las cifras de arriba, de `[{estado, ranas}]` (ranas: sus subagentes).
+   * «Delegando» —quieta con subagentes en marcha— trabaja (C-0298). */
+  function resumir(ts) {
+    return {
+      talleres: ts.length,
+      trabajando: ts.filter((t) => t.estado === 'trabajando' || t.estado === 'delegando').length,
+      espera: ts.filter((t) => t.estado === 'espera').length,
+      ranas: ts.reduce((n, t) => n + (t.ranas || 0) + 1, 0),
+    };
   }
 
   /* Segundos desde `tomado` (ISO) hasta `ahora` (ms); Infinity sin muestra. */
@@ -459,13 +470,11 @@
       talleres.delete(T.clave);
     }
     function pintarResumen() {
-      const ts = [...talleres.values()];
-      const trab = ts.filter((t) => t.estado === 'trabajando').length;
-      const esp = ts.filter((t) => t.estado === 'espera').length;
-      const ranas = ts.reduce((n, t) => n + t.ranas.length + 1, 0);
+      const r = resumir([...talleres.values()].map((t) => ({ estado: t.estado, ranas: t.ranas.length })));
       resumen.replaceChildren();
-      for (const [n, texto, clase] of [[ts.length, 'talleres'], [trab, 'trabajando'],
-                                        [esp, 'esperan tu sí', esp ? 'hay-espera' : ''], [ranas, 'ranas']]) {
+      for (const [n, texto, clase] of [[r.talleres, 'talleres'], [r.trabajando, 'trabajando'],
+                                        [r.espera, 'esperan tu sí', r.espera ? 'hay-espera' : ''],
+                                        [r.ranas, 'ranas']]) {
         const s = el('span', clase || null);
         s.append(el('b', null, String(n)), ' ' + texto);
         resumen.appendChild(s);
@@ -601,7 +610,7 @@
   }
 
   const global = typeof window !== 'undefined' ? window : globalThis;
-  global.HubTalleres = { comparar, repartir, figuraDe, edad, crear };
+  global.HubTalleres = { comparar, repartir, figuraDe, edad, resumir, crear };
   if (typeof document !== 'undefined' && document.querySelector) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', arrancar);
     else arrancar();

@@ -42,7 +42,7 @@ carpeta de la capacidad, con `FUENTE`, `ACCIONES` o `PROVEEDOR` dentro.
 | Archivo | Qué hace | LLM |
 |---|---|---|
 | `servicio.py` | El bucle de `hub-secretario`: un hilo contesta, otro hace el ciclo de 30 s | — |
-| `memoria.py` | La base propia (`memoria.db`): eventos con FTS, notas, compromisos, hilos, turnos, solicitudes, bitácora; y la cola de lo que se hace aparte (`encolar`, `sacar`) | — |
+| `memoria.py` | La base propia (`memoria.db`): eventos con FTS, notas, compromisos, hilos, turnos, solicitudes, bitácora; y la cola de lo que se hace aparte (`encolar`, `sacar`, `retirar`; `devolver` pone a la cabeza lo que un reinicio cortó, sólo al arrancar, C-0308) | — |
 | `piezas.py` | Los contratos, el descubrimiento y los niveles de confianza | — |
 | `tiempo.py` | La zona de la máquina; todo se guarda en UTC | — |
 | `fuentes/hub.py` | Lee reuniones con resumen y notas de slots | — |
@@ -73,10 +73,10 @@ carpeta de la capacidad, con `FUENTE`, `ACCIONES` o `PROVEEDOR` dentro.
 | `personaje.py` | El vocabulario cerrado de su personaje: gestos, roles, estados, quién es y su pose (358, 377), y los puestos del modo monitor con el de cada estado y gesto (389) | — |
 | `mcp.py` | Expone `herramientas` por MCP (stdio, JSON-RPC a mano); una `Imagen` va como `content` de tipo `image` (384) | — |
 | `triaje.py` | Filtro por script → Haiku saca notas y compromisos de lo nuevo | **sí** (lo que pasa el filtro) |
-| `conversacion.py` | Hilos, turnos y cierre con resumen; los adjuntos del chat (`guardar_adjunto`, decisión 383) | **sí** |
+| `conversacion.py` | Hilos, turnos y cierre con resumen; los adjuntos del chat (`guardar_adjunto`, decisión 383); responder a un globo (`responde_a`, 406) | **sí** |
 | `enrutador.py` | Qué modelo y esfuerzo para cada trabajo: una tabla, no un modelo | — |
-| `motor.py` | La costura del modelo (`Motor`; `motor:` en `secretario.yml`). Hoy `suscripcion`: `claude -p`, con el proceso de la conversación abierto entre turnos. Imágenes y PDF como bloques en ese mismo proceso (383). Con `nativas`, sólo `WebSearch` y `WebFetch` y nunca con su MCP; con `tope_usd`, `--max-budget-usd` (385) | — |
-| `sesiones.py` | Resumir una sesión de trabajo larga: lo encarga la conversación y lo hace el hilo aparte del servicio (C-0163) | **sí** (la sesión) |
+| `motor.py` | La costura del modelo (`Motor`; `motor:` en `secretario.yml`). Hoy `suscripcion`: `claude -p`, con el proceso de la conversación abierto entre turnos. Imágenes y PDF como bloques en ese mismo proceso (383). Con `nativas`, sólo `WebSearch` y `WebFetch` y nunca con su MCP; con `tope_usd`, `--max-budget-usd` (385). Lo que falla por el motor y no por el pedido es `MotorNoDisponible`; el triaje y el cierre de hilos no lo cuentan contra el lote o el hilo: esperan con retroceso (`en_pausa`, `pausar`, `reanudar`; la racha, en `estado['motor_no_disponible']`) y antes de apartar o de cerrar sin resumen sondean con una llamada mínima (`responde`, `rendirse`, `acierto`) (C-0307) | — |
+| `sesiones.py` | Resumir una sesión de trabajo larga: lo encarga la conversación y lo hace el hilo aparte del servicio (C-0163); el que corta un reinicio vuelve a la cola y se dice (`retomar`: como mucho dos veces, y nada de hace más de un día, C-0308) | **sí** (la sesión) |
 | `investigar.py` | Investigar lo público en la web (385): lo encarga la conversación (`investigar`) y lo hace el hilo aparte, con sólo buscar y leer, sin su MCP y con tope; vuelve al chat enmarcado, con fuente y fecha por dato, tarjeta de fuentes y nota | **sí** (lo leído en la web) |
 | `delegados.py` | Lo que delegó vuelve a su chat (384): en cada vuelta, las tareas suyas del orquestador ya cerradas, una vez por cierre, con el resumen enmarcado como dato y sus evidencias en una tarjeta `imagenes`; al estrenarlo, lo ya cerrado se apunta sin decirse (`estado['delegados_contados']`). Si era un asunto delegado (`asuntos.delegado_en`), la cabecera dice qué punto era y quién lo delegó; todo va tapado (`misdatos.tapar`) | — |
 | `recordatorios.py` | Manda lo que toca a su hora | — |
@@ -113,11 +113,17 @@ si un script lo resuelve igual; si sí, va por script.
    con las herramientas por MCP, guarda la respuesta → la pantalla la recoge.
    Lo adjunto sube antes (`/api/secretario/adjuntar` → intercambio, de paso)
    y el turno lleva sus rutas: imágenes y PDF van al modelo como bloques; de
-   lo demás, la ruta, marcada como dato (decisión 383).
+   lo demás, la ruta, marcada como dato (decisión 383). Si responde a un
+   globo, el turno lleva `responde_a` (un puntero) y lo citado le llega al
+   modelo en un bloque aparte, como dato, delante de su texto (406).
 6. **Acción en `ask`**: queda una solicitud y un aviso → el dueño aprueba en
    la web o desde el aviso (`/api/secretario/solicitud/{id}`, lo llama el
    service worker) → el ciclo la ejecuta (este servicio tiene las llaves;
-   `hub-web` no).
+   `hub-web` no). La reclama justo antes (`aprobada` → `ejecutando`) y la
+   cierra como `hecha`, `fallo` o `caducada`; la que el arranque encuentra
+   `ejecutando` (`servicio.recoger_cortadas`, sólo desde `correr`) se cierra
+   como `cortada` («no sé si se hizo») y se le dice, sin repetirla; si no se
+   pudo cerrar al arrancar, lo reintenta cada vuelta (C-0315).
 
 ## Dónde vive cada dato
 

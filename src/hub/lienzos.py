@@ -28,6 +28,7 @@ Ver `escribir()`.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import re
 import unicodedata
@@ -58,6 +59,10 @@ PLANTILLAS = ("decisiones", "arquitectura", "pasos", "comparativa")
 
 class SinPermiso(Exception):
     """Se iba a pisar algo del usuario. Lleva dentro qué hacer en su lugar."""
+
+
+class Conflicto(Exception):
+    """Lo que se iba a guardar parte de una versión que ya no es la del disco."""
 
 
 class Lienzo(BaseModel):
@@ -160,7 +165,7 @@ def _de_archivo(ruta: Path, proyecto_id: str) -> Lienzo | None:
     m = _FRONTMATTER.match(texto)
     if m:
         try:
-            datos = yaml.safe_load(m.group(1))
+            datos = config.leer_yaml(m.group(1))
             cabecera = datos if isinstance(datos, dict) else {}
         except yaml.YAMLError:
             # Un frontmatter roto no puede esconder el lienzo: se enseña con lo
@@ -287,6 +292,7 @@ def escribir(
     base = lienzo_id or slug(titulo)
     if not ID_VALIDO.match(base or ""):
         raise ValueError(f"del título «{titulo}» no sale un nombre usable")
+    cuerpo = normalizar_cuerpo(plantilla, cuerpo)
 
     previo = leer(proyecto_id, base)
     if previo is not None and not forzar:
@@ -312,13 +318,177 @@ def escribir(
     return lienzo
 
 
-def guardar_edicion(lienzo: Lienzo, cuerpo: str) -> Lienzo:
+# --------------------------------------------------------------------------- #
+# Un valor por línea (C-0387)
+# --------------------------------------------------------------------------- #
+#
+# 🔴 El único lector del cuerpo es el panel (`static/lienzos.js`), y lee línea a
+# línea: un valor en bloque YAML (`justificacion: >-` y el texto debajo) se
+# pintaba como «>-» y el texto se perdía. Que cada agente recordara escribir en
+# una línea no bastó. Lo garantiza esta puerta, sin abrir un segundo lector:
+# aquí sólo se reescribe cómo va escrito un valor, nunca qué dice.
+
+# `clave: valor` o `- clave: valor`, con la sangría y el guion aparte.
+_LINEA_CLAVE = re.compile(r"^(\s*)(-\s+)?([^\W\d][\w-]*)\s*:(?:\s+(.*?))?\s*$")
+# Un valor que es sólo el indicador de un bloque: `|`, `>-`, `|+2`, `>2-`…
+_INDICADOR_BLOQUE = re.compile(r"^[|>](?:[1-9][+-]?|[+-][1-9]?)?(?:\s+#.*)?$")
+
+#: Las claves que el panel lee de cada plantilla (`static/lienzos.js`:
+#: `leerPuntos`, `leerComparativa`, `leerGrafo`). Un valor partido sólo rompe
+#: lo que se ve si es de una de éstas: lo demás el panel no lo mira, y un
+#: lienzo que se publicaba y se veía bien no puede empezar a rechazarse
+#: (revisión cruzada de C-0387). Una plantilla que no está aquí se enseña
+#: cruda, así que tampoco se toca.
+CLAVES_DEL_PANEL = {
+    "decisiones": frozenset({"id", "punto", "justificacion", "decision", "propone", "respuesta"}),
+    "comparativa": frozenset({"criterios", "valores", "eleccion", "porque", "nombre", "nota"}),
+    "arquitectura": frozenset({"piezas", "flujo", "orientacion"}),
+    "pasos": frozenset({"piezas", "flujo", "orientacion"}),
+}
+
+_COMO_ESCRIBIRLO = ('escríbelo en una línea, entre comillas, con \\n donde vaya '
+                    'un salto: clave: "primera línea\\nsegunda"')
+
+
+def _primer_valor_partido(cuerpo: str, claves: frozenset[str],
+                          continuacion: bool) -> tuple[int, str] | None:
+    """La línea (desde 1) y la clave del primer valor de `claves` que no cabe
+    en su línea.
+
+    Dos formas: el valor es un indicador de bloque, o —con `continuacion`— la
+    línea de abajo sigue al valor (más sangrada que su clave y sin ser otra
+    clave). Una línea suelta que no sigue a ningún valor —un cuerpo de texto
+    libre, una lista de viñetas— no es un valor partido: el panel la enseña
+    cruda, como siempre. Lo de una clave que el panel no lee, tampoco.
+    """
+    previa: tuple[int, str, int] | None = None     # (columna, clave, línea)
+    for n, linea in enumerate(cuerpo.split("\n"), start=1):
+        limpia = linea.strip()
+        if not limpia or limpia.startswith("#"):
+            continue
+        m = _LINEA_CLAVE.match(linea)
+        if m:
+            clave, valor = m.group(3), m.group(4) or ""
+            if clave in claves and _INDICADOR_BLOQUE.match(valor):
+                return n, clave
+            columna = len(m.group(1)) + len(m.group(2) or "")
+            previa = (columna, clave, n) if valor and clave in claves else None
+            continue
+        sangria = len(linea) - len(linea.lstrip())
+        if continuacion and previa and sangria > previa[0]:
+            return previa[2], previa[1]
+        previa = None
+    return None
+
+
+def _entre_comillas(valor: str) -> str:
+    # Lo mismo que escribe `escaparYaml` y deshace `desescapar` en el panel.
+    return '"' + valor.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
+
+
+def normalizar_cuerpo(plantilla: str, cuerpo: str) -> str:
+    """El cuerpo con cada valor en su línea, o `ValueError` con el porqué.
+
+    Sólo mira las claves que el panel lee de esa plantilla
+    (`CLAVES_DEL_PANEL`): un lienzo que se publicaba y se veía bien se sigue
+    publicando tal cual.
+
+    - Si no hay nada partido, vuelve **sin tocar un byte**: comentarios,
+      comillas, campos desconocidos y hasta un cuerpo que YAML estricto no
+      acepta pero el panel lee bien.
+    - En `decisiones`, un valor partido de un punto (en bloque o que sigue
+      abajo) se reescribe en su línea, entre comillas y con los saltos
+      escapados; el resto de líneas no se toca. Se lee con `BaseLoader`, todo
+      como texto: `safe_load` convertiría `decision: no` en `False`. Si el
+      YAML no se entiende, se rechaza.
+    - En las demás plantillas sólo se rechaza un indicador de bloque (`|`,
+      `>`) como valor de una clave que el panel lee, que es lo que se pintaría
+      como «>-»: diciendo la línea, la clave y cómo escribirlo.
+    """
+    claves = CLAVES_DEL_PANEL.get(plantilla, frozenset())
+    decisiones = plantilla == "decisiones"
+    partido = _primer_valor_partido(cuerpo or "", claves, continuacion=decisiones)
+    if partido is None:
+        return cuerpo
+    n, clave = partido
+    donde = f"línea {n}, «{clave}»: el valor ocupa varias líneas y el panel sólo lee la primera"
+    if not decisiones:
+        raise ValueError(f"{donde}; {_COMO_ESCRIBIRLO}")
+    try:
+        raiz_ = yaml.compose(cuerpo, Loader=yaml.BaseLoader)
+        leido = yaml.load(cuerpo, Loader=yaml.BaseLoader)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{donde}, y el cuerpo no es YAML válido "
+                         f"({getattr(exc, 'problem', None) or exc}); {_COMO_ESCRIBIRLO}") from exc
+
+    lineas = cuerpo.split("\n")
+    cambios: list[tuple[int, int, str]] = []       # (desde, hasta, línea nueva)
+
+    def recorrer(nodo) -> None:
+        if isinstance(nodo, yaml.SequenceNode):
+            for hijo in nodo.value:
+                if (isinstance(hijo, yaml.ScalarNode)
+                        and (hijo.style in ("|", ">") or hijo.start_mark.line != hijo.end_mark.line)):
+                    raise ValueError(f"línea {hijo.start_mark.line + 1}: un elemento de lista "
+                                     f"ocupa varias líneas; {_COMO_ESCRIBIRLO}")
+                recorrer(hijo)
+        elif isinstance(nodo, yaml.MappingNode):
+            for k, v in nodo.value:
+                if not isinstance(v, yaml.ScalarNode):
+                    recorrer(v)
+                    continue
+                # Un bloque acaba al principio de la línea siguiente; un
+                # escalar plano o entre comillas, en su última línea.
+                hasta = v.end_mark.line - (1 if v.end_mark.column == 0 else 0)
+                if v.style not in ("|", ">") and hasta <= k.start_mark.line:
+                    continue
+                # Las líneas en blanco del final se quedan: separan puntos.
+                while hasta > k.start_mark.line and not lineas[hasta].strip():
+                    hasta -= 1
+                prefijo = lineas[k.start_mark.line][:k.start_mark.column]
+                if prefijo.strip() not in ("", "-") or k.start_mark.line != k.end_mark.line:
+                    raise ValueError(f"línea {k.start_mark.line + 1}, «{k.value}»: "
+                                     f"{_COMO_ESCRIBIRLO}")
+                texto_clave = lineas[k.start_mark.line][k.start_mark.column:k.end_mark.column]
+                cambios.append((k.start_mark.line, hasta,
+                                f"{prefijo}{texto_clave}: {_entre_comillas(v.value)}"))
+
+    recorrer(raiz_)
+    for desde, hasta, nueva in sorted(cambios, reverse=True):
+        lineas[desde:hasta + 1] = [nueva]
+    salida = "\n".join(lineas)
+    # Lo que se lee tiene que ser lo mismo: sólo cambia cómo va escrito.
+    try:
+        igual = yaml.load(salida, Loader=yaml.BaseLoader) == leido
+    except yaml.YAMLError:
+        igual = False
+    if not igual:
+        raise ValueError(f"{donde}, y no se pudo pasar a una línea sin cambiar lo que dice; "
+                         f"{_COMO_ESCRIBIRLO}")
+    return salida
+
+
+def version(lienzo: Lienzo) -> str:
+    """Una huella del cuerpo: lo que el panel leyó, para guardar encima de eso
+    y no de otra cosa (C-0383). Del cuerpo y no del mtime: es lo que el panel
+    reescribe, y archivar cambia el archivo sin cambiar el cuerpo."""
+    return hashlib.sha256(lienzo.cuerpo.encode("utf-8")).hexdigest()[:16]
+
+
+def guardar_edicion(lienzo: Lienzo, cuerpo: str, base: str | None = None) -> Lienzo:
     """Guarda lo que ha editado el usuario en la web.
 
     🔴 `publicado_en` NO se toca: es la marca de la última vez que escribió
     Claude, y es contra ella contra la que se decide si hay algo que proteger.
     Refrescarla aquí borraría la señal justo al crearse.
+
+    🔴 Con `base`, sólo si el cuerpo del disco sigue siendo el que se leyó
+    (`version`). El panel manda el cuerpo entero reescrito desde su copia: si
+    el agente publicó una corrección mientras tanto, guardarlo la pisaría sin
+    que nadie lo notara (C-0383). Entonces `Conflicto`, y no se escribe nada.
     """
+    if base is not None and base != version(lienzo):
+        raise Conflicto(f"«{lienzo.id}» cambió desde que lo abriste")
     lienzo.cuerpo = cuerpo
     _volcar(lienzo)
     return lienzo

@@ -558,6 +558,73 @@ def test_un_kit_de_maquina_no_deja_pendientes_en_ningun_proyecto(kit_de_maquina,
     assert plan["archivos"] == [] and plan["pendientes"] == []
 
 
+# ── el manifiesto recordado (C-0310) ─────────────────────────────────────────
+#
+# Contexto releía en cada visita todos los `kit.yml`. Ahora se recuerdan
+# mientras no cambien; lo que se prueba es que nunca se devuelve uno viejo.
+
+def _contando_lecturas_de_yaml(monkeypatch) -> list[int]:
+    leidas: list[int] = []
+    original = config.leer_yaml
+    monkeypatch.setattr(config, "leer_yaml", lambda texto: leidas.append(1) or original(texto))
+    return leidas
+
+
+def test_leer_dos_veces_el_mismo_manifiesto_lo_analiza_una(kit_demo, monkeypatch):
+    leidas = _contando_lecturas_de_yaml(monkeypatch)
+    assert kits.leer_manifiesto(kit_demo) == kits.leer_manifiesto(kit_demo)
+    assert len(leidas) == 1
+
+
+def test_un_kit_yml_tocado_se_ve_en_la_siguiente_lectura(kit_demo):
+    import os
+
+    manifiesto = kit_demo / "kit.yml"
+    assert kits.leer_manifiesto(kit_demo).version == "1.0"
+    # Mismo tamaño: sólo cambia la fecha, como al guardarlo desde un editor.
+    manifiesto.write_text(manifiesto.read_text().replace('"1.0"', '"1.1"'))
+    antes = manifiesto.stat().st_mtime_ns
+    os.utime(manifiesto, ns=(antes + 1_000_000_000, antes + 1_000_000_000))
+    assert kits.leer_manifiesto(kit_demo).version == "1.1"
+
+
+def test_un_manifiesto_invalido_no_se_recuerda(tmp_path):
+    """Arreglado con el mismo tamaño y la misma fecha (misma huella): si el
+    error se hubiera recordado, el arreglo no se vería nunca."""
+    import os
+
+    raiz = tmp_path / "a-medias"
+    raiz.mkdir()
+    manifiesto = raiz / "kit.yml"
+    manifiesto.write_text('id: Mal\nversion: "1.0"\n')
+    os.utime(manifiesto, ns=(1_000_000_000, 1_000_000_000))
+    with pytest.raises(kits.KitInvalido):
+        kits.leer_manifiesto(raiz)
+    manifiesto.write_text('id: mal\nversion: "1.0"\n')   # en minúsculas ya vale
+    os.utime(manifiesto, ns=(1_000_000_000, 1_000_000_000))
+    assert kits.leer_manifiesto(raiz).id == "mal"
+
+
+def test_tocar_el_kit_devuelto_no_cambia_lo_recordado(kit_demo):
+    """`Kit` es mutable: quien lo recibe no puede escribir en el de los demás."""
+    primero = kits.leer_manifiesto(kit_demo)
+    primero.aplica.clear()
+    primero.expone.append({"id": "otro#cosa"})
+    primero.mantenimiento["nota"] = "pisada"
+    segundo = kits.leer_manifiesto(kit_demo)
+    assert len(segundo.aplica) == 3
+    assert segundo.capacidades_expuestas == ["demo#hacer-algo"]
+    assert segundo.mantenimiento == {}
+
+
+def test_un_instalador_borrado_se_nota_aunque_kit_yml_no_cambie(kit_de_maquina):
+    """El instalador es otro archivo: la huella de `kit.yml` no lo ve."""
+    assert kits.leer_manifiesto(kit_de_maquina).instalar == "instalar.sh"
+    (kit_de_maquina / "instalar.sh").unlink()
+    with pytest.raises(kits.KitInvalido, match="no está en el kit"):
+        kits.leer_manifiesto(kit_de_maquina)
+
+
 # ── excepciones declaradas ───────────────────────────────────────────────────
 #
 # Salieron de migrar el kit de orquestación, que tiene dos consumidores reales y

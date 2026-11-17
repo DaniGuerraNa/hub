@@ -73,11 +73,46 @@ def test_el_doctor_dice_la_consecuencia_y_no_solo_el_nombre():
 
 # ── los servicios ────────────────────────────────────────────────────────────
 
+SERVICIOS = ["hub-web", "hub-snapshotter", "hub-canal", "hub-encargos", "hub-secretario"]
+
+
+def _arranque(nombre: str) -> str:
+    texto = (RAIZ / "scripts" / f"{nombre}.service.plantilla").read_text(encoding="utf-8")
+    lineas = [l for l in texto.splitlines() if l.startswith("ExecStart=")]
+    assert len(lineas) == 1, f"{nombre}: se espera un solo ExecStart"
+    return lineas[0].removeprefix("ExecStart=")
+
+
+@pytest.mark.parametrize("nombre", SERVICIOS)
+def test_los_servicios_arrancan_con_el_python_del_entorno_y_no_con_uv_run(nombre):
+    """`uv run` dejaba un proceso envoltorio que salía con 143 en cada parada
+    —systemd apuntaba «Failed» en cada reinicio hecho a propósito— y miraba el
+    lock al arrancar (C-0266). El entorno lo preparan `instalar.sh` y
+    `actualizar.sh` antes de generar los units; aquí sólo se usa."""
+    orden = _arranque(nombre).split()
+    assert orden[0] == "@RAIZ@/.venv/bin/python" and orden[1] == "-m"
+    assert "@UV@" not in _arranque(nombre) and "uv run" not in _arranque(nombre)
+    # Lo que se lanza existe: un nombre mal escrito aquí no se vería hasta
+    # reiniciar el servicio de alguien.
+    import importlib.util
+    assert importlib.util.find_spec(orden[2]) is not None, f"{nombre}: no hay módulo {orden[2]}"
+
+
+@pytest.mark.parametrize("nombre", SERVICIOS)
+def test_sin_uv_run_el_entorno_del_servicio_sigue_siendo_el_mismo(nombre):
+    """Lo que `uv run` ponía y de lo que cuelga lo que el hub lanza: el `bin`
+    del entorno delante del PATH de usuario (decisión 81: `~/.local/bin` no se
+    pierde) y `VIRTUAL_ENV`. Medido con `uv run env`."""
+    texto = (RAIZ / "scripts" / f"{nombre}.service.plantilla").read_text(encoding="utf-8")
+    assert "Environment=PATH=@RAIZ@/.venv/bin:@PATH@" in texto
+    assert "Environment=VIRTUAL_ENV=@RAIZ@/.venv" in texto
+
+
 @pytest.mark.parametrize("nombre", ["hub-web", "hub-snapshotter"])
 def test_los_units_son_plantillas_sin_rutas_cableadas(nombre):
     plantilla = RAIZ / "scripts" / f"{nombre}.service.plantilla"
     texto = plantilla.read_text(encoding="utf-8")
-    assert "@RAIZ@" in texto and "@UV@" in texto
+    assert "@RAIZ@" in texto
     # `%h/projects/hub` era la suposición que rompía cualquier clon en otra
     # carpeta, y no fallaba aquí porque aquí esa carpeta existe.
     assert "%h/projects/hub" not in texto
@@ -90,13 +125,13 @@ def test_el_unit_generado_lleva_las_rutas_reales(tmp_path):
     generado = (
         plantilla.replace("@RAIZ@", "/opt/hub-de-otro")
         .replace("@HUB_HOME@", "/opt/datos")
-        .replace("@UV@", "/usr/local/bin/uv")
-        .replace("@PATH@", "/usr/bin")
+        .replace("@PATH@", "/opt/casa/.local/bin:/usr/bin")
         .replace("@HOST@", "127.0.0.1")
         .replace("@PUERTO@", "9999")
     )
     assert "WorkingDirectory=/opt/hub-de-otro" in generado
-    assert "/usr/local/bin/uv run uvicorn" in generado
+    assert "ExecStart=/opt/hub-de-otro/.venv/bin/python -m uvicorn hub.web:app --host 127.0.0.1" in generado
+    assert "Environment=PATH=/opt/hub-de-otro/.venv/bin:/opt/casa/.local/bin:/usr/bin" in generado
     assert "--port 9999" in generado
     assert "Environment=HUB_PORT=9999" in generado
     assert "@" not in re.sub(r"[\w.-]+@[\w.-]+", "", generado.replace("@RAIZ@", ""))
@@ -124,6 +159,19 @@ def test_el_instalador_verifica_que_el_hub_contesta():
     texto = INSTALAR.read_text(encoding="utf-8")
     assert "%{http_code}" in texto
     assert "/inventario" in texto and "/respaldo" in texto
+
+
+def test_instalar_md_dice_como_volver_a_la_version_anterior():
+    """`actualizar.sh` manda ahí al fallar (C-0448): la sección tiene que
+    existir, decir dónde están las copias de antes y que lo que ya corrió
+    no se deshace solo."""
+    texto = (RAIZ / "INSTALAR.md").read_text(encoding="utf-8")
+    m = re.search(r"^### Volver a la versión anterior$(.*?)(?=^##)", texto, re.M | re.S)
+    assert m, "INSTALAR.md no tiene «Volver a la versión anterior»"
+    seccion = " ".join(m.group(1).split())   # el Markdown parte las frases en líneas
+    assert "git checkout" in seccion and "bash scripts/actualizar.sh --sin-bajar" in seccion
+    assert "antes-hub-" in seccion and "antes-secretario-" in seccion
+    assert "no se deshacen" in seccion
 
 
 def test_la_semilla_del_asistente_esta_completa():
@@ -319,6 +367,42 @@ def test_con_el_puerto_ocupado_arrancar_lo_dice_y_no_finge(tmp_path):
         s.close()
     assert r.returncode == 1
     assert "ya lo usa otro programa" in r.stderr
+
+
+def test_parar_espera_a_que_la_web_suelte_el_puerto(tmp_path):
+    """Sin systemd, `actualizar.sh` pide «--parar y otra vez»: hecho seguido, la
+    web aún no había soltado el puerto, arrancar decía «ya lo usa otro
+    programa» y el hub se quedaba apagado (sala limpia del 17-nov)."""
+    import socket
+    import time
+
+    s, puerto = _puerto_ocupado()
+    s.close()
+    lento = tmp_path / "lento.py"
+    lento.write_text(
+        "import signal, socket, sys, time\n"
+        "s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+        f"s.bind(('127.0.0.1', {puerto})); s.listen(1)\n"
+        "def fin(*_):\n    time.sleep(1.5); sys.exit(0)\n"
+        "signal.signal(signal.SIGTERM, fin)\n"
+        "print('listo', flush=True)\n"
+        "while True: time.sleep(1)\n")
+    web = subprocess.Popen([sys.executable, str(lento)], stdout=subprocess.PIPE, text=True)
+    try:
+        assert web.stdout.readline().strip() == "listo"
+        (tmp_path / "logs").mkdir()
+        (tmp_path / "logs" / "web.pid").write_text(str(web.pid))
+        r = _correr(RAIZ / "scripts" / "arrancar.sh",
+                    {"HUB_PORT": str(puerto), "HUB_HOME": str(tmp_path)}, "--parar")
+        assert r.returncode == 0, r.stderr
+        libre = socket.socket()
+        try:
+            assert libre.connect_ex(("127.0.0.1", puerto)) != 0, "el puerto sigue ocupado al volver de --parar"
+        finally:
+            libre.close()
+    finally:
+        web.kill()
+        web.wait()
 
 
 def test_el_doctor_ve_el_puerto_ocupado():

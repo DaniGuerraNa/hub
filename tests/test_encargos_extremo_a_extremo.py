@@ -619,6 +619,9 @@ def test_reiniciar_al_agente_no_pierde_lo_sabido_ni_lo_que_esperaba_en_la_cola(
 # --------------------------------------------------------------------------- #
 
 
+# La espera de arranque de verdad: con la de la suite (0) no se llega a ver morir
+# al comando, que es justo lo que se prueba aquí (C-0325).
+@pytest.mark.espera_de_arranque_real
 def test_una_ventana_que_muere_al_arrancar_se_dice_con_su_motivo(canal, monkeypatch):
     """🔴 Lo que pasó con el primer constructor abierto por el relé: el `claude`
     que encontró rechazó `--permission-mode manual`, la ventana se cerró con el

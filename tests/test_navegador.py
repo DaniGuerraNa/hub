@@ -213,6 +213,88 @@ def test_minimas_conserva_un_repo_que_vive_fuera_de_su_asiento(arbol):
     assert len(navegador.minimas(confin)) == 2
 
 
+def test_minimas_da_lo_mismo_que_comparar_cada_raiz_con_todas():
+    """La forma rápida (por partes) contra la de antes, con las trampas de un
+    prefijo de texto: `/a/b` no contiene a `/a/bc`, y `/` lo contiene todo."""
+    def a_mano(confin):
+        return [r for r in confin if not any(r != o and r.is_relative_to(o) for o in confin)]
+
+    casos = [
+        ["/a/b", "/a/bc", "/a/b/c", "/x"],
+        ["/a/b/c/d", "/a/b", "/a"],
+        ["/", "/a", "/b/c"],
+        ["/a/b", "/a/b", "/a/b/c"],
+        ["/solo"],
+        [],
+    ]
+    for caso in casos:
+        confin = [Path(p) for p in caso]
+        assert navegador.minimas(confin) == a_mano(confin), caso
+
+
+# ─────────────── las rutas declaradas, recordadas (C-0310) ───────────────
+#
+# 🔴 Lo único que se recuerda es cómo se resuelven las raíces DECLARADAS. La
+# ruta que pide quien navega se resuelve y se confina siempre en fresco: estas
+# pruebas fijan que recordar el confín no abre nada que no estuviera abierto.
+
+
+def test_una_ruta_fuera_del_confin_sigue_rechazada_con_las_raices_recordadas(arbol):
+    rutas = [str(arbol / "raiz"), str(arbol / "otra-raiz")]
+    navegador.raices(rutas)
+    confin = navegador.raices(rutas)  # ya de memoria
+    for fuera in ("/etc", str(arbol / "secreto"), str(arbol / "raiz/../secreto")):
+        with pytest.raises(navegador.FueraDeRaiz):
+            navegador.resolver(fuera, confin)
+
+
+def test_un_enlace_que_pasa_a_apuntar_fuera_se_rechaza_aunque_se_pidiera_antes(arbol):
+    """El destino no se recuerda: un enlace dentro de un repo que hace un
+    segundo llevaba dentro y ahora lleva fuera se rechaza ya."""
+    confin = navegador.raices([str(arbol / "raiz")])
+    enlace = arbol / "raiz/atajo"
+    enlace.symlink_to(arbol / "raiz/repo-uno", target_is_directory=True)
+    assert navegador.listar(str(enlace), confin)["ruta"] == str((arbol / "raiz/repo-uno").resolve())
+    enlace.unlink()
+    enlace.symlink_to(arbol / "secreto", target_is_directory=True)
+    confin = navegador.raices([str(arbol / "raiz")])
+    with pytest.raises(navegador.FueraDeRaiz):
+        navegador.resolver(str(enlace), confin)
+    with pytest.raises(navegador.FueraDeRaiz):
+        navegador.listar(str(enlace / "claves.txt"), confin)
+
+
+def test_una_raiz_que_cambia_de_destino_no_abre_lo_nuevo_mientras_se_recuerda(arbol):
+    """Lo viejo del confín sólo puede seguir enseñando lo que ya enseñaba:
+    lo nuevo, resuelto en fresco, cae fuera de la raíz recordada."""
+    raiz = arbol / "raiz-enlazada"
+    raiz.symlink_to(arbol / "raiz", target_is_directory=True)
+    navegador.raices([str(raiz)])
+    raiz.unlink()
+    raiz.symlink_to(arbol / "secreto", target_is_directory=True)
+    confin = navegador.raices([str(raiz)])  # de memoria: sigue siendo `raiz`
+    assert confin == [(arbol / "raiz").resolve()]
+    with pytest.raises(navegador.FueraDeRaiz):
+        navegador.resolver(str(raiz / "claves.txt"), confin)
+
+
+def test_las_declaradas_se_resuelven_una_vez_por_plazo(arbol, monkeypatch):
+    from hub import recordar
+
+    reloj = [1000.0]
+    monkeypatch.setattr(recordar.time, "monotonic", lambda: reloj[0])
+    resueltas = []
+    original = navegador.normalizar
+    monkeypatch.setattr(navegador, "normalizar", lambda r: resueltas.append(r) or original(r))
+    rutas = [str(arbol / "raiz"), str(arbol / "otra-raiz")]
+    navegador.raices(rutas)
+    navegador.raices(rutas)
+    assert len(resueltas) == 2
+    reloj[0] += navegador.PLAZO_DECLARADAS_S
+    navegador.raices(rutas)
+    assert len(resueltas) == 4
+
+
 # ────────────────────────────── el tamaño ──────────────────────────────
 
 

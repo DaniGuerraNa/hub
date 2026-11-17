@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from arnes_js import ejecutar, script_estatico
 
-CHAT = script_estatico("formato-chat.js") + "\n" + script_estatico("chat-secretario.js")
+# Con `grabar.js` delante, como en la página: el chat graba con `HubGrabar` (C-0311).
+CHAT = (script_estatico("grabar.js") + "\n" + script_estatico("formato-chat.js") + "\n"
+        + script_estatico("chat-secretario.js"))
 
 # Un micrófono y una grabadora falsos: la grabadora suelta un trozo al parar.
 MICRO = """
@@ -67,6 +69,21 @@ def test_mantener_ctrl_espacio_graba_y_al_soltar_lo_manda_sin_pasar_por_el_cuadr
     assert "recuérdame llamar a Ana" not in r["valores"]     # no se quedó en el cuadro para revisarlo
 
 
+def test_si_whisper_no_entiende_lo_dicho_con_el_atajo_lo_dice_en_rojo(tmp_path):
+    """No se mandó nada: es un fallo, y en gris parecía un aviso más (C-0314)."""
+    accion = """
+      tecla('keydown', {});
+      setTimeout(() => { SALTAR(1500); tecla('keyup', { ctrlKey: false }); }, 2);
+      setTimeout(() => registro.valores.push(['linea', nodo('estado-sec').textContent,
+                                              nodo('estado-sec').dataset.tono || '']), 8);
+    """
+    r = ejecutar(CHAT, tmp_path, {**RESPUESTAS, "POST /api/voz": {"ok": True, "texto": "  "}},
+                 previo=MICRO, accion=TECLAS + accion)
+    assert not r["errores"], r["errores"]
+    assert _mandados(r) == []
+    assert ["linea", "no te entendí; vuelve a intentarlo", "error"] in r["valores"]
+
+
 def test_un_toque_corto_no_manda_nada(tmp_path):
     accion = "tecla('keydown', {}); setTimeout(() => tecla('keyup', {}), 2);"
     r = _correr(tmp_path, accion)
@@ -110,3 +127,25 @@ def test_mantenerla_pulsada_no_abre_dos_grabaciones(tmp_path):
     r = _correr(tmp_path, accion)
     assert r["valores"].count("GRABA") == 1
     assert _mandados(r) == ["recuérdame llamar a Ana"]
+
+
+def test_lo_dictado_con_ctrl_espacio_sale_marcado_como_dictado(tmp_path):
+    """Nadie lo leyó antes de mandarlo (C-0291): el modelo debe saberlo."""
+    accion = """
+      tecla('keydown', {});
+      setTimeout(() => { SALTAR(1500); tecla('keyup', { ctrlKey: false }); }, 2);
+    """
+    r = _correr(tmp_path, accion)
+    [cuerpo] = [e["cuerpo"] for e in r["enviados"] if e["url"] == "/api/secretario/mensaje"]
+    assert cuerpo["dictado"] is True and cuerpo["voz"] is False
+
+
+def test_al_empezar_a_grabar_se_calienta_el_whisper_antes_de_subir_lo_dicho(tmp_path):
+    """C-0292: la carga del modelo queda tapada por lo que dura la frase."""
+    accion = """
+      tecla('keydown', {});
+      setTimeout(() => { SALTAR(1500); tecla('keyup', { ctrlKey: false }); }, 2);
+    """
+    r = _correr(tmp_path, accion)
+    pedidas = [p for p in r["peticiones"] if str(p).startswith("/api/voz")]
+    assert pedidas[:2] == ["/api/voz/calentar", "/api/voz"]

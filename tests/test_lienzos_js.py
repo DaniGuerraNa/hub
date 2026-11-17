@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 GUION = Path(__file__).resolve().parents[1] / "src" / "hub" / "static" / "lienzos.js"
+SONDEO = GUION.parent / "sondeo.js"   # va en el <head> de todas las páginas (C-0277)
 
 CUERPO = """puntos:
   - id: n1
@@ -76,7 +77,7 @@ function nuevo(id) {
 const ventana = nuevo('ventana');
 ventana.dataset.proyecto = 'pedidos';
 
-const REG = { guardados: [], peticiones: [], archivados: [], abiertos: [] };
+const REG = { guardados: [], peticiones: [], archivados: [], abiertos: [], bases: [] };
 
 global.document = {
   getElementById: (id) => nodos[id] || null,
@@ -178,7 +179,7 @@ function hash(s){ let h = 0; for (const c of String(s)) h = (h * 31 + c.charCode
 // ── fetch gobernado desde el test ──────────────────────────────────────────
 const LIENZO = { id: 'revision', titulo: 'Revisión', plantilla: PLANTILLA_DEL_TEST,
                  proyecto_id: 'pedidos', slot: 'refactor', publicado_en: null,
-                 tuyo: false, cuerpo: CUERPO_DEL_TEST };
+                 tuyo: false, cuerpo: CUERPO_DEL_TEST, version: 'v0' };
 
 global.fetch = async (url, opciones) => {
   REG.peticiones.push(url);
@@ -188,8 +189,16 @@ global.fetch = async (url, opciones) => {
     return { ok: true, status: 200, json: async () => ({ ok: true, lienzo: {} }) };
   }
   if (opciones && opciones.method === 'POST') {
+    const enviado = JSON.parse(opciones.body);
+    REG.bases.push(enviado.base);
+    // `CONFLICTO`: el agente republicó mientras tanto, y el hub contesta 409
+    // con la versión de ahora (C-0383).
+    if (global.CONFLICTO) return { ok: false, status: 409, json: async () => ({
+      ok: false, conflicto: true,
+      lienzo: { ...LIENZO, cuerpo: global.CONFLICTO, version: 'v-de-ahora' } }) };
     REG.guardados.push(JSON.parse(opciones.body).cuerpo);
-    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    return { ok: true, status: 200, json: async () => ({ ok: true,
+      lienzo: { ...LIENZO, cuerpo: enviado.cuerpo, version: 'v' + REG.guardados.length } }) };
   }
   if (url.startsWith('/api/lienzos')) {
     return { ok: true, status: 200, json: async () => ({ ok: true, lienzos: [
@@ -241,6 +250,7 @@ global.vistaDe = () => nodos['lienzos-vista'];
     capa: REG.capa ? String(REG.capa.innerHTML) : null,
     cerrada: !!REG.cerrada,
     sueltos: !!REG.sueltos,
+    bases: REG.bases,
   }));
 })();
 """
@@ -254,6 +264,7 @@ def _correr(accion: str = "", cuerpo: str = CUERPO, plantilla: str = "decisiones
         f"const CUERPO_DEL_TEST = {json.dumps(cuerpo)};\n"
         f"const PLANTILLA_DEL_TEST = {json.dumps(plantilla)};\n"
         + ARNES
+        + SONDEO.read_text(encoding="utf-8")
         + GUION.read_text(encoding="utf-8")
         + FINAL.replace("ACCION", accion)
     )
@@ -331,12 +342,13 @@ def test_si_el_guardado_falla_se_avisa_y_no_se_pinta_como_decidido():
     """Enseñar como decidido algo que no llegó al hub es la peor forma de fallar:
     él nunca lo leerá y tú creerás que sí."""
     guion_roto = ARNES.replace(
-        "REG.guardados.push(JSON.parse(opciones.body).cuerpo);\n"
-        "    return { ok: true, status: 200, json: async () => ({ ok: true }) };",
-        "return { ok: false, status: 500, json: async () => ({}) };")
+        "REG.guardados.push(JSON.parse(opciones.body).cuerpo);\n",
+        "return { ok: false, status: 500, json: async () => ({}) };\n")
+    assert guion_roto != ARNES
     node = shutil.which("node") or pytest.skip("hace falta node")
     guion = (f"const CUERPO_DEL_TEST = {json.dumps(CUERPO)};\n"
              'const PLANTILLA_DEL_TEST = "decisiones";\n' + guion_roto
+             + SONDEO.read_text(encoding="utf-8")
              + GUION.read_text(encoding="utf-8")
              + FINAL.replace("ACCION",
                              'decs[0].querySelectorAll(".dbb button")[0].disparar("click");'))
@@ -348,6 +360,58 @@ def test_si_el_guardado_falla_se_avisa_y_no_se_pinta_como_decidido():
 
 
 # ─────────────────────────── el punto de «hay algo nuevo» ───────────────────
+
+
+# ── guardar sobre la versión que se leyó (C-0383) ───────────────────────────
+#
+# El panel reescribe el cuerpo entero desde su copia. Sin decir de qué versión
+# parte, una corrección que el agente publicó con la pestaña abierta se perdía
+# al marcar una decisión, sin que nadie lo notara.
+
+CORREGIDO = CUERPO.replace("contador en memoria", "contador corregido por el agente")
+
+
+def test_marcar_una_decision_manda_la_version_que_se_leyo():
+    salida = _correr('decs[0].querySelectorAll(".dbb button")[0].disparar("click");')
+    assert salida["bases"] == ["v0"]
+
+
+def test_si_el_lienzo_cambio_no_se_pisa_se_repinta_el_de_ahora_y_se_avisa():
+    salida = _correr(f"global.CONFLICTO = {json.dumps(CORREGIDO)};"
+                     'decs[0].querySelectorAll(".dbb button")[0].disparar("click");')
+    assert salida["guardados"] == []
+    assert "contador corregido por el agente" in salida["vista"]
+    assert "de 3 decididos" in salida["vista"] and "<b>1</b> de 3" in salida["vista"]
+    assert salida["aviso"]["titulo"] == "El lienzo cambió"
+
+
+def test_una_respuesta_y_una_decision_seguidas_van_una_tras_otra_sin_pisarse():
+    """Al pulsar una decisión con una respuesta a medias, el campo pierde el
+    foco antes del clic: salen dos guardados seguidos. El segundo parte de lo
+    que dejó el primero, con su versión, y no de la misma copia."""
+    accion = ("const c = vistaDe().querySelector('.dresp');"
+              "c.value = 'lo que contesto';"
+              "c.disparar('blur');"
+              'decs[0].querySelectorAll(".dbb button")[0].disparar("click");')
+    salida = _correr(accion)
+    assert salida["bases"] == ["v0", "v1"]
+    assert salida["aviso"] is None
+    ultimo = salida["guardados"][-1]
+    assert 'respuesta: "lo que contesto"' in ultimo
+    assert ultimo.split("- id: n2")[0].count("decision: si") == 1
+
+
+def test_si_cambio_mientras_escribias_la_respuesta_no_se_pierde_ni_se_repinta():
+    accion = (f"global.CONFLICTO = {json.dumps(CORREGIDO)};"
+              "const c = vistaDe().querySelector('.dresp');"
+              "c.value = 'lo que contesto';"
+              "c.disparar('blur');")
+    salida = _correr(accion)
+    assert salida["guardados"] == []
+    assert salida["aviso"]["titulo"] == "El lienzo cambió"
+    assert "sigue en el campo" in salida["aviso"]["mensaje"].lower()
+    # Sin repintar: repintar se llevaría lo que acaba de escribir.
+    assert "contador corregido por el agente" not in salida["vista"]
 
 
 def test_el_texto_del_lienzo_va_escapado():
@@ -725,3 +789,42 @@ def test_una_plantilla_que_el_hub_no_conoce_se_sigue_viendo_cruda():
     salida = _correr(cuerpo="loquesea:\n  - a\n", plantilla="mapamundi")
     assert "lienzo-crudo" in salida["vista"]
     assert "loquesea" in salida["vista"]
+
+
+def test_un_bloque_normalizado_al_publicar_se_pinta_entero_y_sin_su_indicador():
+    """C-0387, de punta a punta: lo que deja `normalizar_cuerpo` es lo que lee
+    el panel. Antes, `justificacion: >-` se pintaba como «>-» y el texto de
+    debajo no salía; un salto de `|` llega como salto, y dos puntos y comillas
+    dentro del valor no lo rompen."""
+    from hub import lienzos
+
+    crudo = ('puntos:\n  - id: n1\n    punto: "el plazo"\n    justificacion: >-\n'
+             '      dos procesos dan\n      el mismo número\n    decision: pendiente\n'
+             '  - id: n2\n    punto: lo de "las comillas"\n    justificacion: |\n'
+             '      primero: esto\n      después: aquello\n    decision: no\n')
+    salida = _correr(cuerpo=lienzos.normalizar_cuerpo("decisiones", crudo))
+
+    assert salida["decs"] == 2
+    assert "&gt;-" not in salida["vista"] and ">-" not in salida["vista"]
+    assert "dos procesos dan el mismo número" in salida["vista"]
+    assert "primero: esto\ndespués: aquello" in salida["vista"]
+    assert 'data-e="no"' in salida["vista"]
+
+
+def test_los_saltos_de_un_valor_se_ven_como_saltos_y_sin_lineas_de_mas():
+    """C-0387, mirado en Chromium: el `|` normalizado llega con sus saltos y el
+    panel los juntaba en una línea («primero: el tipo después: el rango»).
+    `pre-line` los enseña; por eso la justificación va pegada a su caja, sin
+    los saltos y la sangría de la plantilla, que también se verían."""
+    import re
+
+    cuerpo = ('puntos:\n  - id: n1\n    punto: "x"\n'
+              '    justificacion: "primero: el tipo\\ndespués: el rango\\n"\n'
+              '    propone: "otra cosa"\n')
+    salida = _correr(cuerpo=cuerpo)
+
+    djj = re.search(r'<div class="djj">(.*?)<div', salida["vista"], re.S).group(1)
+    assert djj == "primero: el tipo\ndespués: el rango"
+    estilo = (GUION.parents[1] / "templates" / "trabajo.html").read_text(encoding="utf-8")
+    regla = re.search(r"\.dec \.djj \{([^}]*)\}", estilo).group(1)
+    assert "white-space:pre-line" in regla.replace(" ", "")

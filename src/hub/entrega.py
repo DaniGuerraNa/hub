@@ -51,7 +51,15 @@ class EscritoSinConfirmar(PanelNoApto):
     Hereda de `PanelNoApto` para no romper a quien ya lo captura, así que **hay
     que atraparla ANTES**. Es la misma trampa del `HTTPError` que hereda de
     `URLError` y que ya mordió en el CLI: el orden de los `except` es la lógica.
+
+    `quitados` es cuántos caracteres de control se le quitaron al texto antes
+    de escribirlo (C-0428). Si fue alguno, va también en el mensaje, que es lo
+    que el canal y los encargos apuntan en su registro.
     """
+
+    def __init__(self, motivo: str, quitados: int = 0):
+        super().__init__(motivo)
+        self.quitados = quitados
 
 
 def quien_hay(pane_id: str) -> tuple[Agente | None, str]:
@@ -161,7 +169,20 @@ def marcar_lote(quien: str, respuestas: list[tuple[str, str]], sin_responder: li
     return "\n".join(lineas).strip()
 
 
-def entregar(pane_id: str, texto: str) -> None:
+def nota_de_limpieza(quitados: int) -> str:
+    """Cómo se dice, en un registro, que al texto se le quitó algo. Vacía si no.
+
+    Una sola frase para todos los que apuntan una entrega: el registro del
+    canal y el de los encargos tienen que poder buscarse por lo mismo.
+    """
+    if not quitados:
+        return ""
+    if quitados == 1:
+        return "se quitó 1 carácter de control"
+    return f"se quitaron {quitados} caracteres de control"
+
+
+def entregar(pane_id: str, texto: str) -> int:
     """Escribe en el panel. Los dos fallos posibles NO son el mismo fallo.
 
     - `PanelNoApto`: no se tocó nada, y reintentar es seguro.
@@ -170,7 +191,21 @@ def entregar(pane_id: str, texto: str) -> None:
     Se comprueba primero y se escribe después, en ese orden y sin hueco entre
     medias: cualquier reorganización que pegue antes de verificar convierte esto
     en «el hub escribe en una shell», que es lo que la regla 6 prohíbe.
+
+    Devuelve cuántos caracteres de control le quitó al texto; lo normal es 0.
+    🔴 Quien apunta la entrega en un registro lo dice si no es 0
+    (`nota_de_limpieza`, regla dura 21): lo que se escribió no es exactamente
+    lo que llegó, y eso no se calla.
     """
+    # 🔴 Lo primero, y antes de comprobar nada (C-0428). Lo que entra por aquí
+    # puede haberlo escrito alguien de fuera, y un `ESC[201~` dentro del texto
+    # cierra el pegado antes de tiempo: lo que venga detrás le llega al agente
+    # como teclas sueltas, con su Enter y fuera de su marco (la medición, en
+    # `tmux.limpiar_pegado`). Se limpia una vez y TODO lo de después —pegar, y
+    # esperar a verlo salir— usa el mismo texto limpio. Limpiar no toca el
+    # panel: si no es apto, sigue sin escribirse nada.
+    texto, quitados = tmux.limpiar_pegado(texto)
+
     apto, motivo = panel_apto(pane_id)
     if not apto:
         raise PanelNoApto(motivo)
@@ -191,4 +226,10 @@ def entregar(pane_id: str, texto: str) -> None:
         # entrar, no se pulsa nada y se dice que no se pudo confirmar.
         enter_a_ciegas=agente is tui.CLAUDE,
     ):
-        raise EscritoSinConfirmar("se escribió pero no se pudo confirmar que saliera")
+        nota = nota_de_limpieza(quitados)
+        raise EscritoSinConfirmar(
+            "se escribió pero no se pudo confirmar que saliera"
+            + (f" ({nota})" if nota else ""),
+            quitados,
+        )
+    return quitados

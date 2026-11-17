@@ -17,6 +17,10 @@ from ..piezas import Proveedor, proveedor
 class Calendario(Proveedor):
     """El contrato de un calendario. Las horas que recibe y da son locales."""
 
+    #: Si `crear` puede salir bien. La dirección iCal sólo lee (327): con
+    #: ella, poner algo en el calendario sólo podría fallar (C-0391).
+    crea: bool = True
+
     def eventos(self, desde: datetime, hasta: datetime, n: int = 50) -> list[dict]:
         """[{id, titulo, inicio, fin, lugar, enlace}] entre dos instantes."""
         raise NotImplementedError
@@ -53,6 +57,17 @@ def disponible() -> str | None:
     p = actual()
     falta = p.disponible()
     return f"{p.nombre}: {falta}" if falta else None
+
+
+def conectada(para_crear: bool = False) -> bool:
+    """Si hay un calendario que leer ahora; con `para_crear`, uno en el que
+    además se pueda crear (C-0391). Lo preguntan el prompt y la lista de
+    herramientas (C-0408), que no pueden caerse por un `agenda:` que no
+    existe en `secretario.yml`: eso cuenta como que no."""
+    try:
+        return disponible() is None and (not para_crear or actual().crea)
+    except Exception:  # noqa: BLE001 — el porqué lo dice `disponible` a quien la use
+        return False
 
 
 def eventos(desde: datetime, hasta: datetime, n: int = 50) -> list[dict]:

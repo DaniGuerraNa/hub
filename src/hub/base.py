@@ -26,7 +26,7 @@ from pathlib import Path
 
 import yaml
 
-from . import kits
+from . import config, kits, tiempos
 from .models import Proyecto
 
 # Los tres campos del mínimo exigible, con los sinónimos que el usuario ya escribe.
@@ -112,13 +112,17 @@ def _casilla(titulo: str) -> str | None:
     return mejor[1] if mejor else None
 
 
-def extraer_minimo(texto: str) -> dict:
+def extraer_minimo(texto: str, entero: bool = False) -> dict:
     """Saca `estado` / `proxima_accion` / `bloqueado_por` de un markdown cualquiera.
 
     Precedencia: el frontmatter YAML gana sobre los encabezados. Un proyecto que
     ya declaró el bloque estructurado no debe verse pisado por una sección de
     prosa que se llame parecido.
+
+    Con `entero`, cada campo con todas sus líneas y sin el corte del resumen:
+    es lo que despliega «Leer entero» en la ficha del proyecto (C-0353).
     """
+    resumir = (lambda v: _resumir(v, entero=True)) if entero else _resumir
     encontrado: dict[str, str] = {}
     # Cómo de específico era el título que llenó cada campo. El frontmatter va
     # con la fuerza más alta posible: es una declaración explícita y ninguna
@@ -135,14 +139,14 @@ def extraer_minimo(texto: str) -> dict:
     m = _FRONTMATTER.match(texto)
     if m:
         try:
-            datos = yaml.safe_load(m.group(1))
+            datos = config.leer_yaml(m.group(1))
         except yaml.YAMLError:
             datos = None
         if isinstance(datos, dict):
             for clave, valor in datos.items():
                 campo = _casilla(str(clave))
                 if campo and valor:
-                    guardar(campo, _resumir(valor), 10_000)
+                    guardar(campo, resumir(valor), 10_000)
         texto = texto[m.end():]
 
     actual: str | None = None
@@ -169,7 +173,7 @@ def extraer_minimo(texto: str) -> dict:
                 acumulado.append(titulo)
                 continue
             if actual:
-                guardar(actual, _resumir("\n".join(acumulado)), peso_actual)
+                guardar(actual, resumir("\n".join(acumulado)), peso_actual)
             encaje = _encaje(titulo)
             if encaje:
                 campo, largo = encaje
@@ -182,12 +186,19 @@ def extraer_minimo(texto: str) -> dict:
         if actual:
             acumulado.append(linea)
     if actual:
-        guardar(actual, _resumir("\n".join(acumulado)), peso_actual)
+        guardar(actual, resumir("\n".join(acumulado)), peso_actual)
 
     return {k: v for k, v in encontrado.items() if v}
 
 
-def _resumir(valor) -> str:
+#: Hasta dónde llega el resumen de un campo: lo que enseñan el panorama, la
+#: ficha del proyecto y el contexto. «Leer entero» llega hasta `_TOPE_ENTERO`; más que eso
+#: ya es el documento, y su ruta está debajo.
+_TOPE = 600
+_TOPE_ENTERO = 4000
+
+
+def _resumir(valor, entero: bool = False) -> str:
     """Las primeras líneas con contenido, sin la tipografía del markdown.
 
     Aquí no se renderiza markdown: se muestra como texto en una tarjeta, así que
@@ -205,7 +216,27 @@ def _resumir(valor) -> str:
         if limpia.startswith("|"):  # fila de tabla: ilegible sin renderizar
             continue
         utiles.append(limpia)
-    return "\n".join(utiles[:6])[:600].strip()
+    if entero:
+        return _cortar("\n".join(utiles), _TOPE_ENTERO)
+    return _cortar("\n".join(utiles[:6]), _TOPE)
+
+
+def _cortar(texto: str, tope: int) -> str:
+    """Como mucho `tope` caracteres, terminando en una palabra entera y con «…».
+
+    A secas se partía la palabra justo donde estaba el dato («…formulario de
+    disparadores, defen», C-0353), y sin ninguna señal de que faltaba algo.
+    """
+    texto = texto.strip()
+    if len(texto) <= tope:
+        return texto
+    corte = texto[:tope - 1]
+    if not texto[tope - 1].isspace():
+        hueco = max(corte.rfind(" "), corte.rfind("\n"))
+        # Sin un solo espacio (una URL larga) no hay palabra que respetar.
+        if hueco > 0:
+            corte = corte[:hueco]
+    return corte.rstrip(" \n,;:") + "…"
 
 
 _MARCAS = re.compile(r"\*\*|__|`|~~")
@@ -235,11 +266,16 @@ def resolver_estado_ref(proyecto: Proyecto) -> Path | None:
     return None
 
 
-def estado_de(proyecto: Proyecto) -> dict:
+@tiempos.medido
+def estado_de(proyecto: Proyecto, enteros: bool = False) -> dict:
     """Qué está pasando en un proyecto, según el documento que él mismo declaró.
 
     Devuelve siempre un dict: la ausencia del puntero es información —significa
     que ese proyecto todavía no dice cuál de sus documentos está vigente.
+
+    `enteros` añade cada campo sin cortar, para «Leer entero» en la ficha
+    (C-0353). Sólo si se pide: el contexto y el panorama leen esto para todos
+    los proyectos y les basta el resumen.
     """
     ruta = resolver_estado_ref(proyecto)
     if not ruta:
@@ -261,18 +297,22 @@ def estado_de(proyecto: Proyecto) -> dict:
     except OSError:
         modificado = None
 
-    return {
+    estado = {
         "ruta": str(ruta),
         "declarado": proyecto.estado_ref,
         "existe": True,
         "campos": extraer_minimo(texto),
         "modificado": modificado,
     }
+    if enteros:
+        estado["enteros"] = extraer_minimo(texto, entero=True)
+    return estado
 
 
 # ───────────────────────── la capa base ─────────────────────────
 
 
+@tiempos.medido
 def capa_de(proyecto: Proyecto) -> dict:
     """Qué tiene el proyecto en `.claude/hub/`.
 
@@ -287,7 +327,7 @@ def capa_de(proyecto: Proyecto) -> dict:
         datos = {}
         if project_yml.is_file():
             try:
-                datos = yaml.safe_load(project_yml.read_text(encoding="utf-8")) or {}
+                datos = config.leer_yaml(project_yml.read_text(encoding="utf-8")) or {}
             except (OSError, yaml.YAMLError):
                 datos = {}
         return {

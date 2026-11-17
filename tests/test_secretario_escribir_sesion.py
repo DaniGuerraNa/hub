@@ -190,3 +190,75 @@ def test_los_slots_dicen_que_una_sesion_quieta_esta_viva_y_esperando(hub):
     assert slot["sesion"] == "abierta y esperando un mensaje"
     assert slot["agentes"] == [{"ventana": "%55", "agente": "Claude Code",
                                 "estado": "abierta y esperando un mensaje"}]
+
+
+# ── en qué está una sesión (C-0419, SEC-16) ──────────────────────────────────
+
+SESION = "0b5c7d2e-1f3a-4b6c-8d9e-0a1b2c3d4e5f"
+
+
+def _transcript(tmp_path, monkeypatch, lineas) -> None:
+    """Un transcript de verdad donde lo busca el hub: `HUB_TRANSCRIPTS`, carpeta de su cwd."""
+    from hub import transcripts
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path / "transcripts"))
+    carpeta = transcripts.directorio_de("/srv/t")
+    carpeta.mkdir(parents=True)
+    (carpeta / f"{SESION}.jsonl").write_text("\n".join(json.dumps(x) for x in lineas), encoding="utf-8")
+
+
+def _herramienta(nombre, **entrada):
+    return {"type": "tool_use", "name": nombre, "input": entrada}
+
+
+def test_en_que_esta_una_sesion_es_su_ultimo_mensaje_y_sus_ultimas_herramientas(hub, tmp_path, monkeypatch):
+    """«¿Cómo va lo de la tienda?» se quedaba en «está trabajando» (SEC-16)."""
+    _transcript(tmp_path, monkeypatch, [
+        {"type": "user", "uuid": "1", "timestamp": "2026-11-13T15:00:00Z", "message": {"content": "migra los videos"}},
+        {"type": "assistant", "uuid": "2", "message": {"content": [{"type": "text", "text": "Empiezo por el esquema."}]}},
+        {"type": "assistant", "uuid": "3", "message": {"content": [_herramienta("Read", file_path="/srv/t/a.py")]}},
+        {"type": "assistant", "uuid": "4", "isSidechain": True,
+         "message": {"content": [{"type": "text", "text": "soy un subagente"}]}},
+        {"type": "assistant", "uuid": "5", "timestamp": "2026-11-13T15:20:00Z", "message": {"content": [
+            {"type": "text", "text": "Migración lista; la clave quedó en sk-ant-abc123def456ghi789jkl. Falta el CDN."},
+            _herramienta("Edit", file_path="/srv/t/videos.py")]}},
+        {"type": "assistant", "uuid": "6", "message": {"content": [
+            _herramienta("Bash", command="TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789 uv run pytest"),
+            # La etiqueta corta en 60: sin tapar antes, quedaba «ghp_abcdefgh…», que ya no casa.
+            _herramienta("Bash", command="echo uno dos tres cuatro cinco seis siete ocho "
+                                         "ghp_abcdefghijklmnopqrstuvwxyz0123456789")]}},
+    ])
+    hub.execute("UPDATE panel SET claude_sesion = ? WHERE pane_id = '%55'", (SESION,))
+    r = herramientas._ultimo_de_sesion(None, {"slot": 1})
+    assert r["ventana"] == "%55" and r["sesion"] == "abierta y esperando un mensaje"
+    assert r["ultimo_mensaje"].startswith("Migración lista") and "Falta el CDN" in r["ultimo_mensaje"]
+    assert r["ultimo_mensaje_local"]
+    assert r["herramientas"] == ("[Read /srv/t/a.py] · [Edit /srv/t/videos.py] · "
+                                 "[Bash: TOKEN=[secreto oculto] uv run pytest] · "
+                                 "[Bash: echo uno dos tres cuatro cinco seis siete ocho [secreto ocu…]")
+    todo = json.dumps(r, ensure_ascii=False)
+    assert "sk-ant-abc123" not in todo and "ghp_" not in todo, "las llaves se tapan, también las que la etiqueta corta"
+    assert "subagente" not in todo
+
+
+def test_un_ultimo_mensaje_largo_se_recorta_por_el_principio(hub, tmp_path, monkeypatch):
+    largo = "relleno " * 2000 + "Y al final: falta el CDN."
+    _transcript(tmp_path, monkeypatch, [
+        {"type": "assistant", "uuid": "1", "message": {"content": [{"type": "text", "text": largo}]}}])
+    hub.execute("UPDATE panel SET claude_sesion = ? WHERE pane_id = '%55'", (SESION,))
+    r = herramientas._ultimo_de_sesion(None, {"slot": 1})
+    assert r["recortado"] is True and len(r["ultimo_mensaje"]) <= herramientas.ULTIMO_MAXIMO
+    assert r["ultimo_mensaje"].endswith("falta el CDN.")
+
+
+def test_sin_conversacion_conocida_lo_dice(hub, tmp_path, monkeypatch):
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path / "vacio"))
+    assert "no sé qué conversación" in herramientas._ultimo_de_sesion(None, {"slot": 1})["error"]
+    hub.execute("UPDATE panel SET claude_sesion = ? WHERE pane_id = '%55'", (SESION,))
+    assert "no sé qué conversación" in herramientas._ultimo_de_sesion(None, {"slot": 1})["error"]
+    assert "slot" in herramientas._ultimo_de_sesion(None, {})["error"]
+
+
+def test_en_que_esta_una_sesion_solo_se_ofrece_con_el_dueno_delante():
+    """En un `pide` con el mensaje de un tercero delante no se sirve (404, C-0241)."""
+    assert "ultimo_de_sesion" in herramientas.todas(con_el_dueno=True)
+    assert "ultimo_de_sesion" not in herramientas.todas(con_el_dueno=False)

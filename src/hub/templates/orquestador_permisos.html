@@ -8,7 +8,7 @@
   .permiso-fila .nombre { flex:1; min-width:140px; }
   .permiso-fila select { width:auto; }
   .niveles dt { font-weight:600; margin-top:8px; }
-  .niveles dd { margin:0; color:var(--texto-3); font-size:12.5px; }
+  .niveles dd { margin:0; color:var(--texto-3); font-size:var(--letra-2); }
 </style>
 
 {{ ui.cabecera_vista('Permisos del orquestador',
@@ -47,7 +47,7 @@
     <dt>Nunca sin ti, en ningún nivel</dt>
     <dd>{{ siempre | join('; ') }}.</dd>
   </dl>
-  <p class="tenue" style="font-size:12.5px;margin:12px 0 0">
+  <p class="tenue" style="font-size:var(--letra-2);margin:12px 0 0">
     Un proyecto con <code>guardrail: never</code> se queda en «nada» se ponga lo
     que se ponga. El nivel es un pacto que cumplen los modelos, no una cerradura:
     con las sesiones en skip permissions no hay nada debajo que frene. Lo que no

@@ -27,12 +27,16 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config
+# El tamaño de siempre, con coma: aquí había una copia que decía «64.0 MB»
+# junto al «64,0 MB» del resto del hub (C-0398).
+from .navegador import tamano
 
 CARPETA = "intercambio"
 
@@ -40,6 +44,13 @@ CARPETA = "intercambio"
 # que llene el disco de casa estando lejos — que es el fallo que nadie podría
 # arreglar desde fuera.
 LIMITE = 64 * 1024 * 1024
+
+# Hasta cuánto pesa una imagen que la lista enseña en miniatura (C-0385). La
+# miniatura es el archivo entero —`/intercambio/ver` no redimensiona y no se
+# trae Pillow para eso—, y en el teléfono cada fila la baja. Con 1 MB, de las
+# 146 imágenes que había el 13-nov se quedaban sin ella 8: las fotos enteras
+# de la cámara, que igual se abren con «Bajar».
+MINIATURA_HASTA = 1024 * 1024
 
 # Lo que se permite en un nombre. El resto se sustituye: es más honesto que
 # rechazar, porque quien sube una foto desde el móvil no elige cómo se llama.
@@ -113,6 +124,37 @@ def subcarpeta(proyecto_id: str = "", slot_id: int | None = None,
     if slot_id:
         tramos.append(f"{int(slot_id)}-{nombre_seguro(slot_nombre or 'slot')}".rstrip("-"))
     return "/".join(tramos)
+
+
+def destino(con: sqlite3.Connection, elegido: str = "", *, session: str = "",
+            ventana: int | None = None, slot_id: int | None = None) -> str:
+    """La subcarpeta `proyecto/slot` para lo que llega, o la raíz si no se sabe.
+
+    `elegido` es lo del formulario (`proyecto` o `proyecto:slot`). Desde la
+    terminal llega la ventana que se está mirando —según el último muestreo—,
+    y si no consta, el slot con el que se abrió la página. Vive aquí y no en
+    `api` (C-0102): decide dónde se escribe, y `api` es la costura de lectura;
+    lo que lee de la base, lo lee por ella.
+    """
+    from . import api
+
+    proyecto_id, _, slot_txt = (elegido or "").partition(":")
+    if not proyecto_id and session:
+        panel = next((p for p in api.paneles_abiertos(con)
+                      if p["session"] == session and p["window_idx"] == ventana), None)
+        if panel:
+            proyecto_id = panel.get("proyecto_id") or ""
+            slot_txt = str(panel.get("slot_id") or "")
+    if not slot_txt and slot_id:
+        slot_txt = str(slot_id)
+    slot = api.obtener_slot(con, int(slot_txt)) if slot_txt.isdigit() else None
+    if slot and not proyecto_id:
+        proyecto_id = slot["proyecto_id"]
+    if slot and slot["proyecto_id"] != proyecto_id:
+        slot = None   # un slot de otro proyecto no se mezcla
+    if not proyecto_id or not api.obtener_proyecto(con, proyecto_id):
+        return SIN_PROYECTO
+    return subcarpeta(proyecto_id, slot["id"] if slot else None, slot["nombre"] if slot else "")
 
 
 def libre(nombre: str, dentro: str = "") -> Path:
@@ -465,10 +507,3 @@ def borrar(nombre: str) -> None:
     """Borrar es un acto humano. La única excepción es lo de paso (decisión
     288), y la página dice en cada archivo cuándo se irá."""
     resolver(nombre).unlink()
-
-
-def tamano(bytes_: int) -> str:
-    for unidad, corte in (("GB", 1024**3), ("MB", 1024**2), ("kB", 1024)):
-        if bytes_ >= corte:
-            return f"{bytes_ / corte:.1f} {unidad}"
-    return f"{bytes_} B"

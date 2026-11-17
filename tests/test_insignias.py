@@ -28,6 +28,8 @@ VALORES = {
     # Los seis estados que devuelve `docker ps`, no sólo los dos que hay hoy en
     # la máquina: el día que un contenedor muera, la UI tiene que saber decirlo.
     "servicio": ["running", "exited", "created", "paused", "restarting", "dead"],
+    # Las comprobaciones de «Salud del hub» en Máquina (`salud.revisar`, C-0378).
+    "salud": ["ok", "aviso", "mal"],
 }
 
 
@@ -80,3 +82,12 @@ def test_ningun_estado_de_reposo_pide_atencion():
     assert insignias.de("status", "archivado").tono == NEUTRO
     assert insignias.de("regimen", "sin-remoto").tono == NEUTRO
     assert insignias.de("guardrail", "never").tono == NEUTRO
+
+
+def test_el_guardrail_se_dice_con_palabras_y_no_con_su_valor():
+    """UI-36: la ficha de un proyecto decía «◆ ask». El valor sigue siendo el
+    de `projects.yml` (regla dura 7); sólo cambia cómo se lee."""
+    assert [insignias.de("guardrail", v).texto for v in ("auto", "ask", "never")] == [
+        "lo hace solo", "te pregunta", "nunca"]
+    assert insignias.nombre_nivel("ask") == "Te pregunta"
+    assert insignias.nombre_nivel("lectura") == "lectura", "lo que no es un nivel sale tal cual"

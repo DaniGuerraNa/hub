@@ -31,12 +31,28 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
+from hub import reloj
+
 
 class Insignia(NamedTuple):
     glifo: str
     tono: str     # nombre del token CSS, sin `var()`
     texto: str    # la palabra, que siempre acompaña
     porque: str   # se convierte en `title=`: qué significa, en una frase
+
+
+#: Cómo se dice cada nivel de confianza (UI-36, C-0371). El valor (`auto`,
+#: `ask`, `never`) es el que se guarda y se envía, y su semántica no cambia
+#: (regla dura 7): esto es sólo su nombre en pantalla, para no tener que
+#: recordar qué significa cada clave. Lo comparten el guardrail de un proyecto
+#: y la confianza del secretario, que usan los mismos tres.
+NIVELES = {"auto": "Lo hace solo", "ask": "Te pregunta", "never": "Nunca"}
+
+
+def nombre_nivel(valor: str | None) -> str:
+    """El nombre en pantalla de un nivel; lo que no es un nivel, tal cual."""
+    crudo = str(valor or "")
+    return NIVELES.get(crudo.strip().lower(), crudo)
 
 
 # `tono` sólo puede ser uno de estos cuatro. La escala es el contrato.
@@ -56,9 +72,9 @@ MAPA: dict[str, dict[str, Insignia]] = {
     # ninguno es coral: sólo `auto` pide atención, porque es el único que actúa
     # sin ti.
     "guardrail": {
-        "auto": Insignia("◉", ESPERA, "auto", "El hub puede lanzar agentes aquí sin preguntar"),
-        "ask": Insignia("◆", NEUTRO, "ask", "Pregunta antes de actuar"),
-        "never": Insignia("○", NEUTRO, "never", "Nunca actúa solo en este proyecto"),
+        "auto": Insignia("◉", ESPERA, NIVELES["auto"].lower(), "El hub puede lanzar agentes aquí sin preguntar"),
+        "ask": Insignia("◆", NEUTRO, NIVELES["ask"].lower(), "Pregunta antes de actuar"),
+        "never": Insignia("○", NEUTRO, NIVELES["never"].lower(), "Nunca actúa solo en este proyecto"),
     },
     # De quién es el trabajo. No es un estado: no lleva color, sólo forma.
     "dominio": {
@@ -86,6 +102,14 @@ MAPA: dict[str, dict[str, Insignia]] = {
         "restarting": Insignia("↻", ESPERA, "reiniciando", "Está reiniciándose"),
         "dead": Insignia("✕", RIESGO, "muerto", "Docker no pudo pararlo limpiamente"),
     },
+    # Las comprobaciones de «Salud del hub» (`salud.revisar`, decisión 289).
+    # «bien» iba sólo con color y palabra (C-0378): el glifo es lo que deja
+    # distinguir un «aviso» de un «mal» sin leer.
+    "salud": {
+        "ok": Insignia("✓", OK, "bien", "Está como tiene que estar"),
+        "aviso": Insignia("▲", ESPERA, "aviso", "Funciona, pero algo pide un arreglo"),
+        "mal": Insignia("✕", RIESGO, "mal", "No está en pie: tiene su arreglo al lado"),
+    },
 }
 
 
@@ -109,5 +133,15 @@ def registrar(env) -> None:
     esta función y reventaba — es decir, probaba algo distinto de lo que se
     sirve. Un único punto de configuración es lo que impide que vuelvan a
     divergir en silencio.
+
+    Por la misma razón cuelga también el filtro `cuando` (`reloj.cuando`), con
+    el que `ui.cuando` pinta toda fecha (C-0396): el arnés pinta Proyecto,
+    Inventario o Trabajo, y sin él cada fecha de esas pantallas reventaría
+    allí y no en la app.
     """
     env.globals["insignia"] = de
+    env.globals["nombre_nivel"] = nombre_nivel
+    env.filters["cuando"] = reloj.cuando
+    # Un lapso en su unidad («2 h» y no «7200 s»), con los mismos cortes que
+    # el «hace» de `cuando` (tras la revisión de C-0396).
+    env.filters["duracion"] = reloj.duracion

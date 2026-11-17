@@ -24,7 +24,7 @@
   const CADENCIA = 6000;
   let respondidasVistas = new Set();
   let abierta = false;
-  let latido = 0;
+  let latido = null;   // lo que lo para: `HubSondeo.cada`
   let filtro = 'todas';
   let ultimas = [];
 
@@ -171,7 +171,8 @@
   }));
 
   // Se sondea con la hoja cerrada, y despacio: es lo que enciende el punto.
+  // Con la pestaña oculta, no (C-0277): al volver se pregunta enseguida.
   refrescar();
-  latido = setInterval(refrescar, CADENCIA);
-  window.addEventListener('beforeunload', () => clearInterval(latido));
+  latido = window.HubSondeo.cada(refrescar, CADENCIA);
+  window.addEventListener('beforeunload', latido);
 })();

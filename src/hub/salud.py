@@ -17,12 +17,14 @@ uno vivo esperando. Por eso el bucle deja su propio latido en cada vuelta.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 
@@ -33,6 +35,25 @@ ARCHIVO_LATIDO = "latido-snapshotter.json"
 # perdidas son un ciclo lento o una base ocupada; minutos, que no corre.
 AVISO_SEGUNDOS = 120
 MAL_SEGUNDOS = 300
+# El ciclo lento se pide cada diez minutos (C-0309). Media hora sin acabar una
+# vuelta son tres perdidas; diez minutos en un paso, más de lo que ninguno
+# tiene de presupuesto (el mayor, los repos, 45 s): está colgado, no lento.
+LENTO_SIN_ACABAR = 30 * 60
+LENTO_EN_UN_PASO = 10 * 60
+# Cómo se le dice a la persona cada paso del ciclo lento. Uno que no esté
+# aquí sale con su clave: mejor un nombre interno que callar cuál es.
+PASOS_LENTOS = {
+    "registro": "la lectura del registro de proyectos",
+    "repos": "el respaldo de los repos",
+    "servicios": "los contenedores",
+    "indice": "el índice de búsqueda",
+    "consumo": "el consumo",
+    "maquina": "la salud del equipo",
+    "copia_base": "la copia de la base",
+    "version": "la búsqueda de versión nueva",
+    "intercambio": "la limpieza de lo pegado en la terminal",
+    "dictados": "la limpieza de dictados",
+}
 
 
 def _servicios_del_hub() -> tuple[str, ...]:
@@ -55,31 +76,49 @@ SERVICIOS = _servicios_del_hub()
 IMPRESCINDIBLES = ("hub-web", "hub-snapshotter")
 
 
-def latir() -> None:
-    """Lo llama el bucle del snapshotter en cada vuelta, haya tmux o no."""
+def latir(lento: dict | None = None) -> None:
+    """Lo llama el bucle del snapshotter en cada vuelta, haya tmux o no.
+
+    `lento` es el estado del ciclo lento (`snapshotter.CicloLento.estado`),
+    que desde C-0309 corre en su hilo: viaja aquí para que `mediciones_lentas`
+    lo juzgue sin que el snapshotter escriba en otro sitio. El latido no se
+    pierde por él: si no cabe en JSON, sale sin él y se dice."""
+    datos = {"en": datetime.now(timezone.utc).isoformat(timespec="seconds"), "pid": os.getpid()}
+    texto = json.dumps(datos)
+    if lento is not None:
+        try:
+            texto = json.dumps({**datos, "lento": lento})
+        except (TypeError, ValueError) as exc:
+            print(f"[salud] el estado del ciclo lento no se pudo escribir en el latido: {exc}",
+                  flush=True)
     destino = config.HUB_HOME / ARCHIVO_LATIDO
     tmp = destino.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"en": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                               "pid": os.getpid()}))
+    tmp.write_text(texto)
     tmp.replace(destino)
 
 
-def _edad_latido(ahora: datetime | None = None) -> int | None:
+def _latido() -> dict | None:
     try:
         datos = json.loads((config.HUB_HOME / ARCHIVO_LATIDO).read_text())
-        cuando = datetime.fromisoformat(datos["en"])
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError):
         return None
-    ahora = ahora or datetime.now(timezone.utc)
+    return datos if isinstance(datos, dict) else None
+
+
+def _segundos_desde(valor: object, ahora: datetime) -> int | None:
+    """Hace cuánto de una fecha del latido; None si no es una fecha."""
+    try:
+        cuando = datetime.fromisoformat(valor)  # type: ignore[arg-type]
+        if cuando.tzinfo is None:
+            cuando = cuando.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
     return max(0, int((ahora - cuando).total_seconds()))
 
 
-def _hace(segundos: int) -> str:
-    if segundos < 120:
-        return f"{segundos} s"
-    if segundos < 7200:
-        return f"{segundos // 60} min"
-    return f"{segundos // 3600} h"
+def _edad_latido(ahora: datetime | None = None) -> int | None:
+    datos = _latido()
+    return _segundos_desde((datos or {}).get("en"), ahora or datetime.now(timezone.utc))
 
 
 def muestreo(ahora: datetime | None = None) -> dict:
@@ -94,17 +133,99 @@ def muestreo(ahora: datetime | None = None) -> dict:
                 "arreglo": arreglo}
     if edad >= MAL_SEGUNDOS:
         return {"clave": "muestreo", "nombre": "Muestreo", "estado": "mal",
-                "detalle": f"El snapshotter no late desde hace {_hace(edad)}. Mientras no "
+                "detalle": f"El snapshotter no late desde hace {reloj.duracion(edad)}. Mientras no "
                            "corra, no se guarda qué ventanas tienes: si reinicias ahora, no se "
                            "podrán reabrir.",
                 "arreglo": arreglo, "edad": edad}
     if edad >= AVISO_SEGUNDOS:
         return {"clave": "muestreo", "nombre": "Muestreo", "estado": "aviso",
-                "detalle": f"Último latido hace {_hace(edad)}: va con retraso.",
+                "detalle": f"Último latido hace {reloj.duracion(edad)}: va con retraso.",
                 "arreglo": arreglo, "edad": edad}
     return {"clave": "muestreo", "nombre": "Muestreo", "estado": "ok",
-            "detalle": f"Late cada {config.INTERVALO_SEGUNDOS} s (último hace {_hace(edad)}).",
+            "detalle": f"Late cada {config.INTERVALO_SEGUNDOS} s (último hace {reloj.duracion(edad)}).",
             "edad": edad}
+
+
+def mediciones_lentas(ahora: datetime | None = None) -> dict | None:
+    """Cómo va el ciclo lento, por lo que el snapshotter dejó en su latido (C-0309).
+
+    Desde que corre en su hilo, colgarse en un `stat` sobre el disco de
+    Windows ya no para el latido: el hub parece sano y el respaldo, el consumo
+    y la salud del equipo se quedan con cifras de hace horas. Esto es lo que
+    lo dice. Sólo en pantalla: no es una clase de `avisos.CLASES` (regla dura
+    3), no sale al teléfono.
+
+    None si no hay nada que juzgar (regla dura 13): sin latido reciente —eso
+    ya lo dice «Muestreo»—, o con un snapshotter de antes de esto, que no
+    cuenta nada del ciclo lento.
+    """
+    ahora = ahora or datetime.now(timezone.utc)
+    datos = _latido() or {}
+    edad = _segundos_desde(datos.get("en"), ahora)
+    lento = datos.get("lento")
+    if edad is None or edad >= MAL_SEGUNDOS or not isinstance(lento, dict):
+        return None
+    acabo = _segundos_desde(lento.get("acabo"), ahora)
+    # Si nunca acabó una vuelta, «sin acabar» cuenta desde que arrancó.
+    sin_acabar = acabo if acabo is not None else _segundos_desde(lento.get("desde"), ahora)
+    if sin_acabar is None:
+        return None
+    paso = lento.get("paso") if isinstance(lento.get("paso"), str) else None
+    en_el_paso = _segundos_desde(lento.get("paso_desde"), ahora) if paso else None
+    nombre_paso = PASOS_LENTOS.get(paso or "", f"«{paso}»")
+    duro = lento.get("duro") if isinstance(lento.get("duro"), (int, float)) else None
+
+    fila = {"clave": "lento", "nombre": "Mediciones lentas"}
+    diario = "journalctl --user -u hub-snapshotter -n 40"
+    arreglo = f"systemctl --user restart hub-snapshotter   (y el porqué: {diario})"
+    de_que = "del respaldo, los contenedores, el consumo y la salud del equipo"
+    if en_el_paso is not None and en_el_paso >= LENTO_EN_UN_PASO:
+        return {**fila, "estado": "aviso", "arreglo": arreglo,
+                "detalle": f"Llevan {reloj.duracion(en_el_paso)} con {nombre_paso} y no acaba: mientras "
+                           f"tanto no se mide lo demás, y las cifras {de_que} se quedan "
+                           "viejas. El muestreo de ventanas no depende de esto y sigue."}
+    fallo = lento["fallo"] if isinstance(lento.get("fallo"), str) and lento["fallo"] else None
+    if sin_acabar >= LENTO_SIN_ACABAR and lento.get("corriendo") is not True and not fallo:
+        # Ni hay una en marcha ni la última falló: nadie la ha pedido aún. Es
+        # lo que se ve al despertar el equipo de una suspensión —el latido es
+        # de ahora y la última vuelta, de anoche— y se arregla solo: mandar
+        # reiniciar el muestreo aquí era un consejo que no hacía falta seguir.
+        cuando = (f"La última vuelta acabó hace {reloj.duracion(sin_acabar)} y no hay ninguna en marcha: "
+                  "es lo normal si el equipo ha estado suspendido." if acabo is not None else
+                  f"El muestreo arrancó hace {reloj.duracion(sin_acabar)}, todavía no ha acabado ninguna "
+                  "vuelta y no hay ninguna en marcha.")
+        return {**fila, "estado": "aviso",
+                "detalle": f"{cuando} Las cifras {de_que} son de antes y se vuelven a medir en "
+                           "la próxima vuelta, que se pide sola cada diez minutos."}
+    if sin_acabar >= LENTO_SIN_ACABAR:
+        detalle = (f"Llevan {reloj.duracion(sin_acabar)} sin terminar una vuelta: las cifras {de_que} "
+                   "son de entonces.")
+        if fallo:
+            detalle += f" La última falló: {fallo}"
+        return {**fila, "estado": "aviso", "detalle": detalle, "arreglo": arreglo}
+    if lento.get("dentro") is True:
+        return {**fila, "estado": "aviso", "arreglo": arreglo,
+                "detalle": "Su hilo no arranca, así que se miden dentro del muestreo: cada "
+                           "diez minutos la muestra de ventanas, los mensajes programados y "
+                           "el orquestador esperan a que acaben."}
+    fallaron = lento.get("fallaron")
+    if isinstance(fallaron, dict) and fallaron:
+        # La vuelta acabó, pero cada paso va en su `try`: pueden haber lanzado
+        # todos y «acabó hace 2 min» sería verdad sobre cifras que nadie
+        # refrescó. Aviso y no «mal»: el muestreo de ventanas no depende de esto.
+        nombres = [PASOS_LENTOS.get(str(clave), f"«{clave}»") for clave in fallaron]
+        lista = nombres[0] if len(nombres) == 1 else f"{', '.join(nombres[:-1])} y {nombres[-1]}"
+        return {**fila, "estado": "aviso", "arreglo": f"{diario}   (ahí está el porqué de cada uno)",
+                "detalle": f"En la última vuelta no se pudo medir: {lista}. Lo que ves de eso "
+                           "es de la última vez que salió bien."}
+    if acabo is None:
+        return {**fila, "estado": "ok",
+                "detalle": "Todavía no ha acabado la primera vuelta desde que arrancó el "
+                           f"muestreo, hace {reloj.duracion(sin_acabar)}."}
+    detalle = f"Se miden aparte del muestreo. La última vuelta acabó hace {reloj.duracion(acabo)}"
+    if duro is not None:
+        detalle += f" y tardó {reloj.duracion(int(duro))}"
+    return {**fila, "estado": "ok", "detalle": detalle + "."}
 
 
 def _tmux() -> dict:
@@ -203,16 +324,68 @@ def _latido_secretario() -> str | None:
         return None
 
 
+def _latido_snapshotter() -> str | None:
+    en = (_latido() or {}).get("en")
+    return en if isinstance(en, str) else None
+
+
+# La señal de vida de cada servicio que la tiene: cuándo latió por última vez,
+# como la guarda (`reloj.ahora()`). Arrancado no es funcionar (151): lo que
+# vale es una señal posterior a encenderlo o reiniciarlo. La web se mira
+# contestando (`actualizar.sh`, `instalar.sh`); canal y encargos no tienen.
+SENALES = {
+    "hub-snapshotter": _latido_snapshotter,
+    "hub-secretario": _latido_secretario,
+}
+
 # Lo que la web puede encender (decisión 400), por nombre exacto: nunca viene de
 # la petición, como los contenedores (50). Cada uno con su nombre para la
-# persona y su señal de vida, porque arrancado no es funcionar (151). Canal y
+# persona y lo que se corre a mano sin systemd; su señal, en `SENALES`. Canal y
 # encargos no: sin su token sólo sabrían apuntar fallos (`instalar.sh`).
 ENCENDIBLES = {
-    "hub-secretario": ("El secretario", _latido_secretario,
-                       "uv run python -m hub.secretario"),
+    "hub-secretario": ("El secretario", "uv run python -m hub.secretario"),
 }
 # La primera vez `uv run` prepara el entorno y puede pasar de 20 s.
 ESPERA_SENAL = 30
+
+
+def _posterior(valor: object, desde) -> bool:
+    """Si una señal es de `desde` o después. Una que no se entiende no cuenta:
+    mejor «aún no da señales» que un 500 en mitad de encender."""
+    try:
+        return bool(valor) and reloj.instante(valor) >= desde  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+
+
+def esperar_senal(nombre: str, desde: str, espera: float = ESPERA_SENAL) -> str:
+    """Espera hasta `espera` segundos a que `nombre` dé una señal de vida de
+    `desde` o después, y dice cómo quedó (C-0448):
+
+    - `ok`: dio la señal;
+    - `sin-senal`: sigue en marcha (`is-active`) pero aún no late;
+    - `caido`: ni late ni está en marcha (con `Restart=always`, uno que
+      revienta al arrancar pasa la espera entre intentos en `activating`);
+    - `sin-medir`: no tiene señal propia (canal, encargos) y está en marcha.
+      No se espera por nada: se mira una vez, así que quien llama deja pasar
+      unos segundos desde el arranque.
+
+    `desde` es una fecha como las de `reloj.ahora()`. La usan `encender`,
+    después de su `enable --now`, y `actualizar.sh` tras reiniciar
+    (`python -m hub.salud senal`). Sólo pregunta: no acciona nada.
+    """
+    senal = SENALES.get(nombre)
+    if senal is None:
+        return "sin-medir" if _systemctl("is-active", nombre) == "active" else "caido"
+    desde_t = reloj.instante(desde)
+    limite = time.monotonic() + espera
+    while True:
+        if _posterior(senal(), desde_t):
+            return "ok"
+        if time.monotonic() >= limite:
+            break
+        time.sleep(1)
+    return "sin-senal" if _systemctl("is-active", nombre) == "active" else "caido"
 
 
 def encender(nombre: str, espera: float | None = None) -> tuple[str, str]:
@@ -229,23 +402,18 @@ def encender(nombre: str, espera: float | None = None) -> tuple[str, str]:
     """
     if nombre not in ENCENDIBLES:
         raise ValueError(f"{nombre} no se enciende desde el hub")
-    quien, senal, a_mano = ENCENDIBLES[nombre]
+    quien, a_mano = ENCENDIBLES[nombre]
     if not hay_systemd_de_usuario():
         return "no", (f"Sin systemd de usuario no se enciende desde aquí. En una terminal, en la "
                       f"carpeta del hub: {a_mano}")
-    antes = reloj.instante()
+    antes = reloj.ahora()
     codigo, dijo = _orden("enable", "--now", nombre)
     if codigo != 0:
         return "no", f"{quien} no se encendió: {(dijo or f'systemctl salió con {codigo}').rstrip('.')}."
-    limite = time.monotonic() + (ESPERA_SENAL if espera is None else espera)
-    while True:
-        ultima = senal()
-        if ultima and reloj.instante(ultima) >= antes:
-            return "encendido", f"{quien} está en marcha, y seguirá encendido cuando reinicies el equipo."
-        if time.monotonic() >= limite:
-            break
-        time.sleep(1)
-    if _systemctl("is-active", nombre) != "active":
+    como = esperar_senal(nombre, antes, ESPERA_SENAL if espera is None else espera)
+    if como == "ok":
+        return "encendido", f"{quien} está en marcha, y seguirá encendido cuando reinicies el equipo."
+    if como != "sin-senal":
         return "no", (f"{quien} se encendió pero se cae al arrancar. Lo que dice al caerse: "
                       f"journalctl --user -u {nombre} -n 40")
     return "sin-senal", (f"{quien} está arrancando pero aún no da señales; la primera vez puede tardar "
@@ -308,6 +476,33 @@ def _copia() -> dict:
                 "detalle": f"La última copia de hub.db es del {e['ultima'].replace('T', ' ')}.",
                 "arreglo": "Mira que el muestreo corra: la copia la hace él."}
     return {"clave": "copia", "nombre": "Copia de la base", "estado": "ok",
+            "detalle": f"Última del {e['ultima'].replace('T', ' ')}, {e['copias']} guardadas."}
+
+
+def _copia_secretario() -> dict | None:
+    """La copia diaria de la memoria del secretario, con el mismo umbral (C-0282).
+
+    Es la base que más vale —entera, no se reconstruye (decisión 299)— y la
+    que más crece, y su copia la hace `hub-secretario`: si dejaba de hacerse,
+    sólo quedaba en su bitácora. Sin secretario en uso no se echa en falta.
+    Se dice aquí, en Máquina y en `/respaldo`; no es un aviso que salga solo
+    (`avisos.CLASES` es lista cerrada, regla dura 3).
+    """
+    from .secretario import memoria
+    if not memoria.existe():
+        return None
+    nombre = "Copia de la memoria del secretario"
+    arreglo = "Mira que el secretario corra (hub-secretario): la copia la hace él."
+    e = copia_base.estado(prefijo=copia_base.PREFIJO_SECRETARIO)
+    if not e["copias"]:
+        return {"clave": "copia-secretario", "nombre": nombre, "estado": "aviso",
+                "detalle": "Todavía no hay ninguna copia de memoria.db (se hace sola una vez al día).",
+                "arreglo": arreglo}
+    if e["vieja"]:
+        return {"clave": "copia-secretario", "nombre": nombre, "estado": "aviso",
+                "detalle": f"La última copia de memoria.db es del {e['ultima'].replace('T', ' ')}.",
+                "arreglo": arreglo}
+    return {"clave": "copia-secretario", "nombre": nombre, "estado": "ok",
             "detalle": f"Última del {e['ultima'].replace('T', ' ')}, {e['copias']} guardadas."}
 
 
@@ -395,7 +590,7 @@ def _desatendido(medidas: dict[str, dict]) -> list[dict]:
             salida.append({"clave": "desatendido:suspender", "nombre": "No suspenderse",
                            "estado": "aviso",
                            "detalle": f"Con corriente, Windows se suspende tras "
-                                      f"{_hace(int(susp['valor']))} sin nadie delante, y "
+                                      f"{reloj.duracion(int(susp['valor']))} sin nadie delante, y "
                                       "el hub deja de contestar.",
                            "arreglo": "En Windows: powercfg /change standby-timeout-ac 0"})
     return salida
@@ -406,8 +601,33 @@ def revisar(slots: list[dict], medidas: dict[str, dict] | None = None) -> list[d
     `medidas`, lo último que midió el ciclo lento (`maquina.ultimas`)."""
     revisiones = [muestreo(), _tmux(), _restauracion(slots), *_servicios(),
                   *_desatendido(medidas or {})]
-    for extra in (_linger(), _copia()):
+    for extra in (mediciones_lentas(), _linger(), _copia(), _copia_secretario()):
         if extra:
             revisiones.append(extra)
     orden = {"mal": 0, "aviso": 1, "ok": 2}
     return sorted(revisiones, key=lambda r: orden[r["estado"]])
+
+
+def main(argv: list[str]) -> int:
+    """`python -m hub.salud senal <servicio> --desde <fecha> [--espera <s>]`.
+
+    Lo corre `actualizar.sh` tras reiniciar cada servicio (C-0448) y escribe
+    una sola palabra, la de `esperar_senal`: el guion decide qué es fallo y
+    qué aviso. El servicio tiene que ser uno del hub (`SERVICIOS`)."""
+    lector = argparse.ArgumentParser(prog="python -m hub.salud")
+    ordenes = lector.add_subparsers(dest="orden", required=True)
+    senal = ordenes.add_parser("senal", help="espera la señal de vida de un servicio")
+    senal.add_argument("servicio", choices=SERVICIOS)
+    senal.add_argument("--desde", required=True, help="fecha ISO: sólo cuenta una señal posterior")
+    senal.add_argument("--espera", type=float, default=ESPERA_SENAL, help="segundos")
+    args = lector.parse_args(argv)
+    try:
+        reloj.instante(args.desde)
+    except ValueError:
+        lector.error(f"--desde no es una fecha: {args.desde}")
+    print(esperar_senal(args.servicio, args.desde, args.espera))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

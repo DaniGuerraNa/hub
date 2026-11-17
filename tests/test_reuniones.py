@@ -6,6 +6,7 @@ qué orden sale de un formulario y qué se enseña de una carpeta."""
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -155,7 +156,7 @@ def test_dice_cuantas_quedan_sin_comprimir_y_comprime_solo_cuando_se_pide(client
     assert datos["sin_comprimir"]["n"] == 1          # la que se está grabando no cuenta
     assert comprimidas == []                          # mirar no comprime nada
     html = cliente.get("/reuniones").text
-    assert "1 sin comprimir" in html and "sin comprimir · 3 MB" in html
+    assert "1 sin comprimir" in html and "sin comprimir · 2,4 MB" in html
     cliente.post("/reuniones/accion", data={"que": "comprimir-todas"})
     assert comprimidas == [["20261020-090000"]]
     cliente.post("/reuniones/accion", data={"que": "comprimir", "id": "20261020-090000"})
@@ -483,3 +484,222 @@ def test_una_compresion_de_varias_marca_tarde_y_aun_asi_se_ve_cortada(raiz):
     reuniones._escribir(reuniones._lanzados(crear=True) / f"{d.name}-comprimir.json",
                         {**huella, "desde": time.time() - 3600})
     assert reuniones.sin_comprimir() == [d.name], "marcada una hora después de lanzarse"
+
+
+# ── lo que ocupa cada una (C-0276) ──
+
+def _grabacion(r, id_, fin, fotos=3):
+    d = r / id_
+    (d / "fotos").mkdir(parents=True)
+    (d / "meta.json").write_text(json.dumps({"id": id_, "inicio": 0, "fin": fin}))
+    (d / "reunion.opus").write_bytes(b"\0" * 1000)
+    for s in range(fotos):
+        (d / "fotos" / f"{s:06d}.jpg").write_bytes(b"\xff" * 500)
+    return d
+
+
+def _envejecer(carpeta):
+    """La deja con una fecha de hace un rato: dos escrituras seguidas pueden
+    caer en el mismo tic del reloj del sistema de archivos."""
+    hace = time.time_ns() - 60 * 10**9
+    os.utime(carpeta, ns=(hace, hace))
+    return hace
+
+
+def test_el_tamano_suma_lo_mismo_que_recorrer_archivo_a_archivo(raiz):
+    r, _ = raiz
+    d = _grabacion(r, "20261020-090000", 600)
+    (d / "fotos" / "sub").mkdir()
+    (d / "fotos" / "sub" / "x.bin").write_bytes(b"\0" * 77)
+    (d / "roto").symlink_to(d / "no-existe")
+    a_mano = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+    assert reuniones._tamano(d) == a_mano == 1000 + 3 * 500 + 77 + len((d / "meta.json").read_bytes())
+
+
+def test_las_fotos_de_una_terminada_se_miden_una_vez_mientras_su_carpeta_no_cambie(raiz):
+    """`/reuniones` tardaba 6,6–7,9 s: recorría cada foto de cada grabación en
+    cada carga, y mientras se graba la pantalla se repinta cada 5 s. Las fotos
+    de una reunión terminada ya no cambian: se recuerdan por la fecha de su
+    carpeta, que cambia si se añade o se quita una."""
+    r, _ = raiz
+    d = _grabacion(r, "20261020-090000", 600)
+    marca = _envejecer(d / "fotos")
+    antes = reuniones.lista()[0]["tamano"]
+
+    # Crecer una foto sin tocar su carpeta: no se vuelve a recorrer.
+    (d / "fotos" / "000000.jpg").write_bytes(b"\xff" * 1500)
+    os.utime(d / "fotos", ns=(marca, marca))
+    assert reuniones.lista()[0]["tamano"] == antes
+
+    # Lo de arriba (el audio, los .json) se mide siempre.
+    (d / "reunion.opus").write_bytes(b"\0" * 3000)
+    assert reuniones.lista()[0]["tamano"] == antes + 2000
+
+    # Una foto nueva cambia la fecha de la carpeta: se mide otra vez entera.
+    (d / "fotos" / "000009.jpg").write_bytes(b"\xff" * 500)
+    assert reuniones.lista()[0]["tamano"] == antes + 2000 + 1000 + 500
+
+
+def test_la_que_se_esta_grabando_se_mide_siempre_entera(raiz):
+    r, _ = raiz
+    d = _grabacion(r, "20261020-090000", None)
+    marca = _envejecer(d / "fotos")
+    antes = reuniones.lista()[0]["tamano"]
+    (d / "fotos" / "000000.jpg").write_bytes(b"\xff" * 1500)
+    os.utime(d / "fotos", ns=(marca, marca))
+    assert reuniones.lista()[0]["tamano"] == antes + 1000
+
+
+# ── C-0379: si el agente de Windows está al día ─────────────────────────────
+
+
+def _version(carpeta: Path, version: str) -> None:
+    carpeta.mkdir(parents=True, exist_ok=True)
+    (carpeta / "agente.py").write_text(f'"""El agente."""\nimport sys\n\nVERSION = "{version}"\n', encoding="utf-8")
+
+
+def _tarjeta_version(html: str) -> str:
+    """La tarjeta de la versión, de su etiqueta a la que la cierra; vacía si no está."""
+    i = html.find('id="version-agente"')
+    if i < 0:
+        return ""
+    inicio = html.rfind("<", 0, i)
+    return html[inicio:html.find("\n  </", i)]
+
+
+def test_con_un_agente_mas_viejo_que_el_del_hub_lo_dice_y_ofrece_copiarlo(cliente, raiz):
+    """Tras actualizar el hub no se sabía si había que «Copiar el agente» (HER-18)."""
+    _version(reuniones.proyecto() / "agente", "0.2.0")
+    cliente.post("/api/reuniones/latido", json=INVENTARIO)              # el agente dice 0.1.0
+    v = api.reuniones()["version_agente"]
+    assert (v["estado"], v["corre"], v["hay"]) == ("vieja", "0.1.0", "0.2.0")
+    tarjeta = _tarjeta_version(cliente.get("/reuniones").text)
+    assert "0.1.0" in tarjeta and "0.2.0" in tarjeta
+    assert 'action="/reuniones/copiar-agente"' in tarjeta and "Copiar el agente" in tarjeta
+
+
+def test_copiado_pero_sin_reiniciar_dice_que_falta_reiniciarlo_y_no_vuelve_a_ofrecer_copiar(cliente, raiz):
+    _version(reuniones.proyecto() / "agente", "0.2.0")
+    _version(reuniones.carpeta_agente(), "0.2.0")
+    cliente.post("/api/reuniones/latido", json=INVENTARIO)
+    assert api.reuniones()["version_agente"]["estado"] == "copiada"
+    html = cliente.get("/reuniones").text
+    assert "falta reiniciarlo" in html and "copiar-agente" not in _tarjeta_version(html)
+
+
+def test_con_la_misma_version_dice_al_dia(cliente, raiz):
+    _version(reuniones.proyecto() / "agente", "0.1.0")
+    cliente.post("/api/reuniones/latido", json=INVENTARIO)
+    assert api.reuniones()["version_agente"]["estado"] == "al-dia"
+    html = cliente.get("/reuniones").text
+    assert "0.1.0 · al día" in html and not _tarjeta_version(html)
+
+
+@pytest.mark.parametrize("corre, hay", [(None, "0.2.0"), ("0.1.0", None), ("0.3.0", "0.2.0"), ("rara", "0.2.0")])
+def test_lo_que_no_se_puede_comparar_no_se_afirma(cliente, raiz, corre, hay):
+    """Regla dura 13: sin la versión de uno de los dos, o con un agente más
+    nuevo que el del hub, ni «al día» ni «copia el agente», que lo bajaría."""
+    if hay:
+        _version(reuniones.proyecto() / "agente", hay)
+    cliente.post("/api/reuniones/latido", json={**INVENTARIO, "agente": corre})
+    assert api.reuniones()["version_agente"]["estado"] is None
+    html = cliente.get("/reuniones").text
+    assert not _tarjeta_version(html) and "al día" not in html
+
+
+# ── C-0380: cerrar de una vez los compromisos que salieron de una reunión ────
+
+
+def _reunion_con_compromisos(raiz_grabaciones: Path) -> tuple[str, list[int], int]:
+    """Una reunión procesada, dos compromisos suyos y uno de otra reunión."""
+    from hub.secretario import memoria
+    from hub.secretario.piezas import Evento
+
+    d = raiz_grabaciones / "20261020-090000"
+    d.mkdir(parents=True)
+    (d / "meta.json").write_text(json.dumps({"id": d.name, "inicio": 0, "fin": 600}))
+    (d / "resumen.json").write_text(json.dumps({"titulo": "Seguimiento", "resumen": "Breve."}))
+    (d / "procesado.json").write_text(json.dumps({"estado": "hecho"}))
+    con = memoria.conectar()
+    try:
+        esta = memoria.guardar_evento(con, Evento(fuente="hub", id_externo=f"reunion:{d.name}", fecha="2026-10-20",
+                                                  texto="…", conversacion="reuniones", autor="Reunión"))
+        otra = memoria.guardar_evento(con, Evento(fuente="hub", id_externo="reunion:20261021-100000",
+                                                  fecha="2026-10-21", texto="…", conversacion="reuniones",
+                                                  autor="Reunión"))
+        origen = "hub · reuniones · Reunión"       # el mismo para todas: no sirve para distinguirlas
+        suyos = [memoria.comprometer(con, "Mandar el acta", evento=esta, origen=origen),
+                 memoria.comprometer(con, "Revisar el despliegue", quien="Ana", evento=esta, origen=origen)]
+        ajeno = memoria.comprometer(con, "Pedir presupuesto", evento=otra, origen=origen)
+    finally:
+        con.close()
+    return d.name, suyos, ajeno
+
+
+def _estados() -> dict[int, str]:
+    from hub.secretario import memoria
+    con = memoria.conectar()
+    try:
+        return {f["id"]: f["estado"] for f in con.execute("SELECT id, estado FROM compromiso")}
+    finally:
+        con.close()
+
+
+def test_la_reunion_ensena_sus_compromisos_abiertos_y_el_boton_pide_confirmacion(cliente, raiz):
+    rid, suyos, ajeno = _reunion_con_compromisos(raiz[0])
+    assert [c["id"] for c in api.reunion(rid)["compromisos"]] == suyos
+    html = cliente.get(f"/reuniones/{rid}").text
+    assert "Mandar el acta" in html and "Revisar el despliegue" in html and "Pedir presupuesto" not in html
+    form = html.split(f'action="/reuniones/{rid}/compromisos"', 1)[1].split("</form>", 1)[0]
+    assert "data-confirmar=" in form and "2 compromisos" in form
+    assert all(f'name="id" value="{i}"' in form for i in suyos) and f'value="{ajeno}"' not in form
+
+
+@pytest.mark.parametrize("estado", ["hecho", "descartado"])
+def test_cerrar_en_bloque_cierra_solo_los_de_esa_reunion(cliente, raiz, estado):
+    rid, suyos, ajeno = _reunion_con_compromisos(raiz[0])
+    # Aunque llegue el id de otra reunión, sólo se cierran los suyos.
+    r = cliente.post(f"/reuniones/{rid}/compromisos", data={"estado": estado, "id": [*suyos, ajeno]},
+                     follow_redirects=False)
+    assert r.status_code == 303 and "2%20compromisos" in r.headers["location"]
+    assert _estados() == {suyos[0]: estado, suyos[1]: estado, ajeno: "abierto"}
+    assert api.reunion(rid)["compromisos"] == []
+
+
+def test_cerrar_en_bloque_no_toca_uno_que_llego_despues_de_ver_la_pantalla(cliente, raiz):
+    """Se cierran los que el dueño vio y confirmó, no los que haya ahora."""
+    rid, suyos, _ = _reunion_con_compromisos(raiz[0])
+    cliente.post(f"/reuniones/{rid}/compromisos", data={"estado": "hecho", "id": [suyos[0]]})
+    assert (_estados()[suyos[0]], _estados()[suyos[1]]) == ("hecho", "abierto")
+
+
+def test_cerrar_en_bloque_desde_otro_sitio_web_se_rechaza(cliente, raiz):
+    rid, suyos, _ = _reunion_con_compromisos(raiz[0])
+    r = cliente.post(f"/reuniones/{rid}/compromisos", data={"estado": "hecho", "id": suyos},
+                     headers={"origin": "https://malo.example"})
+    assert r.status_code == 403 and set(_estados().values()) == {"abierto"}
+
+
+def test_sin_memoria_del_secretario_la_reunion_no_la_crea(cliente, raiz):
+    from hub.secretario import memoria
+    r = raiz[0] / "20261020-090000"
+    r.mkdir(parents=True)
+    (r / "meta.json").write_text(json.dumps({"id": r.name, "inicio": 0, "fin": 600}))
+    assert api.reunion(r.name)["compromisos"] == []
+    assert "compromisos" not in cliente.get(f"/reuniones/{r.name}").text.split('data-region="reunion"')[1]
+    assert not memoria.existe()
+
+
+def test_cuanto_hace_que_el_agente_dio_senales_se_lee_en_su_unidad(cliente, raiz, monkeypatch):
+    """«hace 7200 s» se cuenta con el dedo: va con `reloj.duracion` («2 h»),
+    como el resto del hub (tras la revisión de C-0396). Preparado y callado:
+    es cuando la tarjeta del agente desconectado lo dice."""
+    import json as _json
+    import time as _time
+    (reuniones.carpeta() / "latido.json").write_text(_json.dumps({"t": _time.time() - 7230}))
+    original = reuniones.preparacion
+    monkeypatch.setattr(reuniones, "preparacion", lambda: {**original(), "listo": True})
+
+    html = cliente.get("/reuniones").text
+
+    assert "dio señales hace 2 h." in html and "7230 s" not in html

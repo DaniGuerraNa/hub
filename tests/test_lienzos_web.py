@@ -190,3 +190,50 @@ def test_un_id_invalido_no_sale_de_la_carpeta(cliente):
     """La ruta la compone el id: sin validar, `../../` escribe fuera."""
     r = cliente.post("/api/lienzo/demo/..%2F..%2Fetc/archivar", json={})
     assert r.status_code in (400, 404)
+
+
+def test_publicar_con_un_bloque_que_no_se_puede_leer_devuelve_400_con_el_porque(cliente):
+    """C-0387: lo que la puerta rechaza le llega a quien publica con su motivo,
+    no como un lienzo roto que el dueño descubre al abrirlo."""
+    r = _publicar(cliente, plantilla="pasos",
+                  cuerpo="orientacion: |\n  vertical\npiezas:\n  - {id: a, nombre: A}\n")
+    assert r.status_code == 400
+    assert "«orientacion»" in r.json()["error"] and "en una línea" in r.json()["error"]
+    assert lienzos.listar("pedidos") == []
+
+
+# ── guardar sobre la versión que se leyó (C-0383) ───────────────────────────
+
+
+def test_guardar_sobre_una_version_vieja_da_409_y_el_archivo_queda_intacto(cliente):
+    """C-0383: la pestaña abierta mandaba de vuelta el cuerpo entero que tenía,
+    y una corrección que el agente publicó mientras tanto se perdía sin que
+    nadie lo notara. Con la versión leída, el hub ve que ya no es la del disco:
+    contesta 409 con la de ahora y no escribe nada."""
+    _publicar(cliente, cuerpo="decision: pendiente\n")
+    leida = cliente.get("/api/lienzo/pedidos/flujo-de-pedidos").json()["lienzo"]
+    _publicar(cliente, cuerpo="la corrección del agente\n")   # nadie lo tocó: republica
+
+    r = cliente.post("/api/lienzo/pedidos/flujo-de-pedidos",
+                     json={"cuerpo": "decision: si\n", "base": leida["version"]})
+
+    assert r.status_code == 409
+    assert r.json()["conflicto"] is True
+    assert r.json()["lienzo"]["cuerpo"] == "la corrección del agente\n"
+    ahora = cliente.get("/api/lienzo/pedidos/flujo-de-pedidos").json()["lienzo"]
+    assert ahora["cuerpo"] == "la corrección del agente\n"
+    assert r.json()["lienzo"]["version"] == ahora["version"] != leida["version"]
+
+
+def test_guardar_sobre_la_version_que_hay_se_guarda_y_devuelve_la_nueva(cliente):
+    _publicar(cliente, cuerpo="decision: pendiente\n")
+    leida = cliente.get("/api/lienzo/pedidos/flujo-de-pedidos").json()["lienzo"]
+
+    r = cliente.post("/api/lienzo/pedidos/flujo-de-pedidos",
+                     json={"cuerpo": "decision: si\n", "base": leida["version"]})
+
+    assert r.status_code == 200
+    ahora = cliente.get("/api/lienzo/pedidos/flujo-de-pedidos").json()["lienzo"]
+    assert ahora["cuerpo"] == "decision: si\n"
+    # La que devuelve es la que vale para el siguiente guardado.
+    assert r.json()["lienzo"]["version"] == ahora["version"] != leida["version"]

@@ -32,6 +32,9 @@ class ProponerDato(Accion):
         "required": ["campo", "valor", "fuente"]}
     riesgo = "reversible"
     nivel_inicial = "auto"
+    # El valor es suyo aunque no llegue a la ficha (demasiado largo, un campo
+    # que no existe): la bitácora lo tapa siempre (C-0431).
+    campos_propios = ("valor",)
 
     def ejecutar(self, con, params):
         campo = str(params.get("campo") or "")

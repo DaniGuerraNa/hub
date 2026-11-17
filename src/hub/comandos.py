@@ -32,8 +32,6 @@ import re
 import shlex
 from pathlib import Path
 
-import yaml
-
 from . import config
 
 ARCHIVO = "comandos.yml"
@@ -59,7 +57,7 @@ def leer() -> list[dict]:
     ruta = archivo()
     if not ruta.exists():
         return []
-    datos = yaml.safe_load(ruta.read_text(encoding="utf-8")) or {}
+    datos = config.leer_yaml(ruta.read_text(encoding="utf-8")) or {}
     comandos = datos.get("comandos") or []
     return [c for c in comandos if isinstance(c, dict) and c.get("id") and c.get("plantilla")]
 

@@ -33,6 +33,9 @@ class Aviso:
     #: abierta, viendo el detalle, nunca desde la pantalla bloqueada.
     decidir_desde_aviso: bool = False
     titulo: str = "Secretario"
+    #: Si es un recordatorio, su compromiso: el canal puede ofrecer «Hecho» y
+    #: «En 1 h» (C-0407), los mismos dos gestos que tiene en Pendientes.
+    compromiso: int | None = None
 
 
 class SinCanal(RuntimeError):

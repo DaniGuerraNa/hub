@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+{#- Una dirección que no lleva a nada (C-0300). Antes era `{"detail":"Not
+    Found"}`, en inglés y sin raíl: un enlace viejo —de una notificación, del
+    secretario, del historial— dejaba al dueño en una página cruda sin saber
+    por qué ni por dónde seguir. Aquí sale con el raíl y el buscador de arriba. -#}
+{{ ui.cabecera_vista('Aquí no hay nada',
+    'Esta dirección no lleva a ninguna pantalla del hub. Puede ser un enlace viejo, o algo que ya no existe.') }}
+
+<div class="tarjeta" style="max-width:72ch">
+  {% if motivo %}<p style="margin:0 0 8px">{{ motivo }}</p>{% endif %}
+  <p class="mono dato" data-que="ruta" style="margin:0 0 14px;overflow-wrap:anywhere">{{ ruta }}</p>
+  <div class="barra" style="flex-wrap:wrap">
+    <a class="boton principal" href="/">Volver al panorama</a>
+    <span class="tenue">o búscalo con «Buscar», arriba<span class="solo-teclado"> (Ctrl K)</span>.</span>
+  </div>
+</div>
+{% endblock %}

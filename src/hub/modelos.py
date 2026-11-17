@@ -64,10 +64,33 @@ PERMITIDOS = frozenset(
 ESFUERZOS = ("low", "medium", "high", "xhigh", "max")
 ESFUERZO_SESION_ORQUESTADA = "high"
 
+# 🔴 Lo que el hub lanza SÓLO si el dueño lo pide por su nombre (decisión
+# 405, 2026-11-11): *«quería que usara fable 5.2 para una investigación»*.
+# Va aparte de `PERMITIDOS` a propósito: ahí lo heredarían el orquestador
+# (sesiones de proyecto en un modelo que nadie eligió) y `modelos.yml`, y el
+# techo existe para que un modelo por encima sea decisión suya (149). Sólo lo
+# acepta `resolver(…, a_peticion=True)`; `bandera` y `linea_claude`, nunca.
+# Que lo pidió él lo comprueba quien llama, con él en la conversación
+# (`secretario.herramientas._nombrado`). Medido el 11-nov: pide Claude Code
+# 2.1.322; la 2.1.280 lo rechaza (`unrecognized_model`) y su alias `fable`
+# resolvía a 5-1.
+A_PETICION = frozenset({"claude-fable-5-2"})
+
 #: Los alias que acepta `./orq`, para que el orquestador no tenga que saberse
 #: el id. Se traducen aquí al id exacto (decisión 91): el alias nunca llega a
-#: `claude`.
-ALIAS = {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5", "haiku": "claude-haiku-4-5"}
+#: `claude`. `fable` lo traduce el hub y no la CLI por lo mismo: la 2.1.280 lo
+#: mandaba a la 5-1. Que esté aquí no lo deja lanzar: lo para `bandera`.
+ALIAS = {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5", "haiku": "claude-haiku-4-5",
+         "fable": "claude-fable-5-2"}
+
+#: Para qué sirve cada uno, en una línea: lo lee el modelo del secretario al
+#: elegir (405). Es la única descripción; otra lista sería otro catálogo.
+PARA_QUE = {
+    "haiku": "rápido y barato: un dato concreto, una sola fuente",
+    "sonnet": "comparar varias fuentes o resumir algo con matices",
+    "opus": "análisis de verdad: pros y contras, consecuencias, un plan",
+    "fable": "el más capaz, y el que más gasta: sólo si el dueño lo pide por su nombre",
+}
 
 # 🔴 A qué porcentaje de la ventana compacta solo lo que arranca el orquestador
 # (decisión 267). Por omisión Claude Code espera casi al borde: la sesión de
@@ -83,11 +106,25 @@ def entorno_de_sesion() -> dict[str, str]:
     return {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": str(COMPACTAR_AL)}
 
 
-def resolver(modelo: str) -> str:
-    """Alias o id → id exacto, comprobado contra el techo."""
+def resolver(modelo: str, *, a_peticion: bool = False) -> str:
+    """Alias o id → id exacto, comprobado contra el techo. Con `a_peticion`
+    (el dueño lo nombró, 405) vale también uno de `A_PETICION`."""
     modelo = ALIAS.get((modelo or "").strip().lower(), (modelo or "").strip())
+    if a_peticion and modelo in A_PETICION:
+        return modelo
     bandera(modelo)
     return modelo
+
+
+def alias_de(modelo: str) -> str:
+    """El alias de un id exacto («claude-fable-5-2» → «fable»), o "" si no tiene."""
+    return next((a for a, m in ALIAS.items() if m == modelo), "")
+
+
+def legible(modelo: str) -> str:
+    """El id como lo diría una persona: «claude-fable-5-2» → «Fable 5.2»."""
+    partes = (modelo or "").removeprefix("claude-").split("-")
+    return f"{partes[0].capitalize()} {'.'.join(partes[1:])}".strip() if partes[0] else ""
 
 
 def bandera_esfuerzo(esfuerzo: str) -> str:
@@ -106,6 +143,7 @@ def bandera(modelo: str) -> str:
         raise ValueError(
             f"el hub no arranca «{modelo}»: fuera de la política de modelos. "
             f"Permitidos: {', '.join(sorted(PERMITIDOS))}"
+            + (" (ése sólo si el dueño lo pide por su nombre al secretario, 405)" if modelo in A_PETICION else "")
         )
     return f"--model {shlex.quote(modelo)}"
 

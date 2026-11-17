@@ -257,7 +257,8 @@ def test_el_globo_cuenta_solo_lo_nuevo(cliente, con, tmp_path):
 # ── lo demás que se ve ───────────────────────────────────────────────────────
 
 def test_sin_secretario_te_espera_esta_vacio_y_no_crea_su_base():
-    assert api.secretario_asuntos() == {"asuntos": [], "fichas": [], "callados": [], "fallos": [], "nuevas": 0}
+    assert api.secretario_asuntos() == {"asuntos": [], "grupos": [], "fichas": [], "callados": [], "fallos": [],
+                                        "nuevas": 0}
     assert api.secretario_asunto(None, "bloqueo:x:y") is None
     assert not memoria.existe()
 
@@ -322,7 +323,9 @@ def test_el_globo_sale_con_lo_nuevo_del_sondeo_y_se_va_sin_nada(tmp_path):
         previo="nodo('sec-chat').dataset = { cargar: '1' };", accion=accion)
     assert r["errores"] == []
     # El mismo nombre que el bloque al que lleva (C-0231): eran tres para lo mismo.
-    assert ["tras-sondeo", False, "Te espera: 3"] in r["valores"]
+    # «nuevas», como el modo monitor: el bloque al que lleva tiene más, y las
+    # del globo son las que aún no has visto (resto de UI-31, C-0367).
+    assert ["tras-sondeo", False, "Te espera: 3 nuevas"] in r["valores"]
 
     r = ejecutar(CHAT, tmp_path, {"/api/secretario/turnos": {
         "hilo": None, "turnos": [], "espera": {"asuntos": {"nuevas": 0, "total": 5}}}},
@@ -380,7 +383,8 @@ def test_lo_que_pide_un_gesto_va_primero_y_las_fichas_plegadas_aparte(cliente, c
     monkeypatch.setattr(asuntos, "reunir", lambda *a, **k: Reunidos(asuntos=list(lista), fallos=[]))
 
     te = api.secretario_asuntos()
-    assert [a["clase"] for a in te["asuntos"]] == ["relevo", "bloqueo", "canal"]
+    # Lo que sólo él contesta, antes que los bloqueos (C-0368).
+    assert [a["clase"] for a in te["asuntos"]] == ["relevo", "canal", "bloqueo"]
     assert [a["clave"] for a in te["fichas"]] == ["ficha:C-0001", "ficha:C-0002", "ficha:C-0003"]
 
     bloque = cliente.get(VOLVER).text.split('id="te-espera"')[1].split('<div class="rejilla-2">')[0]
@@ -388,6 +392,140 @@ def test_lo_que_pide_un_gesto_va_primero_y_las_fichas_plegadas_aparte(cliente, c
     assert "Resuelve el captcha" in arriba and "C-0001" not in arriba
     assert "3 fichas esperan algo tuyo (3 nuevas)" in plegado and "C-0003" in plegado
     assert '<span class="num">6</span>' in bloque
+
+
+# ── «Te espera» agrupado (C-0368) ────────────────────────────────────────────
+#
+# Medido el 13-nov: 90 filas, 18 de ellas «Compromiso que vence» con el mismo
+# enlace cada una, y lo del canal debajo de 24 filas. Agrupar y contar no es
+# gestión; ordenar por antigüedad o decir cuánto lleva, sí (regla dura 3).
+
+def _asunto(clave, clase, texto="", **kw):
+    from hub.secretario.asuntos import Asunto
+    return Asunto(clave=clave, clase=clase, texto=texto or clave, **kw)
+
+
+def _reunidos(monkeypatch, lista):
+    from hub.secretario.asuntos import Reunidos
+    monkeypatch.setattr(asuntos, "reunir", lambda *a, **k: Reunidos(asuntos=list(lista), fallos=[]))
+
+
+def _te_espera(cliente) -> str:
+    return cliente.get(VOLVER).text.split('id="te-espera"')[1].split('<div class="rejilla-2">')[0]
+
+
+def test_lo_plegable_sale_de_las_listas_de_asuntos():
+    """Qué se pliega no es una tercera lista: lo que ni sólo él contesta ni
+    nace aquí. Si mañana cambian `SOLO_EL` o `PROPIAS`, esto lo dice."""
+    assert set(asuntos.CLASES) - asuntos.SOLO_EL - set(asuntos.PROPIAS) == {"bloqueo", "vence"}
+
+
+def test_los_bloqueos_salen_agrupados_por_proyecto_con_su_cuenta(con, monkeypatch):
+    _reunidos(monkeypatch, [
+        _asunto("bloqueo:tienda:1", "bloqueo", "Falta el dominio", origen="tienda", enlace="/proyecto/tienda"),
+        _asunto("bloqueo:blog:1", "bloqueo", "Falta el tema", origen="blog", enlace="/proyecto/blog"),
+        _asunto("bloqueo:tienda:2", "bloqueo", "Falta el logo", origen="tienda", enlace="/proyecto/tienda")])
+
+    grupos = api.secretario_asuntos()["grupos"]
+
+    assert [(g["clave"], g["n"], g["plegado"]) for g in grupos] == [
+        ("g:bloqueo:tienda", 2, True), ("g:bloqueo:blog", 1, False)]
+    assert grupos[0]["titulo"].endswith("· 2 bloqueos")
+    assert [a["clave"] for a in grupos[0]["asuntos"]] == ["bloqueo:tienda:1", "bloqueo:tienda:2"]
+    assert grupos[0]["enlace"] == "/proyecto/tienda"
+
+
+def test_lo_que_solo_el_contesta_sale_arriba_y_sin_plegar(cliente, con, monkeypatch):
+    _reunidos(monkeypatch, [
+        _asunto("vence:1:2020-01-01", "vence", "Venció: mandar el reporte"),
+        _asunto("bloqueo:tienda:1", "bloqueo", "Falta el dominio", origen="tienda"),
+        _asunto("bloqueo:tienda:2", "bloqueo", "Falta el logo", origen="tienda"),
+        _asunto("vence:2:2020-01-01", "vence", "Venció: llamar al banco"),
+        _asunto("canal:7", "canal", "Una sesión te pregunta por el canal"),
+        _asunto("relevo:1", "relevo", "Resuelve el captcha", id=1)])
+
+    grupos = api.secretario_asuntos()["grupos"]
+
+    assert [g["clase"] for g in grupos] == ["relevo", "canal", "bloqueo", "vence"]
+    assert [g["plegado"] for g in grupos] == [False, False, True, True]
+    bloque = _te_espera(cliente)
+    arriba = bloque.split("<details")[0]
+    assert "Resuelve el captcha" in arriba and "Una sesión te pregunta" in arriba
+    assert "Falta el dominio" not in arriba
+
+
+def test_los_compromisos_que_vencen_son_un_grupo_con_un_solo_enlace(cliente, con):
+    for que in ("Mandar el reporte", "Llamar al banco", "Pagar la luz"):
+        memoria.comprometer(con, que, vence="2020-01-01T15:00:00+00:00")
+
+    [g] = api.secretario_asuntos()["grupos"]
+    bloque = _te_espera(cliente)
+
+    assert (g["clave"], g["n"], g["plegado"], g["enlace"]) == ("g:vence", 3, True, "#compromisos")
+    assert "3 compromisos vencidos o de hoy" in bloque
+    assert bloque.count('href="#compromisos"') == 1
+    assert bloque.count("Ver tus compromisos") == 1
+
+
+def test_un_grupo_con_algo_nuevo_llega_abierto(cliente, con, tmp_path):
+    _proyecto(tmp_path, ["Falta que elijas el dominio", "Falta el logo"])
+
+    assert '<details class="plegado grupo-asuntos" data-clave="g:bloqueo:tienda" open>' in _te_espera(cliente)
+
+    cliente.post("/secretario/asuntos/vista", json={"claves": [a.clave for a in asuntos.reunir(con).asuntos]})
+    bloque = _te_espera(cliente)
+    # Lo ya visto sigue ahí, plegado, con su cuenta.
+    assert '<details class="plegado grupo-asuntos" data-clave="g:bloqueo:tienda">' in bloque
+    assert "La tienda · 2 bloqueos" in bloque
+
+
+def test_la_accion_principal_la_dice_api_y_las_sugerencias_no_son_cta(cliente, con, tmp_path):
+    _proyecto(tmp_path, ["Falta que elijas el dominio"])
+    asuntos.preguntar(con, "¿Publico el catálogo nuevo?", clase="proyecto", origen="tienda")
+    [bloqueo] = [a for a in api.secretario_asuntos()["asuntos"] if a["clase"] == "bloqueo"]
+    [proyecto] = [a for a in api.secretario_asuntos()["asuntos"] if a["clase"] == "proyecto"]
+
+    assert (bloqueo["principal"], proyecto["principal"]) == ("delegar", "contestar")
+    bloque = _te_espera(cliente)
+    assert '<button class="boton aceptar">Te lo delego</button>' in bloque
+    # Lo demás que se le ofrece, en el menú de la fila: no cuatro botones iguales.
+    menu = bloque.split("Te lo delego")[1].split('class="menu-pop"')[1].split("</details>")[0]
+    assert "Anótalo" in menu and "No me lo sugieras más" in menu and "Te lo delego" not in menu
+    # La cian se queda para su sí, no para una sugerencia.
+    assert 'class="boton cta"' not in bloque
+
+
+def test_la_cabecera_de_te_espera_dice_las_nuevas_con_la_cuenta_del_globo(cliente, con, monkeypatch):
+    """UI-31 (C-0367): el globo decía «Te espera: 4» y el bloque «Te espera 77»,
+    y no se sabía cuáles eran las cuatro. La cabecera dice las nuevas con la
+    misma regla que el globo (sin las fichas, `SIN_GLOBO`), y cada fila y cada
+    grupo nuevo llevan su marca."""
+    _reunidos(monkeypatch, [
+        *(_asunto(f"ficha:C-{n:04d}", "ficha", "espera") for n in range(1, 4)),
+        _asunto("bloqueo:tienda:1", "bloqueo", "Falta el dominio", origen="tienda"),
+        _asunto("bloqueo:tienda:2", "bloqueo", "Falta el logo", origen="tienda"),
+        _asunto("canal:7", "canal", "Una sesión te pregunta", estado="vista")])
+
+    te = api.secretario_asuntos()
+    bloque = _te_espera(cliente)
+
+    assert te["nuevas"] == asuntos.recalcular(con)["nuevas"] == 2
+    cabecera = bloque.split("</h2>")[0]
+    # «nuevas», como el globo y el modo monitor: eran «nuevos» aquí y «nuevas» allí.
+    assert '<span class="num">6</span>' in cabecera and "2 nuevas" in cabecera
+    assert "· 2 bloqueos · <span class=\"marca espera\">2 nuevos</span>" in bloque
+
+
+def test_los_plazos_sacados_de_chats_son_una_sola_linea(con, monkeypatch):
+    """SEC2-17 (C-0412): 22 de 35 asuntos eran `vence` del triaje y tapaban lo
+    demás. Cinco plazos y un permiso son dos filas, no seis."""
+    _reunidos(monkeypatch, [*(_asunto(f"vence:{n}:2020-01-0{n}", "vence", f"Venció: plazo {n}")
+                              for n in range(1, 6)),
+                            _asunto("canal:3", "canal", "Una sesión te pregunta por el canal")])
+
+    grupos = api.secretario_asuntos()["grupos"]
+
+    assert [(g["clase"], g["n"]) for g in grupos] == [("canal", 1), ("vence", 5)]
 
 
 # ── una sola regla para delegar: el botón y el modelo (revisión cruzada del 7-nov) ──
@@ -805,4 +943,25 @@ def test_el_globo_de_uno_dice_lo_mismo_que_el_bloque(tmp_path):
         accion="setTimeout(() => registro.valores.push(['uno', nodo('sec-globo').querySelector('[data-globo-texto]')"
                ".textContent]), 5);")
     assert r["errores"] == []
-    assert ["uno", "Te espera: 1"] in r["valores"]
+    assert ["uno", "Te espera: 1 nueva"] in r["valores"]
+
+
+# ── C-0423: el navegante en «Te espera», sólo para verlo y enlazar ───────────
+
+def test_te_espera_enseña_lo_que_el_navegante_tiene_en_pausa_sin_botones_de_aprobar(cliente, con, tmp_path,
+                                                                                      monkeypatch):
+    lab = tmp_path / "navegador-lab"
+    (lab / "aprobaciones").mkdir(parents=True)
+    monkeypatch.setenv("NAV_DATOS", str(lab))
+    (lab / "aprobaciones" / "p1.json").write_text(json.dumps({
+        "id": "p1", "estado": "pendiente", "creada": 1792396186.18, "accion": "DeleteRestApi",
+        "url": "https://apigateway.us-east-1.amazonaws.com/restapis/x?token=sk-abcdefghijklmnop1234567890"}))
+
+    bloque = cliente.get(VOLVER).text.split('id="te-espera"')[1].split('<div class="rejilla-2">')[0]
+
+    assert 'href="/navegante#preguntas"' in bloque
+    assert "DeleteRestApi en apigateway.us-east-1.amazonaws.com" in bloque
+    assert "sk-abcdefghijklmnop" not in bloque and "restapis" not in bloque
+    assert "/navegante/responder" not in bloque, "el permiso se da en /navegante (256)"
+    assert asuntos.ROTULOS["navegante"] in bloque
+    assert [a["clase"] for a in api.secretario_asuntos()["asuntos"]] == ["navegante"]

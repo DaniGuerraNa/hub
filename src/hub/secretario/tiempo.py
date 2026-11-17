@@ -15,13 +15,31 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from ..reloj import a_local, zona
+from ..reloj import a_local, instante, zona
 
-__all__ = ["a_local", "a_utc", "ahora_local", "zona"]
+__all__ = ["a_local", "a_utc", "ahora_local", "dicho_el", "limite_utc", "zona"]
+
+DIAS = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
 
 
 def ahora_local() -> datetime:
     return datetime.now(ZoneInfo(zona()))
+
+
+def dicho_el(iso: str | None) -> str:
+    """Cuándo dijo algo el dueño, como se le pone delante al modelo (C-0272):
+    «Te lo dice el jueves 2026-11-12 a las 16:42, hora de <zona>.», con la
+    zona de `reloj.zona()` (la de la máquina).
+
+    Con el día de la semana, que es lo que hace falta para «el jueves», y la
+    fecha como la piden sus herramientas. Lo que no sea una fecha se toma
+    como ahora: la marca no puede tumbar el turno."""
+    try:
+        momento = instante(iso)
+    except (TypeError, ValueError):
+        momento = instante()
+    local = momento.astimezone(ZoneInfo(zona()))
+    return f"Te lo dice el {DIAS[local.weekday()]} {local:%Y-%m-%d} a las {local:%H:%M}, hora de {zona()}."
 
 
 def a_utc(local: str | None) -> str | None:
@@ -38,3 +56,14 @@ def a_utc(local: str | None) -> str | None:
     if d.tzinfo is None:
         d = d.replace(tzinfo=ZoneInfo(zona()))
     return d.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+def limite_utc(local: str | None, *, fin: bool = False) -> str | None:
+    """Un límite de lo que se busca (`desde`, o `hasta` con `fin`), en hora
+    local → ISO en UTC. Un día sin hora es su principio, o su final con
+    `fin`: las 9 de `a_utc` son para un recordatorio, y como `hasta` dejaban
+    fuera la tarde de ese día (SEC-01)."""
+    texto = (local or "").strip()
+    if len(texto) == 10:
+        texto += "T23:59:59" if fin else "T00:00"
+    return a_utc(texto)

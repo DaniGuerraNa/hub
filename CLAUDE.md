@@ -35,6 +35,13 @@ de la pantalla **Actualizaciones** (`/actualizaciones`), que hace lo mismo que
   `.antes-<fecha>` de cada uno. El asistente lo sembró el hub, no es un
   proyecto del usuario. Correr los pasos a mano para saltarse alguno deja la
   instalación a medias.
+- **Si `actualizar.sh` falla, no vuelvas atrás ni restaures nada por tu
+  cuenta.** Al final dice «Para volver a como estaba»: el commit de antes y
+  dónde quedaron las copias de las bases (`antes-hub-<fecha>.db`,
+  `antes-secretario-<fecha>.db`). Explícale qué falló y qué haría cada
+  opción —arreglar y reintentar, o volver con esos comandos—, y lo decide.
+  Poner una copia en su sitio pisa lo escrito desde entonces: sólo con su sí,
+  y como dice `INSTALAR.md`, «Volver a la versión anterior».
 - **Lo que no haces tú por tu cuenta:** editar el registro (`projects.yml`),
   cambiar guardrails o tocar los repos de sus proyectos. Si una versión
   recomienda cambiar algo ahí, se lo dices y lo decide el usuario.
@@ -79,6 +86,13 @@ de la pantalla **Actualizaciones** (`/actualizaciones`), que hace lo mismo que
 - **Sin dependencias nuevas en el navegador.** Nada de CDN ni de bundler: Jinja,
   formularios normales y JavaScript en `static/`.
 - **Español** en nombres, comentarios, tests y en la interfaz.
+- **El sistema visual manda: la fuente es el `:root` de `templates/base.html`.**
+  Colores, radios (`--r-*`) y escala de letra (`--letra-1…6`) salen de sus
+  tokens, nunca de valores escritos a mano; sin sombras (salvo lo que flota) ni
+  degradados, y una sola acción principal (`.cta`) por región. Un radio
+  literal con el valor de un token, un color fuera de `:root` y cada tamaño de
+  letra o `style=""` escrito a mano de más los para
+  `tests/test_css_componentes.py`, que lleva un tope por archivo que sólo baja.
 
 ### Las reglas de seguridad del código
 

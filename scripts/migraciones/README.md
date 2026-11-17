@@ -10,9 +10,16 @@ al protocolo cuenta como `0.1.0`.
 ## Lo que ya hace `actualizar.sh` siempre, y por tanto NO va aquí
 
 - bajar el código, `uv sync` y el doctor;
+- copiar `hub.db` y la memoria del secretario justo antes de los pasos de
+  versión (`antes-hub-<fecha>.db`, `antes-secretario-<fecha>.db`, en sólo
+  lectura y sin migrar: `copia_base.antes_de_actualizar`). Un paso no hace su
+  propia copia de las bases, y nunca con `cp`;
 - regenerar los units de systemd y reiniciar los que estaban en marcha;
 - poner al día los archivos del asistente desde su semilla;
-- comprobar que el hub contesta y apuntar la versión.
+- comprobar que el hub contesta, que cada servicio reiniciado sigue en marcha
+  y que el muestreo late (`salud.esperar_senal`), y apuntar la versión;
+- si algo falla desde la copia, decir cómo volver: el commit de antes y dónde
+  quedaron las copias. No se deshace nada solo.
 
 ## Lo que sí va aquí
 
@@ -27,7 +34,9 @@ algo que hay que hacer a mano y **parar** si no está hecho.
   paso se vuelve a correr entero.
 - Sale con un código distinto de 0 si no pudo: `actualizar.sh` para ahí.
 - Nunca borra datos de la persona. Si algo se reemplaza, lo de antes queda al
-  lado.
+  lado. Es lo que permite volver a la versión anterior sin deshacerlo: los
+  pasos que ya corrieron no se deshacen (INSTALAR.md, «Volver a la versión
+  anterior»).
 - Lo prueba un test que lo ejecuta contra un `HUB_HOME` temporal.
 
 La 0.2.0, la primera con número, no necesita pasos propios: todo lo que una

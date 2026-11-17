@@ -43,7 +43,7 @@
     };
     return [...document.querySelectorAll(CAMPOS)].some(tocado);
   }
-  let latido = 0;
+  let parar = null;   // el sondeo en marcha (`HubSondeo.cada`), o nada
   let ocupado = false;
 
   async function mirar() {
@@ -53,7 +53,7 @@
     try {
       await window.HubSinRecarga.refrescar();
     } catch (e) {
-      clearInterval(latido); latido = 0;
+      if (parar) { parar(); parar = null; }
       if (window.HubUI) {
         window.HubUI.avisar({ titulo: 'La pantalla dejó de actualizarse',
                              mensaje: `${e.message}. Recarga la página cuando el hub vuelva.` });
@@ -65,13 +65,15 @@
 
   // Arranca si hay algo en marcha y para si ya no. Se repasa tras cada
   // repintado: una acción sin recargar («Grabar») puede empezar algo que antes
-  // no estaba, y la página ya no se carga de nuevo para enterarse.
+  // no estaba, y la página ya no se carga de nuevo para enterarse. Con la
+  // pestaña oculta no pregunta, y al volver mira enseguida (C-0277): mientras
+  // se graba eran repintados de /reuniones cada 5 s que nadie veía.
   function repasar() {
     const raiz = document.querySelector('[data-refrescar]');
-    if (!raiz) { if (latido) { clearInterval(latido); latido = 0; } return; }
-    if (latido) return;
+    if (!raiz) { if (parar) { parar(); parar = null; } return; }
+    if (parar) return;
     const segundos = Math.max(3, parseInt(raiz.dataset.refrescar, 10) || 5);
-    latido = setInterval(mirar, segundos * 1000);
+    parar = window.HubSondeo.cada(mirar, segundos * 1000);
   }
 
   repasar();

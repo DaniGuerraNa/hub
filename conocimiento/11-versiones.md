@@ -16,7 +16,10 @@ enlace a Actualizaciones, y en el menú, **Ajustes** lleva un aviso. El hub lo
 sabe porque pregunta al repo publicado qué etiquetas tiene (`git ls-remote`, no
 baja nada) cada hora y al entrar en Actualizaciones. Es la única
 consulta a internet que hace por su cuenta; si no la quieres, arranca el hub
-con `HUB_BUSCAR_VERSIONES=0`.
+con `HUB_BUSCAR_VERSIONES=0`. Un clon sin remoto (`origin`) no tiene a quién
+preguntar, y la pantalla lo dice así. Si la consulta falla, dice que no se
+pudo consultar y deja lo que contestó git plegado debajo; si lleva más de dos
+horas sin mirarse, lo marca «atrasado» en vez de prometer que mira cada hora.
 
 🔴 **El hub nunca se actualiza solo.** Avisar es información; actualizar lo
 decides tú.
@@ -37,22 +40,49 @@ bash scripts/actualizar.sh
 Las dos formas hacen lo mismo, todo lo que una versión necesita:
 
 - baja el código, y sólo si avanza en línea recta;
+- copia tus bases tal como están, antes de tocarlas;
 - aplica los pasos propios de esa versión;
 - regenera los servicios con tu puerto y tus datos;
 - reinicia lo que estaba en marcha;
 - pone al día el asistente;
-- comprueba que el hub contesta;
+- comprueba que el hub contesta, que lo que reinició sigue en marcha y que el
+  muestreo late;
 - al final te enseña qué cambió.
 
 Tus datos (`~/.local/share/hub/`) no se borran ni se editan. Lo único que
 cambia ahí es lo que la versión necesita: se apunta la versión instalada
 (`version.json`), y la base recibe las tablas o columnas nuevas, sin perder
 lo que tenía. Del asistente se refrescan sus archivos, y cada uno que cambia
-queda al lado con `.antes-<fecha>`.
+queda al lado con `.antes-<fecha>`. Y en `respaldos/` queda la copia de
+`hub.db` y de la memoria del secretario de justo antes de actualizar
+(`antes-hub-<fecha>.db`, `antes-secretario-<fecha>.db`; las tres últimas de
+cada una).
 
 Si algo falla, para ahí y lo dice, y la versión no se da por instalada.
 Arregla lo que diga y vuelve a correrlo: retoma desde el principio sin
 problema. Si ya bajaste el código a mano, usa `--sin-bajar`.
+
+Falla también si, después de reiniciar, el muestreo no late en un minuto o un
+servicio que reinició no sigue en marcha: el hub contestaría, pero sin
+muestreo no se guarda qué ventanas tenías. Si lo que aún no late es el
+secretario, sólo te avisa: su primer latido puede tardar un minuto, y se ve en
+[Máquina](/maquina).
+
+## Volver a la versión de antes
+
+Si falla después de haber empezado a tocar algo, al final te dice **cómo
+volver a como estaba**: el commit exacto en el que estaba tu carpeta antes de
+bajar, y dónde quedaron las copias de tus bases. Son dos comandos:
+
+```bash
+git checkout <commit de antes>
+bash scripts/actualizar.sh --sin-bajar
+```
+
+🔴 **El hub no vuelve atrás solo**, ni pone las copias en su sitio: hacerlo
+pisaría lo que hayas escrito desde entonces. Casi nunca hacen falta; si el hub
+de antes no arranca con la base como quedó, cómo usarlas está en `INSTALAR.md`,
+«Volver a la versión anterior».
 
 ## Dónde está «la carpeta del hub»
 

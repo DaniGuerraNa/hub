@@ -7,12 +7,18 @@
  * Todas devuelven una promesa: `if (await HubUI.confirmar({...}))`.
  */
 (function () {
+  // Cada diálogo se nombra con su título (C-0347): sin `aria-labelledby` un
+  // lector de pantalla anunciaba «diálogo» sin decir cuál. Un id por diálogo:
+  // uno puede abrirse mientras se cierra otro.
+  let dialogos = 0;
   function construir({ titulo, cuerpo, botones }) {
     const dlg = document.createElement('dialog');
+    const id = `hub-dlg-${++dialogos}`;
     dlg.className = 'dlg';
+    dlg.setAttribute('aria-labelledby', id);
     dlg.innerHTML = `
       <form method="dialog">
-        <h3>${titulo || ''}</h3>
+        <h3 id="${id}">${titulo || ''}</h3>
         <div class="dlg-cuerpo">${cuerpo || ''}</div>
         <div class="dlg-pie">${botones}</div>
       </form>`;

@@ -41,8 +41,9 @@ bash scripts/actualizar.sh
 Baja la versión, regenera los servicios, pone al día el asistente, aplica los
 pasos propios de cada versión, reinicia lo que estaba en marcha y te enseña qué
 cambió ([`CHANGELOG.md`](CHANGELOG.md)). Tus datos viven en
-`~/.local/share/hub/`, fuera del repo, y no se tocan. Si algo se ve raro
-después, recarga con **Ctrl+Shift+R**.
+`~/.local/share/hub/`, fuera del repo, y no se tocan; antes de los pasos de
+versión se copian tus bases, y si algo falla te dice cómo volver a la versión
+de antes. Si algo se ve raro después, recarga con **Ctrl+Shift+R**.
 
 El hub te avisa arriba, en todas las pantallas, cuando hay una versión nueva
 publicada; nunca se actualiza solo. Y si hiciste sólo `git pull`, te avisa de
@@ -177,6 +178,8 @@ tenerlo: uv lo descarga solo. `systemd --user` es lo normal para que arranque
 solo, pero sin él también funciona (`--sin-servicios`). Opcionalmente `docker`
 y `rg`. Navegante y Reuniones traen su propio componente y se preparan
 desde su pantalla ([`conocimiento/12`](conocimiento/12-navegante-y-reuniones.md)).
+El Puente KVM, sólo para quien tiene un JetKVM, viene apagado y se enciende en
+la Guía ([`conocimiento/15`](conocimiento/15-puente-kvm.md)).
 El diagnóstico te lo dice todo:
 
 ```bash

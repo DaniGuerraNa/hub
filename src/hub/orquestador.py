@@ -1175,8 +1175,10 @@ def _nueva_espera(tarea: dict, proyecto_id: str, pane_id: str, tipo: str,
 
 
 def _sesiones_de_claude() -> Path:
-    from . import transcripts
-    return transcripts.TRANSCRIPTS.parent / "sessions"
+    # Propia y no la carpeta de al lado de los transcripts (C-0049, C-0082):
+    # con `HUB_TRANSCRIPTS` apuntando a otro sitio, «al lado» ya no es
+    # `~/.claude`, y el estado de las sesiones vivas se buscaría donde no está.
+    return Path.home() / ".claude" / "sessions"
 
 
 def estado_claude(pane_id: str) -> str | None:
@@ -1265,7 +1267,7 @@ def _contexto(cwd: str | None, session_id: str | None) -> int | None:
 
     if not cwd or not session_id:
         return None
-    ruta = transcripts.TRANSCRIPTS / transcripts.slug_de(cwd) / f"{session_id}.jsonl"
+    ruta = transcripts.directorio_de(cwd) / f"{session_id}.jsonl"
     try:
         with ruta.open("rb") as f:
             f.seek(0, 2)
@@ -1442,7 +1444,7 @@ def respuesta(pane_id: str, n: int | None = None) -> dict[str, Any]:
     buscada = marca(tarea["id"], espera["id"])
 
     cwd = next((p["cwd"] for p in tmux.listar_paneles() if p["pane_id"] == pane_id), "")
-    directorios = [transcripts.TRANSCRIPTS / transcripts.slug_de(cwd)] if cwd else []
+    directorios = [transcripts.directorio_de(cwd)] if cwd else []
     desde = _momento(espera["enviado"]).timestamp() - 120
     candidatos = sorted(
         (j for d in directorios if d.is_dir() for j in transcripts.jsonl_de(d)

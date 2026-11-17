@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block pagina %}claude{% endblock %}
+{% block contenido %}
+<h1>Claude en el puente</h1>
+<p class="sub">Qué sabe hacer, qué puede tocar y qué está haciendo. Sale de los archivos que usa de verdad
+  (<code>CLAUDE.md</code>, <code>.claude/skills/</code>, <code>.claude/settings.json</code> y el servidor MCP), no de una lista aparte.</p>
+
+<div class="rejilla-2">
+  <section class="tarjeta">
+    <div class="fila" style="justify-content:space-between">
+      <h2 style="margin:0">Ahora</h2>
+      <span class="placa" id="claude-ahora">…</span>
+    </div>
+    <p class="sub" style="margin:8px 0 10px" id="claude-detalle"></p>
+    <ul class="bitacora" id="claude-eventos" style="max-height:260px">
+      {% for e in actividad %}<li><span class="hora" data-t="{{ e.t }}"></span><span>{{ e.resumen }}</span></li>
+      {% else %}<li class="vacio">Sin actividad todavía. Aparece aquí en cuanto le escribas en la terminal.</li>{% endfor %}
+    </ul>
+  </section>
+
+  <section class="tarjeta">
+    <h2>Qué sabe</h2>
+    <table>
+      <tr><td>Reglas y forma de trabajar</td><td><code>{{ conocimiento.reglas }}</code></td></tr>
+      <tr><td>El entorno del Mac (medido)</td><td>{% if conocimiento.entorno %}<code>{{ conocimiento.entorno }}</code>{% else %}<span class="placa espera">sin medir</span> <span class="sub">lo crea la skill <b>primera-conexion</b></span>{% endif %}</td></tr>
+      <tr><td>Copias traídas del Mac</td><td>{% for f in conocimiento.copias %}<code>{{ f }}</code>{{ ', ' if not loop.last }}{% else %}<span class="sub">ninguna</span>{% endfor %}</td></tr>
+      <tr><td>Notas que ha dejado</td><td>{% for f in conocimiento.notas %}<code>{{ f }}</code>{{ ', ' if not loop.last }}{% else %}<span class="sub">ninguna</span>{% endfor %}</td></tr>
+      <tr><td>Lecturas en el puente</td><td>{% for r in lecturas %}<a href="/lecturas/{{ r.id }}">{{ r.nombre }}</a> {% if r.verificada %}<span class="placa ok">exacta</span>{% endif %}{{ ' ' if not loop.last }}{% else %}<span class="sub">ninguna</span>{% endfor %}</td></tr>
+    </table>
+  </section>
+</div>
+
+<section class="tarjeta" style="margin-top:16px">
+  <div class="fila" style="justify-content:space-between">
+    <h2 style="margin:0">Qué sabe hacer: sus skills</h2>
+    <span class="sub" style="margin:0">Se las pides con tus palabras («revisa esta función, tarda mucho») o por su nombre. «Usar» la deja escrita en la terminal.</span>
+  </div>
+  <div class="skills">
+    {% for s in skills %}
+    <article class="skill">
+      <div class="fila" style="justify-content:space-between">
+        <code class="skill-nombre">/{{ s.nombre }}</code>
+        <button data-usar-skill="{{ s.nombre }}">Usar</button>
+      </div>
+      <p>{{ s.descripcion }}</p>
+      {% if s.acceso %}<p class="skill-acceso"><b>Acceso:</b> {{ s.acceso }}</p>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="tarjeta">
+  <h2>Qué puede tocar</h2>
+  <p class="sub">Los permisos de Claude Code en esta carpeta. Lo que toca el Mac pide <b>además</b> lo del puente: que le hayas dado el control y, para escribir, que hayas aprobado el cambio.</p>
+  {% if permisos.error %}<p class="aviso riesgo">{{ permisos.error }}</p>{% endif %}
+  <div class="permisos">
+    <div><div class="rotulo"><span class="placa ok">sin preguntar</span></div>
+      <ul>{% for r in permisos.allow %}<li>{{ r.texto }}</li>{% endfor %}</ul></div>
+    <div><div class="rotulo"><span class="placa espera">te pregunta en la terminal</span></div>
+      <ul>{% for r in permisos.ask %}<li>{{ r.texto }}</li>{% endfor %}
+        <li class="sub">todo lo demás que no esté en otra lista</li></ul></div>
+    <div><div class="rotulo"><span class="placa riesgo">nunca</span></div>
+      <ul>{% for r in permisos.deny %}<li>{{ r.texto }}</li>{% endfor %}
+        <li>guardar o ejecutar en el Mac (regla de <code>CLAUDE.md</code>)</li>
+        <li>darse el control o aprobarse un cambio (lo impide el puente)</li></ul></div>
+  </div>
+</section>
+
+<section class="tarjeta">
+  <h2>Herramientas del puente</h2>
+  <table>
+    <tr><th>Herramienta</th><th>Qué hace</th><th>Necesita de ti</th><th>Permiso</th></tr>
+    {% for t in herramientas %}
+    <tr>
+      <td><code>{{ t.nombre }}</code></td>
+      <td>{{ t.descripcion }}</td>
+      <td>{% if t.aprobacion %}<span class="placa accion">control + aprobación</span>{% elif t.control %}<span class="placa accion">control</span>{% else %}<span class="sub">nada</span>{% endif %}</td>
+      <td>{% if t.permiso == 'allow' %}<span class="placa ok">libre</span>{% elif t.permiso == 'deny' %}<span class="placa riesgo">nunca</span>{% else %}<span class="placa espera">pregunta</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endblock %}

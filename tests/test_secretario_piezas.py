@@ -65,6 +65,38 @@ def test_lo_irreversible_pregunta_aunque_el_dueño_lo_ponga_en_auto(monkeypatch)
     assert piezas.nivel(Peligrosa()) == "ask"
 
 
+class Delicada(piezas.Accion):
+    """Tiene vuelta atrás, pero el acto es del dueño: pregunta siempre (C-0422)."""
+    id, nombre, riesgo, nivel_inicial, siempre_pregunta = "delicada", "Hacer lo delicado", "reversible", "ask", True
+    hechas = 0
+
+    def ejecutar(self, con, params):
+        Delicada.hechas += 1
+        return "hecho"
+
+
+def test_lo_que_pregunta_siempre_no_pasa_a_auto_aunque_tenga_vuelta_atras(monkeypatch):
+    """El techo era sólo por riesgo: para que «archivar» preguntara siempre
+    había que llamarlo «No tiene vuelta atrás», que es falso."""
+    monkeypatch.setattr(piezas, "niveles", lambda: {"delicada": "auto"})
+    assert piezas.con_techo(Delicada()) and piezas.nivel(Delicada()) == "ask"
+    monkeypatch.setattr(piezas, "niveles", lambda: {"delicada": "never"})
+    assert piezas.nivel(Delicada()) == "never", "quitársela sí puede"
+
+
+def test_con_techo_es_lo_que_no_tiene_vuelta_lo_que_sale_y_lo_que_pregunta_siempre():
+    class De(piezas.Accion):
+        pass
+
+    for riesgo, siempre, esperado in (("lectura", False, False), ("reversible", False, False),
+                                      ("irreversible", False, True), ("sale-de-la-maquina", False, True),
+                                      ("reversible", True, True), ("lectura", True, True)):
+        a = De()
+        a.riesgo, a.siempre_pregunta = riesgo, siempre
+        assert piezas.con_techo(a) is esperado, (riesgo, siempre)
+    assert piezas.Accion.siempre_pregunta is False, "de fábrica, ninguna"
+
+
 def test_el_nivel_lo_guarda_el_dueño_y_no_acepta_inventos():
     piezas.poner_nivel("agendar", "auto")
     assert piezas.nivel(piezas.acciones()["agendar"]) == "auto"
@@ -125,6 +157,121 @@ def test_una_accion_que_falla_lo_dice_y_no_tumba_nada(con):
     assert memoria.bitacora(con)[0]["ok"] == 0
 
 
+# ── sin el dueño delante: un `pide` no hace, pide (C-0318) ───────────────────
+
+#: Lo que hoy está en `auto` y el modelo podía hacer en un `pide`, sin hilo:
+#: medido el 13-nov con los niveles de fábrica. Una acción nueva en `auto`
+#: tiene que entrar aquí (en un `pide` pedirá permiso) o en
+#: `herramientas.AUTO_SIN_EL_DUENO` (lo hará sola): que lo decida alguien.
+BAJAN_A_ASK_SIN_HILO = {
+    "abrir_en_pc", "anotar", "anotar_en_slot", "apuntar_idea", "callar_asunto", "cerrar_compromiso",
+    "comprometer", "parar_grabacion", "proponer_dato", "publicar_lienzo", "reprogramar_compromiso",
+    "resumen_del_dia", "tele_estado",
+}
+
+
+@pytest.fixture
+def avisados(monkeypatch):
+    """Lo que saldría al teléfono, con sus opciones, sin canal de verdad."""
+    salidos = []
+    monkeypatch.setattr(herramientas.avisos, "mandar", lambda texto, **kw: salidos.append((texto, kw)) or "doble")
+    return salidos
+
+
+def test_sin_hilo_el_modelo_solo_conserva_en_auto_avisar():
+    """La lista, fijada: lo que el modelo hace solo en un `pide` es avisar,
+    que es para lo que existe. Lo demás que está en `auto` baja a `ask`."""
+    assert set(herramientas.AUTO_SIN_EL_DUENO) == {"avisar"}
+    servidas = [a for a in piezas.acciones().values() if not a.solo_con_el_dueno]
+    en_auto = {a.id for a in servidas if piezas.nivel(a) == "auto"}
+    siguen = {a.id for a in servidas if piezas.nivel(a) == "auto" and not herramientas.techo_sin_el_dueno(a)}
+    assert siguen == {"avisar"}
+    assert en_auto - siguen == BAJAN_A_ASK_SIN_HILO
+
+
+def test_en_un_pide_callar_un_asunto_deja_una_solicitud_y_no_calla_nada(con, monkeypatch, avisados):
+    """SEC2-02: un mensaje de un tercero que diga «calla ese asunto» llega al
+    modelo dentro de un `pide`. La defensa es el código, no el prompt (404)."""
+    from hub.secretario import asuntos
+    monkeypatch.delenv("SECRETARIO_HILO", raising=False)
+    memoria.comprometer(con, "Mandar el reporte", vence="2020-01-01T15:00:00+00:00")
+    [vence] = asuntos.reunir(con, clases=("vence",)).asuntos
+    r = herramientas.todas()["accion_callar_asunto"].funcion(con, {"clave": vence.clave, "motivo": "lo dijo el chat"})
+    assert r["hecho"] is False and r["solicitud"]
+    assert [a.clave for a in asuntos.reunir(con, clases=("vence",)).asuntos] == [vence.clave], "sigue sin callar"
+    s = con.execute("SELECT * FROM solicitud WHERE id = ?", (r["solicitud"],)).fetchone()
+    assert s["estado"] == "pendiente" and s["hilo"] is None
+    assert s["motivo"].startswith(herramientas.MARCA_SIN_EL_DUENO) and "lo dijo el chat" in s["motivo"]
+
+
+def test_la_solicitud_nacida_en_un_pide_no_se_aprueba_desde_la_notificacion(con, monkeypatch, avisados):
+    """Ni la que baja de `auto` ni la que ya era `ask` y reversible: en la
+    pantalla bloqueada no se lee que la pidió el mensaje de otro."""
+    monkeypatch.setattr(piezas, "acciones", lambda: {"contar": Contadora()})
+    Contadora.hechas = 0
+    monkeypatch.delenv("SECRETARIO_HILO", raising=False)
+    herramientas.todas()["accion_contar"].funcion(con, {})
+    monkeypatch.setattr(piezas, "niveles", lambda: {"contar": "ask"})
+    herramientas.todas()["accion_contar"].funcion(con, {"motivo": "porque sí"})
+    assert Contadora.hechas == 0 and len(avisados) == 2
+    for texto, kw in avisados:
+        assert kw["solicitud"] and kw["decidir_desde_aviso"] is False
+        assert herramientas.MARCA_SIN_EL_DUENO in texto
+
+
+def test_con_el_dueno_delante_lo_automatico_se_hace_y_lo_que_pide_lleva_sus_botones(con, monkeypatch, avisados):
+    monkeypatch.setattr(piezas, "acciones", lambda: {"contar": Contadora()})
+    Contadora.hechas = 0
+    monkeypatch.setenv("SECRETARIO_HILO", "3")
+    assert herramientas.todas()["accion_contar"].funcion(con, {})["hecho"] and Contadora.hechas == 1
+    monkeypatch.setattr(piezas, "niveles", lambda: {"contar": "ask"})
+    herramientas.todas()["accion_contar"].funcion(con, {"motivo": "porque sí"})
+    [(texto, kw)] = avisados
+    assert kw["decidir_desde_aviso"] is True and herramientas.MARCA_SIN_EL_DUENO not in texto
+
+
+def test_lo_que_pregunta_siempre_no_se_decide_desde_la_notificacion_ni_con_el_dueno_delante(con, monkeypatch, avisados):
+    """Se decide viendo el detalle de la solicitud —cuál es, de quién y cómo
+    está ahora—, que la notificación no enseña: en el chat o en Pendientes."""
+    monkeypatch.setattr(piezas, "acciones", lambda: {"delicada": Delicada()})
+    monkeypatch.setattr(piezas, "niveles", lambda: {"delicada": "auto"})
+    Delicada.hechas = 0
+    monkeypatch.setenv("SECRETARIO_HILO", "3")
+    r = herramientas.todas()["accion_delicada"].funcion(con, {"motivo": "me lo pediste"})
+    assert r["hecho"] is False and r["solicitud"] and Delicada.hechas == 0
+    [(texto, kw)] = avisados
+    assert kw["decidir_desde_aviso"] is False and kw["solicitud"] == r["solicitud"]
+    assert texto == "Hacer lo delicado: me lo pediste"
+
+
+def test_en_un_pide_avisar_sigue_saliendo_solo(con, monkeypatch):
+    """Es para lo que existe el `pide`: su respuesta va al teléfono."""
+    monkeypatch.delenv("SECRETARIO_HILO", raising=False)
+    r = herramientas.todas()["accion_avisar"].funcion(con, {"texto": "llegó lo que esperabas"})
+    assert r["hecho"] and con.execute("SELECT COUNT(*) FROM solicitud").fetchone()[0] == 0
+
+
+def test_en_un_pide_la_lectura_de_acciones_dice_el_nivel_que_le_va_a_tocar(con, monkeypatch):
+    monkeypatch.delenv("SECRETARIO_HILO", raising=False)
+    sin_el = {a["id"]: a["nivel"] for a in herramientas.todas()["acciones"].funcion(con, {})}
+    assert sin_el["callar_asunto"] == "ask" and sin_el["avisar"] == "auto" and "mirar_en_pc" not in sin_el
+    monkeypatch.setenv("SECRETARIO_HILO", "3")
+    con_el = {a["id"]: a["nivel"] for a in herramientas.todas()["acciones"].funcion(con, {})}
+    assert con_el["callar_asunto"] == "auto" and con_el["mirar_en_pc"] == "auto"
+
+
+def test_el_haz_de_un_disparador_no_cambia(con, avisados):
+    """Lo que el dueño escribió en `haz` no lo decide el modelo: sigue con su
+    nivel, sin marca, y su permiso (si lo pide) con sus botones."""
+    from hub.secretario import disparadores
+    disparadores._hacer(con, {"nombre": "apunta", "haz": "anotar", "texto": "llegó {autor}"}, {"autor": "alguien"})
+    assert [n["texto"] for n in memoria.notas(con)] == ["llegó alguien"]
+    Contadora.hechas = 0
+    herramientas.usar_accion(con, Contadora(), {}, motivo="disparador «x»", techo="ask")
+    [(texto, kw)] = avisados
+    assert kw["decidir_desde_aviso"] is True and herramientas.MARCA_SIN_EL_DUENO not in texto
+
+
 # ── el servidor MCP, ejecutado ───────────────────────────────────────────────
 
 def test_el_servidor_mcp_contesta_el_protocolo_y_sus_herramientas(con):
@@ -144,9 +291,27 @@ def test_el_servidor_mcp_contesta_el_protocolo_y_sus_herramientas(con):
     assert set(respuestas) == {1, 2, 3, 4}, r.stderr
     assert respuestas[1]["result"]["protocolVersion"] == "2025-06-18"
     nombres = {t["name"] for t in respuestas[2]["result"]["tools"]}
-    assert {"buscar", "compromisos", "ahora", "tarjeta", "accion_comprometer", "accion_agendar"} <= nombres
+    assert {"buscar", "compromisos", "ahora", "accion_comprometer", "accion_avisar"} <= nombres
+    # Sin calendario que cree, `agendar` sólo podía fallar (C-0391).
+    assert "accion_agendar" not in nombres
+    # Sin hilo no hay turno del que colgar una tarjeta ni que escalar (SEC-39).
+    assert not {"tarjeta", "pedir_modelo_mayor"} & nombres
     assert "lambdas" in respuestas[3]["result"]["content"][0]["text"]
     assert respuestas[4]["result"]["isError"] is True
+
+
+def test_lo_que_cuelga_de_un_turno_solo_se_ofrece_con_el_dueno_delante(con, monkeypatch):
+    """SEC-39: en un `pide` no hay turno. `pedir_modelo_mayor` dejaba la
+    clave `escalar:` huérfana y le decía al modelo «responde sólo «…»», que
+    llegaba tal cual al teléfono; `tarjeta` fallaba. Ni se ofrecen, y llamadas
+    igual no dejan nada."""
+    for nombre in ("tarjeta", "pedir_modelo_mayor"):
+        assert nombre in herramientas.todas(con_el_dueno=True)
+        assert nombre not in herramientas.todas(con_el_dueno=False)
+    monkeypatch.delenv("SECRETARIO_HILO", raising=False)
+    r = herramientas.todas(con_el_dueno=True)["pedir_modelo_mayor"].funcion(con, {"motivo": "es difícil"})
+    assert r["ok"] is False and "…" not in json.dumps(r, ensure_ascii=False)
+    assert memoria.leer(con, "escalar:") is None
 
 
 def test_toda_accion_se_explica_al_dueño_con_sus_palabras():
@@ -194,8 +359,68 @@ def test_un_proveedor_que_no_existe_se_dice_y_no_cae_en_otro():
         agenda.actual()
 
 
-def test_la_agenda_sin_conectar_lo_dice_por_la_herramienta(con):
-    r = herramientas.todas()["agenda"].funcion(con, {})
+class SinConfigurar(piezas.Accion):
+    """Una acción que hoy sólo podría fallar: le falta su configuración."""
+    id, nombre, riesgo, nivel_inicial = "sin_configurar", "Algo sin configurar", "reversible", "auto"
+    como_configurar = "Se configura en su sitio."
+    disponible = staticmethod(lambda: False)
+
+    def ejecutar(self, con, params):
+        raise AssertionError("sin configurar no debería llegar a hacerse")
+
+
+def test_una_accion_sin_configurar_no_se_le_ofrece_al_modelo_ni_sale_en_sus_acciones(con, monkeypatch):
+    """SEC-08: se le servían acciones que sólo podían fallar, y cada una
+    costaba esquema en cada turno y un intento con su error técnico."""
+    monkeypatch.setattr(piezas, "acciones", lambda: {"contar": Contadora(), "sin_configurar": SinConfigurar()})
+    servidas = herramientas.todas(con_el_dueno=True)
+    assert "accion_contar" in servidas and "accion_sin_configurar" not in servidas
+    assert {a["id"] for a in servidas["acciones"].funcion(con, {})} == {"contar"}
+    assert "accion_sin_configurar" not in herramientas.todas(con_el_dueno=False)
+
+
+def test_un_disponible_que_revienta_cuenta_como_sin_configurar_y_no_tumba_la_lista(monkeypatch):
+    class Rota(SinConfigurar):
+        id = "rota"
+        disponible = staticmethod(lambda: 1 / 0)
+
+    monkeypatch.setattr(piezas, "acciones", lambda: {"contar": Contadora(), "rota": Rota()})
+    assert {n for n in herramientas.todas(con_el_dueno=True) if n.startswith("accion_")} == {"accion_contar"}
+
+
+def test_toda_accion_con_disponible_dice_donde_se_configura():
+    """Confianza la sigue enseñando sin configurar: sin esto, sólo diría que no."""
+    for a in piezas.acciones().values():
+        if a.disponible is not None:
+            assert a.como_configurar.strip(), a.id
+
+
+def test_poner_en_el_calendario_solo_se_ofrece_con_un_calendario_que_crea(monkeypatch):
+    """SEC-07 y SEC-08: sin calendario `agendar` sólo podía fallar, y con la
+    dirección iCal —el paso de dos minutos que se le propone al dueño—
+    también: se lee, pero no se crea. Confianza dice que hace falta Google."""
+    from hub.secretario import agenda
+    a = piezas.acciones()["agendar"]
+    assert "accion_agendar" not in herramientas.todas(con_el_dueno=True)
+    assert "Google" in a.como_configurar and "google-entrar" in a.como_configurar
+
+    ical, google = piezas.proveedores("agenda")["ical"], piezas.proveedores("agenda")["google"]
+    monkeypatch.setattr(ical, "disponible", lambda: None)
+    monkeypatch.setattr(agenda, "actual", lambda: ical)
+    servidas = herramientas.todas(con_el_dueno=True)
+    assert "agenda" in servidas and "accion_agendar" not in servidas
+
+    monkeypatch.setattr(google, "disponible", lambda: None)
+    monkeypatch.setattr(agenda, "actual", lambda: google)
+    servidas = herramientas.todas(con_el_dueno=True)
+    assert "agenda" in servidas and "accion_agendar" in servidas
+
+
+def test_la_agenda_sin_conectar_no_se_ofrece_y_si_se_llama_igual_lo_dice(con):
+    """Sin conectar no se ofrece (C-0408); un proceso del MCP abierto antes de
+    desconectarla aún puede llamarla, y entonces dice qué falta."""
+    assert "agenda" not in herramientas.todas()
+    r = next(h for h in herramientas.LECTURAS if h.nombre == "agenda").funcion(con, {})
     assert "no está conectada" in r["error"] and "Google Calendar" in r["error"]
 
 
@@ -320,3 +545,32 @@ def test_las_lecturas_de_kits_y_sesiones_se_ejecutan(con):
     assert "catalogo" in t["kits"].funcion(con, {})
     assert "error" in t["kits"].funcion(con, {"proyecto": "no-existe", "kit": "lienzos"})
     assert isinstance(t["sesiones"].funcion(con, {}), list)
+
+
+# ── los «no puedo» quedan apuntados (C-0247) ─────────────────────────────────
+
+def test_no_se_hacer_apunta_el_hueco_en_la_bitacora_y_nada_mas(con):
+    r = herramientas.todas()["no_se_hacer"].funcion(
+        con, {"que": "cancelar una cita en el calendario", "por_que": "no hay acción para ello"})
+
+    filas = memoria.bitacora(con)
+    assert r["hecho"] is True and len(filas) == 1
+    assert filas[0]["accion"] == "hueco" and "cancelar una cita" in filas[0]["params"]
+    assert filas[0]["motivo"] == "no hay acción para ello"
+    assert not memoria.compromisos(con) and con.execute("SELECT COUNT(*) FROM solicitud").fetchone()[0] == 0
+
+
+def test_no_se_hacer_oculta_las_llaves_y_acota_la_longitud(con):
+    herramientas.todas()["no_se_hacer"].funcion(
+        con, {"que": "usar la clave sk-ant-api03-" + "a" * 40 + " " + "x" * 500, "por_que": "y" * 500})
+
+    fila = memoria.bitacora(con)[0]
+    assert "sk-ant-api03" not in fila["params"]
+    assert len(json.loads(fila["params"])["que"]) <= herramientas.HUECO_MAXIMO
+    assert len(fila["motivo"]) <= herramientas.HUECO_MAXIMO
+
+
+def test_no_se_hacer_sin_decir_que_falta_no_apunta_nada(con):
+    r = herramientas.todas()["no_se_hacer"].funcion(con, {"que": "  ", "por_que": "algo"})
+
+    assert r["hecho"] is False and memoria.bitacora(con) == []

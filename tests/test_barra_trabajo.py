@@ -15,6 +15,7 @@ Aquí se fija lo que hace que eso no vuelva.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -674,3 +675,187 @@ def test_las_filas_pintadas_llevan_sus_paneles_y_su_sitio(escena, monkeypatch):
     monkeypatch.setattr(web, "conexion", lambda: db.conectar(Path(ruta)))
     html = TestClient(web.app).get("/trabajo?session=suelta").text
     assert 'data-panes="%3" data-sitio="suelta:0"' in html
+
+
+def test_la_pagina_abre_la_ventana_pulsada_del_slot_aunque_viva_en_otra_sesion(con, monkeypatch):
+    """C-0242: un slot con su ventana en `mesa` y otras en `work`. El
+    enlace de una de `work` abría la terminal en la primera del slot; ahora la
+    terminal (`SESION`/`VENTANA`) y la fila marcada son las pulsadas."""
+    from fastapi.testclient import TestClient
+    from hub import db, web
+    con.execute("INSERT INTO proyecto (id, nombre, asiento) VALUES ('demo','Demo','/tmp/demo')")
+    monkeypatch.setattr(tmux, "servidor_pid", lambda: 100)
+    monkeypatch.setattr(tmux, "rama_git", lambda cwd: None)
+    monkeypatch.setattr(tmux, "listar_paneles", lambda *a, **k: [
+        {"session": "mesa", "window_idx": 0, "pane_idx": 0, "pane_id": "%55",
+         "cwd": "/tmp/demo", "titulo": "✳ Servicio", "comando": "claude", "activo": True},
+        {"session": "work", "window_idx": 5, "pane_idx": 0, "pane_id": "%24",
+         "cwd": "/tmp/demo", "titulo": "✳ Endpoint", "comando": "bash", "activo": True},
+        {"session": "work", "window_idx": 11, "pane_idx": 0, "pane_id": "%29",
+         "cwd": "/tmp/demo", "titulo": "✳ HU-90486", "comando": "bash", "activo": False},
+    ])
+    atr = Atribuidor([Proyecto(id="demo", nombre="Demo", asiento="/tmp/demo")])
+    snapshotter.capturar(con, atr)
+    slot = slots.crear(con, "demo", "Trabajo")
+    for pane in ("%55", "%24", "%29"):
+        slots.vincular(con, pane, slot)
+    snapshotter.capturar(con, atr)
+    ruta = con.execute("PRAGMA database_list").fetchone()[2]
+    monkeypatch.setattr(web, "conexion", lambda: db.conectar(Path(ruta)))
+
+    html = TestClient(web.app).get("/trabajo?session=work&ventana=11").text
+    assert 'const SESION = "work";' in html and "const VENTANA = 11;" in html
+    assert re.search(r'class="ventana-item activa"\s+href="/trabajo\?session=work&(?:amp;)?ventana=11"', html)
+    html = TestClient(web.app).get(f"/trabajo?slot={slot}").text
+    assert 'const SESION = "mesa";' in html and "const VENTANA = 0;" in html
+
+
+# ── «Sin organizar»: el nombre entero y las acciones bajo ⋯ (C-0349) ─────────
+
+def _trabajo_html(con, monkeypatch, url: str) -> str:
+    from fastapi.testclient import TestClient
+    from hub import db, web
+    ruta = con.execute("PRAGMA database_list").fetchone()[2]
+    monkeypatch.setattr(web, "conexion", lambda: db.conectar(Path(ruta)))
+    monkeypatch.setattr(web.api, "ventana_activa", lambda s: 0)
+    return TestClient(web.app).get(url).text
+
+
+def _fila_suelta(html: str, sitio: str) -> str:
+    """El marcado de una fila de «Sin organizar», hasta la siguiente o el final del raíl."""
+    inicio = html.index(f'data-sitio="{sitio}"')
+    fin = min(i for i in (html.find('<div class="fila-suelta"', inicio), html.find("</nav>", inicio)) if i != -1)
+    return html[inicio:fin]
+
+
+def test_ocultar_y_cerrar_una_ventana_suelta_van_bajo_sus_tres_puntos(escena, monkeypatch):
+    """UI-09: «Ocultar» y «Cerrar» iban en fila con `opacity:0`: invisibles,
+    pero se comían 96 px de una fila de 219 y el nombre salía partido en cinco
+    líneas; con el dedo, sin `hover`, se pulsaba un «Cerrar» que no se veía.
+    Ahora van en un menú ⋯, como en el resto del hub, y «Cerrar» sigue por su
+    puerta, con su confirmación (decisión 396)."""
+    html = _trabajo_html(escena, monkeypatch, "/trabajo?session=work")
+    fila = _fila_suelta(html, "suelta:0")
+    assert '<details class="menu der"' in fila
+    menu = fila[fila.index('<details class="menu der"'):]
+    assert 'name="accion" value="ocultar"' in menu
+    assert 'name="accion" value="cerrar_ventana"' in menu
+    cerrar = menu[menu.index('value="cerrar_ventana"') - 900:menu.index('value="cerrar_ventana"')]
+    assert "data-confirmar=" in cerrar and 'name="servidor" value="100"' in menu
+    # Fuera del menú, en la fila, sólo el enlace: nada invisible que ocupe sitio.
+    assert 'class="ocultar-una' not in html
+    assert ".ocultar-una { opacity:0" not in html
+
+
+# ── el selector del teléfono dice lo que se ve (C-0350) ──────────────────────
+
+def _selector(html: str) -> str:
+    return html[html.index('<select id="ir-a"'):html.index("</select>", html.index('<select id="ir-a"'))]
+
+
+def _marcadas(html: str) -> list[str]:
+    """El texto de las opciones marcadas del `select` del teléfono."""
+    return [re.sub(r"\s+", " ", t).strip()
+            for t in re.findall(r"<option[^>]*\bselected\b[^>]*>(.*?)</option>", _selector(html), re.S)]
+
+
+def test_entrar_a_trabajo_sin_pedir_nada_marca_en_el_selector_la_ventana_que_se_ve(escena, monkeypatch):
+    """UI-11: sin nada pedido se enseña la primera sesión, pero sin saber qué
+    ventana: no se marcaba ninguna opción y el teléfono enseñaba la primera de
+    la lista («principal · sin ventana») con la terminal de otra sesión debajo."""
+    html = _trabajo_html(escena, monkeypatch, "/trabajo")
+    assert 'const SESION = "suelta";' in html
+    assert _marcadas(html) == ["Otra · suelta"]
+
+
+def test_una_ventana_que_no_esta_en_la_lista_sale_marcada_como_viendo(escena, monkeypatch):
+    """Oculta (o aún sin muestrear) no sale en «Sin organizar»: el selector lo
+    dice con una primera opción en vez de marcar otra cosa."""
+    slots.ocultar(escena, "suelta", 0)
+    html = _trabajo_html(escena, monkeypatch, "/trabajo?session=suelta&ventana=0")
+    assert _marcadas(html) == ["Viendo: suelta:0 · sin slot"]
+
+
+def test_en_el_selector_los_slots_con_ventana_van_antes_que_los_cerrados(escena, monkeypatch):
+    cerrado = slots.crear(escena, "demo", "aa cerrado")
+    abierto = slots.crear(escena, "demo", "zz abierto")
+    slots.vincular(escena, "%2", abierto)
+    html = _trabajo_html(escena, monkeypatch, f"/trabajo?slot={abierto}")
+    sel = _selector(html)
+    assert sel.index(f"slot={abierto}") < sel.index(f"slot={cerrado}")
+    assert _marcadas(html) == ["zz abierto"]
+
+
+# ── las shells sin usar desde el arranque (C-0352) ───────────────────────────
+
+# Lo que corre AHORA en cada panel de `escena`, como lo diría tmux.
+_EN_VIVO = {("work", 0): [("%1", "claude")], ("work", 1): [("%2", "claude")], ("suelta", 0): [("%3", "bash")]}
+
+
+def _actividad(monkeypatch, comandos=None, reposo=True, **por_sitio):
+    """tmux arrancó en el segundo 1000; cada ventana, su última actividad y,
+    salvo que se diga otra cosa en `comandos`, lo que corre en `_EN_VIVO`.
+    Los pids son de mentira: si la shell está en reposo lo dice `reposo`."""
+    from hub import procesos
+    monkeypatch.setattr(procesos, "shell_en_reposo", lambda pid, shells: reposo)
+    vivos = {**_EN_VIVO, **(comandos or {})}
+    ventanas = {}
+    for s, t in por_sitio.items():
+        clave = (s.split("_")[0], int(s.split("_")[1]))
+        ventanas[clave] = {"actividad": t, "paneles": [
+            {"pane_id": pane, "pid": 10 + i, "comando": cmd} for i, (pane, cmd) in enumerate(vivos[clave])]}
+    monkeypatch.setattr(tmux, "actividad_de_ventanas", lambda: (1000, ventanas))
+
+
+def test_se_ofrece_cerrar_las_shells_sin_actividad_desde_que_arranco_tmux(escena, monkeypatch):
+    """HER-30: tras la restauración vuelven como `bash` las ventanas de todo
+    lo que había. Sólo las que son shell y no han tenido salida desde el
+    arranque: un agente no, y una shell que se usó tampoco."""
+    _actividad(monkeypatch, work_0=1000, work_1=1003, suelta_0=1004)
+    quietas = api.shells_quietas(escena, api.paneles_abiertos(escena))
+    assert [(v["session"], v["ventana"], v["pane_id"]) for v in quietas["ventanas"]] == [("suelta", 0, "%3")]
+    assert quietas["arranque"]
+
+    _actividad(monkeypatch, work_0=1000, work_1=1003, suelta_0=1000 + api.MARGEN_DEL_ARRANQUE + 1)
+    assert api.shells_quietas(escena, api.paneles_abiertos(escena))["ventanas"] == []
+
+
+def test_lo_que_corre_ahora_manda_sobre_lo_que_dijo_la_muestra(escena, monkeypatch):
+    """Revisión cruzada: la muestra decía `bash`, pero tmux dice ahora que
+    corre otra cosa; dentro del margen, la actividad no lo delata."""
+    _actividad(monkeypatch, {("suelta", 0): [("%3", "sleep")]}, suelta_0=1004)
+    assert api.shells_quietas(escena, api.paneles_abiertos(escena))["ventanas"] == []
+
+
+def test_una_shell_que_no_esta_en_reposo_no_se_ofrece(escena, monkeypatch):
+    """tmux dice `bash`, pero ejecuta un guion o tiene algo debajo."""
+    _actividad(monkeypatch, reposo=False, suelta_0=1004)
+    assert api.shells_quietas(escena, api.paneles_abiertos(escena))["ventanas"] == []
+
+
+def test_una_shell_oculta_a_mano_no_se_ofrece(escena, monkeypatch):
+    _actividad(monkeypatch, suelta_0=1000)
+    slots.ocultar(escena, "suelta", 0)
+    assert api.shells_quietas(escena, api.paneles_abiertos(escena))["ventanas"] == []
+
+
+def test_sin_servidor_de_tmux_no_se_ofrece_nada(escena, monkeypatch):
+    monkeypatch.setattr(tmux, "actividad_de_ventanas", lambda: (None, {}))
+    assert api.shells_quietas(escena, api.paneles_abiertos(escena)) == {"ventanas": [], "arranque": ""}
+
+
+def test_trabajo_ofrece_las_shells_quietas_con_casillas_y_confirmacion(escena, monkeypatch):
+    """Ofrecer, no hacer (regla dura 3): ninguna va marcada, el botón pide
+    confirmación y lleva el servidor de la muestra (396)."""
+    _actividad(monkeypatch, work_0=1000, suelta_0=1000)
+    html = _trabajo_html(escena, monkeypatch, "/trabajo?session=work")
+    grupo = html[html.index('<details class="quietas">'):]
+    grupo = grupo[:grupo.index("</details>")]
+    assert "1 shell sin usar desde el arranque" in grupo
+    assert '<form method="post" action="/trabajo/cerrar-quietas"' in grupo and "data-confirmar=" in grupo
+    assert '<input type="checkbox" name="pane_id" value="%3">' in grupo
+    assert "checked" not in grupo
+    assert 'name="servidor" value="100"' in grupo
+
+    _actividad(monkeypatch, work_0=1000, suelta_0=2000)
+    assert '<details class="quietas">' not in _trabajo_html(escena, monkeypatch, "/trabajo?session=work")

@@ -51,6 +51,13 @@ def _texto_reunion(det: dict) -> str:
     return "\n\n".join(p for p in partes if p.strip())
 
 
+def clave_reunion(id_: str) -> str:
+    """El `id_externo` con que una reunión entra en la memoria. Aparte porque
+    la reunión cierra sus compromisos buscando su evento por él (C-0380):
+    escrito en dos sitios, el día que cambiara uno el botón no encontraría nada."""
+    return f"reunion:{id_}"
+
+
 def _fecha_de_id(id_: str) -> str:
     # Los ids de Reuniones son `AAAAMMDD-HHMMSS`, en hora local de quien graba;
     # en la memoria todo va en UTC para poder ordenar fuentes distintas juntas.
@@ -102,7 +109,7 @@ class FuenteHub(Fuente):
                 continue
             if not det.get("resumen"):
                 continue
-            out.append(Evento(fuente=self.id, id_externo=f"reunion:{r['id']}", fecha=_fecha_de_id(r["id"]),
+            out.append(Evento(fuente=self.id, id_externo=clave_reunion(r["id"]), fecha=_fecha_de_id(r["id"]),
                               conversacion="reuniones", autor="Reunión",
                               texto=_texto_reunion(det), enlace=f"/reuniones/{r['id']}"))
             vistas.add(r["id"])

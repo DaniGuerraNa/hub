@@ -34,7 +34,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ... import config, llavero
+from ... import config, llavero, reloj
 from .. import memoria
 from ..piezas import Evento, Fuente, alias_del_dueno, conversacion_admitida, para_mi
 
@@ -56,7 +56,7 @@ TIPOS = {
 
 
 def carpeta() -> Path:
-    return memoria.carpeta() / "whatsapp"
+    return memoria.carpeta(crear=False) / "whatsapp"
 
 
 def secretos() -> Path:
@@ -77,14 +77,6 @@ def _estado() -> dict:
         return json.loads((carpeta() / "estado.json").read_text(encoding="utf-8")) or {}
     except (OSError, ValueError):
         return {}
-
-
-def _hace(segundos: float) -> str:
-    if segundos < 3600:
-        return f"{int(segundos // 60)} min"
-    if segundos < 86400:
-        return f"{int(segundos // 3600)} h"
-    return f"{int(segundos // 86400)} días"
 
 
 #: Los lectores dentro de WhatsApp Web (decisión 331) y qué hay que abrir para que lean.
@@ -176,7 +168,7 @@ class FuenteWhatsapp(Fuente):
         pasado = (datetime.now(timezone.utc) - latido).total_seconds()
         if pasado > LATIDO_MAXIMO:
             detalle = f" ({est['detalle']})" if est.get("detalle") else ""
-            return (f"el colector no está escribiendo desde hace {_hace(pasado)}{detalle}: "
+            return (f"el colector no está escribiendo desde hace {reloj.duracion(pasado)}{detalle}: "
                     f"arráncalo con «{ORDEN} escuchar»")
         return None
 

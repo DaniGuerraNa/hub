@@ -11,15 +11,37 @@
 
 {% call ui.cabecera_vista('Servicios', 'De quién es cada contenedor, antes de parar ninguno.') %}
   {{ ui.filtro_proyecto('/servicios', s.proyectos, proyecto) }}
+  {# Medir otra vez va en la cabecera y con el verbo de Respaldo: en esta
+     pantalla convivían «Refrescar» arriba —que no relee Docker— y
+     «Reescanear» abajo (C-0401). En secundario: se consulta a diario y se
+     mide cuando has levantado algo. #}
+  <form method="post" action="/servicios/escanear" class="enlinea" data-sin-recarga>
+    <button class="sutil">Medir ahora</button>
+  </form>
+{% endcall %}
+
+{# Esta frase la lee alguien que no es quien escribió el hub: no puede afirmar
+   cuántos proyectos hay en SU Docker ni citar por su nombre un repo privado.
+   El porqué, que es lo que vale, se cuenta igual sin ninguna de las dos. #}
+{% call ui.porque('Aquí se para de uno en uno, nunca en lote.') %}
+  <p>En un mismo Docker suelen convivir contenedores de varios proyectos, y saber
+    de quién es cada uno es lo que evita el accidente clásico: un
+    <code>docker stop $(docker ps -q)</code> se los lleva todos por delante.</p>
 {% endcall %}
 
 {# Arrancar, parar o reescanear repinta sólo esto, sin recargar (C-0167). #}
 <div data-region="servicios">
+{# Sobre una lectura que no es de ahora —Docker ausente, mudo o sin lectura
+   nueva desde hace rato— no se dice «corriendo» ni se ofrece accionar nada: se
+   enseña lo que se vio y cuándo (C-0293, reglas duras 12 y 13). #}
+{% set vigente = s.vigente and not docker_mudo %}
+{% set motivo = 'Docker no contestó' if docker_mudo else s.motivo %}
+{% set corrian = 'corriendo' if vigente else ('corrían el ' ~ s.visto if s.visto else 'sin lectura') %}
 <div class="cifras">
   <div class="cifra">{{ ui.placa('pilas', 'neutro') }}
     <b>{{ s.total }}</b><span>contenedores</span></div>
-  <div class="cifra">{{ ui.placa('punto', 'ok') }}
-    <b>{{ s.vivos }}</b><span>corriendo</span></div>
+  <div class="cifra">{{ ui.placa('punto', 'ok' if vigente else 'neutro') }}
+    <b>{{ s.vivos if (vigente or s.total) else '—' }}</b><span>{{ corrian }}</span></div>
   {% if s.sin_atribuir %}
   <div class="cifra urge">{{ ui.placa('aviso', 'riesgo') }}
     <b>{{ s.sin_atribuir | length }}</b><span>sin dueño</span></div>
@@ -27,49 +49,39 @@
 </div>
 
 <div class="barra" style="margin-bottom:6px">
-  {# Reescanear pasa a secundario: se consulta a diario, se reescanea cuando has
-     levantado algo. Lo que ocupa el primer plano debe ser lo que se lee. #}
-  <form method="post" action="/servicios/escanear" class="enlinea" data-sin-recarga>
-    <button class="sutil">Reescanear</button>
-  </form>
-  {% if s.medido_en %}<span class="tenue">Última lectura {{ s.medido_en[:19] | replace('T', ' ') }}</span>{% endif %}
+  {# En la hora de la casa, como «corrían el …»: con la UTC cruda al lado,
+     la misma lectura salía con dos horas distintas en la misma pantalla.
+     1800 s: tres vueltas del ciclo lento sin lectura, lo mismo que deja de
+     dar la tabla por vigente (`api.SERVICIOS_VIGENTES_SEGUNDOS`). #}
+  {% if s.medido_en %}<span class="tenue">Última lectura {{ ui.cuando(s.medido_en, umbral=1800, forma='ambos') }}</span>{% endif %}
 </div>
 
-<p class="tenue" style="margin:14px 0 0;max-width:70ch">
-  {# Esta frase la lee alguien que no es quien escribió el hub: no puede afirmar
-     cuántos proyectos hay en SU Docker ni citar por su nombre un repo privado.
-     El porqué, que es lo que vale, se cuenta igual sin ninguna de las dos. #}
-  En un mismo Docker suelen convivir contenedores de varios proyectos, y saber de
-  quién es cada uno es lo que evita el accidente clásico: un
-  <code>docker stop $(docker ps -q)</code> se los lleva todos por delante. Por eso
-  aquí se para <strong style="color:var(--texto-2)">de uno en uno</strong>, nunca
-  en lote.
-</p>
-
-{% if docker_mudo %}
+{% if docker_mudo or (s.total and not vigente) %}
 <div class="aviso espera">
   {{ ui.placa('aviso', 'espera', 'lg') }}
   <div style="flex:1;min-width:0">
-  <h2>Docker no contestó</h2>
+  <h2>{{ motivo }}</h2>
   <p class="tenue" style="margin:0">
-    Lo de abajo es la última lectura buena{% if s.medido_en %}, del
-    {{ s.medido_en[:19] | replace('T', ' ') }}{% endif %} — no se ha borrado.
-    Un cero se leería como «no tienes contenedores», y lo cierto es que no se pudo
-    preguntar. Comprueba que Docker Desktop esté corriendo.
+    Lo de abajo es la última lectura buena{% if s.visto %}, del {{ s.visto }}{% endif %}:
+    lo que se vio entonces, no lo que hay ahora. No se ha borrado —un cero se
+    leería como «no tienes contenedores», y lo cierto es que no se pudo
+    preguntar—, pero hasta que Docker vuelva a contestar no se ofrece arrancar,
+    parar ni reiniciar nada.{% if s.hay_docker %} Comprueba que Docker Desktop
+    esté corriendo.{% endif %}
   </p>
   </div>
 </div>
-{% elif not hay_docker %}
+{% elif not s.hay_docker %}
   <p class="tenue">Docker no está instalado en este entorno.</p>
 {% elif not s.total %}
-  <p class="tenue">No hay contenedores, o todavía no se ha escaneado. Pulsa «Reescanear».</p>
+  <p class="tenue">No hay contenedores, o todavía no se ha escaneado. Pulsa «Medir ahora».</p>
 {% endif %}
 
 {% if s.sin_atribuir %}
 <div class="aviso espera">
   {{ ui.placa('aviso', 'espera', 'lg') }}
   <div style="flex:1;min-width:0">
-  <h2>{{ s.sin_atribuir | length }} contenedor(es) sin proyecto</h2>
+  <h2>{{ s.sin_atribuir | length }} contenedor{{ 'es' if s.sin_atribuir | length != 1 }} sin proyecto</h2>
   <p class="tenue" style="margin:0">
     Para atribuirlos, añade su prefijo de nombre al campo <code>contenedores:</code>
     del proyecto en <code>projects.yml</code>. Lo que no tiene dueño es lo que lleva
@@ -81,11 +93,11 @@
 
 {% if s.contenedores %}
 <h2 class="con-placa">{{ ui.placa('pilas') }}<span>Contenedores</span>
-  <span class="apunte">{{ s.vivos }} de {{ s.total }} corriendo</span></h2>
+  <span class="apunte">{{ s.vivos }} de {{ s.total }} {{ corrian }}</span></h2>
 <div class="panel">
 {% for c in s.contenedores %}
-  <div class="fila {{ 'apagada' if c.estado != 'running' }}">
-    {{ ui.placa('punto', 'ok' if c.estado == 'running' else 'neutro') }}
+  <div class="fila {{ 'apagada' if c.estado != 'running' or not vigente }}">
+    {{ ui.placa('punto', 'ok' if c.estado == 'running' and vigente else 'neutro') }}
     <span class="pila">
       <span class="etiqueta">{{ c.contenedor }}</span>
       <span class="barra" style="gap:14px;flex-wrap:wrap">
@@ -99,15 +111,19 @@
     </span>
     <span class="der">
       <span class="svc-estado">
-        {{ ui.estado('servicio', c.estado) }}
+        {% if vigente %}{{ ui.estado('servicio', c.estado) }}
+        {% else %}<span class="insignia neutro" title="{{ motivo }}">visto el {{ s.visto }}</span>{% endif %}
         <span class="apunte">{{ c.detalle }}{% if c.estado != 'running' and c.ultima_vez_visto %}
-          · visto {{ c.ultima_vez_visto[:10] }}{% endif %}</span>
+          · visto {{ ui.cuando(c.ultima_vez_visto, forma='dia') }}{% endif %}</span>
       </span>
       {% if c.estado == 'running' %}
-        <button class="sutil accion-svc" data-contenedor="{{ c.contenedor }}" data-accion="restart">Reiniciar</button>
-        <button class="peligro accion-svc" data-contenedor="{{ c.contenedor }}" data-accion="stop">Parar</button>
+        <button class="sutil accion-svc" data-contenedor="{{ c.contenedor }}" data-accion="restart"
+                {% if not vigente %}disabled title="{{ motivo }}"{% endif %}>Reiniciar</button>
+        <button class="peligro accion-svc" data-contenedor="{{ c.contenedor }}" data-accion="stop"
+                {% if not vigente %}disabled title="{{ motivo }}"{% endif %}>Parar</button>
       {% else %}
-        <button class="aceptar accion-svc" data-contenedor="{{ c.contenedor }}" data-accion="start">Arrancar</button>
+        <button class="aceptar accion-svc" data-contenedor="{{ c.contenedor }}" data-accion="start"
+                {% if not vigente %}disabled title="{{ motivo }}"{% endif %}>Arrancar</button>
       {% endif %}
     </span>
   </div>

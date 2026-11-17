@@ -46,7 +46,10 @@ def test_una_herramienta_con_un_gesto_inventado_no_se_puede_crear():
 
 def test_cada_gesto_lo_usa_alguna_herramienta_o_accion():
     """Un gesto que nadie usa es un dibujo que nunca se ve: o sobra, o falta asignarlo."""
-    usados = {h.gesto for h in herramientas.todas().values()}
+    # Todas las que existen: las que sólo se ofrecen con él delante también
+    # se pintan (`pedir_modelo_mayor`, el gesto «escalar»), y las que aún no
+    # están configuradas también (la tele, el gesto «tele»; C-0390).
+    usados = {h.gesto for h in herramientas.catalogo().values()}
     assert set(personaje.GESTOS) == usados
 
 
@@ -213,7 +216,7 @@ def test_mirar_la_espera_sin_orquestador_no_le_crea_carpeta():
 def _sesion_con_subagentes(tmp_path, monkeypatch, cwd: str = "/srv/demo") -> str:
     """Una sesión de Claude Code con tres subagentes: uno trabajando, uno que
     acabó y uno que se calló hace mucho (como quedaron medidos el 6-nov)."""
-    monkeypatch.setattr(transcripts, "TRANSCRIPTS", tmp_path / "projects")
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path / "projects"))
     sesion = "11111111-2222-3333-4444-555555555555"
     carpeta = tmp_path / "projects" / transcripts.slug_de(cwd)
     sub = carpeta / sesion / "subagents"

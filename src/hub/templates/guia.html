@@ -26,10 +26,10 @@
                      color:var(--ok); }
   .paso.siguiente .num { background:color-mix(in srgb, var(--acento) 22%, transparent);
                          color:var(--acento); }
-  .paso h3 { margin:2px 0 4px; font-size:15px; font-weight:600; color:var(--texto);
+  .paso h3 { margin:2px 0 4px; font-size:var(--letra-4); font-weight:600; color:var(--texto);
              display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .paso .estado { font-size:11px; font-weight:500; letter-spacing:.04em;
-                  padding:1px 8px; border-radius:999px; }
+  .paso .estado { font-size:var(--letra-1); font-weight:500; letter-spacing:.04em;
+                  padding:1px 8px; border-radius:var(--r-pildora); }
   .paso.hecho .estado { color:var(--ok); background:color-mix(in srgb, var(--ok) 14%, transparent); }
   .paso.siguiente .estado { color:var(--acento);
                             background:color-mix(in srgb, var(--acento) 14%, transparent); }
@@ -40,7 +40,7 @@
   .paso.hecho p { display:none; }
   .paso.hecho .acciones { margin-top:0; }
   .mapa { display:grid; gap:18px; }
-  .mapa h3 { font-size:11px; text-transform:uppercase; letter-spacing:.09em;
+  .mapa h3 { font-size:var(--letra-1); text-transform:uppercase; letter-spacing:.09em;
              color:var(--texto-3); font-weight:500; margin:0 0 8px; }
   .pantallas { list-style:none; margin:0; padding:0; display:grid; gap:8px;
                grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); }
@@ -50,8 +50,9 @@
   .pantalla .ruta { font-family:ui-monospace, Menlo, Consolas, monospace; font-size:11.5px;
                     color:var(--texto-3); margin-left:6px; }
   .pantalla p { margin:4px 0 6px; font-size:13px; color:var(--texto-2); }
-  .pantalla ul { margin:0; padding-left:18px; font-size:12.5px; color:var(--texto-3); }
+  .pantalla ul { margin:0; padding-left:18px; font-size:var(--letra-2); color:var(--texto-3); }
   .pantalla li { margin:2px 0; }
+  .opcionales-intro { margin:0 0 12px; max-width:70ch; }
 </style>
 
 <div class="guia-cabeza">
@@ -59,7 +60,9 @@
     <h1>Primeros pasos</h1>
     <p class="tenue" style="margin:0;max-width:70ch">
       Lo básico para que el hub empiece a servirte. Cada paso se marca solo en cuanto
-      el hub ve que está hecho{% if rail.hay_asistente %}, y en cualquiera puedes pulsar
+      el hub ve que está hecho{% if rail.voz == 'secretario' %}, y en cualquiera puedes pulsar
+      <strong>Guíame</strong> para que {{ 'el secretario' if rail.secretario_nombre in (none, '', 'Secretario') else rail.secretario_nombre }}
+      te acompañe{% elif rail.hay_asistente %}, y en cualquiera puedes pulsar
       <strong>Guíame</strong> para que el asistente te acompañe{% endif %}.
     </p>
   </div>
@@ -118,5 +121,96 @@
 {# La versión vivía aquí hasta la decisión 296: ahora tiene su pantalla,
    Actualizaciones, con el botón. #}
 
-<script src="/static/guia.js"></script>
+{# Las herramientas opcionales (438): lista cerrada, apagadas de fábrica y
+   por instalación —valen para todos los aparatos, al revés que la interfaz
+   de abajo—. Formulario normal: se encienden y se apagan sin JavaScript. #}
+<section id="opcionales" aria-labelledby="opcionales-titulo">
+<h2 class="con-placa" id="opcionales-titulo">{{ ui.placa('ajustes') }}<span>Herramientas opcionales</span></h2>
+<p class="tenue opcionales-intro">Vienen con el hub, pero sólo le sirven a quien tiene con qué usarlas. Vienen
+  apagadas, y apagada una herramienta no sale en ningún menú. Lo que enciendas aquí vale para todos los aparatos.</p>
+{% for h in g.opcionales %}
+<div class="tarjeta" id="opcional-{{ h.clave }}">
+  <div class="fila">
+    <div class="pila">
+      <strong>{{ h.nombre }}: {{ 'encendido' if h.encendida else 'apagado' }}</strong>
+      <span class="tenue">{{ h.que_es }} {{ h.quien }}</span>
+      {% if h.encendida %}<a href="{{ h.ruta }}">Ir a {{ h.nombre }}</a>{% endif %}
+    </div>
+    <form method="post" action="/opcionales">
+      <input type="hidden" name="clave" value="{{ h.clave }}">
+      <input type="hidden" name="encendida" value="{{ 'no' if h.encendida else 'si' }}">
+      <input type="hidden" name="destino" value="/guia#opcionales">
+      <button class="principal">{{ 'Apagar' if h.encendida else 'Encender' }}</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
+</section>
+
+{% if interfaz is defined and interfaz.disponible %}{# El interruptor de la
+   interfaz nueva (C-0169): por aparato, una cookie y nada más (`POST
+   /interfaz`). Aquí, al pie, porque en la interfaz de siempre no debe
+   estorbar; la nueva trae un enlace a este punto en cada pantalla.
+   Formulario normal: se enciende y se apaga sin JavaScript. El comentario
+   dentro del `if` y el `endif` pegado a lo que sigue, para que quitando el
+   bloque la página salga byte a byte como antes (`test_clasica_identica.py`). #}<section id="interfaz" aria-labelledby="interfaz-titulo">
+<h2 class="con-placa" id="interfaz-titulo">{{ ui.placa('ajustes') }}<span>Interfaz nueva (vista previa)</span></h2>
+<div class="tarjeta">
+  <div class="fila">
+    <div class="pila">
+      {% if interfaz.elegida == 'nueva' %}
+      <strong>Encendida en este aparato</strong>
+      <span class="tenue">Estás viendo el marco nuevo: nueve secciones (en la PC se pliegan con la flecha de arriba) y
+        la barra de abajo en el teléfono. Las pantallas por dentro son las de siempre. Los demás aparatos no cambian.</span>
+      {% else %}
+      <strong>Apagada en este aparato</strong>
+      <span class="tenue">Cambia el marco —la navegación y los colores—, no lo que hace
+        cada pantalla. Se enciende sólo aquí; los demás aparatos siguen igual, y se apaga en este mismo sitio.</span>
+      {% endif %}
+    </div>
+    <form method="post" action="/interfaz">
+      {% if interfaz.elegida == 'nueva' %}
+      <input type="hidden" name="interfaz" value="clasica">
+      <input type="hidden" name="destino" value="/guia#interfaz">
+      <button class="principal">Volver a la de siempre</button>
+      {% else %}
+      <input type="hidden" name="interfaz" value="nueva">
+      <input type="hidden" name="destino" value="/">
+      <button class="principal">Probar la interfaz nueva</button>
+      {% endif %}
+    </form>
+  </div>
+</div>
+{% if interfaz.elegida == 'nueva' %}{# Los colores (fase 1b): un catálogo
+   cerrado, `interfaz.COLORES`. Cada muestra lleva su `data-colores`, así que
+   se pinta con los tokens de verdad de su juego y aquí no hay ni un color
+   escrito. Un formulario normal por juego: se cambia sin JavaScript, y con
+   recarga entera, que es lo que hace falta para que cambie `<html>`. #}
+<div class="tarjeta" id="colores">
+  <div class="pila">
+    <strong>Colores en este aparato</strong>
+    <span class="tenue">Cambian los colores del hub, no lo que hace ni dónde está cada cosa. La terminal
+      conserva los suyos. Los demás aparatos no cambian.</span>
+  </div>
+  <div class="colores-catalogo">
+    {% for clave, juego in interfaz.juegos.items() %}
+    <form method="post" action="/interfaz/colores" class="colores-juego" data-colores="{{ clave }}">
+      <input type="hidden" name="colores" value="{{ clave }}">
+      <input type="hidden" name="destino" value="/guia#colores">
+      <div class="colores-muestra" aria-hidden="true">
+        <span class="colores-linea"></span><span class="colores-linea corta"></span>
+        <span class="colores-fila"><i class="colores-boton"></i><i class="colores-punto espera"></i><i class="colores-punto ok"></i><i class="colores-punto riesgo"></i></span>
+      </div>
+      <div class="fila">
+        <strong>{{ juego.nombre }}</strong>
+        {% if clave == interfaz.colores %}<span class="insignia">En uso</span>
+        {% else %}<button>Usar {{ juego.nombre }}</button>{% endif %}
+      </div>
+    </form>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+</section>
+{% endif %}<script src="/static/guia.js"></script>
 {% endblock %}

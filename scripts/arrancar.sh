@@ -21,11 +21,24 @@ LOGS="$HUB_HOME/logs"
 mkdir -p "$LOGS"
 
 parar() {
+  local parados=""
   for p in web snapshotter; do
     if [ -f "$LOGS/$p.pid" ] && kill -0 "$(cat "$LOGS/$p.pid")" 2>/dev/null; then
+      parados="$parados $(cat "$LOGS/$p.pid")"
       kill "$(cat "$LOGS/$p.pid")" && printf '  ✓ %s parado\n' "$p"
     fi
     rm -f "$LOGS/$p.pid"
+  done
+  [ -n "$parados" ] || return 0
+  # 🔴 `kill` sólo pide que pare: hasta que la web suelta el puerto pasa un
+  # momento, y «--parar y otra vez» (lo que pide actualizar.sh sin systemd)
+  # encontraba el puerto ocupado por ella misma y dejaba el hub apagado.
+  local vivo
+  for _ in $(seq 1 40); do
+    vivo=""
+    for pid in $parados; do kill -0 "$pid" 2>/dev/null && vivo=1; done
+    if [ -z "$vivo" ] && ! (exec 3<>"/dev/tcp/$HUB_HOST/$HUB_PORT") 2>/dev/null; then return 0; fi
+    sleep 0.25
   done
 }
 

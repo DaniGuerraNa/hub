@@ -100,6 +100,11 @@ def test_nadie_en_src_arranca_claude_sin_modelo() -> None:
             # tiene ningún campo con el que se pueda lanzar nada.
             if "Agente(" in linea:
                 continue
+            # El modo «claude» del Puente KVM —quién tiene el teclado del Mac—
+            # es una clave de `puente.CONTROLES` (decisión 438): nombra un
+            # estado que lee, no arranca nada. Sólo ese archivo y esa forma.
+            if archivo == SRC / "puente.py" and re.match(r"""\s*["']claude["']\s*:""", linea):
+                continue
             # La excepción declarada, en el renglón o justo encima —que es donde
             # cae un comentario—. Es lo que la separa de un descuido: se ve con
             # un `grep -rn "modelo: hereda" src/`, y es una lista corta.
@@ -138,3 +143,27 @@ def test_leer_la_linea_entiende_lo_que_escribe_una_persona():
     assert modelos.leer_linea(["claude", "--model=claude-sonnet-5", "--effort=low",
                                "--dangerously-skip-permissions"]) == {
         "modelo": "claude-sonnet-5", "esfuerzo": "low", "permisos": "bypassPermissions"}
+
+
+def test_fable_solo_se_lanza_si_el_dueno_lo_pide_y_nunca_en_una_terminal() -> None:
+    """Decisión 405: `A_PETICION` va aparte del techo. En `PERMITIDOS` lo
+    heredarían el orquestador y `modelos.yml`; sólo `resolver(…, a_peticion=True)`
+    lo deja pasar, y `bandera`/`linea_claude` nunca."""
+    assert not modelos.A_PETICION & modelos.PERMITIDOS
+    assert modelos.resolver("fable", a_peticion=True) == "claude-fable-5-2"
+    for sin_pedir in ("fable", "claude-fable-5-2"):
+        with pytest.raises(ValueError, match="sólo si el dueño lo pide"):
+            modelos.resolver(sin_pedir)
+    with pytest.raises(ValueError):
+        modelos.linea_claude("fable")
+    # Lo de siempre no cambia por pedirlo.
+    assert modelos.resolver("opus", a_peticion=True) == modelos.resolver("opus") == "claude-opus-5-5"
+    with pytest.raises(ValueError):
+        modelos.resolver("claude-fable-5-1", a_peticion=True)
+
+
+def test_cada_alias_dice_para_que_sirve_y_se_lee_como_lo_diria_una_persona() -> None:
+    assert set(modelos.PARA_QUE) == set(modelos.ALIAS)
+    assert [modelos.legible(modelos.ALIAS[a]) for a in ("haiku", "sonnet", "opus", "fable")] == [
+        "Haiku 4.5", "Sonnet 5", "Opus 5.5", "Fable 5.2"]
+    assert modelos.alias_de("claude-fable-5-2") == "fable" and modelos.alias_de("otro") == ""

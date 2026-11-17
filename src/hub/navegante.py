@@ -55,6 +55,22 @@ def pendientes() -> int:
     return sum(1 for r in d.glob("*.json") if (_leer(r) or {}).get("estado") == "pendiente")
 
 
+def guardian_vivo() -> bool:
+    """Si hay un guardián vigilando, mirado sin llamar a `nav`: el guardián deja
+    un archivo por navegador en `vigilancia/` con su `pid`, y vive mientras
+    ese proceso exista. Barato a propósito: lo lee `asuntos` en cada vuelta y
+    `nav resumen` abre un navegador. Sin la carpeta o sin archivo legible, no
+    hay guardián que se sepa."""
+    d = carpeta() / "vigilancia"
+    if not d.is_dir():
+        return False
+    for r in d.glob("*.json"):
+        pid = (_leer(r) or {}).get("pid")
+        if isinstance(pid, int) and pid > 0 and Path(f"/proc/{pid}").exists():
+            return True
+    return False
+
+
 def registro(n: int = 40) -> list[dict]:
     """Las últimas decisiones que importan: lo bloqueado, lo preguntado y lo
     permitido que no era una lectura simple. Leído desde el final, sin cargar el

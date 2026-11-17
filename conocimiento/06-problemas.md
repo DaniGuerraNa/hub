@@ -55,10 +55,30 @@ uv run python -c "import yaml,pathlib; yaml.safe_load(pathlib.Path.home().joinpa
 El error más común es indentar mal un proyecto y dejarlo fuera de la lista
 `proyectos:`.
 
+## Una pantalla tarda y no sé por qué
+
+Cada respuesta que el hub llega a atender (no las que rechaza en la puerta) dice en qué se le fue el tiempo, en la cabecera
+`Server-Timing`: en el navegador, DevTools → Red → la petición → «Timing».
+Desde la terminal:
+
+```bash
+curl -s -D - -o /dev/null localhost:8787/archivos | grep -i server-timing
+```
+
+Sale el total y las funciones más lentas, en milisegundos (sólo sus nombres:
+nunca rutas ni datos). Si una petición pasa de un segundo, la misma lista va
+al final de su línea en `journalctl --user -u hub-web`.
+
+Lo que cuesta leer y casi nunca cambia —el resumen de cada sesión de Claude
+Code, los `kit.yml`— se recuerda mientras el archivo no cambie, así que la
+segunda visita es mucho más rápida que la primera. Cómo se resuelve cada ruta
+de tu registro se recuerda un minuto: si cambias a dónde apunta un enlace que
+declaraste como ruta, Archivos tarda hasta un minuto en verlo.
+
 ## La pantalla de servicios está vacía
 
 O no tienes Docker, o no está corriendo. Si tienes Docker Desktop en Windows,
-tiene que estar abierto. Pulsa **Reescanear** después.
+tiene que estar abierto. Pulsa **Medir ahora** después.
 
 Si Docker no contesta, el hub enseña la última lectura buena y lo dice — no la
 borra.
@@ -129,3 +149,8 @@ y sus permisos viven en archivos aparte y no se tocan.
 bash scripts/desinstalar.sh           # servicios fuera, datos intactos
 bash scripts/desinstalar.sh --datos   # además borra la carpeta de datos del servicio instalado (te dice antes todo lo que se va)
 ```
+
+Si preparaste el Puente KVM, antes quita su servicio, que no es del hub y
+`desinstalar.sh` no toca: `bash scripts/servicio.sh quitar` en
+`componentes/puente-kvm`. Su carpeta de trabajo, con lo leído del Mac, se
+queda (`15-puente-kvm.md`).

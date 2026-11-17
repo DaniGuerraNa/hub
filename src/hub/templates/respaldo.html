@@ -8,7 +8,7 @@
      vistazo sin tener que leerlos uno a uno. */
   .col { text-align:right; font-size:11.5px; color:var(--texto-4); flex:none;
          min-width:96px; line-height:1.35; }
-  .col b { display:block; font-size:17px; font-weight:600; color:var(--texto-2);
+  .col b { display:block; font-size:var(--letra-5); font-weight:600; color:var(--texto-2);
            font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
   .col b.urge { color:var(--riesgo); }
   .col b.espejo { color:var(--texto-4); font-weight:500; }
@@ -39,7 +39,7 @@
       {{ no_medido }}
     {% endif %}
     Las cifras de abajo son la última lectura buena{% if r.medido_en %}, del
-    {{ r.medido_en[:19] | replace('T', ' ') }}{% endif %} — no se han borrado.
+    {{ ui.cuando(r.medido_en, forma='ambos') }}{% endif %} — no se han borrado.
   </div>
 {% endif %}
 
@@ -63,10 +63,23 @@
     <button class="cta" title="Recorre cada repo con git; tarda unos segundos">Medir ahora</button>
   </form>
   <span class="tenue">
-    {% if r.medido_en %}Última medición {{ r.medido_en[:19] | replace('T', ' ') }}
+    {#- 1800 s: tres vueltas del ciclo lento sin lectura (`api.SERVICIOS_VIGENTES_SEGUNDOS`). #}
+    {% if r.ultima_vuelta %}Última medición {{ ui.cuando(r.ultima_vuelta, umbral=1800, forma='ambos') }}
     {% else %}Todavía no se ha medido nada{% endif %}
   </span>
 </div>
+{# Lo que esa vuelta no midió conserva su cifra de antes: se dice cuántos y de
+   cuándo es lo más viejo, en vez de dar todo por medido a esa hora (C-0295,
+   reglas 13 y 19). Fuera de la barra: dentro, sin partirse, sacaba la página
+   de lado en el teléfono (medido a 390 px). #}
+{% if r.de_otra_vuelta %}
+<p class="tenue" data-que="vuelta-incompleta" style="margin:4px 0 0;max-width:70ch">
+  <span class="insignia espera">incompleta</span>
+  {{ r.repos | length - r.de_otra_vuelta }} de {{ r.repos | length }} repos medidos en esa vuelta;
+  el más viejo, del {{ ui.cuando(r.mas_viejo, forma='ambos') }}. Los que no dio tiempo a medir, o cuyo git falló,
+  enseñan su cifra de entonces.
+</p>
+{% endif %}
 
 <p class="tenue" style="max-width:70ch;margin:14px 0 0">
   Esta pantalla existe por el 2026-08-27: se dieron por muertos dos worktrees que
@@ -78,25 +91,72 @@
    hub, que se copia sola cada día (decisión 277). Se dice dónde, porque una
    copia en el mismo disco no sobrevive a ese disco. #}
 {% set cb = r.copia_base %}
-<h2 class="con-placa">{{ ui.placa('escudo', 'riesgo' if cb.vieja else 'ok') }}<span>Los datos del hub</span></h2>
+{% set cm = r.copia_memoria %}
+{# Lo que se sabe de una copia además de su fecha (C-0417): si pasó
+   `quick_check` al hacerla y si llegó a la segunda carpeta, en otro disco.
+   Un fallo de cualquiera de las dos se dice aquí, no sólo en el journal. #}
+{% macro comprobacion(c, que) %}
+  {% if c.comprobada == false %}
+  <span class="tenue" data-que="copia-defectuosa"><span class="insignia riesgo">no pasó la comprobación</span>
+    El último intento de copiar {{ que }} no pasó la comprobación (<code>quick_check</code>): {{ c.defecto }}.
+    No se guardó; se vuelve a intentar sola.</span>
+  {% elif c.comprobada %}
+  <span class="tenue" data-que="copia-comprobada">Comprobada al hacerla.</span>
+  {% endif %}
+  {% if c.extra and c.extra.error %}
+  <span class="tenue" data-que="copia-extra-falla"><span class="insignia riesgo">sin segunda copia</span>
+    No se pudo llevar a la segunda carpeta, <span class="mono">{{ c.extra.carpeta }}</span>: {{ c.extra.error }}.
+    La copia de siempre sí está.</span>
+  {% elif c.extra %}
+  <span class="tenue" data-que="copia-extra">También en otro disco: <span class="mono">{{ c.extra.carpeta }}</span>
+    ({{ c.extra.copias }} {{ 'copia' if c.extra.copias == 1 else 'copias' }}).</span>
+  {% endif %}
+{% endmacro %}
+{% set mal = cb.vieja or cb.comprobada == false or (cb.extra and cb.extra.error)
+             or (cm and (cm.vieja or cm.comprobada == false or (cm.extra and cm.extra.error))) %}
+<h2 class="con-placa">{{ ui.placa('escudo', 'riesgo' if mal else 'ok') }}<span>Los datos del hub</span></h2>
 <div class="panel" data-que="copia-base">
   <div class="fila">
     <span class="pila">
       <span class="etiqueta">
         {% if not cb.ultima %}Todavía no hay ninguna copia de la base
-        {% elif cb.vieja %}La última copia de la base es del {{ cb.ultima | replace('T', ' ') }}: tiene más de dos días
-        {% else %}Copia de la base del {{ cb.ultima | replace('T', ' ') }}{% endif %}
+        {#- 172800 s: la copia es diaria y a los dos días ya es vieja (`copia_base.VIEJA_A_LOS`). #}
+        {% elif cb.vieja %}La última copia de la base es del {{ ui.cuando(cb.ultima, umbral=172800, forma='ambos') }}: tiene más de dos días
+        {% else %}Copia de la base del {{ ui.cuando(cb.ultima, umbral=172800, forma='ambos') }}{% endif %}
       </span>
       <span class="tenue">Slots, notas, canal, programados y encargos sólo viven ahí. Se copia
-        una vez al día y se guardan las {{ cb.conservar }} últimas. Para sobrevivir a un disco muerto,
-        lleva esa carpeta a otro sitio.</span>
+        una vez al día y se guardan las {{ cb.conservar }} últimas.{% if not cb.extra %} Para sobrevivir a un
+        disco muerto, pon una segunda carpeta en otro disco (<code>HUB_RESPALDO_EXTRA</code>, o su ruta en
+        <code>respaldo-extra.txt</code> dentro de la carpeta del hub).{% endif %}</span>
       <span class="mono dato">{{ cb.carpeta }}</span>
+      {{ comprobacion(cb, 'la base') }}
     </span>
     <span class="der">
       <span class="col"><b>{{ cb.copias }}</b>copias</span>
-      {% if cb.tamano %}<span class="col"><b>{{ (cb.tamano / 1048576) | round(1) }}</b>MB la última</span>{% endif %}
+      {% if cb.tamano %}<span class="col"><b>{{ tamano(cb.tamano) }}</b>la última</span>{% endif %}
     </span>
   </div>
+  {# La memoria del secretario: entera, no se reconstruye (decisión 299). Su
+     copia la hace `hub-secretario` en la misma carpeta, y hasta C-0282 no la
+     miraba nadie. Sin secretario en uso, no sale. #}
+  {% if cm %}
+  <div class="fila" data-que="copia-memoria">
+    <span class="pila">
+      <span class="etiqueta">
+        {% if not cm.ultima %}Todavía no hay ninguna copia de la memoria del secretario
+        {% elif cm.vieja %}La última copia de la memoria del secretario es del {{ ui.cuando(cm.ultima, umbral=172800, forma='ambos') }}: tiene más de dos días
+        {% else %}Copia de la memoria del secretario del {{ ui.cuando(cm.ultima, umbral=172800, forma='ambos') }}{% endif %}
+      </span>
+      <span class="tenue">Lo que el secretario recuerda sólo vive en su base. La copia la hace
+        el propio secretario una vez al día, si está en marcha, y se guardan las {{ cm.conservar }} últimas.</span>
+      {{ comprobacion(cm, 'la memoria del secretario') }}
+    </span>
+    <span class="der">
+      <span class="col"><b>{{ cm.copias }}</b>copias</span>
+      {% if cm.tamano %}<span class="col"><b>{{ tamano(cm.tamano) }}</b>la última</span>{% endif %}
+    </span>
+  </div>
+  {% endif %}
 </div>
 
 {% if r.repos %}
@@ -122,6 +182,10 @@
           <span class="insignia neutro" title="Worktrees además del principal">
             +{{ x.worktrees }} worktree{{ 's' if x.worktrees != 1 }}</span>
         {% endif %}
+        {% if x.de_otra_vuelta %}
+          <span class="insignia espera" title="La última medición no llegó a este repo: la cifra es de entonces">
+            medido el {{ ui.cuando(x.medido_en, forma='local') }}</span>
+        {% endif %}
       </span>
       <span class="mono dato" data-que="repo">{{ x.ruta }}</span>
     </span>
@@ -134,7 +198,7 @@
         {% else %}<b class="{{ 'urge' if x.sin_push }}">{{ x.sin_push }}</b>sin push{% endif %}
       </span>
       <span class="col"><b>{{ x.sucios }}</b>sin commitear</span>
-      <span class="col"><b style="font-size:13px">{{ x.ultimo_commit[:10] if x.ultimo_commit else '—' }}</b>último commit</span>
+      <span class="col"><b style="font-size:13px">{{ ui.cuando(x.ultimo_commit, forma='dia') }}</b>último commit</span>
     </span>
   </div>
 {% endfor %}

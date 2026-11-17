@@ -81,6 +81,11 @@ Para el agente, la pantalla va en orden:
 
 En unos segundos la pantalla dice «agente conectado» y ya puedes grabar.
 
+Si usas el secretario, lo que saca de cada reunión («te lo mando mañana») queda
+entre tus compromisos. En la página de una reunión vieja salen los que siguen
+abiertos, y se cierran de una vez: «Darlos por hechos» o «Descartarlos», con
+confirmación. Sólo los de esa reunión.
+
 **Separar las voces** de los demás (Persona 1, Persona 2…) es opcional y pide
 un token de Hugging Face una vez: los pasos están en
 `componentes/reuniones/README.md`, «Separar las voces».
@@ -99,7 +104,9 @@ máquina; lo único que sale es el texto de la transcripción, para el resumen.
   Si dice 401, falta la llave o es una vieja: sácala otra vez.
 - **Actualizar el agente** tras una versión nueva del hub: «Copiar el agente»
   otra vez (no toca la llave), cierra `pythonw.exe` en el Administrador de
-  tareas y abre `instalar.cmd`.
+  tareas y abre `instalar.cmd`. La pantalla compara la versión del agente que
+  llama con la que trae el hub: dice «al día», «hay una versión nueva» (con el
+  botón de copiar) o «falta reiniciarlo» si ya está copiada.
 
 ## Variables
 

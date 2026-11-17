@@ -81,6 +81,27 @@ def test_sin_servidor_no_pisa_la_ultima_muestra_buena(con, atribuidor, monkeypat
     assert perdido is not None and len(perdido["paneles"]) == 3
 
 
+def test_un_servidor_que_muere_entre_las_dos_preguntas_no_pisa_la_muestra_buena(
+        con, atribuidor, monkeypatch):
+    """C-0283, regla dura 4: el PID y los paneles son dos llamadas a tmux. Si
+    el servidor muere entre ellas —justo el corte para el que existe esto—
+    llegaba un PID vivo con la lista vacía: se escribía una muestra sin
+    paneles y al ciclo siguiente se preservaba ésa, la vacía. Un servidor vivo
+    siempre tiene al menos un panel: sin paneles, tmux no ha respondido."""
+    _falsear(monkeypatch, 123, _paneles(3))
+    buena = snapshotter.capturar(con, atribuidor)
+
+    _falsear(monkeypatch, 123, [])
+    assert snapshotter.capturar(con, atribuidor) is None
+    assert con.execute("SELECT MAX(id) FROM snapshot").fetchone()[0] == buena
+
+    _falsear(monkeypatch, None, [])
+    snapshotter.capturar(con, atribuidor)
+    perdido = api.recuperacion_pendiente(con)
+    assert perdido["id"] == buena and len(perdido["paneles"]) == 3
+    assert api.paneles_abiertos(con) == []
+
+
 def test_un_corte_sin_nada_abierto_no_se_anuncia(con, atribuidor, monkeypatch):
     """Reiniciar con la terminal cerrada no pierde nada: no hay nada que avisar."""
     _falsear(monkeypatch, 100, [])
@@ -156,6 +177,28 @@ def test_un_barrido_fallido_no_tumba_el_ciclo(con, atribuidor, monkeypatch):
     _falsear(monkeypatch, 100, _paneles(2))
 
     assert snapshotter.un_ciclo(con) is not None
+
+
+def test_un_registro_que_no_se_sincroniza_no_deja_sin_muestra(con, atribuidor, monkeypatch, capsys):
+    """Un `alias` repetido en las conexiones daba un error de integridad en
+    cada ciclo y, al ir junto a la muestra, no se tomaba ninguna más (regla
+    dura 2). Lo encontró la revisión cruzada de la Tanda 1."""
+    import sqlite3
+
+    from hub import conexiones, registry, terminal
+
+    monkeypatch.setattr(registry, "cargar", lambda *a, **k: [])
+    monkeypatch.setattr(registry, "cargar_conexiones", lambda *a, **k: [])
+    monkeypatch.setattr(terminal, "limpiar_espejos_huerfanos", lambda *a, **k: [])
+    monkeypatch.setattr(conexiones, "sincronizar",
+                        lambda *a, **k: (_ for _ in ()).throw(sqlite3.IntegrityError("alias repetido")))
+    snapshotter._RACHAS_LENTO.clear()
+    _falsear(monkeypatch, 100, _paneles(2))
+
+    assert snapshotter.un_ciclo(con) is not None
+    assert snapshotter.un_ciclo(con) is not None
+    dicho = capsys.readouterr().out
+    assert dicho.count("no se pudo sincronizar las conexiones") == 1   # una vez por racha
 
 
 def test_un_barrido_fallido_se_dice_en_voz_alta(con, atribuidor, monkeypatch, capsys):
@@ -390,3 +433,163 @@ def test_quien_lee_mientras_se_escribe_la_muestra_ve_la_anterior_entera(con, atr
     con.set_trace_callback(None)
     otra.close()
     assert vistos and all(v == ["%0", "%1", "%2"] for v in vistos)
+
+
+def test_un_aviso_repetido_del_ciclo_lento_se_dice_una_vez_por_racha(con, monkeypatch, capsys):
+    from hub import servicios, repos, busqueda, consumo, maquina, copia_base, intercambio, transcribir
+    from hub import version as _version
+    snapshotter._RACHAS_LENTO.clear()
+    docker = {"ausente": True}
+
+    def escanear(con_, proyectos):
+        if docker["ausente"]:
+            raise servicios.NoRespondio("docker no está instalado")
+        return 1
+
+    monkeypatch.setattr(servicios, "escanear", escanear)
+    monkeypatch.setattr(snapshotter.registry, "cargar", lambda: [])
+    for mod, nombre in ((repos, "escanear"), (busqueda, "reindexar"), (consumo, "escanear"),
+                        (maquina, "escanear"), (copia_base, "hacer")):
+        monkeypatch.setattr(mod, nombre, lambda *a, **k: 0)
+    monkeypatch.setattr(_version, "buscar_remota", lambda: None)
+    monkeypatch.setattr(intercambio, "podar_de_paso", lambda: [])
+    monkeypatch.setattr(transcribir, "podar_dictados", lambda: 0)
+
+    for _ in range(3):
+        snapshotter.ciclo_lento(con)
+    salida = capsys.readouterr().out
+    assert salida.count("docker no está instalado") == 1
+
+    docker["ausente"] = False
+    snapshotter.ciclo_lento(con)
+    snapshotter.ciclo_lento(con)
+    salida = capsys.readouterr().out
+    assert salida.count("servicios: vuelve a medirse") == 1
+
+    docker["ausente"] = True
+    snapshotter.ciclo_lento(con)
+    assert capsys.readouterr().out.count("docker no está instalado") == 1
+
+
+def test_dos_latidos_sin_tocar_el_registro_no_lo_reescriben(con, monkeypatch, tmp_path):
+    """C-0275: cada latido reescribía proyectos, rutas y conexiones en
+    autocommit aunque `projects.yml` no hubiera cambiado. Lo único que escribe
+    un latido tranquilo es su muestra."""
+    yml = tmp_path / "projects.yml"
+    yml.write_text(
+        "proyectos:\n  - id: demo\n    nombre: Demo\n    asiento: /tmp/demo\n"
+        "    rutas:\n      - ruta: /tmp/demo-api\n"
+        "conexiones:\n  - alias: vps\n    host: h\n    proyectos: [demo]\n",
+        encoding="utf-8")
+    monkeypatch.setenv("HUB_PROJECTS_YML", str(yml))
+    monkeypatch.setattr(snapshotter.terminal, "limpiar_espejos_huerfanos", lambda: [])
+    _falsear(monkeypatch, 100, _paneles(1))
+    snapshotter.un_ciclo(con)
+
+    escrito = []
+    con.set_trace_callback(lambda sql: escrito.append(sql) if any(
+        t in sql for t in ("proyecto (", "proyecto_ruta", "conexion")) and not
+        sql.lstrip().upper().startswith("SELECT") else None)
+    snapshotter.un_ciclo(con)
+    con.set_trace_callback(None)
+    assert escrito == []
+    assert api.obtener_proyecto(con, "demo")["nombre"] == "Demo"
+
+
+# ── C-0296: el corte se compara con lo de ahora y, si es viejo, se pliega ────
+#
+# Cinco días después del corte la portada seguía diciendo «Se perdió una
+# sesión de trabajo» con 32 paneles a pantalla completa, aunque tmux-continuum
+# ya había devuelto las ventanas. No se archiva ni se oculta nada solo
+# (principio 9): se dice cómo está y, si es de hace más de un día, se pliega.
+
+
+def _muestra_a_mano(con, sid, pid, tomado_en, preservado, ventanas):
+    con.execute("INSERT INTO snapshot (id, tomado_en, server_pid, preservado) VALUES (?,?,?,?)",
+                (sid, tomado_en, pid, preservado))
+    for i, comando in enumerate(ventanas):
+        con.execute("""INSERT INTO panel (snapshot_id, pane_id, session, window_idx, pane_idx,
+                                          cwd, comando, titulo)
+                       VALUES (?,?,?,?,0,'/tmp/demo',?,'')""",
+                    (sid, f"%{sid}{i}", "work", i, comando))
+
+
+def _hace(**delta):
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(**delta)).isoformat(timespec="seconds")
+
+
+def test_el_corte_dice_cuantas_ventanas_devolvio_tmux_y_cuantas_sin_su_claude(con):
+    _muestra_a_mano(con, 1, 100, _hace(days=5), 1, ["claude", "claude", "bash"])
+    _muestra_a_mano(con, 2, 200, _hace(seconds=20), 0, ["bash", "claude", "bash"])
+    perdido = api.recuperacion_pendiente(con)
+    assert perdido["ventanas"] == 3
+    assert perdido["devueltas"] == 3
+    assert perdido["sin_su_agente"] == 1
+    assert perdido["todo_devuelto"] is False
+
+
+def test_un_corte_de_hace_dias_sale_plegado_y_uno_de_hoy_abierto(con):
+    _muestra_a_mano(con, 1, 100, _hace(days=5), 1, ["claude"])
+    assert api.recuperacion_pendiente(con)["abierta"] is False
+    con.execute("UPDATE snapshot SET tomado_en=? WHERE id=1", (_hace(hours=2),))
+    assert api.recuperacion_pendiente(con)["abierta"] is True
+
+
+def test_si_tmux_lo_devolvio_todo_con_su_agente_se_pliega_aunque_sea_de_hoy(con):
+    _muestra_a_mano(con, 1, 100, _hace(hours=1), 1, ["claude", "bash"])
+    _muestra_a_mano(con, 2, 200, _hace(seconds=20), 0, ["claude", "bash"])
+    perdido = api.recuperacion_pendiente(con)
+    assert perdido["todo_devuelto"] is True and perdido["abierta"] is False
+    assert len(perdido["paneles"]) == 2, "la muestra preservada no se toca"
+
+
+def test_la_portada_pliega_un_corte_viejo_y_deja_a_mano_ya_lo_revise(con, tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from hub import db, web
+
+    _muestra_a_mano(con, 1, 100, _hace(days=5), 1, ["claude", "bash"])
+    con.commit()
+    monkeypatch.setattr(web, "conexion", lambda: db.conectar(tmp_path / "hub.db"))
+    html = TestClient(web.app).get("/").text
+    region = html.split('data-region="recuperacion"', 1)[1].split('data-region=', 1)[0]
+    assert "<details" in region and "<details open" not in region
+    assert "Ya lo revisé" in region
+
+
+# ── C-0297: «última actividad» es trabajo del agente, no «hay una ventana» ──
+#
+# Se ponía a «ahora» en todo slot con un panel en la muestra, cada 20 s: una
+# `bash` olvidada, o los slots de encargos sin mensajes desde septiembre,
+# salían como trabajo de hoy y encabezaban la lista (regla dura 13).
+
+
+def _slot_con_panel(con, atribuidor, monkeypatch, comando, titulo):
+    from hub import slots
+
+    panel = {**_paneles(1)[0], "comando": comando, "titulo": titulo}
+    _falsear(monkeypatch, 100, [panel])
+    snapshotter.capturar(con, atribuidor)
+    slot_id = slots.crear(con, "demo", "back", ruta="/tmp/demo")
+    slots.vincular(con, "%0", slot_id)
+    return slot_id
+
+
+def test_una_bash_quieta_en_un_slot_no_le_pone_actividad(con, atribuidor, monkeypatch):
+    slot_id = _slot_con_panel(con, atribuidor, monkeypatch, "bash", "DESKTOP")
+    snapshotter.capturar(con, atribuidor)
+    snapshotter.capturar(con, atribuidor)
+    assert api.paneles_abiertos(con)[0]["slot_id"] == slot_id
+    assert api.obtener_slot(con, slot_id)["ultima_actividad"] is None
+
+
+def test_un_claude_en_reposo_tampoco_y_trabajando_si(con, atribuidor, monkeypatch):
+    slot_id = _slot_con_panel(con, atribuidor, monkeypatch, "claude", "✳ Reposo")
+    monkeypatch.setattr(snapshotter.tui, "ocupado", lambda agente, pane: False)
+    snapshotter.capturar(con, atribuidor)
+    assert api.obtener_slot(con, slot_id)["ultima_actividad"] is None
+
+    monkeypatch.setattr(snapshotter.tui, "ocupado", lambda agente, pane: True)
+    snapshotter.capturar(con, atribuidor)
+    assert api.obtener_slot(con, slot_id)["ultima_actividad"] is not None

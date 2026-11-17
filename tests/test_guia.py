@@ -82,6 +82,18 @@ def test_cada_pantalla_del_raíl_está_en_el_mapa():
     assert raíl and raíl <= en_mapa, raíl - en_mapa
 
 
+def test_cada_pantalla_del_raíl_nuevo_está_en_el_mapa():
+    """El raíl de la interfaz nueva (C-0169) sale de `navegacion.SECCIONES`, no
+    de la plantilla: lo que se añada allí también tiene que estar explicado.
+    Las dos que el mapa cuenta dentro de su pantalla madre se declaran aquí."""
+    from hub import navegacion
+    dentro_de_otra = {"/orquestador/permisos": "se explica en Orquestador",
+                      "/secretario/monitor": "se explica en Secretario"}
+    en_mapa = {p["ruta"] for p in guia.PANTALLAS} | {"/guia"}
+    del_rail = {p["ruta"].split("?")[0] for s in navegacion.SECCIONES for p in s["pantallas"]}
+    assert del_rail - en_mapa == set(dentro_de_otra), del_rail - en_mapa - set(dentro_de_otra)
+
+
 @pytest.fixture
 def cliente(tmp_path, monkeypatch):
     def conexion():
@@ -164,3 +176,61 @@ def test_la_guia_cuenta_los_proyectos_como_el_rail_archivados_incluidos(con, tmp
 
     assert api.rail(con)["total_proyectos"] == 1
     assert _por_id(api.guia(con)["pasos"])["proyecto"]["hecho"] is True
+
+
+# ── Donde la voz es el secretario, no se habla del asistente (C-0355) ────────
+
+def _secretario_como_voz(nombre="Atenea"):
+    """El secretario en todas las pantallas y con su nombre, en el HUB_HOME de
+    pruebas: lo que `api.rail` lee para decidir quién habla."""
+    from hub.secretario import memoria, personaje
+    con = memoria.conectar()
+    try:
+        personaje.nombrar(con, nombre)
+    finally:
+        con.close()
+    (memoria.carpeta() / "secretario.yml").write_text("en_todo_el_hub: true\n", encoding="utf-8")
+
+
+def texto_visible(html: str) -> str:
+    """Lo que se lee en la página: el texto y los rótulos (`title`,
+    `aria-label`, `placeholder`), sin scripts, estilos ni comentarios."""
+    import re
+    rotulos = " ".join(re.findall(r'(?:title|aria-label|placeholder)="([^"]*)"', html))
+    sin = re.sub(r"<(script|style)\b.*?</\1>|<!--.*?-->", " ", html, flags=re.S | re.I)
+    return re.sub(r"<[^>]+>", " ", sin) + " " + rotulos
+
+
+def test_con_el_secretario_como_voz_la_guia_no_manda_a_buscar_al_asistente(cliente):
+    """«Instala el asistente» y «Guíame para que el asistente te acompañe»
+    donde el asistente está retirado: mandaba a buscar algo que no está."""
+    http, conexion = cliente
+    c = conexion()
+    _proyecto(c, "asistente", "asistente")     # declarado, pero retirado
+    _proyecto(c, "mi-app")
+    c.close()
+    _secretario_como_voz()
+
+    pagina = http.get("/guia").text
+    visible = " ".join(texto_visible(pagina).split())
+
+    assert "asistente" not in visible.lower()
+    assert "Conoce a Atenea" in visible and "para que Atenea te acompañe" in visible
+    assert 'data-guiame="Quiero registrar mi primer proyecto' in pagina   # «Guíame» lo abre él
+
+
+def test_con_el_secretario_su_paso_esta_hecho_y_guiame_se_ofrece(con):
+    pasos = _por_id(guia.pasos(api.listar_proyectos(con, incluir_archivados=True), [], [], [], {},
+                               secretario="Atenea"))
+
+    assert "asistente" not in pasos
+    assert pasos["secretario"]["titulo"] == "Conoce a Atenea" and pasos["secretario"]["hecho"] is True
+    assert pasos["proyecto"]["siguiente"] is True and pasos["proyecto"]["pregunta"]
+    assert "a Atenea" in pasos["proyecto"]["como"]
+
+
+def test_con_el_secretario_de_nombre_por_omision_se_le_llama_el_secretario(con):
+    pasos = _por_id(guia.pasos([], [], [], [], {}, secretario="Secretario"))
+
+    assert pasos["secretario"]["titulo"] == "Conoce al secretario"
+    assert "al secretario" in pasos["proyecto"]["como"]

@@ -15,6 +15,12 @@
   .permiso-proy + .permiso-proy { border-top:1px solid var(--borde); }
   .proy-nombre { font-size:12px; color:var(--texto-2); overflow:hidden;
                  text-overflow:ellipsis; white-space:nowrap; }
+  /* Dar acceso a otro proyecto (C-0372): el selector y sus tres acciones,
+     debajo de los que ya tienen algo. */
+  .dar-acceso { display:flex; flex-wrap:wrap; gap:6px 8px; align-items:center; padding:8px 0 4px;
+                border-top:1px solid var(--borde); margin-top:4px; }
+  .dar-acceso > label { font-size:12px; margin:0; }
+  .dar-acceso > select { width:auto; max-width:220px; }
   @media (max-width: 760px) {
     .permiso-proy { grid-template-columns:1fr; gap:3px; }
   }
@@ -25,7 +31,7 @@
   .chip.dado { border-color:transparent;
                background:color-mix(in srgb, var(--ok) 18%, transparent); color:var(--ok); }
   .linea-reg { display:grid; grid-template-columns:150px 70px 1fr; gap:10px;
-               padding:5px 0; border-bottom:1px solid var(--borde); font-size:12.5px; }
+               padding:5px 0; border-bottom:1px solid var(--borde); font-size:var(--letra-2); }
   .linea-reg .cuerpo { color:var(--texto-3); white-space:pre-wrap; word-break:break-word; }
   /* La barra de una sección: el embudo y lo que hay puesto a la izquierda, la
      cuenta a la derecha. Una sola línea, y los mandos dentro del desplegable. */
@@ -44,7 +50,7 @@
   .plegado-permisos > summary { cursor:pointer; list-style:none; display:flex;
       align-items:center; gap:8px; padding:7px 0; font-size:13px; color:var(--texto-2); }
   .plegado-permisos > summary::-webkit-details-marker { display:none; }
-  .plegado-permisos > summary::before { content:'▸'; color:var(--texto-3); font-size:11px; }
+  .plegado-permisos > summary::before { content:'▸'; color:var(--texto-3); font-size:var(--letra-1); }
   .plegado-permisos[open] > summary::before { content:'▾'; }
   .plegado-permisos > summary:hover { color:var(--texto); }
   /* Un `<a>` que hace de botón: mismo aspecto, pero navega en vez de enviar. */
@@ -54,19 +60,13 @@
 {{ ui.cabecera_vista('Canal de consulta',
     'Quién puede responder preguntas de qué proyecto, y todo lo que ha pasado por aquí.') }}
 
-<div class="aviso" style="border-left-color:var(--acento)">
-  {{ ui.placa('conversacion', '', 'lg') }}
-  <div style="flex:1;min-width:0">
-  <h2>Esto no es un canal para mandar instrucciones</h2>
-  <p class="tenue" style="margin:0">
-    Es un canal por el que <strong style="color:var(--texto-2)">Claude pregunta y
-    recibe una respuesta</strong>. Nadie de fuera puede abrir una conversación,
-    mandar un prompt ni ver la salida de un panel: sólo contestar a algo que se le
-    preguntó. El token del bot no está aquí —vive fuera, y de él sólo se guarda un
-    puntero, igual que las conexiones.
-  </p>
-  </div>
-</div>
+{% call ui.porque('Claude pregunta y alguien de fuera contesta; nada más.') %}
+  <p><strong>Esto no es un canal para mandar instrucciones.</strong> Es un canal por
+    el que Claude pregunta y recibe una respuesta. Nadie de fuera puede abrir una
+    conversación, mandar un prompt ni ver la salida de un panel: sólo contestar a
+    algo que se le preguntó. El token del bot no está aquí —vive fuera, y de él
+    sólo se guarda un puntero, igual que las conexiones.</p>
+{% endcall %}
 
 {% if error %}
 <div class="aviso" style="border-left-color:var(--alerta)">
@@ -124,7 +124,7 @@
     <div class="tenue" style="margin-top:6px">
       Últimos:
       {% for a in avisos.ultimos %}
-        <span class="mono">{{ a.avisado[:16] | replace('T', ' ') }}</span>{{ '' if loop.last else ' · ' }}
+        <span class="mono">{{ ui.cuando(a.avisado, forma='local') }}</span>{{ '' if loop.last else ' · ' }}
       {% endfor %}
     </div>
     {% endif %}
@@ -188,7 +188,7 @@
 </p>
 
 {% for u in usuarios %}
-<div class="tarjeta" style="margin-top:10px">
+<div class="tarjeta persona" style="margin-top:10px">
   <div class="fila">
     <div style="flex:1;min-width:0">
       <strong>{{ u.alias or ('@' ~ u.username if u.username else u.user_id) }}</strong>
@@ -204,6 +204,13 @@
       {{ u.estado }}</span>
   </div>
 
+  {# En lectura, con «Editar» (C-0370): un formulario con «Guardar» por persona
+     siempre abierto se leía como algo por hacer. El formulario va entero, sin
+     partirlo: la ruta desmarca al dueño si llega sin `es_dueno`. Quien está
+     pendiente es lo único de aquí que pide algo tuyo: su formulario va fuera
+     de «Editar», a la vista, y así guardar sin activarle no lo cierra (dentro
+     de un plegable, `sin-recarga.js` lo cerraba hasta recargar). #}
+  {% set formulario %}
   {# El alias no es cosmético: el @username lo cambia su dueño cuando quiere, y
      este nombre acaba dentro del marco de la respuesta que lee Claude. #}
   <form method="post" action="/canal/usuario" class="fila" style="margin-top:8px;gap:6px" data-sin-recarga>
@@ -228,6 +235,13 @@
     </label>
     <button class="principal">Guardar</button>
   </form>
+  {% endset %}
+  <div class="fila" style="margin-top:6px;gap:8px">
+    <span class="tenue" style="flex:1;min-width:0">
+      {%- if u.alias %}Le llamas «{{ u.alias }}»{% else %}Sin alias{% endif %} ·
+      {{ 'recibe los avisos' if u.es_dueno else 'no recibe los avisos' }}</span>
+  {% if u.estado == 'pendiente' %}<div style="flex-basis:100%">{{ formulario }}</div>{% else %}{% call ui.editar() %}{{ formulario }}{% endcall %}{% endif %}
+  </div>
 
   {# El tutorial lo manda el propio bot, en la conversación donde va a
      contestar: quien va a usar esto lo usa desde el móvil, así que el sitio
@@ -238,7 +252,7 @@
     <button class="sutil">{{ 'Volver a mandar el tutorial' if u.tutorial and u.tutorial != 'pedido' else 'Mandarle el tutorial' }}</button>
     <span class="tenue" style="font-size:12px">
       {% if u.tutorial == 'pedido' %}en cola, sale en la próxima vuelta del relé
-      {% elif u.tutorial %}enviado el {{ u.tutorial[:10] }}
+      {% elif u.tutorial %}enviado el {{ ui.cuando(u.tutorial, forma='dia') }}
       {% else %}tres mensajes: qué es esto, qué no puede hacer, y cómo se contesta
       {% endif %}
     </span>
@@ -263,25 +277,23 @@
      plegado que no cuenta lo que esconde obliga a abrirlo para saber si hace
      falta abrirlo. #}
   {% set dados = u.permisos | list %}
-  {% set con_algo = dados | map(attribute='proyecto_id') | unique | list %}
   <details class="plegado-permisos">
     <summary>
       {% if dados %}
         <span>{{ dados | length }} permiso{{ 's' if dados | length != 1 }}
-          en {{ con_algo | length }} proyecto{{ 's' if con_algo | length != 1 }}</span>
+          en {{ u.proyectos_con | length }} proyecto{{ 's' if u.proyectos_con | length != 1 }}</span>
         <span class="tenue" style="font-size:12px">
-          {{ (proyectos | selectattr('id', 'in', con_algo) | map(attribute='nombre') | list) | join(' · ') }}
+          {{ u.proyectos_con | map(attribute='nombre') | join(' · ') }}
         </span>
       {% else %}
         <span class="tenue">Sin ningún permiso: no puede responder a nada</span>
       {% endif %}
     </summary>
   <div class="permisos">
-    {% for p in proyectos %}
+    {# Sólo los proyectos donde tiene algo (HER-11, C-0372): con todos, eran
+       35 filas por persona para ver dos. Los demás, en el selector de abajo. #}
+    {% for p in u.proyectos_con %}
       {% set suyos = u.permisos | selectattr('proyecto_id', 'equalto', p.id) | list %}
-      {# Un proyecto sin nada concedido sólo aparece si se le puede conceder: a
-         alguien bloqueado no se le enseñan doce filas de nada. #}
-      {% if suyos or u.estado == 'activo' %}
       <div class="permiso-proy">
         <span class="proy-nombre">{{ p.nombre }}</span>
         <div class="permiso">
@@ -300,8 +312,23 @@
           {% endfor %}
         </div>
       </div>
-      {% endif %}
     {% endfor %}
+    {# Una acción sobre un proyecto, por la misma ruta que cada casilla: el
+       botón pulsado lleva la acción. A alguien que no está activo no se le
+       ofrece nada nuevo. #}
+    {% if u.estado == 'activo' and u.proyectos_sin %}
+    <form method="post" action="/canal/permiso" class="dar-acceso" data-sin-recarga>
+      <input type="hidden" name="user_id" value="{{ u.user_id }}">
+      <label class="tenue" for="dar-acceso-{{ u.user_id }}">Dar acceso a otro proyecto</label>
+      <select name="proyecto_id" id="dar-acceso-{{ u.user_id }}">
+        {% for p in u.proyectos_sin %}<option value="{{ p.id }}">{{ p.nombre }}</option>{% endfor %}
+      </select>
+      <div class="permiso">
+        {% for a in acciones %}<button class="chip" name="accion" value="{{ a }}"
+                title="Conceder «{{ a }}» sobre el proyecto elegido">{{ a }}</button>{% endfor %}
+      </div>
+    </form>
+    {% endif %}
   </div>
   </details>
 </div>
@@ -505,7 +532,7 @@
 
 {% for r in registro %}
 <div class="linea-reg">
-  <span class="tenue mono">{{ r.momento[:19] | replace('T', ' ') }}</span>
+  <span class="tenue mono">{{ ui.cuando(r.momento, forma='local') }}</span>
   <span class="{{ 'urge' if r.direccion == 'falla' }}">{{ r.direccion }}</span>
   <span class="cuerpo">{{ r.detalle }}{% if r.cuerpo %} — {{ r.cuerpo }}{% endif %}</span>
 </div>

@@ -181,6 +181,19 @@ def test_fichas_lista_filtra_y_no_se_cae_por_una_rota(tmp_path):
     assert fichas.listar(tmp_path / "no-existe") == []
 
 
+def test_la_edad_de_una_ficha_cuenta_desde_su_origen_si_lo_tiene():
+    """Una ficha pasada de un documento viejo lleva `abierta` del día en que se
+    pasó; su edad de verdad es la de su `origen` (C-0333)."""
+    hoy = datetime(2026, 11, 13).date()
+    assert fichas.edad({"abierta": "2026-11-02", "origen": "2026-09-22"}, hoy) == 52
+    assert fichas.edad({"abierta": "2026-11-02"}, hoy) == 11
+    assert fichas.desde({"abierta": "2026-11-02", "origen": "2026-09-22"}) == "2026-09-22"
+    # YAML sin comillas da una fecha, no un texto: vale igual.
+    assert fichas.edad({"abierta": datetime(2026, 11, 2).date()}, hoy) == 11
+    assert fichas.edad({}, hoy) is None
+    assert fichas.edad({"abierta": "no es una fecha"}, hoy) is None
+
+
 # ── la entrega: el chat entero, el teléfono sólo la primera línea ────────────
 
 def test_con_en_chat_el_texto_va_al_chat_y_al_telefono_solo_su_primera_linea(con):
@@ -563,3 +576,12 @@ def test_un_fallo_que_no_es_del_modelo_no_deja_al_personaje_trabajando_para_siem
     assert memoria.leer(con, f"turno_en_curso:{conversacion.hilo_abierto(con)['id']}") is None
     [b] = memoria.bitacora(con)
     assert b["ok"] == 0 and "database is locked" in b["resultado"], "y el parte lo cuenta en «Falló»"
+
+
+def test_el_parte_dice_donde_se_cierran_los_vencidos(con):
+    """SEC-34 (C-0373): los vencidos se acumulaban. El parte ya los contaba;
+    ahora dice dónde se repasan de una vez. Nada se cierra solo."""
+    memoria.comprometer(con, "Revisar PRs", vence="2020-01-01T15:00:00+00:00")
+    t = resumen.del_dia(con, datetime(2026, 10, 26, 8, 30, tzinfo=timezone.utc), noche=True)
+    assert "Vencidos: 1\n· Revisar PRs\nSe cierran de una vez en Pendientes, «Vencidos o de hoy»." in t
+    assert memoria.compromisos(con, "abierto")[0]["que"] == "Revisar PRs"

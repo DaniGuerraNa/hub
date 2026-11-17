@@ -16,6 +16,7 @@ reproduce el accidente que este módulo existe para prevenir.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import shutil
@@ -23,6 +24,7 @@ import sqlite3
 import subprocess
 from datetime import datetime, timezone
 
+from . import db
 from .models import Proyecto
 
 TIEMPO_LIMITE = 20
@@ -116,29 +118,34 @@ def escanear(con: sqlite3.Connection, proyectos: list[Proyecto]) -> int:
     }
 
     contenedores = listar()  # si lanza, la tabla anterior queda intacta
-    con.execute("DELETE FROM servicio")
-    for c in contenedores:
-        nombre = c.get("nombre", "")
-        if not nombre:
-            continue
-        vivo = c.get("estado") == "running"
-        con.execute(
-            """INSERT INTO servicio (contenedor, proyecto_id, imagen, estado, detalle,
-                                     creado, ultima_vez_visto, medido_en)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (
-                nombre,
-                atribuir(nombre, proyectos),
-                c.get("imagen", ""),
-                c.get("estado", ""),
-                c.get("detalle", ""),
-                c.get("creado", ""),
-                # Sólo cuenta como "visto" cuando está corriendo: un contenedor
-                # parado sigue listado, pero no se está usando.
-                ahora if vivo else previos.get(nombre),
-                ahora,
-            ),
-        )
+    # En una transacción (C-0429): el ciclo lento escribe desde su hilo y la
+    # web lee desde otro proceso; en autocommit, entre el DELETE y los INSERT
+    # quien leyera veía la tabla vacía. En WAL, el lector ve lo de antes,
+    # entero, hasta el COMMIT. Si quien llama ya tiene una abierta, en la suya.
+    with contextlib.nullcontext() if con.in_transaction else db.transaccion(con):
+        con.execute("DELETE FROM servicio")
+        for c in contenedores:
+            nombre = c.get("nombre", "")
+            if not nombre:
+                continue
+            vivo = c.get("estado") == "running"
+            con.execute(
+                """INSERT INTO servicio (contenedor, proyecto_id, imagen, estado, detalle,
+                                         creado, ultima_vez_visto, medido_en)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (
+                    nombre,
+                    atribuir(nombre, proyectos),
+                    c.get("imagen", ""),
+                    c.get("estado", ""),
+                    c.get("detalle", ""),
+                    c.get("creado", ""),
+                    # Sólo cuenta como "visto" cuando está corriendo: un contenedor
+                    # parado sigue listado, pero no se está usando.
+                    ahora if vivo else previos.get(nombre),
+                    ahora,
+                ),
+            )
     return len(contenedores)
 
 

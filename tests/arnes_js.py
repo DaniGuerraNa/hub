@@ -166,6 +166,9 @@ global.getComputedStyle = () => ({
   fontFamily: 'monospace', fontSize: '13px', fontWeight: '400',
   fontStyle: 'normal', fontVariant: 'normal', fontFeatureSettings: 'normal',
   letterSpacing: 'normal', width: '800px', font: '',
+  // Los tokens de `:root` que lea la página (C-0403: el tema de la terminal).
+  // `TOKENS` lo fija el test; sin él, como un navegador que no los tiene.
+  getPropertyValue: (nombre) => (globalThis.TOKENS || {})[nombre] || '',
 });
 global.location = { protocol: 'http:', host: 'localhost', href: '' };
 global.innerWidth = 1600;
@@ -230,11 +233,46 @@ global.__sockets = [];
 // los ~40 ms, así que un reintento a 1 s no llega a ejecutarse nunca: sin esto,
 // «¿sigue reintentando?» no se puede comprobar sin dormir un segundo en cada
 // test. Se registra y se delega — no es un reloj falso.
+//
+// 🔴 Hasta que el registro sale. Después, lo que quedaba pendiente se ejecuta
+// ADELANTANDO el reloj (`_adelantarElReloj`), en orden de vencimiento y cada
+// uno en su propia vuelta, con sus microtareas entre medias. Antes node seguía
+// vivo hasta que vencía el último: el aviso que se va a los 5 s costaba 5,5 s
+// de reloj por test, y lo único que se ganaba esperando —que un error en ese
+// temporizador tardío tumbe el test— se conserva igual (C-0325).
 const _setTimeout = global.setTimeout;
+const _clearTimeout = global.clearTimeout;
+const _pendientes = new Map();
+let _adelanto = 0;
+const _ahora = () => performance.now() + _adelanto;
 global.setTimeout = function (fn, ms, ...resto) {
   registro.temporizadores.push(ms || 0);
-  return _setTimeout(fn, ms, ...resto);
+  const asa = _setTimeout(() => { _pendientes.delete(asa); fn(...resto); }, ms);
+  _pendientes.set(asa, { fn, resto, vence: _ahora() + (ms || 0) });
+  return asa;
 };
+global.clearTimeout = (asa) => { _pendientes.delete(asa); _clearTimeout(asa); };
+// La hora avanza con el reloj adelantado: hay pantallas que deciden por el
+// tiempo pasado (el chat del secretario da por apagado al que no contesta en 5 s).
+const _dateNow = Date.now;
+Date.now = () => _dateNow() + _adelanto;
+// Con tope: un sondeo que se reprograma sin fin seguiría a su ritmo de verdad
+// pasadas estas vueltas, como antes de adelantar, en vez de colgar aquí.
+// El siguiente se elige DENTRO de la vuelta: lo que programen las microtareas
+// del anterior ya está apuntado y puede vencer antes.
+function _adelantarElReloj(vueltas) {
+  if (vueltas <= 0) return;
+  setImmediate(() => {
+    if (!_pendientes.size) return;
+    let [asa, siguiente] = _pendientes.entries().next().value;
+    for (const [a, t] of _pendientes) if (t.vence < siguiente.vence) [asa, siguiente] = [a, t];
+    _pendientes.delete(asa);
+    _clearTimeout(asa);
+    _adelanto += Math.max(0, siguiente.vence - _ahora());
+    siguiente.fn(...siguiente.resto);
+    _adelantarElReloj(vueltas - 1);
+  });
+}
 global.WebSocket = class {
   static OPEN = 1;
   constructor(url) { this.url = url; this.readyState = 0;
@@ -330,7 +368,10 @@ try {
 setTimeout(() => {
   // Lo que el test quiera provocar una vez la página ya arrancó.
   try { __ACCION__ } catch (e) { registro.errores.push('accion: ' + String(e)); }
-  setTimeout(() => console.log(JSON.stringify(registro)), 20);
+  setTimeout(() => {
+    console.log(JSON.stringify(registro));
+    _adelantarElReloj(1000);
+  }, 20);
 }, 20);
 """
 
@@ -370,6 +411,40 @@ def scripts_en_linea(html: str) -> list[str]:
 def script_estatico(nombre: str) -> str:
     """El JS que vive en `static/`. Se prueba igual: ejecutándolo (regla dura 11)."""
     return (ESTATICOS / nombre).read_text(encoding="utf-8")
+
+
+# Un micrófono como el del navegador, para cazar los que se quedan abiertos
+# (C-0427). Abrirlo tarda (el permiso, el aparato): 3 ms, para que quepa un
+# doble clic o salir del modo voz mientras tanto. Cada apertura suma en
+# `registro.microfonos` y cada pista viva en `registro.pistas_vivas`, que sólo
+# baja con su `stop()`. Y `MediaRecorder.stop()` entrega el último trozo y el
+# evento `stop` en OTRA tarea, como el de verdad. Los dobles de antes daban
+# `getTracks: () => []` y paraban en la misma tarea: un micrófono que nadie
+# cerraba no se veía. Con `FALLA_START` puesto, `start()` lanza.
+MICROFONO_VIVO = """
+  registro.pistas_vivas = 0; registro.microfonos = 0;
+  navigator.mediaDevices = { getUserMedia: (r) => new Promise((ok) => setTimeout(() => {
+    registro.microfonos += 1; registro.pistas_vivas += 1;
+    let viva = true;
+    const pista = { kind: 'audio', getSettings: () => ({}),
+                    stop() { if (viva) { viva = false; registro.pistas_vivas -= 1; } } };
+    ok({ getTracks: () => [pista], getAudioTracks: () => [pista] });
+  }, 3)) };
+  globalThis.MediaRecorder = class {
+    constructor(flujo) { this.flujo = flujo; this.state = 'inactive'; this.mimeType = 'audio/webm';
+                         this.o = {}; globalThis.REC = this; }
+    addEventListener(ev, f) { (this.o[ev] ||= []).push(f); }
+    start() { if (globalThis.FALLA_START) throw new Error('NotSupportedError'); this.state = 'recording'; }
+    stop() {
+      if (this.state === 'inactive') return;
+      this.state = 'inactive';
+      setTimeout(() => {
+        (this.o.dataavailable || []).forEach(f => f({ data: new Blob(['x']) }));
+        (this.o.stop || []).forEach(f => f({}));
+      }, 0);
+    }
+  };
+"""
 
 
 def ejecutar(

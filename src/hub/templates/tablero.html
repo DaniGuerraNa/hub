@@ -22,13 +22,13 @@
   .fila-idea .num { color:var(--texto-3); font-size:12px; min-width:2.2em; padding-top:2px;
                     font-variant-numeric:tabular-nums }
   .fila-idea button { flex:none }
-  .vacio-tablero { padding:14px 13px; color:var(--texto-3); font-size:13.5px }
+  .vacio-tablero { padding:14px 13px; color:var(--texto-3); font-size:var(--letra-3) }
   .idea-nueva .con-dictado { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px }
-  .idea-nueva .estado-dictado, .idea-nueva .elegidos { color:var(--texto-3); font-size:12.5px }
+  .idea-nueva .estado-dictado, .idea-nueva .elegidos { color:var(--texto-3); font-size:var(--letra-2) }
   .idea-nueva.encima { outline:2px dashed var(--acento); outline-offset:4px }
   .boton.grabando { border-color:var(--riesgo); color:var(--riesgo) }
   .adjuntos { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px }
-  .adjuntos a { display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--texto-2);
+  .adjuntos a { display:flex; align-items:center; gap:6px; font-size:var(--letra-2); color:var(--texto-2);
                 text-decoration:none; max-width:100%; overflow-wrap:anywhere }
   .adjuntos img { width:88px; height:88px; object-fit:cover; border-radius:var(--r-input);
                   border:1px solid var(--borde); background:var(--superficie2) }
@@ -66,7 +66,7 @@
                 placeholder="lo que no cabe arriba; con «Dictar» lo dices en voz"></textarea>
       <div class="con-dictado">
         <button type="button" class="boton" data-grabar="detalle-idea"
-                data-grabar-estado="estado-dictado" data-grabar-url="/api/voz">Dictar</button>
+                data-grabar-estado="estado-dictado" data-grabar-url="/api/voz" data-grabar-quien="tablero">Dictar</button>
         <button type="button" class="boton" data-elegir="archivos-idea">Adjuntar</button>
         <input id="archivos-idea" type="file" name="archivos" multiple hidden>
         <span class="estado-dictado" id="estado-dictado"></span>
@@ -83,8 +83,8 @@
   </div>
   <div class="barra" style="margin-top:14px">
     <button class="cta" type="submit">Apuntar</button>
-    <span class="tenue" style="font-size:12.5px">
-      Fotos, capturas (Ctrl+V) y archivos: con «Adjuntar» o soltándolos aquí.
+    <span class="tenue" style="font-size:var(--letra-2)">
+      Fotos, capturas<span class="solo-teclado"> (Ctrl+V)</span> y archivos: con «Adjuntar» o soltándolos aquí.
       También puedes decírselo al secretario: «anota en el tablero que…».
     </span>
   </div>
@@ -101,7 +101,7 @@
       {% if i.detalle %}<div class="detalle">{{ i.detalle }}</div>{% endif %}
       {{ adjuntos(i) }}
       <div class="meta">
-        <span>{{ i.creada[:10] }}</span>
+        <span>{{ ui.cuando(i.creada, forma='dia', con_hace=false) }}</span>
         {% if i.proyecto %}<span>{{ i.proyecto }}</span>{% endif %}
         {% if i.origen != 'web' %}<span>por {{ i.origen }}</span>{% endif %}
         {% if i.tarea %}<span>encargada → <a href="/orquestador">{{ i.tarea.id }}</a> ({{ i.tarea.estado }})</span>{% endif %}
@@ -154,7 +154,7 @@
       <div class="meta">
         {% if i.estado == 'tomada' %}<span>tomada → <strong>{{ i.ref }}</strong></span>
         {% else %}<span>descartada: {{ i.motivo }}</span>{% endif %}
-        <span>{{ (i.movida or '')[:10] }}</span>
+        <span>{{ ui.cuando(i.movida, forma='dia', con_hace=false) }}</span>
         {% if i.proyecto %}<span>{{ i.proyecto }}</span>{% endif %}
       </div>
     </div>
@@ -166,7 +166,6 @@
 
 <form id="form-descartar" method="post" hidden data-sin-recarga><input type="hidden" name="motivo"></form>
 
-<script src="/static/grabar.js"></script>
 <script>
 // Adjuntar al apuntar: con el botón, pegando (Ctrl+V) o soltando encima.
 // Todo acaba en el mismo <input type=file>, que es lo que viaja en el

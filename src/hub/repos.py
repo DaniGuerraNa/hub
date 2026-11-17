@@ -15,6 +15,7 @@ desde el propio demonio.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import sqlite3
 import subprocess
@@ -24,6 +25,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
+from . import db
 from .models import Proyecto
 
 # Un repo que no responde en 10 s está en un filesystem que no vamos a esperar.
@@ -46,8 +48,10 @@ HILOS_DE_ESCANEO = 8
 
 
 @lru_cache(maxsize=1)
-def _hay_git() -> bool:
-    """Un escaneo hace ~90 llamadas: no tiene sentido resolver el PATH en cada una."""
+def hay_git() -> bool:
+    """Si `git` está en el PATH. Un escaneo hace ~90 llamadas: no tiene sentido
+    resolver el PATH en cada una. Pública porque `api` dice con ella si falta
+    git en la pantalla (C-0088, C-0102)."""
     return shutil.which("git") is not None
 
 
@@ -57,7 +61,7 @@ def _git(ruta: str, *args: str) -> str | None:
     Devolver None en vez de propagar es deliberado: un repo roto, un worktree
     huérfano o un montaje caído no pueden tumbar la medición de los demás.
     """
-    if not _hay_git():
+    if not hay_git():
         return None
     try:
         salida = subprocess.run(
@@ -259,8 +263,8 @@ def escanear(con: sqlite3.Connection, proyectos: list[Proyecto]) -> int:
     # para lo que existe (~90 llamadas). Sin esto, un servicio que arrancó sin
     # git seguía diciendo «no hay git» después de instalarlo —justo lo que la
     # pantalla te acaba de mandar hacer— hasta reiniciarlo.
-    _hay_git.cache_clear()
-    if not _hay_git():
+    hay_git.cache_clear()
+    if not hay_git():
         raise RespaldoNoMedido(
             "git no está en el PATH: no se puede medir el respaldo. Se conserva "
             "la última medición."
@@ -270,6 +274,11 @@ def escanear(con: sqlite3.Connection, proyectos: list[Proyecto]) -> int:
     pares = [(p.id, ruta) for p in proyectos for ruta in p.todas_las_rutas()]
     filas = []
     agotado = False
+    sin_mirar = 0
+    # Las rutas cuya medida lanzó: se siguen saltando para no tumbar a las
+    # demás, pero ya no en silencio (C-0295). Conservan su cifra anterior, y
+    # /respaldo la enseña como de otra vuelta.
+    fallidas: list[str] = []
 
     # En paralelo porque de uno en uno ya no cabe en el presupuesto (decisión
     # 170): los 66 repos del workspace laboral tardan 61 s ellos solos, y con el
@@ -277,16 +286,17 @@ def escanear(con: sqlite3.Connection, proyectos: list[Proyecto]) -> int:
     # últimos suyos, sino TODOS los proyectos que vienen después en el YAML.
     ejecutor = ThreadPoolExecutor(max_workers=HILOS_DE_ESCANEO)
     try:
-        lanzados = [(pid, ejecutor.submit(estado_de, ruta)) for pid, ruta in pares]
-        restantes: list[tuple[str, object]] = []
-        for indice, (pid, futuro) in enumerate(lanzados):
+        lanzados = [(pid, ruta, ejecutor.submit(estado_de, ruta)) for pid, ruta in pares]
+        restantes: list[tuple[str, str, object]] = []
+        for indice, (pid, ruta, futuro) in enumerate(lanzados):
             try:
                 estado = futuro.result(timeout=max(0.0, limite - time.monotonic()))
             except FuturoAgotado:
                 agotado = True
-                restantes = lanzados[indice + 1:]
+                restantes = lanzados[indice:]
                 break
             except Exception:
+                fallidas.append(ruta)
                 continue  # un repo roto no puede tumbar la medición de los demás
             if estado:
                 filas.append((pid, medido_en, estado))
@@ -296,12 +306,14 @@ def escanear(con: sqlite3.Connection, proyectos: list[Proyecto]) -> int:
         # `projects.yml` —los mismos proyectos del final sin medir en cada
         # ciclo, siempre— y esa es la peor forma de estar incompleto: no es que
         # falten datos, es que faltan siempre los mismos y nadie lo nota.
-        for pid, futuro in restantes:
+        for pid, ruta, futuro in restantes:
             if not futuro.done():
+                sin_mirar += 1
                 continue
             try:
                 estado = futuro.result(timeout=0)
             except Exception:
+                fallidas.append(ruta)
                 continue
             if estado:
                 filas.append((pid, medido_en, estado))
@@ -316,12 +328,18 @@ def escanear(con: sqlite3.Connection, proyectos: list[Proyecto]) -> int:
     if agotado:
         # En voz alta: un escaneo truncado en silencio se lee como «no hay nada
         # sin respaldar», que es la mentira más cara que este módulo puede decir.
+        # 🔴 Se cuentan las rutas SIN MIRAR, no «medidas de declaradas»: entre
+        # las declaradas hay carpetas que no son repos, y «94 de 138» hacía
+        # creer que faltaban 44 repos (regla 19, C-0295).
         print(
             f"[repos] escaneo truncado a los {PRESUPUESTO_SEGUNDOS}s: "
-            f"{len(filas)} de {len(pares)} rutas medidas. La cifra de respaldo "
-            "está incompleta.",
+            f"{sin_mirar} de {len(pares)} rutas sin mirar; conservan su medición "
+            "anterior. La cifra de respaldo está incompleta.",
             flush=True,
         )
+    if fallidas:
+        print(f"[repos] no se pudo medir {len(fallidas)} ruta(s), que conservan su "
+              f"medición anterior: {', '.join(fallidas)}", flush=True)
 
     # 🔴 Había rutas que mirar y no salió NINGUNA medida: git está pero no
     # funciona aquí. Es indistinguible de «no tienes repos» mirando el
@@ -344,19 +362,33 @@ def escanear(con: sqlite3.Connection, proyectos: list[Proyecto]) -> int:
     medidas = {e["ruta"] for _, _, e in filas}
     declaradas = set(candidatas) | medidas
     marcas = ",".join("?" * len(declaradas)) or "NULL"
-    con.execute(f"DELETE FROM repo WHERE ruta NOT IN ({marcas})", tuple(declaradas))
+    # Un proyecto con un `patron` que no se dejó leer en esta vuelta (C-0435:
+    # OneDrive a medio sincronizar) llega sin esas rutas, o con las de la
+    # última lectura buena. Lo que no se pudo leer no es «no hay»: sus filas
+    # no se retiran y conservan su cifra con su `medido_en` viejo (regla 13).
+    intactos = sorted({p.id for p in proyectos if p.patrones_sin_leer})
+    # Sin ninguno, nada que añadir: `NOT IN (NULL)` no sería cierto nunca y
+    # no se retiraría nada de nadie.
+    salvo = f" AND proyecto_id NOT IN ({','.join('?' * len(intactos))})" if intactos else ""
+    # En una transacción (C-0429): leída a mitad desde la web, la tabla
+    # tenía filas de dos vueltas y `/respaldo` daba por viejas las que no lo
+    # eran (C-0295). En WAL, el lector ve la vuelta anterior entera hasta el
+    # COMMIT. Si quien llama ya tiene una abierta, en la suya.
+    with contextlib.nullcontext() if con.in_transaction else db.transaccion(con):
+        con.execute(f"DELETE FROM repo WHERE ruta NOT IN ({marcas}){salvo}",
+                    (*declaradas, *intactos))
 
-    for proyecto_id, ts, e in filas:
-        con.execute(
-            """INSERT OR REPLACE INTO repo
-                                (proyecto_id, ruta, rama, sin_push, regimen, detras,
-                                 sucios, ultimo_commit, worktrees, repo_comun, head,
-                                 medido_en)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (proyecto_id, e["ruta"], e["rama"], e["sin_push"], e["regimen"],
-             e["detras"], e["sucios"], e["ultimo_commit"], e["worktrees"],
-             e["repo_comun"], e["head"], ts),
-        )
+        for proyecto_id, ts, e in filas:
+            con.execute(
+                """INSERT OR REPLACE INTO repo
+                                    (proyecto_id, ruta, rama, sin_push, regimen, detras,
+                                     sucios, ultimo_commit, worktrees, repo_comun, head,
+                                     medido_en)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (proyecto_id, e["ruta"], e["rama"], e["sin_push"], e["regimen"],
+                 e["detras"], e["sucios"], e["ultimo_commit"], e["worktrees"],
+                 e["repo_comun"], e["head"], ts),
+            )
     return len(filas)
 
 

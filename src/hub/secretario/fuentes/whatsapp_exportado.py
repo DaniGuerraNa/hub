@@ -47,7 +47,7 @@ def _dueno() -> str:
 
 
 def carpeta() -> Path:
-    return memoria.carpeta() / "whatsapp-exportado"
+    return memoria.carpeta(crear=False) / "whatsapp-exportado"
 
 
 def _nombre_chat(archivo: str) -> str:

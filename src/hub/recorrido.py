@@ -23,6 +23,15 @@ al servidor: el de `/trabajo` haría `tmux attach` a una sesión de verdad y la
 redimensionaría al ancho del móvil. Las rutas GET que no se visitan están en
 `NO_SE_VISITAN`, cada una con su porqué.
 
+Además de los fallos, el informe lleva **avisos** (C-0248): medidas de calidad
+que aún no están a cero en todo el hub, así que no cambian el código de salida
+ni lo que cuenta como roto. Son objetivos táctiles chicos, campos que en iOS
+provocan zoom, pantallas sin `h1` o sin `main`, un TTFB lento y más de una
+`.cta` a la vez; los umbrales, con su porqué, son las constantes `MIN_*`/`MAX_*`
+de abajo. Cuando una llegue a cero en todas las pantallas, pasa a fallo.
+Se dejó fuera «sondea con la pestaña oculta»: hay que esperar un minuto entero
+por pantalla y haría el recorrido lento, que es justo lo que no puede ser.
+
 Las pantallas salen de las rutas de la propia app (`web.app.routes`), no de
 una lista a mano que se queda vieja. Las de detalle (`/proyecto/{id}`…) se
 visitan con un id **real**, sacado de los enlaces de las pantallas ya abiertas
@@ -31,10 +40,19 @@ sirve para todas las rutas que lo llevan. Si no aparece ninguno, la ruta va a
 `sin_visitar` en vez de inventarse un id que daría un 404 falso — y quien
 llama decide si eso es aceptable (el test de la suite no lo acepta).
 
+Con `interfaz="nueva"` (C-0169) el navegador lleva la cookie de la interfaz
+nueva, que es como la ve un aparato que la encendió, y cada pantalla se mide
+dos veces: como llega —el panel del secretario plegado— y con el panel
+abierto, que es cuando el contenido se encoge y algo puede salirse de lado.
+Con `colores="brasa"` lleva además la cookie de ese juego de colores
+(`hub.interfaz.COLORES`): un juego nuevo se mide en el navegador, no se razona.
+
 Playwright no es dependencia del hub (grupo `navegador` de `pyproject.toml`) y
 el navegador lo elige `mirar.cual_linux`. Desde la línea de órdenes:
 
     uv run --group navegador python -m hub.recorrido --url http://127.0.0.1:8787
+    uv run --group navegador python -m hub.recorrido --interfaz nueva --anchos 390,860,861,1024,1200,1750
+    uv run --group navegador python -m hub.recorrido --interfaz nueva --colores brasa
 """
 
 from __future__ import annotations
@@ -46,6 +64,7 @@ import time
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, quote, urlsplit
 
+from . import interfaz as _interfaz
 from . import mirar
 
 ANCHOS = (390, 1200)
@@ -60,6 +79,10 @@ NO_SE_VISITAN = {
     "/acceso/alta/{codigo}": "canjea un código de alta: abrirla ya es usarlo",
     "/terminal": "sólo redirige a /trabajo, que ya se visita",
     "/api/sesiones": "lee todos los transcripts de Claude Code: segundos de disco, y no es una pantalla",
+    # Lo que sirve es de quien las dibuja, no del hub: una antigua que pida algo
+    # a un CDN lo tiene cortado por su CSP a propósito, y el recorrido lo
+    # contaría como un fallo del hub. En el producto, además, no hay carpeta.
+    "/maquetas/{ruta:path}": "prototipos sin función, no pantallas del hub (C-0249)",
 }
 
 #: Rutas sin parámetros en el camino que sólo enseñan algo con su consulta.
@@ -78,6 +101,21 @@ PIDEN_CONSULTA = {
 SIN_PRESTAR = {
     "/intercambio/ver/{nombre:path}": "sólo enseña imágenes; un nombre de otra ruta puede no serlo",
 }
+
+#: Lado mínimo de un objetivo táctil (WCAG 2.2, criterio 2.5.8, nivel AA): por
+#: debajo, un dedo acierta mal. El 44 de la guía de Apple queda de aspiración.
+MIN_OBJETIVO_PX = 24
+
+#: iOS amplía la página al enfocar un campo con letra menor de 16 px y no la
+#: devuelve sola. Sólo se mira en el ancho de teléfono (`pointer: coarse`).
+MIN_LETRA_CAMPO_PX = 16
+
+#: Un servidor local que tarda más de medio segundo en responder el documento
+#: deja la pantalla en blanco ese rato; en el móvil, por la red privada, más.
+MAX_TTFB_MS = 500
+
+#: La acción principal es una (`.cta`, CLAUDE.md): dos a la vez compiten.
+MAX_CTA_VISIBLES = 1
 
 # Cuánto se espera a que la página deje de pedir cosas después del `load`.
 _QUIETO_MS = 400
@@ -118,6 +156,55 @@ _DE_LADO = """(ancho) => {
 }"""
 
 
+_MEDIDAS = """({minObjetivo, minLetra, movil}) => {
+  const visible = (el) => {
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return false;
+    const cs = getComputedStyle(el);
+    return cs.visibility !== 'hidden' && cs.display !== 'none';
+  };
+  const corto = (el) => {
+    const t = (el.textContent || el.value || el.getAttribute('aria-label') || '').trim().slice(0, 20);
+    return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (t ? ' «' + t + '»' : '');
+  };
+  const tactiles = [...document.querySelectorAll(
+    'a[href], button, input:not([type=hidden]), select, textarea, summary, [role=button]')]
+    .filter(visible);
+  const chicos = tactiles.filter(el => {
+    const r = el.getBoundingClientRect();
+    return r.width < minObjetivo || r.height < minObjetivo;
+  });
+  const campos = movil ? [...document.querySelectorAll(
+    'input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea, select')]
+    .filter(visible).filter(c => parseFloat(getComputedStyle(c).fontSize) < minLetra) : [];
+  const nav = performance.getEntriesByType('navigation')[0];
+  const ejemplo = (el) => {
+    const r = el.getBoundingClientRect();
+    return corto(el) + ' ' + Math.round(r.width) + '×' + Math.round(r.height);
+  };
+  return {
+    chicos: chicos.length, ejemplosChicos: chicos.slice(0, 3).map(ejemplo),
+    campos: campos.length, ejemplosCampos: campos.slice(0, 3).map(corto),
+    h1: !!document.querySelector('h1'), main: !!document.querySelector('main'),
+    ttfb: nav ? Math.round(nav.responseStart - nav.startTime) : 0,
+    ctas: [...document.querySelectorAll('.cta')].filter(visible).length,
+  };
+}"""
+
+
+@dataclass
+class Aviso:
+    """Una medida fuera de umbral: se dice, pero no rompe el recorrido."""
+
+    ruta: str
+    ancho: int
+    clase: str  # objetivos | campos | sin_h1 | sin_main | ttfb | cta
+    detalle: str
+
+    def __str__(self) -> str:
+        return f"[{self.clase}] {self.ruta} @{self.ancho}: {self.detalle}"
+
+
 @dataclass
 class Fallo:
     """Una cosa rota, dicha para poder ir a mirarla."""
@@ -139,6 +226,7 @@ class Informe:
     comprobadas: list[str] = field(default_factory=list)
     sin_visitar: list[str] = field(default_factory=list)
     fallos: list[Fallo] = field(default_factory=list)
+    avisos: list[Aviso] = field(default_factory=list)
 
     def texto(self) -> str:
         lineas = [f"Recorrido de {self.base}: {len(self.visitadas)} pantallas en el "
@@ -151,6 +239,9 @@ class Informe:
         else:
             lineas.append(f"{len(self.fallos)} fallos:")
             lineas += [f"  {f}" for f in self.fallos]
+        if self.avisos:
+            lineas.append(f"{len(self.avisos)} avisos (no rompen el recorrido):")
+            lineas += [f"  {a}" for a in self.avisos]
         return "\n".join(lineas)
 
 
@@ -273,12 +364,23 @@ class _Visita:
 
 
 def recorrer(base: str, anchos=ANCHOS, chrome: str | None = None,
-             rutas: list[str] | None = None) -> Informe:
+             rutas: list[str] | None = None, interfaz: str | None = None,
+             colores: str | None = None) -> Informe:
     """Abre cada pantalla del hub de `base` a cada ancho y devuelve lo que falló.
 
-    Lanza `mirar.SinNavegador` si no hay un Chromium de Linux, y
-    `ModuleNotFoundError` si falta Playwright.
+    `interfaz` es con cuál se recorre (`hub.interfaz.INTERFACES`); sin él, la
+    que el hub sirve sin cookie. `colores` es el juego de la interfaz nueva
+    (`hub.interfaz.COLORES`); sin él, el de fábrica. Lanza `mirar.SinNavegador` si no hay un
+    Chromium de Linux, y `ModuleNotFoundError` si falta Playwright.
     """
+    if interfaz is not None and not _interfaz.valida(interfaz):
+        raise ValueError(f"no hay ninguna interfaz «{interfaz}»: " + ", ".join(_interfaz.INTERFACES))
+    if colores is not None and not _interfaz.colores_validos(colores):
+        raise ValueError(f"no hay ningún juego de colores «{colores}»: " + ", ".join(_interfaz.COLORES))
+    if colores is not None and interfaz != _interfaz.NUEVA:
+        # Sin la nueva, la cookie de los colores no pinta nada: se mediría la
+        # de siempre y el informe diría que se midió Brasa.
+        raise ValueError("los colores son de la interfaz nueva: pide también interfaz «nueva»")
     chrome = chrome or mirar.cual_linux()
     if not chrome:
         raise mirar.SinNavegador(
@@ -293,17 +395,26 @@ def recorrer(base: str, anchos=ANCHOS, chrome: str | None = None,
         navegador = pw.chromium.launch(executable_path=chrome, headless=True,
                                        args=["--no-sandbox", "--disable-gpu"])
         try:
-            _Recorrido(navegador, base, anchos, informe).todo(rutas)
+            _Recorrido(navegador, base, anchos, informe, interfaz, colores).todo(rutas)
         finally:
             navegador.close()
     return informe
 
 
 class _Recorrido:
-    def __init__(self, navegador, base: str, anchos, informe: Informe):
-        self.base, self.informe = base, informe
+    def __init__(self, navegador, base: str, anchos, informe: Informe, interfaz: str | None = None,
+                 colores: str | None = None):
+        self.base, self.informe, self.interfaz = base, informe, interfaz
         origen = urlsplit(base).netloc
         self.contextos = {a: _contexto(navegador, a, origen) for a in anchos}
+        if interfaz:
+            # Como un aparato que la eligió: la cookie, en el navegador y en
+            # las peticiones sueltas, que comparten su tarro.
+            for contexto, _ in self.contextos.values():
+                contexto.add_cookies([{"name": _interfaz.COOKIE, "value": interfaz, "url": base}])
+        if colores:
+            for contexto, _ in self.contextos.values():
+                contexto.add_cookies([{"name": _interfaz.COOKIE_COLORES, "value": colores, "url": base}])
         self.pedir = next(iter(self.contextos.values()))[0].request
         # Para aprender ids sirven todas las rutas, no sólo las que se recorren.
         self.patrones = [patron(r) for r in rutas_get() if _parametros(r)]
@@ -383,7 +494,8 @@ class _Recorrido:
             return
         self.informe.visitadas.append(url)
         for ancho, (contexto, estado) in self.contextos.items():
-            self._aprender(_abrir(contexto, estado, self.base, url, ancho, self.informe))
+            self._aprender(_abrir(contexto, estado, self.base, url, ancho, self.informe,
+                                  con_panel=self.interfaz == _interfaz.NUEVA))
 
 
 def _contexto(navegador, ancho: int, origen: str):
@@ -418,9 +530,43 @@ def _contexto(navegador, ancho: int, origen: str):
     return contexto, estado
 
 
+def _avisar(visita: _Visita, m: dict) -> None:
+    """Convierte las medidas de la página en avisos, uno por clase."""
+    def avisa(clase: str, detalle: str):
+        visita.informe.avisos.append(Aviso(visita.ruta, visita.ancho, clase, detalle))
+    if m["chicos"]:
+        avisa("objetivos", f"{m['chicos']} de menos de {MIN_OBJETIVO_PX} px: "
+                           + "; ".join(m["ejemplosChicos"]))
+    if m["campos"]:
+        avisa("campos", f"{m['campos']} con letra de menos de {MIN_LETRA_CAMPO_PX} px "
+                        "(iOS amplía la página): " + "; ".join(m["ejemplosCampos"]))
+    if not m["h1"]:
+        avisa("sin_h1", "no tiene ningún h1")
+    if not m["main"]:
+        avisa("sin_main", "no tiene ningún main")
+    if m["ttfb"] > MAX_TTFB_MS:
+        avisa("ttfb", f"{m['ttfb']} ms hasta el primer byte (máximo {MAX_TTFB_MS})")
+    if m["ctas"] > MAX_CTA_VISIBLES:
+        avisa("cta", f"{m['ctas']} .cta visibles a la vez (máximo {MAX_CTA_VISIBLES})")
+
+
+#: Abre el panel del secretario si está a la vista y plegado. Con el
+#: clic de verdad sobre su pestaña, que es lo que hace quien lo usa.
+_ABRIR_PANEL = """() => {
+  const panel = document.getElementById('secretario-panel');
+  const pestana = document.getElementById('secretario-pestana');
+  if (!panel || !pestana || !pestana.offsetParent || panel.classList.contains('abierto')) return false;
+  pestana.click();
+  return panel.classList.contains('abierto');
+}"""
+
+
 def _abrir(contexto, estado: dict, base: str, url: str, ancho: int,
-           informe: Informe) -> list[str]:
-    """Abre `url` a `ancho`, apunta lo que falle y devuelve sus enlaces del hub."""
+           informe: Informe, con_panel: bool = False) -> list[str]:
+    """Abre `url` a `ancho`, apunta lo que falle y devuelve sus enlaces del hub.
+
+    Con `con_panel`, después se abre el panel del secretario y se vuelve a
+    medir si algo se sale de lado con él abierto."""
     visita = _Visita(base, url, ancho, informe)
     estado["visita"] = visita
     pagina = contexto.new_page()
@@ -436,6 +582,15 @@ def _abrir(contexto, estado: dict, base: str, url: str, ancho: int,
         if lado["total"] > ancho:
             visita.fallo("desborde", f"{lado['total']} px de ancho en {ancho}: "
                                      + ("; ".join(lado["culpables"]) or "sin culpable a la vista"))
+        _avisar(visita, pagina.evaluate(_MEDIDAS, {
+            "minObjetivo": MIN_OBJETIVO_PX, "minLetra": MIN_LETRA_CAMPO_PX,
+            "movil": ancho < 700}))
+        if con_panel and pagina.evaluate(_ABRIR_PANEL):
+            visita.esperar_quieta(pagina)
+            lado = pagina.evaluate(_DE_LADO, ancho)
+            if lado["total"] > ancho:
+                visita.fallo("desborde", f"con el panel abierto, {lado['total']} px de ancho en {ancho}: "
+                                         + ("; ".join(lado["culpables"]) or "sin culpable a la vista"))
         # Las imágenes también, aunque no se hayan pedido: las de `loading="lazy"`
         # dentro de un `<details>` cerrado sólo se piden al abrirlo.
         hrefs = pagina.eval_on_selector_all(
@@ -460,15 +615,24 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="python -m hub.recorrido",
         description="Abre todas las pantallas del hub en Chromium a 390 y 1200 px "
-                    "y dice cuáles fallan. Sólo mira: corta toda escritura.")
+                    "y dice cuáles fallan, más avisos de calidad que no cambian el "
+                    "código de salida. Sólo mira: corta toda escritura.")
     p.add_argument("--url", default="http://127.0.0.1:8787")
     p.add_argument("--anchos", default=",".join(map(str, ANCHOS)),
                    help="anchos en px, separados por comas")
     p.add_argument("--ruta", action="append",
                    help="recorrer sólo esta ruta (se puede repetir)")
+    p.add_argument("--interfaz", choices=_interfaz.INTERFACES, default=None,
+                   help="con qué interfaz recorrer; con «nueva», cada pantalla se mide "
+                        "también con el panel del secretario abierto")
+    p.add_argument("--colores", choices=tuple(_interfaz.COLORES), default=None,
+                   help="con qué juego de colores de la interfaz nueva recorrer")
     a = p.parse_args(argv)
+    if a.colores and a.interfaz != _interfaz.NUEVA:
+        p.error("--colores sólo vale con --interfaz nueva")
     try:
-        informe = recorrer(a.url, tuple(int(x) for x in a.anchos.split(",")), rutas=a.ruta)
+        informe = recorrer(a.url, tuple(int(x) for x in a.anchos.split(",")), rutas=a.ruta,
+                           interfaz=a.interfaz, colores=a.colores)
     except ModuleNotFoundError:
         print("Falta Playwright. Lánzalo así:\n"
               "  uv run --group navegador python -m hub.recorrido", file=sys.stderr)

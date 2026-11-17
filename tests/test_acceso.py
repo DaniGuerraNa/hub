@@ -50,6 +50,16 @@ def de_casa():
 
 # ── Lo que tiene que fallar ──────────────────────────────────────────────────
 
+@pytest.mark.parametrize("ruta", ["/acceso/alta/x/y", "/acceso/alta/", "/acceso/alta/x/"])
+def test_una_direccion_que_no_existe_no_le_pinta_el_hub_a_quien_no_ha_entrado(de_fuera, ruta):
+    """La puerta deja mirar `/acceso/alta/…` sin aparato (decisión 183), y la
+    página de «no existe» (C-0300) se pintaba ahí con el raíl y sus cifras.
+    Lo encontró la revisión cruzada: sin alta, sólo el 404 desnudo."""
+    r = de_fuera.get(ruta, headers={"accept": "text/html"}, follow_redirects=False)
+    assert "<nav" not in r.text
+    assert "rail-global" not in r.text
+
+
 def test_un_aparato_sin_dar_de_alta_no_pasa_de_la_puerta(de_fuera):
     """§8.5. El caso entero: la red privada es la puerta de fuera, ésta la de
     dentro, y perder el móvil con la sesión viva no puede entregar la casa."""
@@ -599,3 +609,14 @@ def test_la_puerta_del_host_es_la_de_acceso():
     assert acceso.host_permitido("[::1]:8787", ("::1",))
     assert not acceso.host_permitido("otro:8787", ("::1",))
     assert not hasattr(web, "_en_lista")
+
+
+def test_con_el_secretario_como_voz_acceso_no_habla_del_asistente(de_casa):
+    """El asistente está retirado donde el secretario es la voz (C-0355)."""
+    from test_guia import _secretario_como_voz, texto_visible
+    _secretario_como_voz()
+
+    visible = texto_visible(de_casa.get("/acceso").text)
+
+    assert "asistente" not in visible.lower()
+    assert "lienzos, Atenea—" in " ".join(visible.split())

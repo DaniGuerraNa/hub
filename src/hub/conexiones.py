@@ -14,9 +14,11 @@ Lo único que se comprueba del puntero es **si existe**. Nunca se lee.
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from pathlib import Path
 
+from . import db
 from .models import Conexion
 
 # Nombres de campo que jamás deben aparecer en `projects.yml`. Si alguien pega
@@ -48,23 +50,46 @@ def puntero_existe(referencia: str | None) -> bool | None:
     return Path(ruta).expanduser().exists()
 
 
-def sincronizar(con: sqlite3.Connection, conexiones: list[Conexion]) -> None:
-    """Refleja las conexiones de `projects.yml` en el índice. El YAML manda."""
-    con.execute("DELETE FROM conexion")
-    con.execute("DELETE FROM conexion_proyecto")
-    for c in conexiones:
-        con.execute(
+def sincronizar(con: sqlite3.Connection, conexiones: list[Conexion]) -> bool:
+    """Refleja las conexiones de `projects.yml` en el índice. El YAML manda.
+
+    Devuelve si escribió. Como el registro (C-0275): el latido la llama cada
+    20 s, así que sólo se escribe si lo que quedaría difiere de lo que hay, y
+    de una vez. Se compara lo que se escribiría —con `puntero_ok` ya medido—
+    y no el YAML: que aparezca el archivo del puntero también es un cambio.
+    El puntero se mira antes de abrir la transacción: dentro, sólo base
+    (decisión 352).
+    """
+    filas = [
+        (c.alias, c.host, c.usuario, c.proposito, c.referencia_secreto,
+         _a_entero(puntero_existe(c.referencia_secreto)), c.nota)
+        for c in conexiones
+    ]
+    # `INSERT OR IGNORE`: un proyecto repetido en la lista entra una vez.
+    vinculos = list(dict.fromkeys(
+        (c.alias, proyecto_id) for c in conexiones for proyecto_id in c.proyectos))
+    hay = [tuple(f) for f in con.execute(
+        "SELECT alias, host, usuario, proposito, referencia_secreto, puntero_ok, nota"
+        " FROM conexion ORDER BY rowid")]
+    hay_vinculos = [tuple(f) for f in con.execute(
+        "SELECT alias, proyecto_id FROM conexion_proyecto ORDER BY rowid")]
+    if hay == filas and hay_vinculos == vinculos:
+        return False
+
+    with contextlib.nullcontext() if con.in_transaction else db.transaccion(con):
+        con.execute("DELETE FROM conexion")
+        con.execute("DELETE FROM conexion_proyecto")
+        con.executemany(
             """INSERT INTO conexion (alias, host, usuario, proposito, referencia_secreto,
                                      puntero_ok, nota)
                VALUES (?,?,?,?,?,?,?)""",
-            (c.alias, c.host, c.usuario, c.proposito, c.referencia_secreto,
-             _a_entero(puntero_existe(c.referencia_secreto)), c.nota),
+            filas,
         )
-        for proyecto_id in c.proyectos:
-            con.execute(
-                "INSERT OR IGNORE INTO conexion_proyecto (alias, proyecto_id) VALUES (?,?)",
-                (c.alias, proyecto_id),
-            )
+        con.executemany(
+            "INSERT OR IGNORE INTO conexion_proyecto (alias, proyecto_id) VALUES (?,?)",
+            vinculos,
+        )
+    return True
 
 
 def _a_entero(valor: bool | None) -> int | None:

@@ -563,7 +563,7 @@ def drenar(con: sqlite3.Connection, encargo_id: str) -> dict:
     lote = nombre_de_lote(encargo_id)
 
     try:
-        entrega.entregar(panel["pane_id"], texto)
+        quitados = entrega.entregar(panel["pane_id"], texto)
     except entrega.EscritoSinConfirmar as exc:
         # 🔴 ANTES que `PanelNoApto`, del que hereda. El orden de los `except`
         # es la lógica: al revés, un texto ya escrito volvería a la cola y
@@ -589,8 +589,13 @@ def drenar(con: sqlite3.Connection, encargo_id: str) -> dict:
            WHERE id = ?""",
         [(lote, ahora(), i) for i in ids],
     )
+    # Si al texto se le quitaron caracteres de control, se dice aquí (regla
+    # dura 21, C-0428): al agente no le llegó exactamente lo que se escribió.
+    nota = entrega.nota_de_limpieza(quitados)
     encargos.registrar(
-        con, "sale", f"{len(ids)} mensaje(s) entregados al agente en un lote",
+        con, "sale",
+        f"{len(ids)} mensaje(s) entregados al agente en un lote"
+        + (f"; {nota}" if nota else ""),
         encargo_id=encargo_id,
     )
     return {"resultado": "entregado", "cuantos": len(ids), "lote": lote}

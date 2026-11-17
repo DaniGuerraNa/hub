@@ -658,6 +658,9 @@ def transaccion(con: sqlite3.Connection) -> Iterator[None]:
     con.execute("COMMIT")
 
 
+TOPE_DEL_WAL = 4 * 1024 * 1024
+
+
 def conectar(ruta: Path | None = None) -> sqlite3.Connection:
     ruta = ruta or config.DB_PATH
     try:
@@ -667,6 +670,11 @@ def conectar(ruta: Path | None = None) -> sqlite3.Connection:
         con.execute("PRAGMA journal_mode=WAL")
         con.execute("PRAGMA synchronous=NORMAL")
         con.execute("PRAGMA foreign_keys=ON")
+        # Sin tope, el `-wal` se reutiliza tras cada punto de control pero no
+        # encoge nunca: el 11-nov medía 14 MB para una base de 1,8 (C-0281).
+        # Con él, al volver a empezar se recorta a 4 MB. Es de la conexión, no
+        # de la base: por eso va aquí, que es por donde abren todas.
+        con.execute(f"PRAGMA journal_size_limit={TOPE_DEL_WAL}")
         return con
     except (sqlite3.Error, OSError) as exc:
         raise BaseIlegible(porque_no_abre(ruta, exc)) from exc

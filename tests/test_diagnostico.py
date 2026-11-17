@@ -349,8 +349,8 @@ def test_si_powershell_no_devuelve_json_se_dice(monkeypatch):
 # ── la red ─────────────────────────────────────────────────────────────────────
 
 def test_tracert_se_lee_en_espanol_y_en_ingles():
-    es = diagnostico.leer_tracert(diagnostico._texto(TRACERT_ES))
-    en = diagnostico.leer_tracert(diagnostico._texto(TRACERT_EN))
+    es = diagnostico.leer_tracert(diagnostico.texto_consola(TRACERT_ES))
+    en = diagnostico.leer_tracert(diagnostico.texto_consola(TRACERT_EN))
 
     assert es == en
     assert [s["salto"] for s in es] == [1, 2, 3, 4, 5, 10]
@@ -363,8 +363,8 @@ def test_tracert_se_lee_en_espanol_y_en_ingles():
 def test_ping_se_lee_en_espanol_y_en_ingles_y_sin_contar_un_inaccesible():
     """«Host de destino inaccesible» empieza como una respuesta y no es un eco;
     en español, «<1 ms» se escribe «tiempo<1m», sin la «s»."""
-    es = diagnostico.leer_ping(diagnostico._texto(PING_ES))
-    en = diagnostico.leer_ping(diagnostico._texto(PING_EN))
+    es = diagnostico.leer_ping(diagnostico.texto_consola(PING_ES))
+    en = diagnostico.leer_ping(diagnostico.texto_consola(PING_EN))
     assert es == en == {"enviados": 5, "recibidos": 3, "perdidos_pct": 40, "min": 0, "media": 29, "max": 45}
 
     nada = diagnostico.leer_ping("La solicitud de ping no pudo encontrar el host x.invalid. Compruebe el nombre y\n"
@@ -724,3 +724,108 @@ def test_el_secretario_pregunta_por_un_programa_y_lo_que_escribe(pc_falsa):
 def test_la_cli_tambien_mira_los_programas(pc_falsa, capsys):
     assert diagnostico.main(["programas", "--buscar", "amd"]) == 0
     assert "AMD Software 23.4.3" in capsys.readouterr().out
+
+
+# ── en Máquina, a petición (C-0209) ─────────────────────────────────────────
+
+from test_vistas_web import cliente  # noqa: E402,F401  — el cliente con base de pruebas
+
+
+def _tarjeta(html: str) -> str:
+    return html.split('id="diagnostico"', 1)[1].split('id="alarmas"', 1)[0]
+
+
+def test_abrir_maquina_no_diagnostica_y_el_boton_pide_confirmacion(cliente, monkeypatch):  # noqa: F811
+    """Regla dura 14: la pantalla mira lo guardado; diagnosticar es un botón."""
+    monkeypatch.setattr(diagnostico, "_lanzar", lambda args: pytest.fail(f"lanzó {args} al abrir la pantalla"))
+    tarjeta = _tarjeta(cliente.get("/maquina").text)
+    form = tarjeta.split('action="/maquina/diagnosticar#diagnostico"', 1)[1].split("</form>", 1)[0]
+    assert "data-confirmar=" in form and "Diagnosticar ahora" in form
+    assert "data-sin-recarga" not in form       # contesta con la página y el resultado, no con un 303
+
+
+def test_diagnosticar_ahora_ensena_los_pantallazos_y_la_latencia(cliente, windows_falso):  # noqa: F811
+    r = cliente.post("/maquina/diagnosticar")
+    assert r.status_code == 200
+    tarjeta = _tarjeta(r.text)
+    assert "0x00000133" in tarjeta and "DPC_WATCHDOG_VIOLATION" in tarjeta
+    assert "04:13:25 p. m. del 06/11/2026" in tarjeta          # la caída, según el 6008
+    assert "192.168.1.1" in tarjeta and "puerta de enlace" in tarjeta and "1.1.1.1" in tarjeta
+    assert "40 % perdidos" in tarjeta                            # 2 de 5 sin eco, como lo cuenta `legible`
+    # Por la misma puerta que el secretario: los guiones fijos y ping, sin traza.
+    programas = sorted({a[0].rsplit("/", 1)[-1] for a in windows_falso})
+    assert programas == ["ping.exe", "powershell.exe"]
+
+
+def test_api_da_todo_lo_que_lee_la_tarjeta(windows_falso):
+    """La costura única (C-0100): lo que pinta la tarjeta sale entero de `api`."""
+    import arnes_plantillas as plantilla
+    from hub import api
+
+    d = api.diagnosticar_pc()
+    assert plantilla.campos("maquina.html", "dg") <= set(d)
+    assert plantilla.campos("maquina.html", "diagnostico") <= set(d)
+    for coleccion, campo in (("pantallazos", "p"), ("volcados", "v"), ("latencias", "x"), ("adaptadores", "a")):
+        assert d[coleccion], coleccion
+        assert plantilla.campos("maquina.html", campo) <= set(d[coleccion][0]), coleccion
+
+
+def test_sin_windows_la_tarjeta_lo_dice_y_no_lanza_nada(cliente, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(maquina, "encontrar", lambda nombre: None)
+    monkeypatch.setattr(diagnostico, "_lanzar", lambda args: pytest.fail(f"lanzó {args}"))
+    r = cliente.post("/maquina/diagnosticar")
+    assert r.status_code == 200 and "No encuentro Windows debajo de esta máquina" in _tarjeta(r.text)
+
+
+def test_un_diagnostico_que_revienta_se_dice_y_la_pantalla_sigue(cliente, monkeypatch):  # noqa: F811
+    def roto(*a, **k):
+        raise RuntimeError("se rompió algo")
+    monkeypatch.setattr(diagnostico, "windows", roto)
+    monkeypatch.setattr(diagnostico, "red", roto)
+    r = cliente.post("/maquina/diagnosticar")
+    assert r.status_code == 200 and "se rompió algo" in _tarjeta(r.text)
+
+
+def test_diagnosticar_desde_otro_sitio_web_se_rechaza(cliente, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(diagnostico, "_lanzar", lambda args: pytest.fail(f"lanzó {args}"))
+    r = cliente.post("/maquina/diagnosticar", headers={"origin": "https://malo.example"})
+    assert r.status_code == 403
+
+
+def test_mientras_hay_un_diagnostico_en_marcha_otro_no_se_lanza_y_se_dice(cliente, monkeypatch):  # noqa: F811
+    """Revisión cruzada de C-0209: cada «Diagnosticar» ocupa un hilo hasta
+    ~50 s y lanza PowerShell y pings, y F5 sobre la página del resultado
+    repite el POST. Con uno en marcha, el segundo contesta la página diciendo
+    que ya hay uno, sin lanzar nada; acabado, se puede volver a pedir."""
+    import threading
+
+    from fastapi.testclient import TestClient
+
+    from hub import web
+
+    dentro, soltar, llamadas = threading.Event(), threading.Event(), []
+
+    def lento():
+        llamadas.append(1)
+        dentro.set()
+        soltar.wait(10)
+        return {"hecho_en": "ahora", "errores": [], "fallos": []}
+
+    monkeypatch.setattr(web.api, "diagnosticar_pc", lento)
+    primero = {}
+    hilo = threading.Thread(target=lambda: primero.update(
+        r=TestClient(web.app).post("/maquina/diagnosticar")))
+    hilo.start()
+    try:
+        assert dentro.wait(10), "el primero no llegó a diagnosticar"
+        segundo = cliente.post("/maquina/diagnosticar")
+        assert segundo.status_code == 200
+        assert "Ya hay un diagnóstico en marcha" in _tarjeta(segundo.text)
+        assert len(llamadas) == 1
+    finally:
+        soltar.set()
+        hilo.join(10)
+    assert primero["r"].status_code == 200 and "en marcha" not in _tarjeta(primero["r"].text)
+
+    tercero = cliente.post("/maquina/diagnosticar")
+    assert "en marcha" not in _tarjeta(tercero.text) and len(llamadas) == 2

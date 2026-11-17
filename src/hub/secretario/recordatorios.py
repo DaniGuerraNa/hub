@@ -4,7 +4,9 @@
 es cerrada porque «llevas cinco días sin tocar esto» es el hub gestionando al
 dueño. Esto es lo contrario: cada recordatorio lo pidió él —o salió de algo que
 él dijo que iba a hacer— y lleva la hora que él dio. El secretario no se
-inventa plazos: un compromiso sin `recordar_en` no avisa nunca.
+inventa plazos: un compromiso sin `recordar_en` no avisa nunca. Lo que le
+pide otro sale del triaje con su plazo y sin aviso (C-0410); «(te lo pidió
+X)» queda para cuando él pide que se lo recuerden.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ def revisar(con: sqlite3.Connection, momento: str | None = None) -> int:
         vence = f" — vence {a_local(c['vence'])}" if c.get("vence") and c["vence"] != c["recordar_en"] else ""
         try:
             canal = avisos.mandar(f"{c['que']}{quien}{vence}", titulo="⏰ Recordatorio",
-                                  enlace="/secretario?p=pendientes")
+                                  enlace="/secretario?p=pendientes", compromiso=c["id"])
         except (avisos.SinCanal, LookupError) as exc:
             if memoria.leer(con, "avisos_error") != str(exc):
                 memoria.poner(con, "avisos_error", str(exc))

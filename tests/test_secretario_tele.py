@@ -160,6 +160,29 @@ def test_encender_en_ask_pide_permiso_y_no_manda_nada_a_la_tele(con, falsa):
 
 # ── sin configurar ───────────────────────────────────────────────────────────
 
+TELE = ("tele_estado", "tele_encender", "tele_apagar", "tele_entrada", "tele_app")
+
+
+def test_sin_ip_no_se_le_ofrece_ninguna_y_con_ella_todas():
+    """HER-45: las cinco se le servían sin `tele:` en secretario.yml y sólo
+    podían fallar. Confianza las sigue enseñando con dónde se configura."""
+    a = piezas.acciones()
+    servidas = herramientas.todas(con_el_dueno=True)
+    assert not {f"accion_{i}" for i in TELE} & set(servidas)
+    assert not {x["id"] for x in servidas["acciones"].funcion(None, {})} & set(TELE)
+    for i in TELE:
+        assert not piezas.se_ofrece(a[i]) and "secretario.yml" in a[i].como_configurar, i
+    _configurar({"ip": "192.168.1.50"})
+    assert {f"accion_{i}" for i in TELE} <= set(herramientas.todas(con_el_dueno=True))
+
+
+def test_una_tele_sin_ip_cuenta_como_sin_configurar():
+    _configurar({"entradas": {"pc": "InputHDMI2"}})
+    assert not piezas.se_ofrece(piezas.acciones()["tele_estado"])
+    _configurar({"ip": "  "})
+    assert not piezas.se_ofrece(piezas.acciones()["tele_estado"])
+
+
 def test_sin_ip_configurada_dice_como_configurarla(con):
     for accion in ("tele_estado", "tele_encender", "tele_apagar"):
         with pytest.raises(roku.TeleError, match="falta su IP") as e:

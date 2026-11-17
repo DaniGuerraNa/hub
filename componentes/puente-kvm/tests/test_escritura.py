@@ -1,0 +1,148 @@
+"""Antes de escribir, el puente comprueba que el documento sigue siendo el que se leyó.
+
+Los números de línea de un cambio valen para el texto leído. Si alguien tocó
+el documento después —en cualquier sitio por encima del tramo más bajo—, los
+números ya no apuntan a lo mismo y escribir rompería otra cosa.
+"""
+
+import pytest
+
+from puente_kvm import cambios, lecturas
+
+from .ayuda import PERSONA, esperar, leer, leida_y_verificada, proponer_y_aprobar, puente_simulado, \
+    transcribir_como_oraculo
+from .test_motor import SimuladorInquieto
+
+
+@pytest.fixture
+def entorno():
+    with puente_simulado() as (c, sim):
+        yield c, sim
+
+
+def tocar(sim, linea: int, texto: str) -> None:
+    """Lo que haría alguien en el Mac: cambiar una línea a mano."""
+    sim.editor.lineas[linea - 1] = texto
+    sim.editor.version += 1
+
+
+def escribir(c, cid: str) -> dict:
+    c.post("/api/control", json={"accion": "dar"}, headers=PERSONA)
+    r = c.post(f"/api/cambios/{cid}/escribir")
+    assert r.status_code == 200, r.text
+    esperar(c)
+    return c.get(f"/api/cambios/{cid}").json()
+
+
+def test_un_cambio_hecho_a_mitad_del_documento_despues_de_leer_impide_escribir(entorno):
+    # La primera página está intacta: comparar sólo ésa no lo veía.
+    c, sim = entorno
+    lid = leida_y_verificada(c, sim)
+    nuevo = list(sim.editor.guardado)
+    nuevo[129] = nuevo[129] + " -- revisado"
+    cid = proponer_y_aprobar(c, lid, nuevo)
+    tocar(sim, 80, "    -- alguien tocó esto")
+    antes = list(sim.editor.lineas)
+    cambio = escribir(c, cid)
+    assert cambio["estado"] == "fallido"
+    assert "página 3" in cambio["error"] and "no es la que se leyó" in cambio["error"]
+    assert sim.editor.lineas == antes
+
+
+def test_un_cambio_por_debajo_del_tramo_mas_bajo_no_impide_escribir_y_la_huella_lo_dira(entorno):
+    # Debajo del último tramo los números no se mueven: no hace falta recorrerlo.
+    c, sim = entorno
+    lid = leida_y_verificada(c, sim)
+    nuevo = list(sim.editor.guardado)
+    nuevo[10] = nuevo[10] + " -- revisado"
+    cid = proponer_y_aprobar(c, lid, nuevo)
+    tocar(sim, 150, "    -- alguien tocó esto")
+    cambio = escribir(c, cid)
+    assert cambio["estado"] == "escrito", cambio["error"]
+    assert sim.editor.lineas[10] == nuevo[10]
+
+
+def test_la_comprobacion_previa_queda_en_la_bitacora_con_lo_que_tardo(entorno):
+    c, sim = entorno
+    lid = leida_y_verificada(c, sim)
+    nuevo = list(sim.editor.guardado)
+    nuevo[-1] = "END; -- fin"
+    cid = proponer_y_aprobar(c, lid, nuevo)
+    assert escribir(c, cid)["estado"] == "escrito"
+    paginas = len(lecturas.cargar(lid).paginas)
+    entradas = [e for e in c.get("/api/bitacora").json() if e["tipo"] == "comprobacion"]
+    assert entradas and f"páginas 1–{paginas}" in entradas[-1]["detalle"] and " s)" in entradas[-1]["detalle"]
+
+
+def test_con_la_pantalla_moviendose_no_escribe():
+    with puente_simulado() as (c, sim):
+        lid = leida_y_verificada(c, sim)
+        nuevo = list(sim.editor.guardado)
+        nuevo[5] = nuevo[5] + " -- x"
+        cid = proponer_y_aprobar(c, lid, nuevo)
+    # El mismo cambio, ahora con algo moviéndose en la pantalla del Mac.
+    inquieto = SimuladorInquieto(lineas=list(sim.editor.lineas))
+    from fastapi.testclient import TestClient
+
+    from puente_kvm.app import crear_app
+    with TestClient(crear_app(inquieto, hosts={"testserver"})) as c:
+        c.app.state.puente.motor.tope_estable = 0.6
+        antes = list(inquieto.editor.lineas)
+        cambio = escribir(c, cid)
+        assert cambio["estado"] == "fallido"
+        assert "quieta" in cambio["error"]
+        assert inquieto.editor.lineas == antes
+
+
+def test_una_pagina_capturada_con_la_pantalla_moviendose_queda_marcada_para_ambos():
+    sim = SimuladorInquieto(lineas=__import__("puente_kvm").muestras.procedimiento(80))
+    from fastapi.testclient import TestClient
+
+    from puente_kvm.app import crear_app
+    with TestClient(crear_app(sim, hosts={"testserver"})) as c:
+        c.app.state.puente.motor.tope_estable = 0.4
+        lid = leer(c)
+        r = c.get(f"/api/lecturas/{lid}").json()
+        assert r["inestables"] == list(range(1, r["paginas"] + 1))  # Claude lo ve en la API
+        html = c.get(f"/lecturas/{lid}").text
+        assert "se movía" in html  # y la persona en la página de la lectura
+
+
+def test_proponer_sobre_una_lectura_sin_verificar_se_puede_pero_se_dice(entorno):
+    c, sim = entorno
+    lid = leer(c)
+    transcribir_como_oraculo(c, sim, lid)  # completa, pero sin huella
+    nuevo = list(sim.editor.guardado)
+    nuevo[5] = nuevo[5] + " -- x"
+    r = c.post("/api/cambios", json={"lectura": lid, "texto": "\n".join(nuevo), "descripcion": "sin huella"})
+    assert r.status_code == 200
+    assert r.json()["lectura_verificada"] is False
+    assert "sin verificar" in r.json()["aviso"]
+    html = c.get(f"/cambios/{r.json()['id']}").text
+    assert html.index("sin verificar") < html.index("data-aprobar")
+
+
+def test_proponer_sobre_una_lectura_verificada_no_lleva_aviso(entorno):
+    c, sim = entorno
+    lid = leida_y_verificada(c, sim)
+    nuevo = list(sim.editor.guardado)
+    nuevo[5] = nuevo[5] + " -- x"
+    r = c.post("/api/cambios", json={"lectura": lid, "texto": "\n".join(nuevo), "descripcion": "con huella"})
+    assert r.json()["lectura_verificada"] is True
+    assert "sin verificar" not in c.get(f"/cambios/{r.json()['id']}").text
+
+
+def test_la_huella_tras_guardar_un_cambio_sin_huella_esperada_queda_guardada_con_su_variante(entorno):
+    c, sim = entorno
+    lid = leer(c)
+    transcribir_como_oraculo(c, sim, lid)
+    nuevo = list(sim.editor.guardado)
+    nuevo[5] = nuevo[5] + " -- x"
+    cid = proponer_y_aprobar(c, lid, nuevo)
+    assert escribir(c, cid)["estado"] == "escrito"
+    c.post("/api/simulador/guardar", headers=PERSONA)
+    r = c.post(f"/api/cambios/{cid}/huella", json={"referencia": sim.estado()["huella_base"]}).json()
+    assert r["verificado"]
+    guardado = cambios.cargar(cid)
+    assert guardado.variante and guardado.variante["codificacion"] == "utf-16-le"
+    assert guardado.estado == "verificado"

@@ -26,7 +26,7 @@
      hace la pantalla usable. La escala de atención sigue mandando en las
      insignias de la derecha —«sin uso detectado» en ámbar—, así que las dos
      cosas no compiten: identidad a la izquierda, estado a la derecha. */
-  .cap-desc { font-size:13.5px; color:var(--texto-2); line-height:1.5;
+  .cap-desc { font-size:var(--letra-3); color:var(--texto-2); line-height:1.5;
               display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .cap-meta { text-align:right; font-size:12px; color:var(--texto-4); line-height:1.6; flex:none;
               min-width:150px; }
@@ -36,7 +36,7 @@
   .catalogo-kits { display:grid; gap:10px; grid-template-columns:repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
   .kit-cat { display:grid; gap:8px; align-content:start; }
   .kit-cat .kit-cab { gap:8px; }
-  .kit-desc { margin:0; color:var(--texto-2); font-size:13.5px; }
+  .kit-desc { margin:0; color:var(--texto-2); font-size:var(--letra-3); }
   .kit-acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .kit-acciones form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; min-width:0; }
   .kit-acciones select { min-width:0; max-width:100%; }
@@ -117,9 +117,10 @@
    distintas si el escaneo es de hoy o de antes de escribir media docena de
    skills. Va DEBAJO de las cifras y en tenue a propósito — es la letra pequeña
    de lo de arriba, no un dato que se consulte por sí mismo. #}
-<p class="tenue" style="margin:-6px 0 16px;font-size:12.5px">
+<p class="tenue" style="margin:-6px 0 16px;font-size:var(--letra-2)">
   {% if inv.medido_en %}
-    Escaneado el {{ inv.medido_en[:19] | replace('T', ' ') }} (UTC).
+    {#- Sin umbral: el catálogo no se escanea solo, y no hay cadencia contra la que medirlo. #}
+    Escaneado el {{ ui.cuando(inv.medido_en, forma='ambos') }}.
     El catálogo no se refresca solo: si has creado algo desde entonces, reescanea
     desde la rueda.
   {% else %}
@@ -193,13 +194,13 @@
         {% if c.proyecto_status == 'archivado' %}
           <span class="insignia neutro" title="El proyecto está archivado: no es que se te olvidara, lo retiraste">archivado</span>
         {% elif c.usado %}
-          <span class="insignia ok"><span class="glifo">✓</span>usado {{ c.usado[:10] }}</span>
+          <span class="insignia ok"><span class="glifo">✓</span>usado {{ ui.cuando(c.usado, forma='dia') }}</span>
         {% elif c.medible %}
           <span class="insignia espera"><span class="glifo">▲</span>sin uso detectado</span>
         {% else %}
           <span class="insignia neutro" title="Los métodos son documentos que se leen, no algo invocable por nombre">uso no medible</span>
         {% endif %}
-        <span style="display:block;margin-top:4px">editado {{ c.modificado[:10] if c.modificado else '—' }}</span>
+        <span style="display:block;margin-top:4px">editado {{ ui.cuando(c.modificado, forma='dia') }}</span>
       </span>
       {% if c.tipo == 'agente' %}
         <button class="sutil lanzar-agente"
@@ -230,7 +231,7 @@
 {% for k in catalogo %}
 <div class="tarjeta kit-cat">
   <div class="kit-cab">
-    <strong style="font-size:15px;font-weight:500">{{ k.nombre }}</strong>
+    <strong style="font-size:var(--letra-4);font-weight:500">{{ k.nombre }}</strong>
     {% if k.version %}<span class="chip">v{{ k.version }}</span>{% endif %}
     {% if k.estado == 'instalado' %}<span class="chip" style="color:var(--ok);border-color:var(--ok)">instalado</span>
     {% elif k.estado == 'con-el-hub' %}<span class="chip">viene con el hub</span>
@@ -262,7 +263,7 @@
         <button>Aplicar</button>
       </form>
     {% elif k.obligatorio %}
-      <span class="tenue" style="font-size:12.5px">Todos los proyectos la llevan.</span>
+      <span class="tenue" style="font-size:var(--letra-2)">Todos los proyectos la llevan.</span>
     {% endif %}
   </div>
 </div>
@@ -358,7 +359,7 @@
     </summary>
 
     <div class="barra" style="margin:14px 0">
-      <button class="cta lanzar-agente"
+      <button class="aceptar lanzar-agente"
               data-proyecto="{{ k.id }}"
               data-nombre="mantenedor:{{ c.id }}"
               data-titulo="Lanzar el mantenedor sobre {{ c.nombre }}"

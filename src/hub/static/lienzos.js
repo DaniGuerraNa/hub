@@ -24,7 +24,7 @@
   let elegido = null;
   let vistos = new Set();       // para saber cuál es nuevo desde que miraste
   let abierta = false;
-  let latido = 0;
+  let latido = null;   // lo que lo para: `HubSondeo.cada`
   // Mirando el archivo en vez de lo que está en uso. Archivar no es borrar:
   // esto es la puerta de vuelta, y sin ella archivar daría miedo.
   let viendoArchivados = false;
@@ -287,9 +287,12 @@
                ${p.decision !== 'pendiente' ? `data-e="${escapar(p.decision)}"` : ''}>
         <summary><span class="dtt"><b>${i + 1}.</b> ${escapar(p.punto || p.id)}</span>
           <span class="dst">${escapar(p.decision || 'pendiente')}</span></summary>
-        ${p.justificacion ? `<div class="djj">${escapar(p.justificacion)}
-          ${p.propone ? `<div style="margin-top:5px"><b>Propone:</b> ${escapar(p.propone)}</div>` : ''}
-        </div>` : ''}
+        ${p.justificacion
+          // Pegado a su caja: `.djj` va en `pre-line` para que los saltos de
+          // un valor se vean (C-0387), y los de la plantilla también se verían.
+          ? `<div class="djj">${escapar(p.justificacion.replace(/\n+$/, ''))}${p.propone
+            ? `<div style="margin-top:5px"><b>Propone:</b> ${escapar(p.propone)}</div>` : ''}</div>`
+          : ''}
         <div class="dbb">
           <button type="button" class="sutil" data-v="si">Sí</button>
           <button type="button" class="sutil" data-v="no">No</button>
@@ -306,6 +309,40 @@
       </details>`).join('');
   }
 
+  /* Guarda UN campo de un punto. 🔴 Sobre la versión leída (C-0383): el
+   * cuerpo se reescribe desde la copia de esta pestaña, y mandarlo sin decir
+   * de cuál parte pisaba la corrección que el agente publicó mientras tanto.
+   * Si el hub contesta que cambió (409), `l` pasa a ser la de ahora y quien
+   * llama decide si repinta: devuelve 'cambio' en vez de 'ok'.
+   *
+   * En cola: al pulsar una decisión con una respuesta a medias salen dos
+   * guardados seguidos (el campo pierde el foco antes del clic), y el segundo
+   * tiene que partir de lo que dejó el primero, no de la misma copia. */
+  let cola = Promise.resolve();
+  function guardarCampo(l, id, campo, valor) {
+    const paso = cola.then(async () => {
+      const cuerpo = reemplazarCampo(l.cuerpo, id, campo, valor);
+      const r = await fetch(
+        `/api/lienzo/${encodeURIComponent(l.proyecto_id)}/${encodeURIComponent(l.id)}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cuerpo, base: l.version }) });
+      if (r && r.status === 409) {
+        const datos = await r.json();
+        if (!datos || !datos.lienzo) throw new Error('cambió y no llegó la versión de ahora');
+        Object.assign(l, datos.lienzo);
+        return 'cambio';
+      }
+      if (!r || !r.ok) throw new Error('no se guardó');
+      let datos = null;
+      try { datos = await r.json(); } catch (e) { /* sin cuerpo: vale la copia */ }
+      l.cuerpo = cuerpo;
+      if (datos && datos.lienzo && datos.lienzo.version) l.version = datos.lienzo.version;
+      return 'ok';
+    });
+    cola = paso.catch(() => {});
+    return paso;
+  }
+
   function atarDecisiones(l) {
     vista.querySelectorAll('.dec').forEach(caja => {
       caja.querySelectorAll('.dbb button').forEach(bt => {
@@ -315,15 +352,16 @@
           // es una decisión que no se puede retirar.
           const previo = caja.dataset.e || 'pendiente';
           const valor = previo === bt.dataset.v ? 'pendiente' : bt.dataset.v;
-          const cuerpo = reemplazarCampo(l.cuerpo, caja.dataset.id, 'decision', valor);
           try {
-            const r = await fetch(
-              `/api/lienzo/${encodeURIComponent(l.proyecto_id)}/${encodeURIComponent(l.id)}`,
-              { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cuerpo }) });
-            if (!r || !r.ok) throw new Error('no se guardó');
-            l.cuerpo = cuerpo;
+            const como = await guardarCampo(l, caja.dataset.id, 'decision', valor);
+            // Con 'cambio' se repinta la de ahora, sin la marca: enseñarla
+            // como puesta sería mentir, y ponerla encima, pisar lo nuevo.
             pintar(l);
+            if (como === 'cambio') HubUI.avisar({
+              titulo: 'El lienzo cambió',
+              mensaje: 'Se publicó una versión nueva mientras lo tenías abierto y tu marca '
+                + 'no se guardó, para no pisarla. Ya ves la de ahora: vuelve a marcar '
+                + 'si sigue haciendo falta.' });
           } catch (e) {
             // No se repinta: dejar la marca puesta sin haberla guardado sería
             // enseñar como decidido algo que él no leerá nunca.
@@ -342,16 +380,20 @@
       let previo = campo.value;
       campo.addEventListener('blur', async () => {
         if (campo.value === previo) return;      // no se toca lo que no cambió
-        const cuerpo = reemplazarCampo(
-          l.cuerpo, campo.dataset.id, 'respuesta', escaparYaml(campo.value));
         if (marca) marca.textContent = 'guardando…';
         try {
-          const r = await fetch(
-            `/api/lienzo/${encodeURIComponent(l.proyecto_id)}/${encodeURIComponent(l.id)}`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ cuerpo }) });
-          if (!r || !r.ok) throw new Error('no se guardó');
-          l.cuerpo = cuerpo;
+          const como = await guardarCampo(
+            l, campo.dataset.id, 'respuesta', escaparYaml(campo.value));
+          if (como === 'cambio') {
+            // No se repinta: se llevaría lo que acaba de escribir. `l` ya es
+            // la de ahora, así que salir otra vez del campo lo guarda encima.
+            if (marca) marca.textContent = '';
+            HubUI.avisar({ titulo: 'El lienzo cambió',
+              mensaje: 'Se publicó una versión nueva mientras escribías y tu respuesta no '
+                + 'se guardó. Sigue en el campo: sal de él otra vez para guardarla sobre '
+                + 'la versión nueva, o cópiala y vuelve a abrir el lienzo para ver qué cambió.' });
+            return;
+          }
           previo = campo.value;
           if (marca) marca.textContent = 'guardada';
           // 🔴 NO se repinta el lienzo: repintar reconstruye los `<details>` y
@@ -831,8 +873,9 @@
   });
 
   // Se sondea aunque la hoja esté cerrada, pero despacio: es lo que enciende el
-  // punto. Es una llamada a un directorio con pocos archivos.
+  // punto. Es una llamada a un directorio con pocos archivos. Con la pestaña
+  // oculta, no (C-0277): al volver se pregunta enseguida.
   refrescar();
-  latido = setInterval(refrescar, CADENCIA);
-  window.addEventListener('beforeunload', () => clearInterval(latido));
+  latido = window.HubSondeo.cada(refrescar, CADENCIA);
+  window.addEventListener('beforeunload', latido);
 })();

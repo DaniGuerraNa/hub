@@ -13,6 +13,463 @@ bash scripts/actualizar.sh
 Al terminar te enseña esta misma lista, sólo con las versiones que acabas de
 cruzar.
 
+## 0.6.0 — 2026-11-17
+
+Herramientas opcionales (la primera, el Puente KVM para quien tiene un
+JetKVM), un secretario que apunta lo que no sabe hacer y lo convierte en
+mejoras, e investigaciones que llegan digeridas.
+
+### Qué tienes que hacer
+
+- **Actualiza** con el botón de **Actualizaciones** (o con
+  `bash scripts/actualizar.sh` en la carpeta del hub).
+- **Reinicia el secretario antes que la web, o a la vez** (lo hace
+  `actualizar.sh`). Su memoria gana una tabla y, hasta que el servicio
+  arranque con el código nuevo, la pantalla del secretario se ve vacía. Si
+  lo tienes parado, se ve vacía hasta que lo enciendas.
+- **Para que el secretario trate lo dictado como dictado, empieza una
+  conversación nueva**: las que ya estaban abiertas leyeron sus instrucciones
+  al empezar.
+- **Para usar Fable 5.2, actualiza Claude Code** (`npm install -g
+  @anthropic-ai/claude-code@latest`): hasta la 2.1.280 no lo reconoce.
+- **Abre una vez la app del secretario en el teléfono** tras actualizar: así
+  carga la versión nueva de sus avisos, con «Hecho» y «En 1 h» en los
+  recordatorios.
+- Si usas el secretario, reinicia `hub-secretario` para que lea las
+  instrucciones nuevas (lo hace `actualizar.sh`).
+- **Si preparas el Puente KVM**: su servicio no es del hub. Tras cada
+  actualización del hub, reinícialo tú (`systemctl --user restart
+  puente-kvm`, o vuelve a lanzar `scripts/arrancar.sh` en su carpeta con la
+  misma `PUENTE_TRABAJO` delante), y antes de desinstalar el hub quítalo
+  (`bash scripts/servicio.sh quitar` en `componentes/puente-kvm`):
+  `desinstalar.sh` no lo toca.
+
+### Nuevo
+
+- **Herramientas opcionales, apagadas de fábrica**, en Ajustes → Guía
+  («Herramientas opcionales»). Vienen con el hub, pero sólo le sirven a quien
+  tiene con qué usarlas; apagadas no salen en ningún menú ni en ninguna
+  búsqueda, y el hub se ve como siempre. La primera es el **Puente KVM**,
+  para quien tiene un JetKVM: Claude lee y escribe en un Mac donde no se
+  puede instalar nada. Viene en `componentes/puente-kvm` del clon, con su
+  propio servicio, y se prepara una vez desde su pantalla («Preparar con
+  Claude»). Encendido, sale en el menú (Agentes) y su pantalla dice si el
+  puente está en marcha, si llega al aparato y quién tiene el teclado.
+  «Abrir el puente» lo abre en una pestaña aparte, y sólo desde la PC donde
+  corre. **Aún no se ha probado con un JetKVM de verdad**, sólo con el Mac
+  simulado que trae. Si usas el asistente, `hub componentes` y `hub preparar
+  puente` también lo conocen («Limpiar» su chat para que lea sus
+  instrucciones nuevas). Todo, en `conocimiento/15-puente-kvm.md`. Si no
+  tienes un JetKVM, no tienes que hacer nada.
+- **«Te espera» enseña las peticiones que el navegador de Claude tiene en
+  pausa** esperando tu permiso: la acción y el sitio, nunca la dirección
+  entera, con un botón que lleva a Navegante, donde se contesta. No se
+  pueden callar ni aprobar desde ahí, y si el guardián no está en marcha la
+  fila lo avisa.
+- **En Secretario → Memoria, «Filtrar» junto a la búsqueda.** Por tema
+  (persona, proyecto, preferencia, decisión, dato, investigación, inglés) y
+  por «Sin salir en ninguna búsqueda desde el …»: las notas que el
+  secretario no ha usado al buscar desde que se cuenta. Nada se borra solo.
+- **`/maquetas/` enseña prototipos HTML, sólo para mirarlos.** Los de la
+  carpeta `maquetas/` del repo (u otra con `HUB_MAQUETAS`), también desde el
+  teléfono por el acceso remoto. Cada página va aislada del hub: sus `.css` y
+  `.js` se incrustan, y lo que cargue de un CDN o como imagen suelta no se
+  ve. Sin la carpeta, la ruta responde 404.
+- **El secretario conoce las skills de tus proyectos.** Puede consultar las
+  skills, agentes y métodos que cada proyecto tiene escritos (lo que enseña
+  Inventario) y leer cómo se hace un proceso antes de explicártelo, en vez
+  de inventarlo. Depende de que el inventario esté escaneado.
+- **De «no sé hacerlo» a una mejora.** Cuando le pides algo que aún no sabe,
+  te pregunta si lo apunta como mejora en el tablero y, si quieres, la manda
+  trabajar; nunca lo hace sin que se lo digas. Confianza enseña en qué punto
+  va cada una.
+- **El secretario apunta lo que no sabe hacer.** Cuando te dice que aún no
+  puede con algo, lo deja anotado, y Confianza enseña «Lo que le pediste y no
+  supo», agrupado y con su recuento: así se sabe qué le falta sin que tengas
+  que acordarte de pedirlo.
+- **Cada dictado deja medido lo que tardó.** Una línea en el registro del hub
+  con el tiempo total y el de Whisper, por qué camino fue, el modelo, si usó
+  GPU o CPU y cuánto duraba el audio; nunca lo que dijiste. El servidor de
+  voz guarda su arranque y sus errores en `voz/servidor.log` (las últimas
+  200 líneas).
+- **El recorrido de pantallas avisa de más cosas** (`python -m hub.recorrido`),
+  sin darlas por rotas: botones y enlaces de menos de 24 px, campos con letra
+  de menos de 16 px en el móvil, pantallas sin título principal o sin `main`,
+  respuestas de más de 500 ms y más de un botón de acción principal a la vez.
+- **El secretario mira tu PC con PowerShell.** Pídele «revisa qué modelo son
+  mis monitores» o «¿qué tengo conectado por USB?» y lo mira él, sin
+  preguntarte, si la orden sólo mira (aparatos, controladores, discos, red,
+  servicios, el registro). Lo comprueba el propio PowerShell antes de
+  correrla y la corre recortada a esos comandos; no lee tus archivos.
+  **Si hace falta cambiar algo, te pide tu sí con la orden exacta**, que ves
+  entera en Pendientes: nada cambia sin él, y si tardas más de 15 minutos no
+  la corre. Además, se niega a pedirte lo que toque tus proyectos, puertos,
+  docker o WSL; eso es una red para lo evidente, no una garantía. Nunca lo
+  usa desde un disparador. Sólo en Windows, con el hub en WSL.
+- **Elige con qué modelo investiga el secretario, y páralo si te arrepientes.**
+  «Investígalo con opus» o «consúltalo con Fable 5.2» lo hace con ése; si no
+  dices ninguno, lo elige él según lo difícil que sea (Haiku para un dato,
+  Sonnet para comparar fuentes, Opus para analizar). Fable sólo si lo nombras
+  tú en tu mensaje: es el que más gasta. «Contéstame con fable» le pasa la
+  respuesta a ése. Y «para la investigación» (o «páusala») la detiene a mitad
+  y quita las que esperaban; para retomarla, pídela otra vez.
+- **Responde a un mensaje concreto del secretario, como en WhatsApp Web.**
+  Doble clic en el hueco al lado de un globo (o su ↩, que en el teléfono se
+  ve siempre): encima del cuadro sale «Respondiendo a…»; × o Escape lo quita.
+  Tu mensaje lleva la cita arriba y pulsarla te lleva al original. Le llega
+  lo citado aunque esa conversación ya se haya cerrado, y lo trata como dato,
+  no como una orden.
+
+- **Pregúntale al secretario por un día concreto.** «¿Qué hice ayer?» le
+  deja ver las sesiones de trabajo de ese día, y al buscar en tus mensajes
+  «hoy» y «desde las 3» son tu hora local, igual que las horas que te cita.
+- **Busca en todas tus notas.** En la pestaña Memoria del secretario, pulsa
+  Intro en «Filtrar notas» para buscar en todas, no sólo en las 80 más
+  recientes.
+- **Respaldo y Máquina vigilan también la copia de la memoria del
+  secretario**, si lo usas: dicen cuándo fue la última y avisan en pantalla
+  si lleva más de dos días sin hacerse.
+
+- **Una dirección que no existe abre una página del hub**, con el menú y el
+  buscador, en vez de un error en inglés; y un proyecto que ya no existe lo
+  dice al volver al panorama.
+- **Cada respuesta dice en qué se le fue el tiempo**, en la cabecera
+  `Server-Timing` (DevTools → Red → Timing), y la línea del registro de una
+  petición lenta también. Sirve para saber por qué tarda una pantalla.
+
+- **Banco de dictado** (`/voz/banco`, también desde la guía). Lees en voz alta
+  unas frases en la PC y en el teléfono; se guardan sólo en tu máquina, y
+  `uv run python -m hub.banco_dictado medir --modelos small,large-v3-turbo`
+  te dice qué modelo de Whisper te entiende mejor: error por palabras, por
+  categoría y por aparato. Las grabaciones no caducan ni van en la copia
+  diaria. Con tu propio vocabulario: `python -m hub.banco_dictado sembrar
+  --de mis-frases.yml`, antes de grabar.
+
+- En Ajustes → Confianza, bajo «Lo que le pediste y no supo», ahora se
+  cuentan también las veces que contestó que no podía sin apuntar qué le
+  faltaba.
+- **El secretario sabe más del hub y de cada persona.** Ideas del tablero,
+  fichas, consumo, versión y dónde está cada pantalla; «¿cuándo hablé
+  con…?»; y busca primero en lo que ya anotó. Sin calendario conectado ya no
+  intenta leerlo.
+- Máquina: «Diagnosticar ahora» enseña pantallazos, volcados y latencia de
+  Windows, en sólo lectura y a petición.
+- Reuniones: la pantalla dice si el agente de Windows está al día y, si no,
+  ofrece copiarlo; en una reunión, sus compromisos abiertos se cierran de
+  una vez («Darlos por hechos» o «Descartarlos»).
+- Lo que el secretario te pide aprobar sale como tarjeta encima del cuadro
+  del chat, con el texto entero: apruebas o rechazas sin ir a Pendientes.
+- Puedes pedirle al secretario que detenga o reanude una tarea, arranque o
+  pare un contenedor, archive un slot, descarte una idea o ponga el modo
+  inglés. Salvo el modo inglés, pregunta siempre y no se aprueba desde la
+  notificación.
+- Por el chat puedes corregir una nota o el texto de un compromiso, y
+  pedirle que olvide una nota; olvidar pide siempre tu permiso.
+- El aviso de un recordatorio trae «Hecho» y «En 1 h» (Android y PC), y
+  puedes preguntarle en qué está cualquier sesión de Claude Code de un slot.
+- Si usas fichas de cambios, cuando la mejora que nació de algo que el
+  secretario no sabía hacer está hecha y su herramienta ya está cargada, te
+  lo dice una vez en el chat (nunca al teléfono).
+- Trabajo reúne las shells sin usar desde que arrancó tmux y cierra las que
+  marques, con confirmación. En el orquestador, una tarea terminada o
+  detenida enseña lo que dejó abierto y ofrece cerrarlo y archivarlo.
+
+- Puedes pedir más sobre una investigación («profundiza en el punto 3»): la
+  siguiente sabe lo que ya se encontró y no lo repite. Cada investigación
+  dice cuánto tardó y a cuánto equivale, y Memoria → Investigaciones lista
+  las últimas con modelo, estado y gasto; lo que gastó una cortada sale como
+  «no se sabe».
+- La copia diaria se comprueba al hacerla y puede llevarse también a una
+  segunda carpeta en otro disco (`HUB_RESPALDO_EXTRA` o `respaldo-extra.txt`
+  dentro de la carpeta del hub); `/respaldo` dice si llegó.
+- En Secretario → Ajustes → Voz eliges, en cada aparato, qué voz te lee
+  (también en el modo inglés) y a qué velocidad, con «Probar».
+
+- `scripts/medir_claude.py` comprueba, tras actualizar Claude Code, que el
+  hub sigue leyéndolo bien (sin gastar cuota; `--con-modelo` para lo que sí
+  gasta).
+
+- El chat del secretario enseña las conversaciones anteriores encima de la
+  de ahora, con un separador cada una; «Ver lo anterior» trae más, y cada
+  conversación de la lista se abre en el chat.
+- Al rechazar lo que pide el secretario puedes decirle por qué, desde el
+  chat o desde Pendientes; te contesta a eso, y el chat nombra la acción por
+  su nombre.
+
+### Qué cambia en lo que ya usabas
+
+- **Las investigaciones del secretario llegan digeridas.** Sin cabecera ni
+  tu pregunta repetida: primero la respuesta, luego de 3 a 6 puntos redactados que citan
+  sus fuentes por número (`[1][3]`) y, si cabe, «Lo que deduzco», rotulado
+  como no dato. Las direcciones ya no van en el texto: están en la tarjeta
+  «Fuentes», numeradas igual y como enlace corto (el dominio; pulsarlo abre
+  la página en otra pestaña). Un punto que no cita ninguna fuente válida, o
+  con una cifra que no está en las fuentes que cita, no se enseña y se
+  cuenta. Si el investigador no devuelve esos puntos, sale como antes. Las
+  notas que ya tenías no cambian, y las nuevas se siguen pudiendo ampliar
+  («profundiza en el punto 3»).
+- **Actualizar copia tus bases antes de tocarlas** (`respaldos/antes-
+  hub-<fecha>.db` y `antes-secretario-<fecha>.db`, las tres últimas) y ya no
+  da la versión por instalada sólo porque la web conteste: si el muestreo no
+  late en un minuto, o un servicio que reinició no sigue en marcha, falla y
+  te dice cómo volver a la de antes (`INSTALAR.md`, «Volver a la versión
+  anterior»). Si el secretario aún no late, sólo avisa. Nada se restaura
+  solo. La comprobación final puede tardar hasta un minuto más.
+- **Las notas que el secretario saca solo llevan un tema de una lista corta,
+  o ninguno**; las que apuntas tú, el que digas. Al cerrar una conversación
+  también apunta tus preferencias. Las notas que ya tenías no cambian.
+- **Lo que se pega en una sesión va sin caracteres de control.** Un mensaje
+  de fuera (Encargos, el canal de consulta) que los trajera podía cerrar el
+  pegado antes de tiempo y llegar al agente como teclas sueltas; ahora se
+  quitan antes de pegar, y si se quitó alguno el registro lo dice.
+- **Si el hub no contestaba y dictabas y luego escribías, «Reintentar» manda
+  las dos cosas** (antes se perdía lo grabado), y los fallos del dictado
+  salen en rojo. Un fallo antes de llamar al modelo ya no deja la respuesta
+  «pensando» hasta reiniciar.
+- **Sin registro de proyectos, el secretario no cambia nada en tu PC**: antes
+  sólo se negaba si el registro estaba roto, no si faltaba.
+- **El chat del secretario se abre mostrando la última respuesta entera**,
+  aunque haya algo en «Te espera», y sigue al final al abrir el teclado del
+  móvil. El panel ya no enseña un instante las sugerencias de «chat vacío»
+  al cambiar de pantalla.
+- **Si un mensaje al secretario no sale, lo dice en rojo bajo el cuadro, con
+  «Reintentar»**, y lo escrito no se pierde; en el modo voz se pausa y lo dice
+  en voz alta.
+- **Si le escribes con su servicio parado, el chat lo dice a los pocos
+  segundos** («lo contestará al volver»), con un enlace a su pantalla, en vez
+  de quedarse «pensando».
+- **Cuando no puede contestar, dice qué pasó y qué hacer en lenguaje llano**;
+  el detalle técnico queda en `journalctl --user -u hub-secretario`.
+- **El código de sus respuestas sale en un bloque aparte, con «Copiar»**, y
+  los títulos sin almohadillas.
+- **Modo voz: «déjame mirarlo» suena mientras busca**, no al terminar. Puedes
+  contestar en cuanto calla o seguir hablando tras interrumpirle: lo dicho ya
+  no se pierde. Una tos o un ruido no lo pausan: dice «¿Perdón?» y sigue; y
+  si se pausa por un fallo, lo dice en voz alta. Ya no se queda «hablando» si
+  el navegador no avisa del final de una frase.
+- **Dictado: si se corta la red, se reintenta solo**; si no sale, aparece
+  «Reintentar» y lo grabado no se pierde. El panel dice cuándo pasa tu voz a
+  texto y enseña lo que entendió, y si el micrófono falla dice por qué (sin
+  permiso, no hay micrófono, ocupado por otra aplicación).
+- **El primer dictado tras un rato es más rápido**: el Whisper empieza a
+  cargar al pulsar grabar. Y lo dictado sin revisar le llega al secretario
+  como dictado: si algo clave no cuadra, pregunta antes de actuar.
+- **«Reabrir tus slots persistentes» ya no ofrece lo que está abierto**: sólo
+  sale para los slots que se quedaron sin ninguna ventana, y cuenta sólo las
+  que faltan.
+- **El aviso de una sesión perdida dice cuántas ventanas volvieron** y cuántas
+  sin su agente; si el corte es de hace más de un día, sale plegado en una
+  línea.
+- **Servicios no ofrece arrancar ni parar sobre una lectura vieja.** Si Docker
+  no contesta, no está instalado o no hay lectura de la última media hora,
+  enseña la última con su fecha y el menú deja de contar contenedores.
+- **Actualizaciones dice cuándo un clon no tiene remoto**, explica en español
+  por qué falló la consulta y avisa si lleva más de dos horas sin mirar.
+- **Respaldo avisa cuando la última medición no llegó a todos los repos**:
+  cuántos se midieron y qué filas tienen una cifra anterior.
+- **La última actividad de un slot es la última vez que su agente trabajó**;
+  tener una ventana abierta ya no la actualiza.
+- **Talleres cuenta como trabajando la sesión que delega en subagentes**, y
+  dos talleres con el mismo nombre se distinguen por su ventana.
+- **Archivos y la lista de sesiones cargan mucho más rápido** desde la segunda
+  visita: lo que no cambió en el disco no se vuelve a leer. Si cambias a
+  dónde apunta un enlace que declaraste como ruta, Archivos tarda hasta un
+  minuto en verlo.
+- **Reiniciar o actualizar el hub ya no deja «Failed» en el registro de sus
+  servicios**, y el secretario termina de contestarte antes de reiniciarse
+  (hasta 45 segundos). Los servicios arrancan con el Python del entorno, sin
+  `uv run`. No tienes que hacer nada: `actualizar.sh` regenera los servicios.
+- **Los recordatorios ya no esperan a que el secretario termine de leer tus
+  mensajes**, ni el corte de la grabación de una reunión. Y lo que le
+  apruebas se hace casi al momento.
+- **El secretario sabe qué día y hora es en cada mensaje**: «mañana» o «el
+  jueves» se entienden sin una consulta de más.
+- **Si le pides cambiar algo en un proyecto, te ofrece encargarlo** en vez de
+  decir que no puede.
+- **Cuando pasa una pregunta al modelo mayor, la respuesta se va viendo**
+  mientras se escribe.
+- **Si se reinicia a mitad de una respuesta, al retomarla no repite lo que ya
+  había hecho.** Y un mensaje escrito justo cuando la conversación se estaba
+  cerrando ya no desaparece del chat.
+- **El secretario sólo investiga cuando se lo pides tú en una conversación**:
+  ni un disparador ni el modo inglés pueden encargar una investigación. Si
+  una investigación falla al devolver sus resultados, te lo dice en vez de
+  responder que no encontró nada.
+- **Si no puede leer tu registro de proyectos, no te pide cambiar nada en tu
+  PC** hasta que pueda; mirar sigue funcionando.
+- **El resumen de una sesión de trabajo llega marcado como dato y con las
+  llaves tapadas**, y un disparador ya no puede mandarte «…» al teléfono.
+- **La sugerencia de pasar una acción a «auto» sólo aparece tras cinco
+  aprobaciones seguidas**, sin un «no» ni un fallo entre medias.
+- **Las pantallas viajan comprimidas**: se cargan bastante más rápido desde
+  el teléfono. Reuniones abre en menos de un segundo donde tardaba siete.
+- **Las pestañas del hub que no estás mirando dejan de preguntar al
+  servidor**; al volver se ponen al día enseguida.
+- **Menos escritura en disco**: el muestreo ya no reescribe el registro cada
+  20 segundos si nada cambió, y las copias diarias quedan en un solo archivo.
+- **Las notas de los slots ya no enseñan contraseñas ni llaves.** El
+  secretario las ve tapadas y el buscador (Ctrl+K) las muestra como
+  `[secreto oculto]`, aunque sigue encontrando la nota por sus palabras. Es
+  un filtro por patrones, no una garantía: guarda las llaves en el llavero y
+  deja en la nota sólo el puntero.
+- **El registro del servicio web ya no apunta cada acceso correcto.** Sólo
+  las respuestas con error y las peticiones de más de un segundo, con su ruta
+  y su tiempo: el historial de `journalctl` pasa de unos seis días a semanas.
+  Surte efecto al ejecutar `scripts/actualizar.sh`, que regenera el servicio.
+  Los avisos repetidos del ciclo lento («docker no está instalado») se dicen
+  una vez por racha, no cada diez minutos.
+- **Una investigación ya no va siempre con Haiku**: si no nombras modelo, el
+  secretario puede elegir Sonnet u Opus para una pregunta que pide comparar o
+  analizar, y entonces tarda algo más y gasta más (como mucho 1 USD con Sonnet
+  y 1,50 con Opus, frente a 0,50 con Haiku). Si prefieres que no, nómbrale
+  «con haiku».
+- **El tope de gasto de una investigación va por modelo**: el de siempre con
+  Haiku, y más alto con los que gastan más. Si pusiste `investigar: tope_usd`
+  en `secretario.yml`, ese número vale para todos; para uno solo,
+  `tope_usd: {fable: 8}`.
+- **En Trabajo, pulsar una ventana de un slot abre ésa.** Si el slot tenía
+  ventanas en más de una sesión de tmux (por ejemplo, tras restaurar),
+  pulsar cualquiera de la otra sesión te devolvía siempre a la primera, y no
+  había forma de llegar a las demás para usarlas o cerrarlas.
+
+- **En un disparador `pide`, el secretario ya sólo te avisa por su cuenta.**
+  Cualquier otra cosa te pide permiso aunque esté en auto; la solicitud dice
+  que nació en un disparador y se aprueba abriendo la app, no desde la
+  notificación. Lo que pones en `haz` no cambia.
+- **Lo que se escribe en un grupo y no va para ti se lee junto** (diez
+  mensajes o cinco minutos) en vez de mensaje a mensaje: gasta menos. Un
+  aviso «En el grupo» puede tardar hasta unos cinco minutos; lo que es para
+  ti y tus disparadores no esperan.
+- Mientras el secretario escribe una respuesta larga, la pantalla ya no dice
+  que no está en marcha.
+- Al preguntarle por un periodo («¿qué anotamos desde el lunes?»), el
+  secretario ya no trae notas de otros días, y dice en tu hora cuándo fue el
+  último mensaje de un chat, cuándo se encargó una tarea y desde cuándo
+  espera un asunto.
+- Si una investigación falla, te lo dice en llano y con qué hacer. Si el
+  modelo elegido no devuelve los datos con su fuente, la repite una vez con
+  el modelo de siempre y te lo dice (son dos intentos, cada uno con su
+  tope).
+- Dictar en la terminal (/trabajo) ahora dice por qué no puede usar el
+  micrófono (sin permiso, sin micrófono u ocupado por otra aplicación),
+  reintenta una vez la subida si se corta la red y empieza a cargar el
+  modelo de voz al pulsar «Dictar», como ya hacían el secretario y el
+  tablero.
+- Si tienes `HUB_TRANSCRIPTS` puesta, ahora la siguen también las
+  conversaciones de cada slot, el contexto, el orquestador, el asistente y
+  Talleres; antes sólo Consumo e Inventario.
+- Si el secretario se reinicia mientras investiga o resume una sesión, lo
+  repite solo (como mucho dos veces) y te lo dice en el chat.
+- Si Claude no está disponible, el secretario ya no aparta mensajes ni
+  cierra conversaciones sin resumen: espera y reintenta solo. Antes de
+  apartar hace una llamada mínima de prueba.
+- Una acción que apruebas se hace una sola vez: si el secretario se reinicia
+  a mitad no la repite; te dice que no sabe si se hizo y queda como «no sé
+  si se hizo».
+- Los mensajes programados y el orquestador ya no esperan hasta un minuto
+  cada diez mientras se miden repos y consumo; Máquina → Salud gana la fila
+  «Mediciones lentas». El muestreo ya no relee todo el registro de Claude
+  Code en cada medición. No tienes que hacer nada.
+- Lo que contesta un disparador `pide` queda entero en su chat y al teléfono
+  llega la primera línea (`en_chat: false` lo deja como antes).
+- En el teléfono los campos ya no amplían la página al tocarlos, botones y
+  plegables son más fáciles de pulsar, el menú abre plegado y la paleta no
+  parte los títulos; en todas partes los campos llevan el mismo estilo, las
+  casillas dejan la versalita, los ejemplos se ven apagados y hay «Saltar al
+  contenido» para el teclado.
+- «Te espera» agrupa los bloqueos de cada proyecto y lo que vence en una
+  línea plegada con su cuenta; lo que sólo contestas tú sale arriba, y en
+  cada fila la acción propuesta va destacada y el resto en su menú (⋯). La
+  cabecera dice cuántas cosas son nuevas.
+- En Memoria las notas se leen y se corrigen con «Editar»; «Borrar» pasa a
+  su menú, en rojo. En Canal cada persona se lee en una línea, con su
+  formulario tras «Editar», y los permisos enseñan sólo los proyectos donde
+  tiene algo.
+- Junto a la conversación, lo vencido sale aparte («Vencidos»), con «Hecho»
+  y «Mover». Pendientes junta los compromisos vencidos en «Vencidos sin
+  cerrar» para cerrarlos o descartarlos de varios en varios; el parte dice
+  dónde están.
+- Confianza y la ficha de proyecto dicen «Lo hace solo», «Te pregunta» y
+  «Nunca» (en la configuración sigue auto/ask/never).
+- Máquina: «Salud del hub» enseña arriba sólo lo que pide algo; lo que está
+  bien queda plegado en «Todo en pie», y cada estado lleva su glifo. «Tras
+  el último arranque» dice cuánto tardaron WSL y el hub en volver tras
+  encender.
+- El secretario ya no te recuerda en el teléfono lo que te pide otra persona
+  en un chat o una reunión: queda en Pendientes con su plazo, o como nota si
+  no trae plazo (pídele «recuérdamelo» si lo quieres).
+- El estado de un proyecto ya no se corta a media palabra: «Leer entero» lo
+  despliega en su ficha. La búsqueda (Ctrl+K) dice cuando no encuentra nada
+  y enseña cada slot con su proyecto y su ruta en vez de su nota. La Guía y
+  Acceso hablan del secretario cuando es él quien te habla.
+- La bandeja de la portada ya no cuenta una ventana partida que tiene un
+  panel en un slot: sale sólo bajo su slot. Un slot abierto por el
+  secretario, el orquestador o Encargos sale ya bajo su slot en Trabajo, sin
+  pasar 20 s por «Sin organizar».
+- En Trabajo, «Ocultar» y «Cerrar» de las ventanas sin organizar están en su
+  menú ⋯, y el nombre ya no se parte. En el teléfono, el selector de Trabajo
+  marca lo que estás viendo, y los slots con ventana van primero.
+- Un doble clic en «Dictar» o en el micrófono del secretario, o salir del
+  modo voz mientras se abre, ya no deja el micrófono grabando.
+- Intercambio: «Elegir archivos» en castellano y varios a la vez; miniaturas
+  de las imágenes; un solo selector de sesión y las acciones de cada archivo
+  en su menú ⋯.
+- Lienzos: un valor escrito en bloque se publica en una línea (o se rechaza
+  diciendo la línea), y sus saltos se ven; marcar una decisión ya no pisa
+  una versión publicada mientras lo tenías abierto.
+- Encargos: un encargo descartado o publicado ya no ofrece «Abrir el
+  entrevistador». Archivos: en el teléfono el filtro va debajo de la
+  explicación. Inventario: CHANGELOG, PLAN, PENDIENTES y ESTADO de un kit
+  dejan de contarse como «método» tras reescanear.
+
+- La nota que guarda una investigación ya no se corta a 4000 caracteres, y
+  una investigación puede tardar hasta 20 minutos (antes se cortaba a los
+  10).
+- Mis datos: «Confirmar» sólo confirma el valor que tenías delante; si
+  cambió mientras lo mirabas, no confirma y te lo dice.
+- Los avisos con emoji, texto no latino o un título largo ya llegan por la
+  app (antes caían a Telegram), y un aparato con la suscripción rota ya no
+  deja sin avisos a los demás.
+- Mirar el hub sin usar el secretario ya no le crea su carpeta ni su base, y
+  la web ya no la migra (lo hace el servicio). Lo que el secretario guarda
+  —notas, compromisos y respuestas— lleva tapado lo que parece una llave.
+- El secretario sólo te lee con voces de tu aparato. Las de red (las
+  «Google…» de Chrome, las «Online» de Edge) mandan el texto fuera y sólo
+  suenan si las eliges tú en Ajustes → Voz.
+- «Leer las respuestas en voz alta» empieza a leer según escribe, y las
+  respuestas habladas son más cortas y sin rutas, códigos ni símbolos. En el
+  modo voz, si tarda en empezar con lo tuyo, te dice «un momento».
+- Con el modo inglés puesto, una línea encima del cuadro lo recuerda, con
+  «Quitar». El globo dice «Te espera: N nuevas»; en el teléfono, los botones
+  pequeños del chat se tocan mejor.
+- Un repo recién clonado bajo un `patron` tarda hasta un minuto en aparecer;
+  si su carpeta no se deja leer un rato, sus repos conservan su última cifra
+  de respaldo en vez de desaparecer.
+
+- Las fechas salen en tu hora y con cuánto hace («13/11 14:41 (hace 3 h)»);
+  una medición atrasada sale en ámbar. Las cifras llevan coma decimal en
+  todas las pantallas («64,0 MB», «25,0 %»).
+- La explicación de Canal, Conexiones, Servicios, Consumo y Navegante va
+  plegada bajo «¿Por qué así?». En el teléfono no salen teclas y «Buscar» es
+  una lupa.
+- «Refrescar» sólo sale en Panorama, Trabajo y Talleres; en Servicios,
+  «Reescanear» pasa a «Medir ahora», arriba. El cian marca sólo la acción
+  principal; «Aprobar» o «Guardar» de cada fila van en tono de aceptar;
+  «Encolar» pasa a cian.
+- La terminal toma fondo, cursor y selección de los colores de la interfaz.
+
+- El secretario dice cuántos mensajes hay cuando no los lee todos, y lo
+  largo le llega recortado pero entero, no partido.
+
+- El secretario ya no intenta lo que aún no está configurado (la tele sin su
+  IP, poner cosas en el calendario sin Google): en Ajustes → Confianza sale
+  «sin configurar», con dónde se configura.
+
+- Sin systemd, `bash scripts/arrancar.sh --parar` seguido de arrancar otra
+  vez (lo que pide `actualizar.sh` en esas instalaciones) ya no deja el hub
+  apagado diciendo que el puerto lo usa otro programa: parar espera a que la
+  web suelte el puerto.
+
 ## 0.5.2 — 2026-11-10
 
 El secretario se pone en todas las pantallas con un botón, revisa tus

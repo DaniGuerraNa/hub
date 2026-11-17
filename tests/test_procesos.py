@@ -79,3 +79,79 @@ def test_la_sonda_de_systemd_no_se_repite(monkeypatch):
     assert procesos.puede_desasir() is True
     assert procesos.puede_desasir() is True
     assert len(sondas) == 1
+
+
+# ── una shell en reposo (C-0352, revisión cruzada) ───────────────────────────
+#
+# tmux dice `bash` con `bash x.sh` o con un comando compuesto: el nombre no
+# basta para decir «sin nada en marcha». Procesos de verdad, mirados en /proc.
+
+SHELLS = frozenset({"bash", "sh"})
+
+
+def _hijos(pid: int) -> list[int]:
+    return [int(h) for t in Path(f"/proc/{pid}/task").iterdir()
+            for h in Path(t, "children").read_text().split()]
+
+
+def _esperar_hijo(pid: int) -> list[int]:
+    limite = time.monotonic() + 3
+    while time.monotonic() < limite:
+        if hijos := _hijos(pid):
+            return hijos
+        time.sleep(0.02)
+    raise AssertionError("el hijo no llegó a nacer")
+
+
+def _lanzar(orden, entrada=b""):
+    p = subprocess.Popen(orden, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if entrada:
+        p.stdin.write(entrada)
+        p.stdin.flush()
+    return p
+
+
+def test_una_shell_a_secas_sin_nada_debajo_esta_en_reposo():
+    p = _lanzar(["bash", "--norc", "--noprofile"])
+    try:
+        time.sleep(0.1)
+        assert procesos.shell_en_reposo(p.pid, SHELLS) is True
+    finally:
+        p.kill()
+        p.wait()
+
+
+def test_una_shell_con_algo_en_marcha_debajo_no_esta_en_reposo():
+    p = _lanzar(["bash", "--norc", "--noprofile"], b"sleep 30\n")
+    hijos = []
+    try:
+        hijos = _esperar_hijo(p.pid)
+        assert procesos.shell_en_reposo(p.pid, SHELLS) is False
+    finally:
+        for h in hijos:   # por su pid, el que da /proc: nunca por patrón
+            os.kill(h, 9)
+        p.kill()
+        p.wait()
+
+
+@pytest.mark.parametrize("orden", [
+    ["bash", "GUION"],                       # `bash x.sh`: un guion, aunque sólo haga `read`
+    ["bash", "-c", "read x; read y"],         # un comando compuesto
+    ["sleep", "30"],                         # no es una shell
+])
+def test_lo_que_tmux_llamaria_shell_pero_ejecuta_algo_no_esta_en_reposo(orden, tmp_path):
+    guion = tmp_path / "x.sh"
+    guion.write_text("read x\n", encoding="utf-8")
+    p = _lanzar([str(guion) if a == "GUION" else a for a in orden])
+    try:
+        time.sleep(0.1)
+        assert procesos.shell_en_reposo(p.pid, SHELLS) is False
+    finally:
+        p.kill()
+        p.wait()
+
+
+def test_lo_que_no_se_puede_leer_no_cuenta_como_en_reposo():
+    p = subprocess.Popen(["true"])
+    p.wait()
+    assert procesos.shell_en_reposo(p.pid, SHELLS) is False

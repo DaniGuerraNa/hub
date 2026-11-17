@@ -11,11 +11,13 @@ de falla que de verdad importa en un buscador.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import sqlite3
 from urllib.parse import quote
 
 from . import db
+from .secretario.memoria import ocultar_secretos
 
 # Cada clase sabe a dónde lleva su resultado. Sin esto la búsqueda encuentra
 # cosas pero no te lleva a ellas, que es la mitad inútil del trabajo.
@@ -47,9 +49,13 @@ def reindexar(con: sqlite3.Connection) -> int:
            FROM slot s LEFT JOIN proyecto p ON p.id = s.proyecto_id
            WHERE s.status = 'activo'"""
     ):
+        # La nota sigue encontrándose por sus palabras, pero se indexa ya
+        # tapada (C-0255): buscar un trozo de una llave no la encuentra
+        # porque no está. Red de patrones, no garantía (regla dura 22); por
+        # eso, además, la nota no se enseña nunca (`_detalle_de_slots`).
         filas.append(
             ("slot", str(f["id"]), f["nombre"],
-             f"{f['nota'] or ''} {f['ruta'] or ''} {f['proyecto'] or ''}", f["proyecto_id"])
+             f"{ocultar_secretos(f['nota'] or '')} {f['ruta'] or ''} {f['proyecto'] or ''}", f["proyecto_id"])
         )
     for f in con.execute("SELECT tipo, nombre, descripcion, ruta, proyecto_id FROM capacidad"):
         filas.append(
@@ -77,10 +83,14 @@ def reindexar(con: sqlite3.Connection) -> int:
             ("conexion", f["alias"], f["alias"], f"{f['host'] or ''} {f['proposito']}", None)
         )
 
-    con.execute("DELETE FROM indice")
-    con.executemany(
-        "INSERT INTO indice (clase, ref, titulo, cuerpo, proyecto_id) VALUES (?,?,?,?,?)", filas
-    )
+    # En una transacción (C-0429): en autocommit, una búsqueda que llegara
+    # entre el DELETE y los INSERT —el ciclo lento reindexa desde su hilo—
+    # no encontraba nada. Si quien llama ya tiene una abierta, en la suya.
+    with contextlib.nullcontext() if con.in_transaction else db.transaccion(con):
+        con.execute("DELETE FROM indice")
+        con.executemany(
+            "INSERT INTO indice (clase, ref, titulo, cuerpo, proyecto_id) VALUES (?,?,?,?,?)", filas
+        )
     return len(filas)
 
 
@@ -135,18 +145,37 @@ def buscar(con: sqlite3.Connection, texto: str, limite: int = 20) -> list[dict]:
         filas = _buscar_like(con, texto, limite * 5)
 
     filas = sorted(filas, key=lambda f: _orden(f, texto))[:limite]
+    de_slots = _detalle_de_slots(con, [f["ref"] for f in filas if f["clase"] == "slot"])
 
     return [
         {
             "clase": f["clase"],
             "ref": f["ref"],
             "titulo": f["titulo"],
-            "detalle": " ".join((f["cuerpo"] or "").split())[:120],
+            "detalle": (de_slots.get(str(f["ref"]), "") if f["clase"] == "slot"
+                        else " ".join((f["cuerpo"] or "").split())[:120]),
             "proyecto_id": f["proyecto_id"],
             "url": _DESTINOS.get(f["clase"], lambda r, p: "/")(f["ref"], f["proyecto_id"]),
         }
         for f in filas
     ]
+
+
+def _detalle_de_slots(con: sqlite3.Connection, refs: list) -> dict[str, str]:
+    """Lo que se enseña de un slot encontrado: su proyecto y su ruta, nunca su
+    nota (C-0356). En la nota puede haber una llave pegada, y la paleta se
+    abre con un atajo, también desde el teléfono; taparla con patrones es una
+    red, no una garantía (regla dura 5). Se sigue encontrando por la nota."""
+    ids = [int(r) for r in refs if str(r).isdigit()]
+    if not ids:
+        return {}
+    filas = con.execute(
+        f"""SELECT s.id, s.ruta, COALESCE(p.nombre, s.proyecto_id) AS proyecto
+            FROM slot s LEFT JOIN proyecto p ON p.id = s.proyecto_id
+            WHERE s.id IN ({",".join("?" * len(ids))})""",
+        ids,
+    )
+    return {str(f["id"]): " · ".join(x for x in (f["proyecto"], f["ruta"]) if x) for f in filas}
 
 
 def _buscar_like(con: sqlite3.Connection, texto: str, limite: int) -> list[sqlite3.Row]:
@@ -165,6 +194,9 @@ def _buscar_like(con: sqlite3.Connection, texto: str, limite: int) -> list[sqlit
            FROM slot WHERE status='activo' AND (nombre LIKE ? OR nota LIKE ?) LIMIT ?""",
         (patron, patron, limite),
     ).fetchall()
+    # El respaldo lee la nota cruda de la tabla: se tapa aquí, como el índice.
+    salida = [{**dict(f), "cuerpo": ocultar_secretos(f["cuerpo"] or "")} if f["clase"] == "slot" else f
+              for f in salida]
     salida += con.execute(
         """SELECT 'capacidad' AS clase, nombre AS ref, nombre AS titulo,
                   descripcion AS cuerpo, proyecto_id

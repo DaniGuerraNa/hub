@@ -15,15 +15,18 @@ medir antes de complicar.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import re
 import sqlite3
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any, Callable
 
 from .. import config
-from ..db import transaccion
+from ..db import TOPE_DEL_WAL, transaccion
 from ..reloj import ahora
 
 ESQUEMA = """
@@ -89,6 +92,17 @@ CREATE TRIGGER IF NOT EXISTS nota_au AFTER UPDATE ON nota BEGIN
     VALUES ('delete', old.id, old.texto, old.tema, old.origen);
     INSERT INTO nota_fts(rowid, texto, tema, origen) VALUES (new.id, new.texto, new.tema, new.origen);
 END;
+
+-- 🔴 Sólo vive aquí y no se reconstruye: cuántas veces se le sirvió cada nota
+-- al modelo y cuándo la última (`apuntar_lectura`, C-0424). Perderla pierde la
+-- cuenta, no las notas. Aparte de `nota` a propósito: una columna allí haría
+-- saltar `nota_au` —y reescribir el índice de texto— en cada búsqueda. Desde
+-- cuándo se cuenta va en `estado` (`USO_DESDE`); borrar la nota se lleva su fila.
+CREATE TABLE IF NOT EXISTS nota_uso (
+    nota    INTEGER PRIMARY KEY REFERENCES nota(id) ON DELETE CASCADE,
+    veces   INTEGER NOT NULL DEFAULT 0,
+    ultima  TEXT NOT NULL
+);
 
 -- 🔴 Sólo vive aquí. «Voy a hacer X» (quien = 'yo') o «te pido X» (quien = otro).
 CREATE TABLE IF NOT EXISTS compromiso (
@@ -241,22 +255,34 @@ CREATE TABLE IF NOT EXISTS asunto (
 """
 
 
-def carpeta() -> Path:
+def carpeta(crear: bool = True) -> Path:
+    """Donde vive lo del secretario. La crea quien va a escribir en ella; quien
+    sólo mira pasa `crear=False`: una pantalla de `hub-web` no deja la carpeta
+    de un secretario que nadie ha encendido (C-0099)."""
     d = config.HUB_HOME / "secretario"
-    d.mkdir(parents=True, exist_ok=True)
+    if crear:
+        d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def ruta() -> Path:
-    return carpeta() / "memoria.db"
+    """Dónde está la base, sin crear nada: lo crea `conectar`."""
+    return carpeta(crear=False) / "memoria.db"
 
 
-def conectar(r: Path | None = None) -> sqlite3.Connection:
+def conectar(r: Path | str | None = None) -> sqlite3.Connection:
+    """La memoria para escribir: la crea si no existe y la migra en el sitio.
+    La abren `hub-secretario` y las rutas POST de la web; lo que sólo mira
+    usa `abrir_lectura` (C-0099)."""
+    if r is None:
+        carpeta()
     con = sqlite3.connect(r or ruta(), timeout=10.0, isolation_level=None)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
     con.execute("PRAGMA foreign_keys=ON")
+    # El mismo tope que `hub.db` (C-0281): sin él, el `-wal` no encoge nunca.
+    con.execute(f"PRAGMA journal_size_limit={TOPE_DEL_WAL}")
     con.executescript(ESQUEMA)
     # Columnas que llegaron después de crearse la base (regla dura 1: la
     # memoria no se rehace, se migra en el sitio).
@@ -282,11 +308,67 @@ def conectar(r: Path | None = None) -> sqlite3.Connection:
     # intercambio, bajo `_secretario/`. El archivo no se copia aquí.
     if "adjuntos" not in {f["name"] for f in con.execute("PRAGMA table_info(turno)")}:
         con.execute("ALTER TABLE turno ADD COLUMN adjuntos TEXT NOT NULL DEFAULT '[]'")
+    # A qué globo del chat contesta (C-0243, decisión 406): un puntero, no una
+    # copia. Sin `REFERENCES`: si el citado ya no está, la cita se queda vacía.
+    if "responde_a" not in {f["name"] for f in con.execute("PRAGMA table_info(turno)")}:
+        con.execute("ALTER TABLE turno ADD COLUMN responde_a INTEGER")
     return con
 
 
 def existe() -> bool:
     return ruta().is_file()
+
+
+# Tablas y columnas tal cual están en el archivo: lo que `abrir_lectura`
+# compara con lo que hoy deja `conectar`.
+_COLUMNAS = ("SELECT m.name, c.name FROM sqlite_master AS m, pragma_table_info(m.name) AS c"
+             " WHERE m.type = 'table'")
+
+
+@functools.cache
+def _esquema_de_hoy() -> frozenset[tuple[str, str]]:
+    """Lo que una base al día tiene: el `ESQUEMA` y sus migraciones, aplicados
+    a una vacía en RAM. Sacado de `conectar` mismo, para que una columna nueva
+    no haya que apuntarla en dos sitios."""
+    c = conectar(":memory:")
+    try:
+        return frozenset((f[0], f[1]) for f in c.execute(_COLUMNAS))
+    finally:
+        c.close()
+
+
+def abrir_lectura() -> sqlite3.Connection | None:
+    """La memoria para quien sólo la mira (`hub-web`, C-0099): en sólo lectura,
+    sin crear la carpeta ni la base y sin migrarla. Crearla y ponerla al día es
+    de quien escribe: el servicio y las rutas POST, por `conectar`.
+
+    `None` si no hay base, y también si es de una versión anterior (le falta
+    una tabla o una columna que `conectar` añade): leída a medias, una consulta
+    nueva fallaría en una pantalla cualquiera, y migrarla desde aquí es justo
+    lo que esto evita. Se lee como vacía hasta que la abra quien escribe, que
+    al arrancar el servicio es enseguida. Puede lanzar `sqlite3.Error` (una
+    base ilegible o bloqueada): quien llama decide qué significa."""
+    r = ruta()
+    if not r.is_file():
+        return None
+    con = sqlite3.connect(f"{r.absolute().as_uri()}?mode=ro", uri=True, timeout=5)
+    con.row_factory = sqlite3.Row
+    try:
+        al_dia = _esquema_de_hoy() <= {(f[0], f[1]) for f in con.execute(_COLUMNAS)}
+    except BaseException:
+        con.close()
+        raise
+    if not al_dia:
+        con.close()
+        return None
+    return con
+
+
+def vacia() -> sqlite3.Connection:
+    """Una memoria vacía en RAM con el esquema de hoy: lo que lee una pantalla
+    cuando `abrir_lectura` no da base (C-0099). Tiene la misma forma que la de
+    verdad, así que se pinta por el mismo camino, y no deja archivos."""
+    return conectar(":memory:")
 
 
 # ───────────────────────────── aparatos con avisos ─────────────────────────────
@@ -444,6 +526,12 @@ _SECRETOS = [
 
 
 def ocultar_secretos(texto: str) -> str:
+    """Tapa lo que tiene pinta de llave. Pasa por aquí todo lo que se guarda
+    venga de donde venga: lo que entra de las fuentes (`guardar_evento`) y lo
+    que escribe el secretario —sus notas y compromisos (`anotar`,
+    `comprometer`, también los que apunta el modelo) y sus turnos
+    (`conversacion.contestar` y `decir`), C-0434—. Es una red de patrones,
+    no una garantía (regla dura 22): un secreto escrito en prosa pasa."""
     for patron in _SECRETOS:
         if patron.groups >= 2:
             texto = patron.sub(lambda m: f"{m.group(1)}{m.group(2)}[secreto oculto]", texto)
@@ -506,54 +594,74 @@ def _consulta_fts(texto: str, modo: str) -> str | None:
     return f" {modo} ".join(f'"{t}"*' for t in terminos[:12])
 
 
+#: Las notas que van delante en `buscar`: lo ya sacado en limpio, sin que
+#: tape los mensajes cuando casan muchas.
+NOTAS_DELANTE = 4
+
+
 def buscar(con: sqlite3.Connection, texto: str, *, fuente: str | None = None, desde: str | None = None,
            hasta: str | None = None, n: int = 12) -> list[dict]:
-    """Eventos y notas que casan con `texto`, los mejores primero, con su origen.
+    """Notas y mensajes que casan con `texto`, con su origen: primero las
+    notas (hasta `NOTAS_DELANTE`) y luego los mensajes, cada grupo por su
+    puntuación y, a igualdad, lo más reciente primero.
+
+    No se mezclan: bm25 de `evento_fts` y el de `nota_fts` no se comparan,
+    cada índice tiene sus propias estadísticas, y una nota quedaba detrás de
+    veinte mensajes que casaban mejor por casualidad (SEC2-20). Sin notas que
+    casen, todo el hueco es para los mensajes.
 
     Primero exige todos los términos; si no sale nada, se conforma con alguno.
     Lo segundo trae ruido, pero «no encontré nada» cuando sí había es peor: el
     dueño deja de preguntar.
+
+    `desde` y `hasta` (UTC) recortan los mensajes por su fecha y las notas por
+    cuándo se anotaron (C-0322): sin lo segundo, «¿qué anotamos desde el
+    lunes?» traía notas de cualquier día.
     """
-    salida: list[dict] = []
     for modo in ("AND", "OR"):
         q = _consulta_fts(texto, modo)
         if not q:
             break
         filtros, params = "", [q]
+        de_notas, params_notas = "", [q]
         if fuente:
             filtros += " AND e.fuente = ?"
             params.append(fuente)
         if desde:
             filtros += " AND e.fecha >= ?"
             params.append(desde)
+            de_notas += " AND n.creada >= ?"
+            params_notas.append(desde)
         if hasta:
             filtros += " AND e.fecha <= ?"
             params.append(hasta)
-        filas = con.execute(
-            "SELECT e.id, e.fuente, e.conversacion, e.autor, e.fecha, e.texto, e.enlace, bm25(evento_fts) AS r"
-            " FROM evento_fts JOIN evento e ON e.id = evento_fts.rowid"
-            f" WHERE evento_fts MATCH ? {filtros} ORDER BY r LIMIT ?", (*params, n)).fetchall()
+            de_notas += " AND n.creada <= ?"
+            params_notas.append(hasta)
         notas = [] if fuente else con.execute(
             "SELECT n.id, n.texto, n.tema, n.origen, n.creada, bm25(nota_fts) AS r"
             " FROM nota_fts JOIN nota n ON n.id = nota_fts.rowid WHERE nota_fts MATCH ?"
-            " ORDER BY r LIMIT ?", (q, n)).fetchall()
+            f"{de_notas} ORDER BY r, n.creada DESC LIMIT ?", (*params_notas, min(NOTAS_DELANTE, n))).fetchall()
+        filas = con.execute(
+            "SELECT e.id, e.fuente, e.conversacion, e.autor, e.fecha, e.texto, e.enlace, bm25(evento_fts) AS r"
+            " FROM evento_fts JOIN evento e ON e.id = evento_fts.rowid"
+            f" WHERE evento_fts MATCH ? {filtros} ORDER BY r, e.fecha DESC LIMIT ?",
+            (*params, n - len(notas))).fetchall()
         salida = ([{"tipo": "nota", "id": f["id"], "texto": f["texto"], "tema": f["tema"],
-                    "origen": f["origen"], "fecha": f["creada"], "r": f["r"]} for f in notas]
+                    "origen": f["origen"], "fecha": f["creada"]} for f in notas]
                   + [{"tipo": "mensaje", "id": f["id"], "fuente": f["fuente"], "conversacion": f["conversacion"],
                       "autor": f["autor"], "fecha": f["fecha"], "texto": f["texto"][:1500],
-                      "enlace": f["enlace"], "r": f["r"]} for f in filas])
+                      "enlace": f["enlace"]} for f in filas])
         if salida:
-            break
-    salida.sort(key=lambda x: x["r"])
-    for x in salida:
-        x.pop("r", None)
-    return salida[:n]
+            return salida
+    return []
 
 
-def recientes(con: sqlite3.Connection, *, fuente: str | None = None, conversacion: str | None = None,
-              desde: str | None = None, n: int = 40, solo_para_mi: bool = False) -> list[dict]:
-    """Lo último que llegó, sin buscar: «¿qué se dijo hoy en el grupo?», y con
-    `solo_para_mi`, «¿qué me pidieron a mí?» (decisión 332)."""
+def _filtros_recientes(con: sqlite3.Connection, *, fuente: str | None = None, conversacion: str | None = None,
+                       desde: str | None = None, hasta: str | None = None, autor: str | None = None,
+                       solo_para_mi: bool = False) -> tuple[list[str], list]:
+    """Los filtros de `recientes`, armados una vez para la página y para su
+    cuenta (C-0392): dos `WHERE` copiados acabarían contando otra cosa.
+    `desde`/`hasta` en UTC, como `fecha`; `autor`, por `autores_llamados`."""
     filtros, params = [], []
     if solo_para_mi:
         filtros.append("para_mi IN ('privado', 'etiqueta', 'nombre')")
@@ -566,10 +674,52 @@ def recientes(con: sqlite3.Connection, *, fuente: str | None = None, conversacio
     if desde:
         filtros.append("fecha >= ?")
         params.append(desde)
+    if hasta:
+        filtros.append("fecha <= ?")
+        params.append(hasta)
+    if autor:
+        quienes = autores_llamados(con, autor)
+        filtros.append(f"autor IN ({','.join('?' * len(quienes))})" if quienes else "0")
+        params.extend(quienes)
+    return filtros, params
+
+
+def recientes(con: sqlite3.Connection, *, fuente: str | None = None, conversacion: str | None = None,
+              desde: str | None = None, n: int = 40, solo_para_mi: bool = False, hasta: str | None = None,
+              autor: str | None = None, antes_de: int | None = None) -> list[dict]:
+    """Lo último que llegó, sin buscar: «¿qué se dijo hoy en el grupo?», y con
+    `solo_para_mi`, «¿qué me pidieron a mí?» (decisión 332). Lo más nuevo
+    primero, en el orden `(fecha, id)`.
+
+    `antes_de`: el id del último que ya se leyó; da los que van después de él
+    en ese orden (C-0392). Por la pareja y no por el id solo: un chat
+    exportado entra con ids nuevos y fechas viejas, y a igual fecha el orden
+    no estaba definido, así que una página podía repetir o saltarse uno. Un
+    id que no existe es un `ValueError`. Sigue siendo una lista: el total lo
+    da `contar_recientes` (la usa también el triaje)."""
+    filtros, params = _filtros_recientes(con, fuente=fuente, conversacion=conversacion, desde=desde, hasta=hasta,
+                                         autor=autor, solo_para_mi=solo_para_mi)
+    if antes_de is not None:
+        cursor = con.execute("SELECT fecha FROM evento WHERE id = ?", (int(antes_de),)).fetchone()
+        if cursor is None:
+            raise ValueError(f"no hay ningún mensaje con id {antes_de}")
+        filtros.append("(fecha < ? OR (fecha = ? AND id < ?))")
+        params.extend([cursor["fecha"], cursor["fecha"], int(antes_de)])
     donde = ("WHERE " + " AND ".join(filtros)) if filtros else ""
     filas = con.execute(f"SELECT id, fuente, conversacion, autor, fecha, texto, enlace, para_mi FROM evento {donde}"
-                        " ORDER BY fecha DESC LIMIT ?", (*params, n)).fetchall()
+                        " ORDER BY fecha DESC, id DESC LIMIT ?", (*params, n)).fetchall()
     return [dict(f) | {"texto": f["texto"][:1500]} for f in filas]
+
+
+def contar_recientes(con: sqlite3.Connection, *, fuente: str | None = None, conversacion: str | None = None,
+                     desde: str | None = None, hasta: str | None = None, autor: str | None = None,
+                     solo_para_mi: bool = False) -> int:
+    """Cuántos cumplen los filtros de `recientes`, sin página ni cursor: lo
+    que hace falta para decir «hay 266, leí los 100 últimos» (C-0392)."""
+    filtros, params = _filtros_recientes(con, fuente=fuente, conversacion=conversacion, desde=desde, hasta=hasta,
+                                         autor=autor, solo_para_mi=solo_para_mi)
+    donde = ("WHERE " + " AND ".join(filtros)) if filtros else ""
+    return con.execute(f"SELECT COUNT(*) FROM evento {donde}", params).fetchone()[0]
 
 
 def conversaciones(con: sqlite3.Connection) -> list[dict]:
@@ -578,17 +728,172 @@ def conversaciones(con: sqlite3.Connection) -> list[dict]:
         " GROUP BY fuente, conversacion ORDER BY ultimo DESC")]
 
 
+def nombra(texto: str, nombre: str) -> bool:
+    """Si `texto` lleva `nombre` como palabra entera, sin mayúsculas ni
+    tildes: «Ana» no casa con «Anabel» (como `piezas.para_mi`)."""
+    n = _sin_tildes(" ".join((nombre or "").split()))
+    return bool(n) and re.search(rf"(?<!\w){re.escape(n)}(?!\w)", _sin_tildes(texto or "")) is not None
+
+
+def autores_llamados(con: sqlite3.Connection, nombre: str) -> list[str]:
+    """Los autores de mensajes que se llaman `nombre` (`nombra`: palabra
+    entera, sin mayúsculas ni tildes), sin el dueño («Yo»). Una sola regla
+    para `persona` y para `recientes` por autor (C-0392): un `LIKE` aparte
+    haría que «Ana» casara con «Anabel» en uno y no en el otro."""
+    return sorted({f["autor"] for f in con.execute("SELECT DISTINCT autor FROM evento WHERE autor != 'Yo'")
+                   if nombra(f["autor"], nombre)})
+
+
+def sobre_persona(con: sqlite3.Connection, nombre: str, *, n: int = 10) -> dict:
+    """Lo que hay de alguien, calculado al vuelo (C-0411): la tabla `persona`
+    sigue vacía (C-0029), y esto no la necesita ni cambia el esquema.
+
+    Los chats donde firma mensajes, su último mensaje, el último del dueño
+    (autor «Yo») en su chat privado —en un grupo no se sabe a quién hablaba—,
+    los compromisos abiertos que hace él o son para él, y las notas que lo
+    nombran. Las fechas, en UTC como todo lo de aquí."""
+    autores = autores_llamados(con, nombre)
+    chats, ultimo, tuyo = [], None, None
+    if autores:
+        marcas = ",".join("?" * len(autores))
+        chats = [dict(f) for f in con.execute(
+            f"SELECT fuente, conversacion, COUNT(*) AS mensajes, MAX(fecha) AS ultimo FROM evento"
+            f" WHERE autor IN ({marcas}) GROUP BY fuente, conversacion ORDER BY ultimo DESC LIMIT ?", (*autores, n))]
+        f = con.execute(f"SELECT id, fuente, conversacion, autor, fecha, texto FROM evento WHERE autor IN ({marcas})"
+                        " ORDER BY fecha DESC LIMIT 1", autores).fetchone()
+        ultimo = dict(f) if f else None
+        privados = con.execute(f"SELECT DISTINCT fuente, conversacion FROM evento WHERE autor IN ({marcas})"
+                               " AND para_mi = 'privado'", autores).fetchall()
+        for p in privados:
+            f = con.execute("SELECT id, fuente, conversacion, fecha, texto FROM evento WHERE autor = 'Yo'"
+                            " AND fuente = ? AND conversacion = ? ORDER BY fecha DESC LIMIT 1",
+                            (p["fuente"], p["conversacion"])).fetchone()
+            if f and (tuyo is None or f["fecha"] > tuyo["fecha"]):
+                tuyo = dict(f)
+    suyos = [c for c in compromisos(con, "abierto")
+             if nombra(c["quien"], nombre) or nombra(c["para_quien"], nombre)]
+    q = " ".join(_PALABRA.findall(nombre or ""))
+    notas = [dict(f) for f in con.execute(
+        "SELECT n.id, n.texto, n.tema, n.creada FROM nota_fts JOIN nota n ON n.id = nota_fts.rowid"
+        " WHERE nota_fts MATCH ? ORDER BY n.creada DESC LIMIT ?", (f'"{q}"', n))] if q else []
+    return {"autores": autores, "chats": chats, "su_ultimo": ultimo, "del_dueno": tuyo,
+            "compromisos": suyos[:n], "notas": notas}
+
+
 # ───────────────────────────── notas ─────────────────────────────
 
 
 def anotar(con: sqlite3.Connection, texto: str, *, tema: str = "", evento: int | None = None,
            origen: str = "") -> int:
+    """Una nota, con lo que parece una llave tapado (`ocultar_secretos`, C-0434:
+    una red, no una garantía)."""
     return con.execute("INSERT INTO nota (texto, tema, evento, origen, creada) VALUES (?,?,?,?,?)",
-                       (texto.strip(), tema.strip(), evento, origen, ahora())).lastrowid
+                       (ocultar_secretos(texto.strip()), ocultar_secretos(tema.strip()), evento, origen,
+                        ahora())).lastrowid
 
 
-def notas(con: sqlite3.Connection, n: int = 100) -> list[dict]:
-    return [dict(f) for f in con.execute("SELECT * FROM nota ORDER BY id DESC LIMIT ?", (n,))]
+#: Los temas que pueden llevar las notas que el secretario saca solo: el
+#: triaje y el cierre de un hilo eligen de aquí o lo dejan vacío (C-0424).
+#: Con tema libre salían 88 temas para 127 notas, y un tema que no agrupa no
+#: sirve para filtrar; el detalle va en el texto. El dueño, y el secretario
+#: cuando él se lo dicta (`anotar`, corregir una nota), siguen con tema libre.
+#: Cambiar la lista no migra nada: las notas ya guardadas se quedan como están.
+TEMAS = ("persona", "proyecto", "preferencia", "decisión", "dato", "investigación", "inglés")
+
+#: En `estado`: desde cuándo se cuenta qué notas se le sirven al modelo. De
+#: antes no se sabe, y decir «nunca salió» sería una cifra que no se puede
+#: defender (regla dura 13).
+USO_DESDE = "uso_notas_desde"
+
+
+def tema_automatico(tema) -> str:
+    """El tema de una nota que el secretario saca solo: uno de `TEMAS`, o
+    ninguno. El esquema del triaje y el del cierre ya se lo piden al modelo;
+    esto es por si no lo cumple, que un tema inventado vuelve a partir lo que
+    la lista junta. Lo que pone el dueño no pasa por aquí."""
+    t = " ".join(str(tema or "").split()).lower()
+    return t if t in TEMAS else ""
+
+
+def notas(con: sqlite3.Connection, n: int | None = 100, *, tema: str | None = None,
+          sin_leer: bool = False) -> list[dict]:
+    """Las notas, la más nueva primero; `n=None`, todas.
+
+    `tema`: sólo las de ese tema, exacto. `sin_leer`: sólo las que no se le
+    han servido al modelo desde que se cuenta (`apuntar_lectura`; desde
+    cuándo, `USO_DESDE`): sin una búsqueda contada, lo son todas."""
+    filtros, params = [], []
+    if tema is not None:
+        filtros.append("tema = ?")
+        params.append(tema)
+    if sin_leer:
+        filtros.append("id NOT IN (SELECT nota FROM nota_uso)")
+    donde = ("WHERE " + " AND ".join(filtros)) if filtros else ""
+    limite = "" if n is None else " LIMIT ?"
+    return [dict(f) for f in con.execute(f"SELECT * FROM nota {donde} ORDER BY id DESC{limite}",
+                                         (*params, *(() if n is None else (n,))))]
+
+
+def cuantas_por_tema(con: sqlite3.Connection) -> dict[str, int]:
+    """Cuántas notas lleva cada tema, exacto (las de tema libre también)."""
+    return dict(con.execute("SELECT tema, COUNT(*) FROM nota GROUP BY tema").fetchall())
+
+
+def apuntar_lectura(con: sqlite3.Connection, ids, *, desde_ahora: bool = False) -> None:
+    """Que estas notas se le acaban de servir al modelo (C-0424): suma una vez
+    a cada una y guarda cuándo. La primera vez, apunta también desde cuándo se
+    cuenta (`USO_DESDE`), aunque la búsqueda no trajera ninguna nota.
+
+    La llaman quienes le dan la nota al modelo —las herramientas `buscar` y
+    `persona`—, cada una en su `try`: si falla, la herramienta contesta igual
+    y lo dice. **`buscar` no escribe**: es una lectura que cualquiera puede
+    llamar, y que el dueño abra Memoria no es que el secretario la use.
+
+    La fecha y la cuenta, juntas o ninguna: una fecha sin su cuenta diría «no
+    salió» de lo que sí salió. Por lo mismo, `desde_ahora` la adelanta a este
+    momento: lo pide quien sabe que una lectura anterior no se pudo apuntar, y
+    desde la fecha de antes «no salió» ya no se podría defender (regla dura
+    13). Una nota que ya no está (borrada entre que se buscó y se apunta) no
+    deja fila. Escribe en `nota_uso` y en `estado`, nunca en `nota`: su índice
+    de texto no se toca."""
+    unicos = sorted({int(i) for i in ids})
+    momento = ahora()
+
+    def escribir() -> None:
+        con.execute("INSERT INTO estado (clave, valor) VALUES (?, ?) ON CONFLICT(clave) DO "
+                    + ("UPDATE SET valor = excluded.valor" if desde_ahora else "NOTHING"),
+                    (USO_DESDE, json.dumps(momento)))
+        if unicos:
+            # Por el SELECT y no por VALUES: así una nota que ya no está no
+            # deja fila (ni rompe la clave ajena). Su `WHERE` hace falta para
+            # que SQLite no lea el `ON` de `ON CONFLICT` como el de un JOIN.
+            con.execute(f"INSERT INTO nota_uso (nota, veces, ultima) SELECT id, 1, ? FROM nota"
+                        f" WHERE id IN ({','.join('?' * len(unicos))})"
+                        " ON CONFLICT(nota) DO UPDATE SET veces = nota_uso.veces + 1, ultima = excluded.ultima",
+                        (momento, *unicos))
+
+    if con.in_transaction:
+        escribir()
+        return
+    with transaccion(con):
+        escribir()
+
+
+def buscar_notas(con: sqlite3.Connection, texto: str) -> list[dict]:
+    """Todas las notas que dicen `texto` en su texto, su tema o su origen, la
+    más reciente primero (SEC-35: la pantalla carga las últimas y una vieja
+    equivocada no se podía ni encontrar). Un trozo de palabra cuenta, sin
+    mayúsculas ni tildes que la separen, como el filtro del navegador: por eso
+    no va por `nota_fts`, que sólo casa palabras enteras."""
+    q = _sin_tildes(texto.strip())
+    if not q:
+        return []
+    return [dict(f) for f in con.execute("SELECT * FROM nota ORDER BY id DESC")
+            if q in _sin_tildes(f"{f['texto']} {f['tema']} {f['origen']}")]
+
+
+def _sin_tildes(texto: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", texto.casefold()) if unicodedata.category(c) != "Mn")
 
 
 def editar_nota(con: sqlite3.Connection, id_: int, texto: str, tema: str | None = None) -> None:
@@ -603,6 +908,118 @@ def borrar_nota(con: sqlite3.Connection, id_: int) -> None:
     con.execute("DELETE FROM nota WHERE id = ?", (id_,))
 
 
+#: Lo que queda en la bitácora y en una solicitud donde estaba el texto de una
+#: nota olvidada: la fila sigue diciendo qué se hizo y cuándo, no el contenido.
+OLVIDADO = "[olvidado]"
+
+#: Las acciones cuyo parámetro `texto` ES el texto de una nota.
+_DE_NOTAS = ("anotar", "editar_nota")
+_ANTES_DECIA = re.compile(r"antes decía: «(.*?)»(?:; su tema era «.*»)?\Z", re.S)
+#: Por debajo de esto una versión no se busca suelta dentro de un resultado:
+#: una nota que dijera «ok» se llevaría por delante medio «nota 5 guardada».
+_MINIMO_SUELTO = 12
+
+
+def olvidar_nota(con: sqlite3.Connection, id_: int) -> int:
+    """Borra una nota y tapa lo que la bitácora y las solicitudes guardaban de
+    ella (C-0418). Devuelve cuántas filas tapó.
+
+    `borrar_nota` quita la fila y nada más: el texto seguía en la bitácora
+    —en los parámetros de anotarla y de cada corrección, en el «antes decía»
+    y en el motivo que redactó el modelo— y, si pasó por un permiso, en su
+    solicitud. Olvidar que deja eso escrito no es olvidar.
+
+    Qué filas son de la nota, y sólo éstas:
+
+    - `anotar` cuyo resultado es «nota N guardada», y su solicitud si la hubo;
+    - `editar_nota` cuyo parámetro `id` es N, y sus solicitudes (también la
+      que aún espera: aprobada después, dirá que la nota no existe);
+    - la fila que pidió permiso para anotarla, que no lleva N: se llega por
+      el número de su solicitud («solicitud S»);
+    - y la de `anotar` o `editar_nota` que no lleva N (un intento que no se
+      permitió): sólo si su `texto` es **exactamente** el de la nota o el de
+      una versión suya de las que estas mismas filas guardan. Nunca por
+      parecido, y nunca en otra acción: un compromiso con las mismas
+      palabras no es la nota.
+
+    El número de una nota puede volver a usarse al borrar la última: las
+    filas de una nota anterior con ese número también se tapan, y está bien,
+    porque esa nota ya no existe.
+
+    En cada una, todo texto de sus parámetros y su motivo pasan a ser
+    `OLVIDADO`, y el «antes decía» del resultado también. Se conservan la
+    fila, la fecha, la acción, el nivel y el número. 🔴 Es la única escritura
+    que cambia la bitácora después de apuntada, y con el borrado va en una
+    sola transacción: las dos cosas o ninguna.
+
+    Lo que **no** toca, porque no se puede saber con certeza qué es de la
+    nota: los turnos del chat, los resúmenes de conversaciones, el mensaje
+    del que salió (`evento`) y las copias diarias ya hechas."""
+    if con.in_transaction:
+        return _olvidar_nota(con, int(id_))
+    with transaccion(con):
+        return _olvidar_nota(con, int(id_))
+
+
+def _olvidar_nota(con: sqlite3.Connection, nid: int) -> int:
+    def parametros(fila) -> dict:
+        try:
+            p = json.loads(fila["params"] or "{}")
+        except ValueError:
+            return {}
+        return p if isinstance(p, dict) else {}
+
+    def de_la_nota(fila, p: dict) -> bool:
+        if fila["accion"] == "anotar":
+            return (fila["resultado"] or "") == f"nota {nid} guardada"
+        return not isinstance(p.get("id"), bool) and str(p.get("id")) == str(nid)
+
+    def tapada(fila, p: dict) -> tuple[str, str, str | None]:
+        limpio = {k: v if v is None or isinstance(v, (bool, int, float)) else OLVIDADO for k, v in p.items()}
+        resultado = fila["resultado"]
+        if resultado:
+            resultado = _ANTES_DECIA.sub(f"antes decía: «{OLVIDADO}»", resultado)
+            # Por si el resultado la citara de otra forma que el «antes decía».
+            for v in versiones:
+                if len(v) >= _MINIMO_SUELTO:
+                    resultado = resultado.replace(v, OLVIDADO)
+        return json.dumps(limpio, ensure_ascii=False), OLVIDADO if fila["motivo"] else fila["motivo"], resultado
+
+    def version(fila, p: dict) -> None:
+        if isinstance(p.get("texto"), str) and p["texto"].strip():
+            versiones.add(p["texto"])
+        antes = _ANTES_DECIA.search(fila["resultado"] or "")
+        if antes and antes.group(1).strip():
+            versiones.add(antes.group(1))
+
+    nota = con.execute("SELECT texto FROM nota WHERE id = ?", (nid,)).fetchone()
+    versiones: set[str] = {nota["texto"]} if nota and nota["texto"].strip() else set()
+    marcas = ", ".join("?" for _ in _DE_NOTAS)
+
+    solicitudes = [(s, parametros(s)) for s in con.execute(
+        f"SELECT id, accion, params, motivo, resultado FROM solicitud WHERE accion IN ({marcas})", _DE_NOTAS)]
+    solicitudes = [(s, p) for s, p in solicitudes if de_la_nota(s, p)]
+    suyas = {s["id"] for s, _ in solicitudes}
+
+    seguras, dudosas = [], []
+    for b in con.execute(f"SELECT id, accion, params, motivo, resultado FROM bitacora WHERE accion IN ({marcas})",
+                         _DE_NOTAS).fetchall():
+        p = parametros(b)
+        pidio = re.fullmatch(r"solicitud (\d+)", b["resultado"] or "")
+        (seguras if de_la_nota(b, p) or (pidio and int(pidio.group(1)) in suyas) else dudosas).append((b, p))
+    for fila, p in (*solicitudes, *seguras):
+        version(fila, p)
+    # Las que no dicen de qué nota son: sólo por el texto exacto.
+    seguras += [(b, p) for b, p in dudosas if isinstance(p.get("texto"), str) and p["texto"] in versiones]
+
+    for s, p in solicitudes:
+        con.execute("UPDATE solicitud SET params = ?, motivo = ?, resultado = ? WHERE id = ?", (*tapada(s, p), s["id"]))
+    for b, p in seguras:
+        con.execute("UPDATE bitacora SET params = ?, motivo = ?, resultado = ? WHERE id = ?", (*tapada(b, p), b["id"]))
+    con.execute("DELETE FROM nota WHERE id = ?", (nid,))
+    return len(solicitudes) + len(seguras)
+
+
 # ───────────────────────────── compromisos ─────────────────────────────
 
 
@@ -615,12 +1032,22 @@ def comprometer(con: sqlite3.Connection, que: str, *, quien: str = "yo", para_qu
     Si ya había uno igual y llegan fechas, **las fechas nuevas mandan**: «el de
     los PRs, recuérdamelo el lunes» sobre uno que vencía el martes pasado se
     quedaba con la fecha vieja, y el modelo, viéndolo vencido, lo descartó
-    (medido el 2026-10-24). Lo último que dijo el dueño es lo que vale."""
+    (medido el 2026-10-24). Lo último que dijo el dueño es lo que vale.
+
+    Un plazo que llega sin aviso no se vuelve aviso: el triaje no lo da a lo
+    que le pide otro (C-0410) ni a un plazo ya pasado, y `reprogramar` hacía
+    del plazo la hora del aviso.
+
+    Lo que parece una llave se tapa antes de compararlo y de guardarlo
+    (`ocultar_secretos`, C-0434: una red, no una garantía)."""
+    que = ocultar_secretos(que)
     igual = con.execute("SELECT id FROM compromiso WHERE estado = 'abierto' AND lower(que) = lower(?)"
                         " AND quien = ?", (que.strip(), quien or "yo")).fetchone()
     if igual:
-        if vence or recordar_en:
+        if recordar_en:
             reprogramar(con, igual["id"], vence=vence, recordar_en=recordar_en)
+        elif vence:
+            con.execute("UPDATE compromiso SET vence = ? WHERE id = ?", (vence, igual["id"]))
         return igual["id"]
     return con.execute(
         "INSERT INTO compromiso (quien, para_quien, que, vence, recordar_en, evento, origen, creado)"
@@ -654,20 +1081,108 @@ def editar_compromiso(con: sqlite3.Connection, id_: int, *, que: str, vence: str
         con.execute("UPDATE compromiso SET recordado = NULL WHERE id = ?", (id_,))
 
 
-def compromisos(con: sqlite3.Connection, estado: str | None = "abierto", n: int = 200) -> list[dict]:
+def compromisos(con: sqlite3.Connection, estado: str | None = "abierto", n: int = 200, *,
+                quien: str | None = None, vence_antes: str | None = None,
+                evento: int | None = None) -> list[dict]:
+    """Los abiertos, el que vence antes primero; los cerrados, el último que
+    se cerró primero («¿qué hice esta semana?» no empieza por lo de octubre).
+
+    `quien`: «yo» (lo que dijo que haría) u «otros» (lo que le pidieron);
+    `vence_antes` (UTC): sólo los que tienen plazo hasta ese instante;
+    `evento`: sólo los que salieron de ese evento (una reunión, C-0380)."""
+    filtros, params = [], []
     if estado:
-        filas = con.execute("SELECT * FROM compromiso WHERE estado = ? ORDER BY vence IS NULL, vence, id"
-                            " LIMIT ?", (estado, n))
-    else:
-        filas = con.execute("SELECT * FROM compromiso ORDER BY id DESC LIMIT ?", (n,))
-    return [dict(f) for f in filas]
+        filtros.append("estado = ?")
+        params.append(estado)
+    if evento is not None:
+        filtros.append("evento = ?")
+        params.append(int(evento))
+    if quien == "yo":
+        filtros.append("lower(quien) = 'yo'")
+    elif quien == "otros":
+        filtros.append("lower(quien) != 'yo'")
+    elif quien:
+        raise ValueError("`quien` es «yo» u «otros»")
+    if vence_antes:
+        filtros.append("vence IS NOT NULL AND vence <= ?")
+        params.append(vence_antes)
+    donde = ("WHERE " + " AND ".join(filtros)) if filtros else ""
+    orden = ("vence IS NULL, vence, id" if estado == "abierto" else "cerrado DESC, id DESC" if estado
+             else "id DESC")
+    return [dict(f) for f in con.execute(f"SELECT * FROM compromiso {donde} ORDER BY {orden} LIMIT ?", (*params, n))]
 
 
-def cerrar_compromiso(con: sqlite3.Connection, id_: int, estado: str = "hecho") -> None:
+def vencidos(con: sqlite3.Connection, momento: str | None = None) -> list[dict]:
+    """Los abiertos cuya fecha de vencer es anterior a `momento` (UTC ISO; por
+    omisión, ahora), el que antes venció primero. De quien sea: la pantalla
+    los enseña todos, como «Compromisos abiertos». Una sola regla para la
+    pantalla y el parte (C-0369, C-0373)."""
+    return [dict(f) for f in con.execute(
+        "SELECT * FROM compromiso WHERE estado = 'abierto' AND vence IS NOT NULL AND vence < ?"
+        " ORDER BY vence, id", (momento or ahora(),))]
+
+
+def vencidos_o_de_hoy(con: sqlite3.Connection) -> list[dict]:
+    """Los vencidos y los que vencen hoy, en la hora de la casa: lo que
+    enseñan «Vencidos o de hoy» y su lote de Pendientes. Hasta el final del día
+    y no hasta ahora: un compromiso de hoy sin hora se guarda a las 9
+    (`tiempo.a_utc`), y con el corte en «ahora» a las 10 ya salía vencido."""
+    from . import tiempo
+
+    return vencidos(con, tiempo.limite_utc(tiempo.ahora_local().date().isoformat(), fin=True))
+
+
+def cerrar_compromiso(con: sqlite3.Connection, id_: int, estado: str = "hecho", *,
+                      solo_abierto: bool = False) -> None:
+    """`solo_abierto`: no toca uno ya cerrado. Lo pide el aviso de un
+    recordatorio, que puede ser de antes de cerrarlo: un «Hecho» viejo pasaba
+    un descartado a hecho y le cambiaba la hora de cierre (C-0407)."""
     if estado not in ("hecho", "descartado", "abierto"):
         raise ValueError("estado no válido")
-    con.execute("UPDATE compromiso SET estado = ?, cerrado = ? WHERE id = ?",
-                (estado, None if estado == "abierto" else ahora(), id_))
+    # Uno que no existe se dice: «Hecho» desde un aviso viejo contestaba que sí (C-0407).
+    if not con.execute("UPDATE compromiso SET estado = ?, cerrado = ? WHERE id = ?"
+                       + (" AND estado = 'abierto'" if solo_abierto else ""),
+                       (estado, None if estado == "abierto" else ahora(), id_)).rowcount:
+        existe = con.execute("SELECT 1 FROM compromiso WHERE id = ?", (id_,)).fetchone()
+        raise ValueError("ese compromiso ya está cerrado" if existe else "ese compromiso ya no existe")
+
+
+def aplazar_aviso(con: sqlite3.Connection, id_: int, minutos: int) -> str:
+    """«En 1 h» desde el aviso de un recordatorio (C-0407): sólo la hora del
+    aviso, por la misma puerta que «Editar» en Pendientes; el texto y el plazo
+    no se tocan. Uno ya cerrado no se vuelve a avisar. Devuelve la hora nueva (UTC)."""
+    f = con.execute("SELECT que, vence, estado FROM compromiso WHERE id = ?", (id_,)).fetchone()
+    if not f:
+        raise ValueError("ese compromiso ya no existe")
+    if f["estado"] != "abierto":
+        raise ValueError("ese compromiso ya está cerrado")
+    nuevo = (datetime.fromisoformat(ahora()) + timedelta(minutes=minutos)).isoformat(timespec="seconds")
+    editar_compromiso(con, id_, que=f["que"], vence=f["vence"], recordar_en=nuevo)
+    return nuevo
+
+
+def id_evento(con: sqlite3.Connection, fuente: str, id_externo: str) -> int | None:
+    """El evento que una fuente guardó con ese id suyo (`reunion:<id>`), o None."""
+    f = con.execute("SELECT id FROM evento WHERE fuente = ? AND id_externo = ?", (fuente, id_externo)).fetchone()
+    return f["id"] if f else None
+
+
+def cerrar_compromisos(con: sqlite3.Connection, ids, estado: str, *, evento: int) -> int:
+    """Cierra de una vez los compromisos de `ids` que sigan abiertos y hayan
+    salido de `evento` (los de una reunión vieja, C-0380). Devuelve cuántos.
+
+    🔴 Por ids y no «todos los del evento»: se cierran los que el dueño vio y
+    confirmó (regla dura 3); uno que llegara entre medias no entra. Y del
+    evento: un id de otra reunión colado en el formulario no se toca. Todos
+    o ninguno, que un corte a medias dejaría la reunión partida en dos."""
+    if estado not in ("hecho", "descartado"):
+        raise ValueError("se cierran como «hecho» o «descartado»")
+    abiertos = {c["id"] for c in compromisos(con, "abierto", n=10_000, evento=evento)}
+    cerrar = sorted({int(i) for i in ids} & abiertos)
+    with transaccion(con):
+        for i in cerrar:
+            cerrar_compromiso(con, i, estado)
+    return len(cerrar)
 
 
 def por_recordar(con: sqlite3.Connection, momento: str | None = None) -> list[dict]:
@@ -684,12 +1199,29 @@ def marcar_recordado(con: sqlite3.Connection, id_: int) -> None:
 # ───────────────────────────── bitácora y estado ─────────────────────────────
 
 
+#: El `resultado` de un `hueco` que no apuntó el modelo con `no_se_hacer` sino
+#: la red de `conversacion.contestar` (C-0324): se sabe en qué turno dijo que
+#: no podía, no qué le faltaba. Lo cuenta aparte `api.secretario_huecos_sin_clasificar`.
+HUECO_SIN_CLASIFICAR = "sin clasificar"
+
+
 def apuntar(con: sqlite3.Connection, accion: str, *, nivel: str = "", params: dict | None = None,
             motivo: str = "", resultado: str = "", ok: bool = True) -> None:
     con.execute("INSERT INTO bitacora (cuando, accion, nivel, params, motivo, resultado, ok)"
                 " VALUES (?,?,?,?,?,?,?)",
                 (ahora(), accion, nivel, json.dumps(params or {}, ensure_ascii=False), motivo,
                  resultado[:2000], int(ok)))
+
+
+def aprobadas_seguidas(con: sqlite3.Connection, accion: str) -> int:
+    """Las veces que el dueño aprobó `accion` y salió bien desde su último
+    rechazo o fallo. Es lo que pide la 303 para sugerir `auto` («cinco
+    aprobaciones sin fallo»): contar todas sugería subir algo que acababa de
+    rechazar (SEC-45)."""
+    return con.execute(
+        "SELECT COUNT(*) FROM bitacora WHERE accion = ? AND nivel = 'aprobada' AND ok = 1 AND id > COALESCE("
+        "(SELECT MAX(id) FROM bitacora WHERE accion = ? AND (nivel = 'rechazada' OR (nivel = 'aprobada' AND ok = 0)))"
+        ", 0)", (accion, accion)).fetchone()[0]
 
 
 def bitacora(con: sqlite3.Connection, n: int = 100, desde: str | None = None) -> list[dict]:
@@ -745,17 +1277,54 @@ def leer_sin_abrir(clave: str, defecto=None):
 
 
 def resolver_solicitud(con: sqlite3.Connection, sid: int, estado: str, resultado: str | None = None,
-                       solo_pendiente: bool = False) -> sqlite3.Row | None:
+                       solo_pendiente: bool = False, de: str | None = None,
+                       params: Any = None) -> sqlite3.Row | None:
     """Cambia el estado de una solicitud y la devuelve; None si no se tocó.
 
-    La única que escribe `solicitud` después de crearla (C-0050): la pantalla
-    la aprueba o rechaza y el servicio la cierra, y cada uno tenía su UPDATE."""
-    cond = " AND estado = 'pendiente'" if solo_pendiente else ""
-    if resultado is None:
-        cur = con.execute(f"UPDATE solicitud SET estado = ?, resuelta = ? WHERE id = ?{cond}", (estado, ahora(), sid))
-    else:
-        cur = con.execute(f"UPDATE solicitud SET estado = ?, resuelta = ?, resultado = ? WHERE id = ?{cond}",
-                          (estado, ahora(), resultado[:2000], sid))
+    La única que cambia el estado de una `solicitud` después de crearla
+    (C-0050): la pantalla la aprueba o rechaza y el servicio la cierra, y cada
+    uno tenía su UPDATE. (`olvidar_nota` le tapa el texto, no el estado.)
+
+    `de`: el estado en el que tiene que estar; si no lo está, no se toca y
+    devuelve None. Es como se **reclama** (C-0315): de dos que piden
+    `"ejecutando", de="aprobada"` sólo uno recibe la fila, y sólo ése la
+    ejecuta. `solo_pendiente=True` es `de="pendiente"`. Sin `de`, por id: así
+    cierra quien la ejecutó, esté como esté.
+
+    Los estados, que no tienen otra lista (el campo es texto libre):
+    `pendiente` (espera su sí) → `aprobada` | `rechazada`; `aprobada` →
+    `ejecutando` (reclamada: se está haciendo, o murió a mitad) → `hecha` |
+    `fallo` | `caducada`; y `ejecutando` → `cortada` sólo lo que el servicio
+    encontró a medias al arrancar (`servicio.recoger_cortadas`): no se sabe
+    si se hizo, y es final.
+
+    🔴 El reclamo (`ejecutando`) se asegura en disco antes de volver. La
+    base va con `synchronous=NORMAL`, que en WAL puede perder el último
+    commit en un corte de luz: si el perdido es éste, la solicitud vuelve a
+    «aprobada» con la acción ya hecha y se repetiría. Sólo para esta
+    escritura se pone FULL, y se deja como estaba. Dentro de una transacción
+    ya abierta no se puede cambiar, y no se intenta.
+
+    `params`: los que se quedan guardados, en la misma escritura y con la
+    misma condición. Se pasan tapados al cerrarla (hecha, fallo, caducada,
+    rechazada, cortada: C-0431): en claro sólo hacen falta mientras puede
+    ejecutarse, y resuelta sigue en esta base y en sus catorce copias."""
+    de = "pendiente" if solo_pendiente and de is None else de
+    cond, extra = (" AND estado = ?", (de,)) if de is not None else ("", ())
+    cambia, valores = "estado = ?, resuelta = ?", [estado, ahora()]
+    if resultado is not None:
+        cambia, valores = cambia + ", resultado = ?", [*valores, resultado[:2000]]
+    if params is not None:
+        cambia, valores = cambia + ", params = ?", [*valores, json.dumps(params, ensure_ascii=False)]
+    antes = None
+    if estado == "ejecutando" and not con.in_transaction:
+        antes = int(con.execute("PRAGMA synchronous").fetchone()[0])
+        con.execute("PRAGMA synchronous=FULL")
+    try:
+        cur = con.execute(f"UPDATE solicitud SET {cambia} WHERE id = ?{cond}", (*valores, sid, *extra))
+    finally:
+        if antes is not None:
+            con.execute(f"PRAGMA synchronous={antes}")
     if not cur.rowcount:
         return None
     return con.execute("SELECT * FROM solicitud WHERE id = ?", (sid,)).fetchone()
@@ -810,12 +1379,63 @@ def encolar(con: sqlite3.Connection, clave: str, item: dict, *, igual=None) -> b
     return True
 
 
-def sacar(con: sqlite3.Connection, clave: str) -> dict | None:
+def sacar(con: sqlite3.Connection, clave: str, *, en_curso: str | None = None,
+          como: Callable[[dict], Any] | None = None) -> dict | None:
     """Saca el primero de la cola `clave`, o None si está vacía; en una
-    transacción, así que dos que sacan a la vez nunca se llevan el mismo."""
+    transacción, así que dos que sacan a la vez nunca se llevan el mismo.
+
+    Con `en_curso`, en la misma transacción deja en esa clave `como(item)`
+    (o el item): entre sacarlo y marcarlo no hay un instante en que quien lo
+    busca para cancelarlo no lo encuentre ni en la cola ni en curso (C-0241)."""
     with transaccion(con):
         cola = leer(con, clave) or []
         if not cola:
             return None
         poner(con, clave, cola[1:])
+        if en_curso:
+            poner(con, en_curso, como(cola[0]) if como else cola[0])
     return cola[0]
+
+
+def devolver(con: sqlite3.Connection, clave: str, en_curso: str, *, rehacer: Callable[[Any], dict | None] | None = None,
+             igual=None) -> tuple[Any, dict | None]:
+    """Lo que quedó marcado en `en_curso` vuelve a la CABEZA de la cola `clave`
+    y la marca se borra, en una transacción (C-0308): es lo que `sacar` dejó a
+    medias en un servicio que murió, y ya esperó su turno una vez.
+
+    Devuelve `(lo que había en la marca, lo que quedó en la cola)`; `(None,
+    None)` si no había nada. `rehacer(lo que había)` da el item que vuelve —la
+    marca no tiene por qué ser el item—, o None si no debe volver: la marca se
+    borra igual. Con `igual`, si ya espera uno igual no se duplica y se queda
+    el que estaba, en su sitio.
+
+    🔴 Sólo la llama quien sabe que nadie está haciendo lo marcado: el
+    servicio al arrancar, en el mismo hilo que después atiende la cola. A
+    mitad de una investigación viva la pondría a correr dos veces."""
+    clave_de = igual or (lambda x: x)
+    with transaccion(con):
+        habia = leer(con, en_curso)
+        if habia is None:
+            return None, None
+        item = rehacer(habia) if rehacer else habia
+        if item is not None:
+            cola = leer(con, clave) or []
+            ya = next((x for x in cola if clave_de(x) == clave_de(item)), None)
+            if ya is not None:
+                item = ya
+            else:
+                poner(con, clave, [item] + cola)
+        quitar(con, en_curso)
+    return habia, item
+
+
+def retirar(con: sqlite3.Connection, clave: str, quitar: Callable[[dict], bool]) -> list[dict]:
+    """Quita de la cola `clave` los que cumplen `quitar(item)` y los devuelve,
+    en una transacción como `encolar` y `sacar` (C-0241: cancelar lo que aún
+    espera)."""
+    with transaccion(con):
+        cola = leer(con, clave) or []
+        fuera = [x for x in cola if quitar(x)]
+        if fuera:
+            poner(con, clave, [x for x in cola if not quitar(x)])
+    return fuera

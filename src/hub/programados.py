@@ -75,14 +75,6 @@ def _momento(valor: str | None) -> datetime:
     return fecha if fecha.tzinfo else fecha.replace(tzinfo=timezone.utc)
 
 
-def _legible(iso: str) -> str:
-    """Para el texto que ve Claude. En UTC y dicho, no en una hora local muda."""
-    try:
-        return _momento(iso).strftime("%d/%m a las %H:%M UTC")
-    except ValueError:
-        return iso
-
-
 def normalizar(cuando: str) -> str:
     """La hora que llega de fuera, en UTC y con formato de la base.
 

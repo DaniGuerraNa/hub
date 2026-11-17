@@ -69,3 +69,49 @@ def test_lo_urgente_se_ve_aunque_su_grupo_este_cerrado(cliente, monkeypatch):
     html = cliente.get("/guia").text
     vigilar = html.split('title="Vigilar"')[1].split("</summary>")[0]
     assert 'class="cuenta urge">7<' in vigilar
+
+
+# ── el grupo de la pantalla, en el teléfono (C-0345) ──────────────────────────
+
+def _cerrar_en_el_telefono(html: str, ancho: int) -> list[bool]:
+    """Ejecuta en node el guion que va justo detrás del raíl, con un grupo
+    abierto y otro cerrado, y devuelve cómo quedan."""
+    import json
+    import re
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node no disponible")
+    guion = re.search(r"</nav>\s*<script data-antes-de-pintar>(.*?)</script>", html, re.S)
+    assert guion, "detrás del raíl no va el guion que pliega el grupo"
+    programa = """
+      const grupos = [{ open: true }, { open: false }];
+      global.window = global;
+      global.matchMedia = (q) => ({ matches: /max-width:\\s*860px/.test(q) && ANCHO <= 860 });
+      global.document = { querySelectorAll: (s) => (s.includes('grupo-rail') ? grupos.filter((g) => g.open) : []) };
+    """.replace("ANCHO", str(ancho)) + guion.group(1) + "\nconsole.log(JSON.stringify(grupos.map((g) => g.open)));"
+    salida = subprocess.run([node, "-e", programa], capture_output=True, text=True, timeout=20)
+    assert salida.returncode == 0, salida.stderr
+    return json.loads(salida.stdout)
+
+
+def test_en_el_telefono_el_grupo_de_la_pantalla_sale_cerrado(cliente):
+    """Abierto, el grupo ocupaba la fila entera y se iba al final: 296 px de
+    menú (el 35 % de la pantalla) antes de ver nada, y en cada pantalla en otro
+    orden. El servidor lo sigue mandando abierto —sin JavaScript, y en el PC,
+    se ve dónde estás—; el guion lo cierra antes de pintar sólo en el teléfono."""
+    html = cliente.get("/maquina").text
+    assert '<details open class="grupo-rail">' in html
+    assert _cerrar_en_el_telefono(html, 390) == [False, False]
+
+
+def test_en_el_pc_el_grupo_de_la_pantalla_sigue_abierto(cliente):
+    assert _cerrar_en_el_telefono(cliente.get("/maquina").text, 1200) == [True, False]
+
+
+def test_cerrado_el_grupo_sigue_diciendo_que_dentro_esta_la_pantalla(cliente):
+    html = cliente.get("/maquina").text
+    vigilar = html.split('<details open class="grupo-rail">')[1].split("</summary>")[0]
+    assert 'class="enlace contiene"' in vigilar

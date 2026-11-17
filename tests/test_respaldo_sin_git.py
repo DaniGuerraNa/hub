@@ -57,22 +57,22 @@ def repo_con_trabajo_sin_respaldar(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _cache_limpia():
-    """`_hay_git` lleva `lru_cache`: sin vaciarla, el test mide la respuesta de antes.
+    """`hay_git` lleva `lru_cache`: sin vaciarla, el test mide la respuesta de antes.
 
     Se vacía también al SALIR, o el siguiente test hereda un «no hay git» que
     nadie puso — la contaminación entre tests es un falso rojo tan caro como un
     falso verde.
     """
-    repos._hay_git.cache_clear()
+    repos.hay_git.cache_clear()
     yield
-    repos._hay_git.cache_clear()
+    repos.hay_git.cache_clear()
 
 
 def _sin_git(monkeypatch):
     monkeypatch.setattr(
         shutil, "which", lambda nombre: None if nombre == "git" else "/usr/bin/" + nombre
     )
-    repos._hay_git.cache_clear()
+    repos.hay_git.cache_clear()
 
 
 def test_con_git_se_mide(repo_con_trabajo_sin_respaldar, tmp_path):

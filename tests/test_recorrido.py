@@ -8,6 +8,8 @@ navegador adecuado se niega en voz alta en vez de medir mal (C-0168).
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from hub import mirar, recorrido
@@ -95,3 +97,182 @@ def test_un_id_suelto_se_sigue_prestando_entre_rutas():
     r = _recorrido_sin_navegador(["/proyecto/demo"])
     assert r._detalle("/api/estado/{proyecto_id}") is True
     assert r.visitadas == ["/api/estado/demo"]
+
+
+# --- avisos de calidad (C-0248): con un navegador de verdad y una página sintética ---
+
+import http.server
+import threading
+
+_CUMPLE = """<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>ok</title><style>
+a,button,input{display:inline-block;min-width:44px;min-height:44px;font-size:16px}</style></head>
+<body><main><h1>Hola</h1><a href="#x">uno</a><input aria-label="campo"><button class="cta">Sí</button>
+</main></body></html>"""
+
+_INCUMPLE = """<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>mal</title><style>
+a{display:inline-block;width:10px;height:10px;font-size:8px}input{font-size:10px}</style></head>
+<body><div><a href="#x">u</a><input aria-label="campo">
+<button class="cta">A</button><button class="cta">B</button></div></body></html>"""
+
+
+@pytest.fixture
+def sitio():
+    """Un servidor propio en un puerto libre de 127.0.0.1: nunca el hub real."""
+    paginas = {"/cumple": (_CUMPLE, 0), "/incumple": (_INCUMPLE, 0.7)}
+
+    class Manejador(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            html, espera = paginas[self.path]
+            time.sleep(espera)
+            cuerpo = html.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(cuerpo)))
+            self.end_headers()
+            self.wfile.write(cuerpo)
+
+        def log_message(self, *a):
+            pass
+
+    servidor = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Manejador)
+    threading.Thread(target=servidor.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{servidor.server_address[1]}"
+    servidor.shutdown()
+
+
+def _recorrer_o_saltar(base, ruta, anchos=(390, 1200)):
+    pytest.importorskip("playwright.sync_api")
+    if not mirar.cual_linux():
+        pytest.skip("no hay un Chromium de Linux")
+    return recorrido.recorrer(base, anchos=anchos, rutas=[ruta])
+
+
+def test_una_pagina_que_incumple_cada_regla_saca_un_aviso_de_cada_clase(sitio):
+    informe = _recorrer_o_saltar(sitio, "/incumple")
+    clases_390 = {a.clase for a in informe.avisos if a.ancho == 390}
+    assert clases_390 == {"objetivos", "campos", "sin_h1", "sin_main", "ttfb", "cta"}
+    # Los campos sólo se miran en el teléfono; el resto, a todos los anchos.
+    assert "campos" not in {a.clase for a in informe.avisos if a.ancho == 1200}
+    assert not informe.fallos
+
+
+def test_una_pagina_que_cumple_todo_no_saca_ningun_aviso(sitio):
+    informe = _recorrer_o_saltar(sitio, "/cumple")
+    assert informe.avisos == [] and informe.fallos == []
+
+
+def test_los_avisos_se_leen_en_el_texto_del_informe_y_no_cambian_el_codigo_de_salida(monkeypatch, capsys):
+    informe = recorrido.Informe("http://h", visitadas=["/"], avisos=[
+        recorrido.Aviso("/", 390, "objetivos", "3 de menos de 24 px: a «u» 10×10")])
+    assert "1 avisos (no rompen el recorrido)" in informe.texto()
+    assert "[objetivos] / @390: 3 de menos de 24 px" in informe.texto()
+    monkeypatch.setattr(recorrido, "recorrer", lambda *a, **kw: informe)
+    assert recorrido.main(["--url", "http://127.0.0.1:1"]) == 0
+
+
+# --- recorrer con la interfaz nueva (C-0169) ---
+
+# Un panel como el del secretario: al pulsar su pestaña se abre y, aquí, algo se sale de lado.
+_CON_PANEL = """<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>p</title>
+<style>body{margin:0}#ancho{display:none;width:3000px;height:10px}.abierto + #ancho{display:block}</style></head>
+<body><main><h1>Hola</h1></main>
+<aside id="secretario-panel"><button id="secretario-pestana" style="min-width:44px;min-height:44px">abrir</button></aside>
+<div id="ancho">sale</div>
+<script>document.getElementById('secretario-pestana').addEventListener('click',
+  () => document.getElementById('secretario-panel').classList.add('abierto'));</script></body></html>"""
+
+
+@pytest.fixture
+def sitio_con_panel():
+    """Como `sitio`, y apunta la cookie con que llega cada petición."""
+    recibidas = []
+
+    class Manejador(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            recibidas.append(self.headers.get("Cookie", ""))
+            cuerpo = _CON_PANEL.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(cuerpo)))
+            self.end_headers()
+            self.wfile.write(cuerpo)
+
+        def log_message(self, *a):
+            pass
+
+    servidor = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Manejador)
+    threading.Thread(target=servidor.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{servidor.server_address[1]}", recibidas
+    servidor.shutdown()
+
+
+def _recorrer_con(base, **kw):
+    pytest.importorskip("playwright.sync_api")
+    if not mirar.cual_linux():
+        pytest.skip("no hay un Chromium de Linux")
+    return recorrido.recorrer(base, anchos=(1200,), rutas=["/panel"], **kw)
+
+
+def test_con_la_interfaz_nueva_lleva_su_cookie_y_mide_tambien_con_el_panel_abierto(sitio_con_panel):
+    base, recibidas = sitio_con_panel
+    informe = _recorrer_con(base, interfaz="nueva")
+    assert recibidas and all("hub_interfaz=nueva" in c for c in recibidas), recibidas
+    [fallo] = informe.fallos
+    assert fallo.clase == "desborde" and fallo.detalle.startswith("con el panel abierto, 3000 px")
+
+
+def test_sin_pedir_interfaz_no_manda_cookie_ni_abre_el_panel(sitio_con_panel):
+    base, recibidas = sitio_con_panel
+    informe = _recorrer_con(base)
+    assert recibidas and not any("hub_interfaz" in c for c in recibidas)
+    assert informe.fallos == []
+
+
+def test_una_interfaz_que_no_existe_se_rechaza_antes_de_abrir_nada(monkeypatch):
+    monkeypatch.setattr(mirar, "cual_linux", lambda: "/no/existe/chrome")
+    with pytest.raises(ValueError, match="no hay ninguna interfaz «otra»"):
+        recorrido.recorrer("http://127.0.0.1:1", interfaz="otra")
+
+
+def test_la_orden_pasa_la_interfaz_y_los_anchos_que_se_le_piden(monkeypatch):
+    pedido = {}
+
+    def falso(base, anchos, **kw):
+        pedido.update(base=base, anchos=anchos, **kw)
+        return recorrido.Informe(base)
+
+    monkeypatch.setattr(recorrido, "recorrer", falso)
+    assert recorrido.main(["--url", "http://127.0.0.1:1", "--interfaz", "nueva", "--anchos", "390,861"]) == 0
+    assert pedido["interfaz"] == "nueva" and pedido["anchos"] == (390, 861)
+    assert recorrido.main(["--url", "http://127.0.0.1:1"]) == 0 and pedido["interfaz"] is None
+
+
+
+def test_con_colores_lleva_tambien_la_cookie_de_ese_juego(sitio_con_panel):
+    base, recibidas = sitio_con_panel
+    _recorrer_con(base, interfaz="nueva", colores="brasa")
+    assert recibidas and all("hub_interfaz=nueva" in c and "hub_colores=brasa" in c for c in recibidas), recibidas
+
+
+def test_unos_colores_que_no_existen_o_sin_la_nueva_se_rechazan_antes_de_abrir_nada(monkeypatch):
+    monkeypatch.setattr(mirar, "cual_linux", lambda: "/no/existe/chrome")
+    with pytest.raises(ValueError, match="no hay ningún juego de colores «fosforito»"):
+        recorrido.recorrer("http://127.0.0.1:1", interfaz="nueva", colores="fosforito")
+    # Con la de siempre la cookie no pinta nada: se mediría otra cosa de la que se dice.
+    with pytest.raises(ValueError, match="los colores son de la interfaz nueva"):
+        recorrido.recorrer("http://127.0.0.1:1", colores="brasa")
+
+
+def test_la_orden_pasa_los_colores_y_no_los_admite_sin_la_nueva(monkeypatch):
+    pedido = {}
+
+    def falso(base, anchos, **kw):
+        pedido.update(base=base, anchos=anchos, **kw)
+        return recorrido.Informe(base)
+
+    monkeypatch.setattr(recorrido, "recorrer", falso)
+    assert recorrido.main(["--url", "http://127.0.0.1:1", "--interfaz", "nueva", "--colores", "brasa"]) == 0
+    assert pedido["colores"] == "brasa"
+    assert recorrido.main(["--url", "http://127.0.0.1:1", "--interfaz", "nueva"]) == 0 and pedido["colores"] is None
+    with pytest.raises(SystemExit):
+        recorrido.main(["--url", "http://127.0.0.1:1", "--colores", "brasa"])

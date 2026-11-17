@@ -8,9 +8,11 @@ la página se servía perfecta y el navegador moría al ejecutarla.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from arnes_js import ejecutar, script_de
+from arnes_js import MICROFONO_VIVO, ejecutar, script_de, script_estatico
 from hub import web
 
 CONTEXTO = {
@@ -958,10 +960,15 @@ def test_sin_ventanas_se_dice_por_que_no_hay_pestanas(tmp_path):
 # ── teclas del móvil e imágenes sobre la terminal (21-oct) ────────────────────
 
 
-def _con_socket_abierto(tmp_path_factory, accion, respuestas=None):
-    return ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path_factory.mktemp("js"),
+# Con `grabar.js` delante, como en la página: va en el `<head>` de `base.html`
+# y el dictado de la terminal graba con `HubGrabar` (C-0311).
+GRABAR = script_estatico("grabar.js")
+
+
+def _con_socket_abierto(tmp_path_factory, accion, respuestas=None, previo=""):
+    return ejecutar(GRABAR + "\n" + script_de("trabajo.html", CONTEXTO), tmp_path_factory.mktemp("js"),
                     {**PULSO, **(respuestas or {})},
-                    accion="__sockets[0].readyState = 1;\n" + accion)
+                    accion="__sockets[0].readyState = 1;\n" + accion, previo=previo)
 
 
 def test_la_barra_del_movil_manda_las_secuencias_de_un_teclado(tmp_path_factory):
@@ -1120,6 +1127,123 @@ def test_dictar_graba_transcribe_y_pega_sin_enter(tmp_path_factory):
     assert "\r" not in "".join(r["tecleado"])
 
 
+# ── el dictado de la terminal, por `HubGrabar` (C-0311) ──────────────────────
+
+# Un `HubGrabar` de mentira puesto antes de cargar `grabar.js`, que con uno ya
+# presente no hace nada: anota con qué se le llama. El navegador no tiene
+# micrófono, así que si la terminal abriera el suyo no grabaría nada.
+HUBGRABAR_ESPIA = """
+  registro.api = [];
+  globalThis.HubGrabar = {
+    RESTRICCIONES: { llano: 'LLANO', conversacion: 'CONVERSACION' },
+    puede: () => true,
+    calentar: () => { registro.api.push(['calentar']); },
+    grabar: async (o) => {
+      registro.api.push(['grabar', o.restricciones]);
+      let fin;
+      const terminado = new Promise((ok) => { fin = ok; });
+      return { terminado, parar() { fin('AUDIO'); return terminado; },
+               descartar() { fin(null); return terminado; } };
+    },
+    subir: async (audio, o) => { registro.api.push(['subir', audio, o]);
+                                 return { ok: true, texto: 'por el grabador común' }; },
+  };
+"""
+
+PULSAR_DICTAR_DOS_VECES = """
+  const boton = document.querySelectorAll('[data-dictar]')[0];
+  boton.disparar('click');
+  setTimeout(() => boton.disparar('click'), 1);
+  setTimeout(() => { registro.estado = nodo('estado').textContent; }, 15);
+"""
+
+# Un micrófono que anota con qué restricciones se abrió y una grabadora que
+# entrega un trozo al parar, como la del navegador.
+MICRO_TERMINAL = """
+  registro.restricciones = [];
+  navigator.mediaDevices = { getUserMedia: async (r) => { registro.restricciones.push(r);
+                                                          return { getTracks: () => [{ stop(){} }] }; } };
+  globalThis.MediaRecorder = class {
+    constructor(){ this.oy = {}; this.mimeType = 'audio/webm'; }
+    addEventListener(ev, fn){ (this.oy[ev] ||= []).push(fn); }
+    start(){}
+    stop(){ (this.oy.dataavailable || []).forEach(f => f({ data: new Blob(['x']) }));
+            (this.oy.stop || []).forEach(f => f()); }
+  };
+"""
+
+
+def test_dictar_en_la_terminal_graba_y_sube_por_el_grabador_comun_con_lo_suyo(tmp_path_factory):
+    """Un solo grabador (C-0311): la terminal conserva sus restricciones
+    (`llano`, no las de la conversación) y dice que el dictado es suyo para
+    medirlo aparte (C-0246). Lo que hace con el texto sigue siendo suyo."""
+    r = _con_socket_abierto(tmp_path_factory, PULSAR_DICTAR_DOS_VECES, previo=HUBGRABAR_ESPIA)
+    assert r["errores"] == []
+    assert r["api"] == [["calentar"], ["grabar", "LLANO"],
+                        ["subir", "AUDIO", {"campos": {"origen": "terminal"}}]]
+    assert r["pegados"] == ["por el grabador común"]
+    assert r["estado"] == "dictado escrito: revísalo y pulsa Enter"
+
+
+def test_un_doble_clic_en_dictar_abre_un_solo_microfono_y_parar_lo_cierra(tmp_path_factory):
+    """C-0427: el segundo clic llegaba mientras el micrófono se abría y abría
+    otro; «Parar» cerraba uno y el otro seguía grabando, sin botón que lo
+    parara. Con el micrófono que cuenta sus pistas vivas."""
+    r = _con_socket_abierto(tmp_path_factory, """
+      const boton = document.querySelectorAll('[data-dictar]')[0];
+      boton.disparar('click');
+      setTimeout(() => boton.disparar('click'), 1);
+      setTimeout(() => boton.disparar('click'), 8);
+    """, {"POST /api/voz": {"ok": True, "texto": "una vez"}}, previo=MICROFONO_VIVO)
+    assert r["errores"] == []
+    assert r["microfonos"] == 1
+    assert r["pistas_vivas"] == 0
+    assert r["pegados"] == ["una vez"]
+
+
+@pytest.mark.parametrize("nombre,dice", [
+    ("NotAllowedError", "sin permiso para el micrófono"),
+    ("NotReadableError", "el micrófono está ocupado por otra aplicación"),
+])
+def test_dictar_dice_por_que_no_hay_microfono(tmp_path_factory, nombre, dice):
+    """Aquí todo era «sin permiso»: un micrófono ocupado por una reunión no
+    se arregla dando permiso (C-0290, que la terminal hereda de `HubGrabar`)."""
+    r = _con_socket_abierto(tmp_path_factory, PULSAR_DICTAR_DOS_VECES, previo=f"""
+      navigator.mediaDevices = {{ getUserMedia: () => Promise.reject({{ name: '{nombre}' }}) }};
+      globalThis.MediaRecorder = class {{}};
+    """)
+    assert r["errores"] == []
+    assert r["estado"].startswith(dice)
+    assert r["pegados"] == []
+
+
+def test_dictar_con_la_red_caida_reintenta_una_vez_y_dice_que_el_hub_no_contesta(tmp_path_factory):
+    """Un corte de un segundo costaba lo dictado (C-0287): ahora se reintenta
+    una vez, sola. Y el micrófono se sigue abriendo como siempre, sin el
+    filtro de eco de la conversación."""
+    red = """
+      registro.intentos = 0;
+      // Los de node tardan en cargar la primera vez, y con el reintento el
+      // arnés volcaba antes de acabar.
+      global.Blob = class { constructor(p, o){ this.size = 1; this.type = (o && o.type) || ''; } };
+      global.FormData = class { append(k, v){ this[k] = v; } };
+      const _fetch = global.fetch;
+      global.fetch = (url, o) => {
+        if (String(url) === '/api/voz') { registro.intentos += 1;
+                                          return Promise.reject(new TypeError('Failed to fetch')); }
+        return _fetch(url, o); };
+      // El reintento espera 1,5 s: en el arnés, 2 ms.
+      const _st = global.setTimeout;
+      global.setTimeout = (f, ms, ...resto) => _st(f, ms === 1500 ? 2 : ms, ...resto);
+    """
+    r = _con_socket_abierto(tmp_path_factory, PULSAR_DICTAR_DOS_VECES, previo=MICRO_TERMINAL + red)
+    assert r["errores"] == []
+    assert r["restricciones"] == [{"audio": True}]
+    assert r["intentos"] == 2
+    assert r["estado"] == "no se transcribió: el hub no contesta"
+    assert r["pegados"] == []
+
+
 
 # ── el latido suelta las ventanas que murieron por dentro (C-0234) ───────────
 
@@ -1177,3 +1301,118 @@ def test_una_ventana_partida_despues_de_pintar_la_pagina_sigue_aunque_muera_su_p
     y luego `%1` hizo `exit`. Sigue viva en su sitio: la fila no se va."""
     r = _latido(tmp_path, ["%7", "%4", "%3"], 4242, ventanas=("work:0", "work:1", "work:2"))
     assert _quitadas(r) == []
+
+
+
+# ── El tema de la terminal sale de los tokens (C-0403) ──────────────────────
+#
+# Fondo, cursor y selección eran literales de la paleta violeta (#0f101a,
+# #98a4f7, #2a3050): el cursor seguía violeta con el acento cian, y en la
+# interfaz nueva la terminal no seguía al juego de colores. El texto y la
+# paleta ANSI se quedan fijos: son la excepción declarada en CLAUDE.md.
+
+def _tema(tmp_path_factory, tokens: dict | None):
+    from arnes_js import ejecutar
+    previo = f"globalThis.TOKENS = {json.dumps(tokens)};" if tokens else ""
+    return ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path_factory.mktemp("tema"), PULSO,
+                    "registro.tema = TERM.options.theme;", previo)["tema"]
+
+
+def test_fondo_cursor_y_seleccion_de_la_terminal_salen_de_los_tokens(tmp_path_factory):
+    tema = _tema(tmp_path_factory, {"--lienzo": " #141318", "--acento": " #f2b880", "--elevado": " #302e37"})
+
+    assert (tema["background"], tema["cursor"], tema["selectionBackground"]) == ("#141318", "#f2b880", "#302e37")
+    assert tema["foreground"] == "#d8dade" and tema["brightWhite"] == "#ffffff", "texto y ANSI, fijos"
+
+
+def test_sin_tokens_la_terminal_toma_los_de_siempre_y_no_los_de_la_paleta_violeta(tmp_path_factory):
+    tema = _tema(tmp_path_factory, None)
+
+    assert (tema["background"], tema["cursor"], tema["selectionBackground"]) == ("#0d1117", "#3fb9d4", "#243040")
+
+
+# ── La barra plegada de la interfaz nueva (C-0450) ──────────────────────────
+#
+# El marco pone el estado efectivo en `<html data-barra>` y avisa con
+# `hub:barra`; /trabajo esconde su lista de proyectos con `sin-rail`, la misma
+# clase que el preset «Foco». Se lee del atributo y no de lo guardado: con la
+# interfaz de siempre no hay atributo ni botón para volver a abrirla.
+
+BARRA_PLEGADA = "document.documentElement.dataset.barra = 'plegada';"
+AVISAR_BARRA = "const avisarBarra = () => (DOC_OYENTES['hub:barra'] || []).forEach(f => f({ detail: {} }));"
+SIN_RAIL = "registro.valores.push(['sin-rail', String(nodo('taller').classList.contains('sin-rail'))]);"
+
+
+def test_con_la_barra_plegada_al_cargar_la_lista_no_se_ve_aunque_el_preset_la_ensene(tmp_path):
+    r = ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path, PULSO, previo=BARRA_PLEGADA, accion=SIN_RAIL)
+    assert r["errores"] == []
+    assert _anotados(r, "sin-rail") == ["true"]      # preset «Cómodo», el de fábrica: con lista
+
+
+def test_sin_la_marca_la_lista_sale_como_hoy(tmp_path):
+    """Con la interfaz de siempre, aunque este aparato plegara con la nueva."""
+    r = ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path, PULSO,
+                 previo="localStorage.setItem('hub.sinBarra', 'true');", accion=SIN_RAIL)
+    assert r["errores"] == []
+    assert _anotados(r, "sin-rail") == ["false"]
+
+
+def test_hub_barra_esconde_y_devuelve_la_lista_y_reajusta_la_terminal(tmp_path):
+    base = ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path, PULSO)
+    r = ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path, PULSO, accion=AVISAR_BARRA + BARRA_PLEGADA
+                 + "avisarBarra();" + SIN_RAIL
+                 + "delete document.documentElement.dataset.barra; avisarBarra();" + SIN_RAIL)
+    assert r["errores"] == []
+    assert _anotados(r, "sin-rail") == ["true", "false"]
+    assert len(r["encajes"]) > len(base["encajes"]), "la lista cambió y xterm y tmux no se enteraron"
+
+
+def test_elegir_un_preset_con_la_barra_plegada_no_vuelve_a_abrir_la_lista(tmp_path):
+    accion = BARRA_PLEGADA + """
+      const [comodo, , foco] = document.querySelectorAll('[data-preset]');
+      foco.dataset.preset = 'foco'; foco.onclick();
+    """ + SIN_RAIL + "comodo.onclick();" + SIN_RAIL
+    r = ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path, PULSO, accion=accion)
+    assert r["errores"] == []
+    assert _anotados(r, "sin-rail") == ["true", "true"]
+
+
+def test_abrir_la_barra_con_el_preset_foco_deja_la_lista_escondida(tmp_path):
+    """«Foco» quita la lista por su cuenta: abrir la barra no se la devuelve."""
+    accion = AVISAR_BARRA + BARRA_PLEGADA + """
+      const foco = document.querySelectorAll('[data-preset]')[2];
+      foco.dataset.preset = 'foco'; foco.onclick();
+      delete document.documentElement.dataset.barra; avisarBarra();
+    """ + SIN_RAIL
+    r = ejecutar(script_de("trabajo.html", CONTEXTO), tmp_path, PULSO, accion=accion)
+    assert r["errores"] == []
+    assert _anotados(r, "sin-rail") == ["true"]
+
+
+def _antes_de_pintar_del_taller(contexto: dict) -> list[str]:
+    import re
+
+    from jinja2 import Environment, FileSystemLoader
+
+    from arnes_js import PLANTILLAS
+    from hub import insignias
+    entorno = Environment(loader=FileSystemLoader(str(PLANTILLAS)))
+    insignias.registrar(entorno)
+    html = entorno.get_template("trabajo.html").render(**contexto)
+    taller = html[html.index('<div class="taller" id="taller"'):html.index('<nav class="rail">')]
+    return re.findall(r"<script data-antes-de-pintar>(.*?)</script>", taller, re.S)
+
+
+def test_con_la_barra_plegada_la_lista_sale_ya_escondida_antes_de_pintar(tmp_path):
+    """Puesta sólo por el script de la vista, al final de la página, la lista
+    se veía dos fotogramas y se iba (medido a 1200 px). Va delante de ella."""
+    (guion,) = _antes_de_pintar_del_taller(CONTEXTO)
+    for barra, esperado in (("'plegada'", ["sin-rail"]), ("undefined", [])):
+        r = ejecutar(guion, tmp_path, previo=f"document.documentElement.dataset.barra = {barra};")
+        assert r["errores"] == [] and r["clases"] == esperado, (barra, r["clases"])
+
+
+def test_sin_sesion_la_lista_no_se_esconde_porque_nadie_la_devolveria():
+    """Sin sesión el script de la vista no corre, y con él tampoco quien oye
+    `hub:barra`: escondida antes de pintar, abrir la barra no la devolvería."""
+    assert _antes_de_pintar_del_taller({**CONTEXTO, "session": None}) == []

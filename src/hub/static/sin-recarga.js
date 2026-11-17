@@ -14,8 +14,9 @@
  * `api.py`. Sin JavaScript, el formulario se envía como siempre.
  *
  * Cuándo NO sustituye y navega como antes (`location.assign`): si el 303 lleva
- * a otra pantalla, si la respuesta no es HTML, o si las regiones de una página
- * y otra no casan una a una. Mejor una recarga que media página vieja.
+ * a otra pantalla, si la respuesta no es HTML, si las regiones de una página
+ * y otra no casan una a una, o si llega pintada con otra interfaz (C-0169).
+ * Mejor una recarga que media página vieja.
  *
  * Lo que hay dentro de una región se pinta de nuevo: un `<script>` en línea
  * ahí dentro no se vuelve a ejecutar, y un oyente atado a un nodo de dentro se
@@ -62,6 +63,16 @@
     propios.forEach((k) => u.searchParams.delete(k));
     const busqueda = u.searchParams.toString();
     return u.pathname + (busqueda ? '?' + busqueda : '');
+  }
+
+  // Con qué interfaz y con qué colores está pintado un documento:
+  // `data-interfaz` y `data-colores` en `<html>`, o nada con la de siempre.
+  // Los colores cuentan: cambiados desde otra pestaña, cambiar sólo las
+  // regiones dejaría los de antes hasta recargar.
+  function interfazDe(doc) {
+    const raiz = doc && doc.documentElement;
+    const datos = (raiz && raiz.dataset) || {};
+    return (datos.interfaz || '') + '|' + (datos.colores || '');
   }
 
   function regionesDe(raiz) {
@@ -176,6 +187,11 @@
   // `antes(doc)` corre justo antes de cambiar nada.
   function aplicar(html, url, { soloEstas = null, sondeo = false, antes = null } = {}) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
+    // La interfaz es del aparato (una cookie, C-0169) y se puede cambiar desde
+    // otra pestaña. Lo que llega entonces trae el marco de la otra —el raíl es
+    // una región— y, pintado aquí, quedaría con el marcado de una y la hoja de
+    // la otra. No se mezcla: se navega, y la página entera sale con la suya.
+    if (interfazDe(doc) !== interfazDe(document)) return false;
     const viejas = regionesDe(document);
     const nuevas = regionesDe(doc);
     if (!viejas.size || !mismas(viejas, nuevas)) return false;
@@ -307,7 +323,10 @@
       // volver a pulsar lo duplicaría.
       const aviso = hecho.aviso;
       const fallo = aviso && !aviso.classList.contains('fugaz') && !('hecho' in aviso.dataset);
-      if (form.isConnected && !fallo) form.reset();
+      // `data-conserva`: lo elegido es para la vez siguiente (la sesión de
+      // Intercambio a la que se pasan rutas, C-0385). Vaciarlo mandaría la
+      // segunda a la primera opción de la lista sin que nadie la eligiera.
+      if (form.isConnected && !fallo && !('conserva' in form.dataset)) form.reset();
     } catch (e) {
       avisarFallo('La acción llegó al hub, pero la pantalla no se pudo poner al día (' +
         (e && e.message ? e.message : e) + '). Recarga la página para verla.');

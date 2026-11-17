@@ -79,3 +79,12 @@ def campos_de_cada(plantilla: str, coleccion: str) -> set[str]:
         for parte in (*bucle.body, *bucle.else_):
             leidos |= _leidos(parte, bucle.target.name)
     return leidos
+
+
+def campos_de_macro(plantilla: str, macro: str) -> set[str]:
+    """Los campos que lee un macro de la plantilla de su primer argumento: una
+    fila pintada por un macro (`fila_salud(r)`) no está dentro de su `for`."""
+    for m in _arbol(plantilla).find_all(nodes.Macro):
+        if m.name == macro and m.args:
+            return set().union(*(_leidos(parte, m.args[0].name) for parte in m.body))
+    return set()

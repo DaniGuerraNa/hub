@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "puente-kvm": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${PUENTE_CODIGO:-.}",
+        "--frozen",
+        "puente-kvm",
+        "mcp"
+      ]
+    }
+  }
+}

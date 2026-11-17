@@ -18,6 +18,7 @@ Lo que se protege aquí es lo que la vista puede romper sin que nadie se entere:
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -594,6 +595,82 @@ def test_si_el_entrevistador_no_puede_abrir_se_dice_en_voz_alta(
     assert "no hay servidor de tmux" in r.text
 
 
+def _acciones_de_la_ficha(html: str) -> str:
+    """Sólo la fila de botones de la ficha: el resto de la página (el raíl, el
+    panel del secretario) tiene sus propios botones y no es lo que se mide."""
+    desde = html.index('<div class="fila enc-acciones"')
+    return html[desde:html.index("</div>", desde)]
+
+
+@pytest.mark.parametrize("estado, etapa, principal", [
+    ("recogiendo", "maqueta", "Abrir el entrevistador"),
+    ("construyendo", "maqueta", "Abrir el entrevistador"),
+    ("publicado", "maqueta", "Implementar el sistema"),
+    ("publicado", "sistema", None),
+    ("descartado", "maqueta", None),
+])
+def test_la_ficha_ofrece_como_principal_solo_lo_que_su_estado_permite(
+    cliente, estado, etapa, principal
+):
+    """C-0384: un encargo descartado ofrecía «Abrir el entrevistador» en cian,
+    y el entrevistador contesta a ese botón que no hay entrevista que seguir.
+    Como mucho una acción principal, y ninguna si no queda nada que hacer."""
+    _un_encargo(cliente)
+    con = web.conexion()
+    try:
+        encargos.tocar(con, "encargo-1", estado=estado, etapa=etapa)
+        con.commit()
+    finally:
+        con.close()
+
+    acciones = _acciones_de_la_ficha(cliente.get("/encargos/encargo-1").text)
+    principales = acciones.count('class="cta"')
+    if principal:
+        assert principales == 1 and principal in acciones
+    else:
+        assert principales == 0
+        assert "Abrir el entrevistador" not in acciones
+        assert "← Todos los encargos" in acciones
+
+
+#: El de verdad, antes de que la fixture lo sustituya por uno que no abre nada.
+_ABRIR_DE_VERDAD = entrevistador.abrir_agente
+
+
+class _PasoElFiltro(Exception):
+    """`abrir_agente` siguió adelante: para ese estado sí hay entrevista."""
+
+
+def test_la_ficha_y_el_entrevistador_cierran_la_entrevista_en_los_mismos_estados(
+    cliente, monkeypatch
+):
+    """Lo que la ficha deja de ofrecer es justo lo que `abrir_agente` rechaza:
+    si un día se separan, el botón vuelve a llevar a un error o desaparece
+    donde sí se podía. Se usa el de verdad y se le corta el paso justo después
+    de mirar el estado, antes de tocar disco o tmux."""
+    from hub import api
+
+    def cortar(*_a, **_k):
+        raise _PasoElFiltro
+
+    monkeypatch.setattr(entrevistador, "preparar", cortar)
+    _un_encargo(cliente)
+    con = web.conexion()
+    try:
+        for estado in encargos.ESTADOS:
+            encargos.tocar(con, "encargo-1", estado=estado, slot_id=None)
+            try:
+                _ABRIR_DE_VERDAD(con, "encargo-1")
+            except _PasoElFiltro:
+                abre = True
+            except ValueError as exc:
+                assert "no hay entrevista que seguir" in str(exc), estado
+                abre = False
+            assert api.encargo(con, "encargo-1")["entrevista_abierta"] == abre, estado
+    finally:
+        con.close()
+
+
 # ── 🔴 la vista no habla con Telegram ─────────────────────────────────────────
 
 
@@ -769,3 +846,26 @@ def test_con_la_llave_del_chat_web_la_vista_solo_da_de_alta_y_renombra(cliente, 
     cliente.post("/encargos/persona", data={"user_id": 900000002, "alias": "Rosa P.", "estado": "activo"})
 
     assert pedidas == ["/hub/personas", "/hub/personas/900000002/nombre"]
+
+
+def test_la_conversacion_se_parte_por_dia_de_la_casa_y_no_por_el_de_utc(cliente, monkeypatch):
+    """A las 17:30 y a las 19:00 de aquí ya eran las 23:30 y la 01:00 en UTC:
+    agrupando por el día UTC, la conversación se partía a media tarde con un
+    «2026-11-14» encima (C-0396)."""
+    monkeypatch.setenv("TZ", "America/Mexico_City")
+    _un_encargo(cliente)
+    con = web.conexion()
+    try:
+        buzon.aparcar(con, "encargo-1", 777, "a media tarde")
+        buzon.aparcar(con, "encargo-1", 777, "y un poco después")
+        ids = [f[0] for f in con.execute("SELECT id FROM encargo_mensaje ORDER BY id")]
+        for i, cuando in zip(ids, ("2026-11-13T23:30:00+00:00", "2026-11-14T01:00:00+00:00")):
+            con.execute("UPDATE encargo_mensaje SET recibido_en = ? WHERE id = ?", (cuando, i))
+        con.commit()
+    finally:
+        con.close()
+
+    html = cliente.get("/encargos/encargo-1").text
+
+    assert re.findall(r'<div class="dia">([^<]*)</div>', html) == ["13/11"]
+    assert re.findall(r'<time class="cuando" datetime="[^"]+"[^>]*>(\d\d:\d\d)</time>', html) == ["17:30", "19:00"]

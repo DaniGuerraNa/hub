@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% import "_preparar.html" as prep %}
+{% block contenido %}
+{{ prep.estilos() }}
+
+<style>
+  /* Una columna: cómo está, cómo se abre y, mientras falte algo, qué falta.
+     Sin `iframe`: el puente se abre en su pestaña y sólo desde la PC donde
+     corre (decisión 438). */
+  .puente-v { display:grid; gap:14px; grid-template-columns:minmax(0, 1fr); max-width:880px; }
+  .puente-v > .tarjeta { margin:0; }
+  .puente-v > .tarjeta > h2 { margin:0 0 10px; font-size:var(--letra-4); }
+  .puente-cabeza { display:flex; gap:10px 14px; align-items:center; flex-wrap:wrap; margin:0 0 14px; }
+  .puente-cabeza .motivo { color:var(--texto-3); font-size:var(--letra-3); overflow-wrap:anywhere; }
+  .puente-cabeza .boton { margin-left:auto; }
+  .puente-datos { display:grid; grid-template-columns:max-content minmax(0, 1fr); gap:6px 18px; margin:0; }
+  .puente-datos dt { color:var(--texto-3); font-size:var(--letra-3); }
+  .puente-datos dd { margin:0; color:var(--texto); font-size:var(--letra-3); overflow-wrap:anywhere; }
+  .puente-datos dd .motivo { color:var(--texto-3); }
+  .puente-abrir { display:flex; gap:10px 14px; align-items:center; flex-wrap:wrap;
+                  margin-top:16px; padding-top:14px; border-top:1px solid var(--borde); }
+  .puente-abrir p { margin:0; color:var(--texto-3); font-size:var(--letra-3); max-width:64ch; }
+  @media (max-width: 520px) {
+    .puente-datos { grid-template-columns:minmax(0, 1fr); gap:0; }
+    .puente-datos dd { margin-bottom:8px; }
+  }
+</style>
+
+{{ ui.cabecera_vista('Puente KVM', 'Claude lee y escribe en un Mac de otra persona a través de un JetKVM') }}
+
+{% if not p.encendida %}
+{# Tecleada a mano con la herramienta apagada: se dice dónde se enciende, y
+   al puente no se le ha preguntado nada. #}
+<div class="tarjeta" id="apagado">
+  <div class="pila">
+    <strong>Apagado en esta instalación</strong>
+    <span class="tenue">Es una herramienta opcional y viene apagada: sólo tiene sentido si tienes un JetKVM.
+      Se enciende en <a href="/guia#opcionales">Ajustes → Guía</a>, en «Herramientas opcionales».</span>
+  </div>
+</div>
+{% else %}
+{% set e = p.estado %}
+<div class="puente-v">
+
+  <section class="tarjeta" id="estado" aria-labelledby="puente-estado">
+    <h2 class="solo-lector" id="puente-estado">Cómo está</h2>
+    <div class="puente-cabeza">
+      {% if e.vivo %}
+      <span class="insignia ok"><span class="glifo" aria-hidden="true">●</span><span>En marcha</span></span>
+      {% else %}
+      <span class="insignia riesgo"><span class="glifo" aria-hidden="true">✕</span><span>Caído</span></span>
+      <span class="motivo">{{ e.motivo }}</span>
+      {% endif %}
+      <a class="boton sutil" href="/puente">Volver a mirar</a>
+    </div>
+    {% if e.vivo %}
+    <dl class="puente-datos">
+      <dt>Aparato</dt>
+      <dd>{{ p.aparato or 'uno que el hub no conoce' }}</dd>
+      <dt>Conectado al aparato</dt>
+      <dd>{% if e.conectado %}Sí{% elif e.conectado is sameas false %}No <span class="motivo">· {{ e.motivo }}</span>{% else %}No lo dice{% endif %}</dd>
+      <dt>Tiene el teclado</dt>
+      <dd>{{ p.control or 'No lo dice' }}</dd>
+      {% if e.version %}<dt>Versión</dt><dd>{{ e.version }}</dd>{% endif %}
+    </dl>
+    {% endif %}
+
+    <div class="puente-abrir">
+      {% if p.direccion and e.vivo %}
+      <a class="boton cta" href="{{ p.direccion }}" target="_blank" rel="noopener">Abrir el puente</a>
+      <p>En una pestaña aparte. Dar el control a Claude, pararlo y aprobar un cambio se hace allí, no desde el hub.</p>
+      {% elif p.direccion %}
+      <p>Cuando conteste, aquí tendrás «Abrir el puente».</p>
+      {% else %}
+      <p>Se abre en la PC donde corre: su web escucha sólo en esa máquina y no pasa por la puerta del hub.
+        Desde este aparato ves cómo está.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  {% if not p.listo %}
+  {% set sig = prep.siguiente_de(p.pasos) | trim %}
+  <section class="tarjeta prep" id="preparar">
+    <h2>Preparar el puente</h2>
+    {{ prep.cabeza('Un programa aparte que viene con el hub: ve la pantalla del Mac por el JetKVM y teclea en él sólo cuando la persona le da el control. Hay que preparar su entorno y su servicio una vez.',
+                   'puente-kvm', 'Ayúdame a preparar el Puente KVM: qué me falta y cómo lo consigo.', rail.hay_asistente) }}
+    <ol class="prep-pasos">
+      {% for paso in p.pasos %}{{ prep.paso(paso, loop.index, paso.id == sig) }}{% endfor %}
+    </ol>
+  </section>
+  {% endif %}
+
+</div>
+<script src="/static/guia.js"></script>
+{% endif %}
+{% endblock %}

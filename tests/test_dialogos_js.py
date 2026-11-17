@@ -25,8 +25,9 @@ const valores = {};
 
 function elemento() {
   const el = {
-    className: '', innerHTML: '', value: '', returnValue: '', _cierre: null,
+    className: '', innerHTML: '', value: '', returnValue: '', _cierre: null, atributos: {},
     appendChild(){}, remove(){}, focus(){}, select(){},
+    setAttribute(k, v){ this.atributos[k] = String(v); },
     addEventListener(ev, fn){ if (ev === 'close') this._cierre = fn; },
     querySelector(sel){
       const hijo = elemento();
@@ -67,12 +68,15 @@ registro.expuesto = Object.keys(window.HubUI).sort();
 
   // Confirmar: el usuario acepta.
   const p2 = window.HubUI.confirmar({ titulo: 't', mensaje: 'm', peligro: true });
+  // Con qué se nombra el diálogo, y el de otro: dos a la vez no comparten id.
+  registro.nombrado = [ultimo.atributos['aria-labelledby'] || null, ultimo.innerHTML];
   ultimo.returnValue = 'si'; ultimo._cierre();
   registro.resultados.aceptado = await p2;
 
   // Preguntar: se cierra sin aceptar.
   const p3 = window.HubUI.preguntar({ titulo: 't', etiqueta: 'e', valor: 'v' });
   registro.htmlPreguntar = ultimo.innerHTML;
+  registro.otroNombre = ultimo.atributos['aria-labelledby'] || null;
   ultimo.returnValue = 'no'; ultimo._cierre();
   registro.resultados.sinDato = await p3;
 
@@ -181,6 +185,16 @@ def test_solo_lleva_required_lo_que_se_declaro_obligatorio(ejecucion):
 def test_confirmar_distingue_aceptar_de_cancelar(ejecucion):
     assert ejecucion["resultados"]["cancelado"] is False
     assert ejecucion["resultados"]["aceptado"] is True
+
+
+def test_cada_dialogo_se_nombra_con_su_titulo(ejecucion):
+    """Un lector de pantalla anunciaba «diálogo» sin decir cuál: ni
+    `aria-labelledby` ni `aria-label` (C-0347). Se nombra con su `h3`, y el
+    id no se repite entre dos diálogos."""
+    import re
+    ident, html = ejecucion["nombrado"]
+    assert ident and re.search(r'<h3 id="' + re.escape(ident) + r'">t</h3>', html)
+    assert ejecucion["otroNombre"] and ejecucion["otroNombre"] != ident
 
 
 def test_preguntar_devuelve_nulo_si_no_se_acepta(ejecucion):

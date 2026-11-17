@@ -30,16 +30,14 @@ medias. Aquí eso nunca es un error, sólo una línea menos.
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
-from . import modelos
+from . import modelos, recordar, tiempos
 from .models import Proyecto
-
-# Donde Claude Code guarda sus transcripts. Un directorio por ruta de trabajo.
-TRANSCRIPTS = Path.home() / ".claude" / "projects"
 
 # Sólo estos dos tipos de línea cuentan qué pasó. El resto —`mode`,
 # `permission-mode`, `file-history-snapshot`, `attachment`, `system`,
@@ -66,6 +64,30 @@ def slug_de(ruta: str) -> str:
     return _NO_ALFANUMERICO.sub("-", str(Path(ruta).expanduser()).rstrip("/"))
 
 
+def raiz() -> Path:
+    """Donde Claude Code guarda sus transcripts: un directorio por ruta de trabajo.
+
+    🔴 La única puerta (C-0049). Había tres raíces y sólo una leía
+    `HUB_TRANSCRIPTS`, que `INSTALAR.md` documenta: quien la ponía veía Consumo
+    e Inventario en una carpeta y /contexto, las conversaciones y el
+    orquestador en otra. Se lee en cada llamada y no al importar, como
+    `tmux.orden_base`: una constante se quedaría con la respuesta vieja, y la
+    suite la apunta a una carpeta que no existe para no leer los transcripts
+    reales de quien la ejecuta.
+    """
+    declarado = os.environ.get("HUB_TRANSCRIPTS")
+    return Path(declarado) if declarado else Path.home() / ".claude" / "projects"
+
+
+def directorio_de(cwd: str) -> Path:
+    """El directorio de transcripts de una ruta de trabajo, exista o no.
+
+    Se armaba a mano (raíz más `slug_de`) en cuatro sitios (C-0091): el día
+    que Claude Code cambie cómo nombra la carpeta, se cambia aquí.
+    """
+    return raiz() / slug_de(cwd)
+
+
 def directorios_de(proyecto: Proyecto) -> list[Path]:
     """Los directorios de transcripts de un proyecto: uno por ruta suya.
 
@@ -74,7 +96,7 @@ def directorios_de(proyecto: Proyecto) -> list[Path]:
     """
     vistos: dict[str, Path] = {}
     for ruta in proyecto.todas_las_rutas():
-        camino = TRANSCRIPTS / slug_de(ruta)
+        camino = directorio_de(ruta)
         if camino.is_dir():
             vistos[camino.name] = camino
     return list(vistos.values())
@@ -123,10 +145,11 @@ def ruta_de_sesion(session_id: str, directorios: list[Path] | None = None) -> Pa
 
 
 def _todos_los_directorios() -> list[Path]:
-    if not TRANSCRIPTS.is_dir():
+    carpeta = raiz()
+    if not carpeta.is_dir():
         return []
     try:
-        return sorted(d for d in TRANSCRIPTS.iterdir() if d.is_dir())
+        return sorted(d for d in carpeta.iterdir() if d.is_dir())
     except OSError:
         return []
 
@@ -136,13 +159,24 @@ def _todos_los_directorios() -> list[Path]:
 # --------------------------------------------------------------------------- #
 
 
+@tiempos.medido
 def resumir_sesion(ruta: Path) -> dict[str, Any] | None:
     """Ficha de una sesión sin bajar a su contenido.
 
     El título no se inventa ni se pide a un modelo: Claude Code ya escribe
     líneas `ai-title` con el que él mismo puso. Si hay varias —una sesión larga
     cambia de tema— manda la última.
+
+    Para sacarla hay que leer el archivo entero, y una sesión larga pesa
+    megas: se recuerda mientras el archivo no cambie (`recordar.por_archivo`,
+    C-0310). Es la única ficha recordada del hub —los slots y el asistente la
+    piden por `conversaciones.ficha`, que delega aquí—, y cada quien recibe
+    su copia, porque `listar_sesiones` le añade el proyecto.
     """
+    return recordar.por_archivo(ruta, _resumir, copia=dict)
+
+
+def _resumir(ruta: Path) -> dict[str, Any] | None:
     inicio = fin = None
     titulo = rama = cwd = None
     mensajes = 0
@@ -190,6 +224,7 @@ def resumir_sesion(ruta: Path) -> dict[str, Any] | None:
     }
 
 
+@tiempos.medido
 def listar_sesiones(
     proyectos: list[Proyecto],
     proyecto_id: str | None = None,
@@ -238,7 +273,8 @@ def jsonl_de(directorio: Path) -> list[Path]:
 # --------------------------------------------------------------------------- #
 
 
-def esqueleto(ruta: Path, limite: int | None = None, desde_uuid: str | None = None) -> dict[str, Any]:
+def esqueleto(ruta: Path, limite: int | None = None, desde_uuid: str | None = None,
+              tapar: Callable[[str], str] | None = None) -> dict[str, Any]:
     """La conversación sin el ruido: todo el texto, las herramientas en una línea.
 
     Qué se tira y por qué:
@@ -252,6 +288,13 @@ def esqueleto(ruta: Path, limite: int | None = None, desde_uuid: str | None = No
 
     `desde_uuid` devuelve sólo lo posterior a ese mensaje, que es como el chat
     pide lo nuevo sin releer la conversación entera en cada sondeo.
+
+    `tapar` pasa por el argumento de cada herramienta ANTES de que la etiqueta
+    lo recorte (el secretario tapa llaves, C-0419): recortada, una llave ya no
+    casa con su patrón y saldría a medias. Sólo por ése: el resto de la entrada
+    (lo que escribe un Write, por ejemplo) no se enseña y tapar el transcript
+    entero lo hacía veinte veces más lento. El texto no se recorta aquí: quien
+    lo enseñe lo tapa.
     """
     todos: list[dict[str, Any]] = []
     corte = -1
@@ -259,7 +302,7 @@ def esqueleto(ruta: Path, limite: int | None = None, desde_uuid: str | None = No
     for dato in leer_lineas(ruta):
         if dato.get("type") not in TIPOS_UTILES or dato.get("isSidechain"):
             continue
-        mensaje = _condensar(dato)
+        mensaje = _condensar(dato, tapar)
         if not mensaje:
             continue
         todos.append(mensaje)
@@ -303,10 +346,10 @@ def respuesta_tras(ruta: Path, marca: str, hasta_el_siguiente: bool = False) -> 
     return "\n\n".join(textos).strip()
 
 
-def _condensar(dato: dict[str, Any]) -> dict[str, Any] | None:
+def _condensar(dato: dict[str, Any], tapar: Callable[[str], str] | None = None) -> dict[str, Any] | None:
     """Un mensaje reducido a texto + herramientas. None si no queda nada."""
     texto = _texto_de(dato)
-    herramientas = _herramientas_de(dato)
+    herramientas = _herramientas_de(dato, tapar)
     if not texto and not herramientas:
         return None
     return {
@@ -338,9 +381,9 @@ def _texto_de(dato: dict[str, Any]) -> str:
     return "\n".join(p for p in partes if p).strip()
 
 
-def _herramientas_de(dato: dict[str, Any]) -> list[str]:
+def _herramientas_de(dato: dict[str, Any], tapar: Callable[[str], str] | None = None) -> list[str]:
     return [
-        etiqueta_herramienta(b.get("name", "?"), b.get("input"))
+        etiqueta_herramienta(b.get("name", "?"), b.get("input"), tapar)
         for b in _bloques(dato)
         if b.get("type") == "tool_use"
     ]
@@ -352,14 +395,15 @@ ARGUMENTO_CLAVE = ("file_path", "command", "pattern", "path", "url", "descriptio
                    "query", "notebook_path", "prompt")
 
 
-def etiqueta_herramienta(nombre: str, entrada: Any) -> str:
-    """Una llamada a herramienta en ~60 caracteres: `[Bash: uv run pytest]`."""
+def etiqueta_herramienta(nombre: str, entrada: Any, tapar: Callable[[str], str] | None = None) -> str:
+    """Una llamada a herramienta en ~60 caracteres: `[Bash: uv run pytest]`.
+    `tapar`, antes de recortar (ver `esqueleto`)."""
     if not isinstance(entrada, dict):
         return f"[{nombre}]"
     for clave in ARGUMENTO_CLAVE:
         valor = entrada.get(clave)
         if isinstance(valor, str) and valor.strip():
-            resumen = " ".join(valor.split())
+            resumen = " ".join((tapar(valor) if tapar else valor).split())
             if len(resumen) > ANCHO_HERRAMIENTA:
                 resumen = resumen[: ANCHO_HERRAMIENTA - 1] + "…"
             separador = " " if clave == "file_path" else ": "

@@ -56,16 +56,26 @@ dueno: Tu nombre
 ## Hablarle
 
 - **Escribiendo**, en el cuadro de abajo. Enter manda; Mayús+Enter es un salto de
-  línea.
+  línea. Si un mensaje no sale (el hub no contesta), te lo dice en rojo debajo
+  del cuadro, lo escrito se queda en él y **Reintentar** lo manda.
 - **Hablando**: pulsa «Hablar», di lo que quieras y pulsa «Parar». Se transcribe
   en tu máquina con el mismo Whisper que usa Reuniones, así que hace falta tener
   Reuniones preparado. El texto queda en el cuadro para que lo leas antes de
-  enviarlo, salvo que marques «Al terminar de hablar, mandarlo solo».
+  enviarlo, salvo que marques «Al terminar de hablar, mandarlo solo». Si no se
+  pudo transcribir te lo dice en rojo, como un mensaje que no sale; si fue por
+  un corte de red, sale **Reintentar** y lo grabado no se pierde, aunque luego
+  escribas algo que tampoco salga: Reintentar manda lo escrito y después sube
+  lo grabado.
 - **Manteniendo Ctrl+Espacio** (en el PC, en su pantalla —y en cualquiera si
   lo pusiste en todas las pantallas— aunque el cursor esté en otro campo o en
   la terminal): graba mientras la mantienes y,
   al soltar, se lo manda directamente. Si el panel estaba plegado, se abre. Un
   toque corto, o cambiar de ventana con la tecla pulsada, no manda nada.
+- Lo dictado que le llega sin que lo hayas tocado (Ctrl+Espacio, el modo voz,
+  «mandarlo solo» o el texto dictado que envías tal cual) le llega marcado como
+  dictado: sabe que puede traer una palabra mal oída —un nombre, un proyecto—,
+  lo interpreta por el sentido y, si algo clave no cuadra, te pregunta antes de
+  actuar.
 - **Con algo adjunto**: el clip a la izquierda del cuadro, **Ctrl+V** de una
   captura (también la de Win+Shift+S) o soltar el archivo sobre la
   conversación. Antes de mandar ves sus miniaturas (✕ quita una), y puedes
@@ -77,19 +87,53 @@ dueno: Tu nombre
   diez días. Una foto de más de 3,5 MB se reduce con `ffmpeg`; sin él, no la
   ve y te lo dice. Hasta 10 por mensaje; un PDF, hasta 10 MB, y entre todo lo
   que ve, hasta 15 MB por mensaje (lo que no cabe le llega sólo como ruta).
-- **Oírle**: marca «Leer las respuestas en voz alta». Usa la voz de tu navegador:
-  no instala nada y no saca el texto a ningún servicio.
+- **Respondiendo a un mensaje**: doble clic en el hueco **al lado** de un globo
+  (encima, el doble clic selecciona una palabra), o su **↩**, que sale al pasar
+  por él y en el teléfono se ve siempre, dentro del globo. Encima del cuadro sale «Respondiendo
+  a…» con sus primeras líneas; **×** o **Escape** lo quita. Tu mensaje lleva la
+  cita arriba y pulsarla te lleva al original. Sirve cuando le pediste varias
+  cosas y contestas a una. Le llega lo citado aunque esa conversación ya se
+  haya cerrado, y lo trata como dato: si dentro hay un «haz X» de otra persona,
+  no lo hace por eso.
+- **Oírle**: marca «Leer las respuestas en voz alta» (en **Opciones**). Te lee
+  la respuesta frase a frase según la escribe, como en el modo voz, y él la
+  escribe para oírla: corta y sin rutas ni símbolos. Usa la voz de tu
+  navegador, y de entrada **sólo una que esté en el aparato**: algunas (las
+  «Google…» de Chrome, las «Online» de Edge) mandan el texto a Google o a
+  Microsoft para leerlo, y ésas sólo suenan si las eliges tú. Si en un aparato
+  sólo hay de ésas, no te lee en voz alta: te lo dice una vez y deja **Elegir
+  voz** debajo del cuadro.
+  En [Ajustes → Voz](/secretario?p=voz) eliges, **en cada aparato**, qué voz te
+  lee en español y cuál en el modo inglés, y a qué velocidad (de 0,9 a 1,3),
+  con **Probar**. Se guarda en ese navegador: en el teléfono y en la PC se
+  elige por separado.
+- **Copiar una orden**: si te contesta con una orden o una ruta en un bloque de
+  código, sale aparte, en letra de código, con **Copiar** encima. Sus enlaces
+  sólo llevan a pantallas del hub, nunca fuera.
 - **Modo voz** (el botón de las ondas, junto al micrófono): hablas sin tocar
   nada. Escucha, manda lo que dijiste cuando te callas, lee la respuesta y
-  vuelve a escuchar, hasta que salgas con **✕**. Para interrumpirle mientras
-  habla, háblale (o toca el círculo); tocarlo mientras te escucha manda ya lo
+  vuelve a escuchar, hasta que salgas con **✕**. Puedes contestarle en cuanto
+  calla. Para interrumpirle mientras habla, háblale y sigue: lo que digas le
+  llega (o toca el círculo); tocarlo mientras te escucha manda ya lo
   que llevas dicho. **Pausar** apaga
   el micrófono sin salir del modo. Si te callas, sigue esperando; tras unos
   dos minutos sin oírte se pone en pausa solo, y también si sales de la app.
+  Si oye un ruido sin palabras (una tos, una puerta) te dice «¿Perdón?» y
+  sigue escuchando; si algo falla de verdad, se pausa y te lo dice en voz alta.
+  Si lo que dijiste no llega al hub (un corte de red), lo reintenta solo; si
+  tampoco, sale **Reintentar** debajo del cuadro y lo grabado no se pierde.
+  Si lo que entendió no se puede mandar, se pausa, te lo dice en voz alta y
+  **Reintentar** lo manda tal cual.
+  Mientras lo pasa a texto el panel lo dice, y mientras piensa enseña lo que
+  entendió («Entendí: «…»»): si oyó mal, interrúmpele antes de que actúe.
+  Si a los tres segundos aún no ha empezado con lo tuyo (está acabando otra
+  cosa), te dice «un momento» y el panel, por qué.
   Mientras dura, la pantalla no se apaga.
   Te lee la respuesta frase a frase según la escribe, así que empieza a
-  hablar a los pocos segundos; por voz contesta en dos o tres frases, y si
-  tiene que consultar algo te lo dice primero.
+  hablar a los pocos segundos; por voz contesta en tres frases como mucho,
+  escritas para oírlas (sin rutas, códigos ni símbolos, las horas como se
+  dicen), te ofrece contarte el resto, y si tiene que consultar algo te lo
+  dice primero.
 - **English** (debajo del cuadro): práctica de inglés. Conversa en inglés
   sobre tu día —puede mirar tus slots y proyectos para hablar de lo que
   haces—, te corrige un error por turno y a veces te pregunta como en una
@@ -97,7 +141,12 @@ dueno: Tu nombre
   preguntar «¿cómo se dice…?»). Mientras está puesto **no hace nada por su
   cuenta**: cualquier acción, también un recordatorio, sale como permiso que
   apruebas en Pendientes, y no le contesta al orquestador. Lo que hayáis
-  hablado no queda como notas. Se quita con el mismo botón. Para hablarle
+  hablado no queda como notas. Mientras está puesto lo dice encima del
+  cuadro («Practicando inglés · no hace nada sin tu permiso», con **Quitar**)
+  y el cuadro pide «Write to him». Se quita con el mismo botón. También puedes
+  pedírselo («pon el modo inglés»): lo pone él y el botón se enciende solo; para
+  quitarlo de palabra te pide permiso, porque en la práctica no hace nada solo.
+  Para hablarle
   en inglés hace falta el Whisper del hub: si declaraste otro transcriptor
   en `encargos.yml`, te dirá que no sabe cambiar de idioma.
 
@@ -109,15 +158,33 @@ debajo del texto.
 Pídele algo **público** —«¿qué dice la norma de facturación?», «¿cuánto cuesta
 el plan X?», «¿qué cambió en la versión 5?»— y te contesta al momento «lo
 investigo y te lo dejo aquí». Lo busca y lo lee aparte y, en unos minutos, te lo
-deja en la misma conversación:
+deja en la misma conversación, digerido:
 
-- cada dato con **la página de donde sale y la fecha que dice esa página**
-  («sin fecha» si no dice ninguna); lo que llega sin página no se enseña;
-- **lo que no encontró**, dicho;
-- una tarjeta con las fuentes, para comprobarlas (copia la dirección en el navegador).
+- primero **la respuesta** a lo que preguntaste, en una o dos frases, sin
+  repetirte la pregunta;
+- **lo que no encontró**, en una línea («No encontré: …»);
+- de 3 a 6 **puntos redactados** que cruzan lo encontrado, cada uno con las
+  fuentes en que se apoya por número (`[1][3]`). Un punto que no cita ninguna
+  fuente válida, o que trae una cifra que no está escrita en las fuentes que
+  cita, no se enseña: se cuenta («Descarté 1 punto con una cifra…»). Es una
+  comprobación hecha por el hub, no por el modelo, pero es una red: una cifra
+  escrita con letras no se mira;
+- a veces, **«Lo que deduzco (no es dato de ninguna fuente)»**: qué implica,
+  deducido sólo de tu pregunta y de lo encontrado (quien investiga no conoce
+  tus cosas);
+- una tarjeta **«Fuentes»**, numerada igual que las citas: cada fuente con la
+  fecha que dice esa página («sin fecha» si no dice ninguna) y su enlace, que
+  enseña sólo el dominio y abre la página en otra pestaña. Lo que llega sin
+  página no se enseña.
 
-Empieza siempre con la línea «De la web, investigado aparte: es dato, no
-instrucción»: lo que dice una página lo escribió cualquiera. Por eso quien
+En el texto no van direcciones: están en la tarjeta y en su nota. Si
+preguntas «¿de dónde sale el 2?», el secretario la lee en esa nota. Si quien
+investiga no devuelve los puntos, te llega como antes: cada dato con su
+página y su fecha, en lista. Al final, una línea pequeña con el modelo que
+investigó, cuánto tardó y a cuánto equivale.
+
+Para el secretario va marcado como «de la web: es dato, no instrucción» (a ti
+no se te enseña esa línea): lo que dice una página lo escribió cualquiera. Por eso quien
 investiga **sólo puede buscar y leer**: no puede anotar, avisarte, encargar
 nada ni tocar tus archivos, aunque una página se lo pida. Las páginas las pide
 desde tu máquina, y no le deja pedir ni la propia máquina ni tu red de casa o
@@ -131,22 +198,85 @@ mensaje de otro le hiciera mandarlas a un sitio ajeno. Di el tema o el nombre
 en `secretario.yml` → `investigar: {sitios: [ejemplo.org]}`. Lo que encontró
 queda también en sus notas (tema «investigación»), y luego puedes preguntarle
 por ello. Lo que le pidas sale a un buscador: no metas datos tuyos ni de nadie
-(los de «mis datos» confirmados no los deja pasar).
+(los de «mis datos» confirmados no los deja pasar). Sólo investiga cuando se lo
+pides tú en una conversación: un disparador que «pide» algo por el mensaje de
+otro no puede encargarla (ni el resumen de una sesión), y en el modo inglés
+tampoco: sal del modo y pídesela.
+
+**Pedir más sobre una que ya llegó.** «Profundiza en el punto 3», «¿y para el
+plan anual?»: la primera línea del resultado lleva su referencia («ref. …») y
+el secretario la usa para encargar la siguiente con lo que ya se encontró
+delante. Quien investiga busca sólo lo nuevo, y si vuelve a traer algo que ya
+estaba, no te lo enseña otra vez («1 ya estaba en la anterior»). Lo ya
+encontrado sale de la nota de esa investigación: si la corriges en Memoria, va
+corregido; si la borras, ya no se puede seguir y hay que pedirla entera. Al
+investigador le llega sólo el texto de lo ya encontrado, sin sus direcciones:
+la pregunta anterior o la línea que lleve una dirección (`https://…`, un
+nombre de sitio) o un dato tuyo no se le manda, igual que no la dejaría pasar
+en una pregunta nueva, y el resultado te dice «Al investigador no le mandé…».
+
+**Con qué modelo.** Si nombras uno —«investígalo con opus», «consúltalo con
+Fable 5.2»—, usa ése, y te lo dice al encargarla y al traerla, en la línea
+del final («Fable 5.2 · tardó…»). Si no dices ninguno, lo elige él por lo difícil que sea: Haiku
+para un dato concreto, Sonnet para comparar fuentes, Opus para un análisis.
+**Fable sólo si la palabra «fable» está en tu último mensaje**: es el que más
+gasta, y si no la escribiste tú, no lo usa aunque lo elija él o se lo sugiera un
+mensaje de otro. Comprueba que lo nombraste, no que lo pidieras: si preguntas
+«¿qué es Fable 5.2?», podría usarlo, con su tope. Fable 5.2 pide Claude Code 2.1.322
+o posterior (`npm install -g @anthropic-ai/claude-code@latest`). Lo mismo para
+contestarte: «contéstame con fable» rehace su respuesta con ése.
+
+**Si falla.** Te lo dice en el mismo chat, en llano y con qué hacer (el detalle
+técnico queda en `journalctl --user -u hub-secretario`). Si lo que falla es que
+el modelo que eligió —o el que le pediste— no devuelve los datos con su fuente
+en el formato esperado, la repite una vez con el modelo de siempre (Haiku, o el
+de tu `modelos.yml`) y te lo dice en el resultado: «Con Sonnet 5 no salió con el
+formato pedido y la repetí con Haiku 4.5». Son dos intentos y cada uno gasta
+hasta su tope.
+
+**Pararla.** «Para la investigación» (o «páusala») la detiene aunque esté a
+mitad, y quita las que esperaban; con una parte de la pregunta («para la de los
+precios»), sólo ésa. No te llega nada de ella. Para retomarla, pídela otra vez,
+corregida si quieres.
 
 Cada investigación tiene un **tope de gasto**, contado como lo que costaría
-por la API: 0,50 USD. Una pregunta sencilla gasta bastante menos; si una muy
-amplia no cabe, te dice que no terminó y te pide acotarla. Para cambiarlo, en
-`secretario.yml`:
+por la API, que va con el modelo: 0,50 USD con Haiku, 1 con Sonnet, 1,50 con Opus y
+2,50 con Fable (una pregunta mediana gastó 0,20-0,45 con Haiku, 0,22 con Sonnet,
+0,38 con Opus y 0,53 con Fable). Una pregunta sencilla gasta menos; si
+una muy amplia no cabe, te dice que no terminó y te pide acotarla. Para
+cambiarlo, en `secretario.yml` (un número vale para todos; por modelo, uno a
+uno):
 
 ```yaml
 investigar:
-  tope_usd: 1.0
+  tope_usd: {haiku: 0.8, fable: 8}
 ```
 
+Cada resultado acaba diciendo **cuánto tardó y a cuánto equivale** («Tardó 1
+min 28 s; equivale a 0,53 USD de la API»): con tu suscripción no se cobra, pero
+sirve para ver lo que gasta cada modelo. Si la repitió porque el primer intento
+no salió, dice «al menos», porque ese intento no dio su cuenta.
+
+En **Memoria → Investigaciones** están las 20 últimas: qué preguntaste, con qué
+modelo, cuándo, cómo acabó (hecha, sin nada con fuente, no cupo en su tope,
+falló, cancelada), cuánto tardó y a cuánto equivale, y «Ver su nota» para
+volver a lo que encontró. Las de antes de esta versión salen sin modelo ni
+gasto: no se apuntaban.
+
 Las investigaciones van de una en una, en la misma cola que los resúmenes de
-sesión, y esperan como mucho cinco a la vez. Las hace Haiku, que es con el que
-se midió el tope; para otro, `investigar: sonnet` en `modelos.yml` (y quizá un
-tope mayor). No maneja tu navegador ni entra con tus cuentas.
+sesión, y esperan como mucho cinco a la vez. Cada una puede tardar hasta 20
+minutos (más que una respuesta del chat: ahí nadie espera delante); si no ha
+acabado, se corta y te lo dice. Lo que gastó una que se cortó así, o que
+paraste, no se sabe: el proceso se corta sin dar su cuenta. No maneja tu
+navegador ni entra con tus cuentas.
+
+**Si el servicio se reinicia a mitad** (una actualización, un corte), la
+investigación o el resumen que estaba haciendo no se pierde: al arrancar te lo
+dice en el mismo chat («se cortó al reiniciarme; la repito») y la vuelve a
+hacer desde el principio, antes que las que esperaban. Repetirla gasta otra
+vez, así que lo hace como mucho dos veces: si se corta una tercera, te lo dice
+y ya no la repite. La que tú paraste no vuelve, y tampoco una que se quedó a
+medias hace más de un día: ésa se retira sin más.
 
 ### El personaje: qué está haciendo
 
@@ -186,6 +316,13 @@ el slot tiene dos ventanas con agente te pregunta a cuál. Un proyecto con
 guardrail `never` no se toca. Con Claude Code, además, no escribe si tiene un
 permiso o un menú abiertos, y puede leerte lo que contestó; de Codex todavía no
 sabe leer ni lo uno ni lo otro.
+
+**Te dice en qué está cualquier sesión.** «¿Cómo va lo de la tienda?» o «¿en
+qué está la sesión de Trabajo?»: lee el registro de la conversación de Claude
+Code de ese slot (no la pantalla) y te cuenta su último mensaje y lo último que
+hizo (qué archivos tocó, qué comandos lanzó), con las llaves tapadas. Sólo
+lo tiene en tu chat (nunca cuando contesta a otra cosa por su cuenta) y está
+hecho para cuando le preguntas por una sesión; de Codex todavía no sabe leerlo.
 
 **Puedes ponerle nombre.** En **Ajustes → Personaje**, arriba del todo,
 «Cómo se llama»: el que escribas sale en el menú, en su pantalla y en la app
@@ -240,10 +377,14 @@ te devuelve a su pantalla.
 **Desde el teléfono:** entra por [Acceso](/acceso), abre Secretario y añádelo a
 la pantalla de inicio. El icono abre directamente el secretario, como una app:
 secciones abajo y el cuadro de escribir siempre a la vista. En la PC, la
-conversación tiene al lado lo que espera tu permiso y lo próximo.
+conversación tiene al lado lo que espera tu permiso, lo **vencido o de hoy**
+(aparte, con **Hecho** y **Mover** para cambiarle la fecha) y lo próximo. Con
+la conversación vacía, las ideas para empezar salen de lo que te espera (un
+permiso, algo nuevo, lo que le encargaste al orquestador) y, si no hay nada,
+las de siempre.
 
 Tiene cuatro secciones: **Conversación**, **Pendientes**, **Memoria** y
-**Ajustes** (dentro: Avisos, Fuentes, Confianza, Disparadores y Personaje).
+**Ajustes** (dentro: Avisos, Fuentes, Confianza, Disparadores, Personaje, Voz y Mis datos).
 
 ### Por qué no se llena nunca
 
@@ -252,6 +393,15 @@ su memoria, y la consulta cuando hace falta. Tras media hora sin hablar, el hilo
 se cierra solo: se guarda un resumen y las notas que salieron, y la siguiente
 conversación empieza limpia. No hay que compactar ni limpiar nada a mano.
 «Conversación nueva» lo cierra en el momento.
+
+Lo ya hablado **se sigue viendo**: al abrir el chat, encima de la conversación
+de ahora salen las anteriores, cada una con su separador («Conversación del…,
+resumida»), y **Ver lo anterior**, arriba del todo, trae más mientras quede algo
+atrás. Se pueden releer y responder a un globo de entonces (↩), pero el
+secretario no las tiene delante: el separador de la de ahora lo dice («lo de
+arriba lo recuerda sólo por su resumen»). Si citas algo de entonces, le llega
+lo citado. Una imagen adjunta de hace más de diez días ya no está: deja su
+nombre.
 
 ### Qué modelo contesta
 
@@ -262,10 +412,13 @@ Depende del trabajo:
 | Leer lo que llega y sacar notas y compromisos | Haiku |
 | Hablar contigo | Sonnet |
 | Planificar algo de varios pasos o decidir con consecuencias | Opus (lo pide el propio Sonnet) |
-| Investigar algo en la web (`investigar`) | Haiku |
+| Investigar algo en la web (`investigar`) | Haiku, o el que elija según lo difícil que sea |
 
+Si le nombras un modelo («con opus», «con fable»), manda el tuyo, para esa
+investigación o esa respuesta. Fable no lo usa nunca si no lo nombras tú.
 Bajo cada respuesta ves qué modelo la dio y cuánto tardó. Para cambiar la tabla:
-`~/.local/share/hub/secretario/modelos.yml`, por ejemplo con `conversacion: haiku`.
+`~/.local/share/hub/secretario/modelos.yml`, por ejemplo con `conversacion: haiku`
+(ahí no entra Fable: sólo cuando lo pides).
 
 ## Fuentes
 
@@ -334,6 +487,12 @@ caída, un plazo para todos. Y si un mensaje cambia la hora de un pendiente tuyo
 —«la planning se movió a las 4:30»—, lo mueve y te avisa («🔁 Pendiente
 movido»). Sólo con mensajes de las últimas horas, y nunca lo cierra ni lo borra. En WhatsApp las
 etiquetas llegan como un número, así que allí sólo se sabe si te nombran.
+
+Lo de un grupo que no va para ti no se lee mensaje a mensaje: espera a que se
+junten diez o a que el más viejo lleve cinco minutos, y entonces se lee todo de
+una vez (gasta menos de tu suscripción). Por eso un aviso «📣 En el grupo» puede
+tardar hasta unos cinco minutos. Un chat contigo, una etiqueta o tu nombre no
+esperan, y tus disparadores tampoco.
 
 **WhatsApp (exportado a mano)** es la forma sin riesgo para tu cuenta: no se
 conecta nada a WhatsApp. En el teléfono, en un chat: ⋮ → Más → **Exportar chat**
@@ -423,24 +582,107 @@ Dispositivos vinculados del teléfono (aparece como un navegador).
 
 ## Pendientes, memoria y confianza
 
+- **Aprobar sin salir del chat**: cuando el secretario te pide permiso, sale una
+  tarjeta **Pide tu permiso** justo encima del cuadro de escribir, en su
+  pantalla y en el panel de las demás. Dice qué quiere hacer, por qué y, entero,
+  el texto exacto o la orden que va a usar, y cuándo lo pidió: léelo antes de
+  decidir. Tiene tres botones: **Aprobar**, **Rechazar** y **Rechazar y decir
+  por qué**, que abre un campo en la misma tarjeta: escribes qué estaba mal y
+  pulsas **Rechazar** (o **Cancelar**). Él dice «No lo hago: rechazaste…» con el
+  nombre de la acción y lo que pedía, y tu motivo le llega como un mensaje tuyo
+  que responde a eso, así que te contesta (lo vuelve a proponer bien o te
+  pregunta). El motivo no se guarda en la solicitud: vive en la conversación.
+  Si se cae la red, lo escrito sigue en la tarjeta; si otro aparato ya la había
+  decidido, también, hasta que pulses **Quitar**.
+  Si hay varias, salen todas, la más antigua arriba; las que nacieron sin ti
+  delante lo dicen al principio. Lo mismo sigue en Pendientes, donde
+  **Rechazar diciendo por qué** se despliega bajo cada una: decidir en un
+  sitio la quita del otro.
 - **Pendientes**: arriba, **Te espera** (lo explica el apartado de abajo), que
   incluye lo que espera tu permiso (Aprobar o Rechazar); después, tus
   compromisos abiertos (Hecho o Descartar; descartar pregunta antes, porque
-  no se puede deshacer). Al aprobar, el secretario lo hace en unos segundos y
-  te lo cuenta en la conversación.
-- **Memoria**: las notas que ha sacado. Se corrigen y se borran ahí (borrar
-  pregunta antes: una nota borrada no se recupera). Al final, plegadas, tus
+  no se puede deshacer). Lo que ya venció o vence hoy va arriba de ellos, en
+  **Vencidos o de hoy**: marcas los que quieras y los das por **Hecho** o los
+  **Descartas** de una vez (los botones salen al marcar uno), y cada uno se puede **Mover** a otra fecha. Nada
+  se cierra solo; el parte de la mañana te dice cuántos hay y dónde están. Al
+  aprobar, el secretario lo hace en unos segundos y te lo cuenta en la
+  conversación. Lo hace una sola vez: si el secretario se
+  reinicia justo a mitad, no la repite; te dice en el chat que no sabe si llegó
+  a hacerse, para que lo mires tú y se la vuelvas a pedir si hace falta, y en
+  «Solicitudes resueltas» queda como «no sé si se hizo».
+- **Memoria**: las notas que ha sacado. Cada una se lee tal cual; **Editar**
+  abre su texto para corregirlo y **Borrar** está en su menú (⋯), en rojo, y
+  pregunta antes: una nota borrada no se recupera. También se lo puedes decir
+  en la conversación: «eso que anotaste está mal, es el jueves» corrige la nota
+  al momento, y lo que decía antes (y su tema) queda en la bitácora; si era muy
+  larga o llevaba algo con forma de contraseña, ahí queda recortado o tapado, y
+  te lo dice. «Cámbialo a "llamar al taller"» cambia el texto de un compromiso
+  abierto sin moverle el plazo ni el aviso. Y «olvida esa nota» te pide permiso
+  siempre, enseñándote la nota entera, porque borrar es cosa tuya. Al olvidarla
+  se borra la nota y, a la vez, se tapa con «[olvidado]» lo que la bitácora y
+  las solicitudes guardaban de ella: el texto con que se anotó, cada
+  corrección y su «antes decía», y el motivo que se apuntó entonces. La
+  bitácora sigue diciendo que se anotó, se corrigió y se olvidó, y cuándo; no
+  qué decía. El aviso y la solicitud de olvidarla tampoco llevan su texto.
+  **Lo que sí sigue**, y conviene saberlo: lo que hablasteis de ella en la
+  conversación (también lo que él te contestó citándola) y los resúmenes de
+  esas conversaciones; el mensaje del que salió, si salió de uno, que sigue
+  entre lo leído; y las copias diarias de su memoria hechas antes (se guardan
+  las catorce últimas). **Borrar** desde esta pantalla quita la nota, pero no
+  tapa la bitácora: para eso, pídeselo a él. Se ven las 80 más
+  recientes: escribir en «Filtrar notas» filtra ésas al momento, y con Intro
+  busca en todas (sin distinguir mayúsculas ni tildes). El botón **Filtrar**,
+  al lado, acota también sobre todas, y se suma a lo que hayas buscado:
+  - **Tema**: las notas que saca él solo (de lo que lee y al cerrar una
+    conversación) llevan uno de una lista corta —persona, proyecto,
+    preferencia, decisión, dato, investigación, inglés— o ninguno, y el
+    detalle va en el texto. Las que apuntas tú, o le dictas, llevan el tema que
+    digas. Las notas de antes conservan el suyo: para encontrarlas, busca la
+    palabra, que la búsqueda también mira el tema.
+  - **Sin salir en ninguna búsqueda desde el …**: las que no le han salido
+    cuando busca en su memoria o le preguntas por alguien. Cuenta desde su
+    primera búsqueda con esta versión, y la fecha lo dice; de antes no se sabe.
+    Que tú abras Memoria no cuenta. No borra nada: sirve para decidir qué
+    olvidar, y olvidar sigue siendo cosa tuya.
+
+  Lo puesto se ve encima de las notas, y cada uno se quita con su ×.
+  Cuando cierra una conversación también apunta lo que **prefieres** si lo
+  dejas caer («prefiere…», «no le gusta…»), con tema «preferencia»: sólo lo
+  que dijiste tú. Al final, plegadas, tus
   **conversaciones anteriores** con su resumen: en la PC también salen al lado
   de la conversación, y en el teléfono y la tablet sólo aquí.
 - **Ajustes → Confianza**: lo que sabe hacer y cuándo te pregunta. Hay tres niveles:
-  - **auto**: lo hace sin preguntar;
-  - **ask**: te pide permiso en el teléfono;
-  - **never**: no lo hace.
+  - **Lo hace solo** (*auto*): sin preguntar;
+  - **Te pregunta** (*ask*): te pide permiso en el teléfono;
+  - **Nunca** (*never*): no lo hace.
+
+  En pantalla salen con su nombre; entre paréntesis, el valor que se guarda
+  y que verás en los archivos de configuración (el guardrail de un proyecto
+  usa los mismos tres).
 
   Debajo de cada acción dice si sólo mira, si tiene vuelta atrás, si no la
-  tiene o si sale de tu máquina. Lo que no tiene vuelta atrás pregunta siempre. Cuando has aprobado algo varias
-  veces, te sugiere pasarlo a auto, pero no lo cambia solo. Abajo está la
+  tiene o si sale de tu máquina. Lo que no tiene vuelta atrás pregunta siempre, y también lo que
+  dice **Pregunta siempre**: cosas que tienen vuelta atrás pero son tuyas de decidir cada vez
+  (archivar un slot, parar un contenedor, detener una tarea). En ésas, «Lo hace solo» no se puede elegir. Cuando has aprobado algo cinco
+  veces seguidas sin que fallara (un «no» o un fallo vuelven a empezar la cuenta), te sugiere pasarlo a «Lo hace solo»,
+  pero no lo cambia solo. Lo que sabe hacer pero aún no está configurado
+  sale marcado **sin configurar**, con dónde se configura: mientras tanto el
+  secretario ni lo intenta (no se le ofrece), y en cuanto lo configuras lo
+  tiene en la siguiente conversación. Su nivel se puede elegir igual. Abajo está la
   **bitácora**: todo lo que hizo, con qué nivel y por qué.
+  Encima de la bitácora, **Lo que le pediste y no supo**: lo que él mismo apunta
+  cuando no tiene con qué hacer algo, agrupado y con cuántas veces. Si contestó
+  que no podía y no apuntó qué le faltaba, sale contado aparte («Dijo que no
+  podía, sin apuntar qué le faltaba»): es una señal, no una lista exacta —un
+  «no puedo eso, pero sí esto» también cuenta—, y lo que dijo está en esa
+  conversación.
+  Cuando te dice que no sabe hacer algo, te pregunta si lo apunta como mejora
+  en el tablero, y sólo lo apunta si le dices que sí; al lado del hueco, aquí,
+  ves en qué va. Si usas fichas de cambios (`parte_fichas`) y la ficha que lo
+  resolvió está hecha y dice qué herramienta suya lo resuelve (`resuelve:`),
+  te lo dice **una vez, en el chat** («Ya sé hacer algo que me pediste y no
+  sabía…»), y sólo cuando esa herramienta ya está cargada en el secretario que
+  tienes en marcha. No te llega al teléfono.
 
 **En tu PC:** puede abrirte una pantalla del hub en el navegador («ábreme en la
 PC la reunión del martes») y la ventana de trabajo de un slot. Lo primero lo
@@ -480,11 +722,81 @@ Tarda menos de un minuto. Lo mismo, desde la terminal:
 `uv run python -m hub.diagnostico programas --buscar <nombre> --proceso <proceso>`
 (con `--json`, todo el detalle). Sólo funciona con el hub instalado en WSL.
 
-**Lo que no sabe hacer, no lo improvisa:** no tiene terminal ni acceso a tus
-archivos. Crear un proyecto o un slot lo hace igual que el botón de la
+**Mira lo demás de tu PC con una orden de PowerShell.** Lo que no cubre lo de
+arriba —«¿qué modelo son mis monitores?», «¿qué tengo conectado por USB?», «¿mi
+disco está sano?»— lo mira él con una orden de PowerShell, **sin preguntarte,
+sólo si la orden únicamente mira**: aparatos, controladores, discos, red,
+servicios, procesos, eventos y el registro. No se fía de lo que él diga de su
+orden: la comprueba el propio PowerShell antes de correrla, y la corre en un
+PowerShell recortado que sólo tiene esos comandos. No lee el contenido de tus
+archivos (eso va por la carpeta que le diste), ni el portapapeles, ni
+contraseñas, ni variables de entorno, ni la línea de órdenes de tus procesos.
+Lo que sí mira (el registro, los eventos de Windows) puede llevar algo
+privado: lo que parece una llave se tapa antes de pasárselo, pero es un
+filtro, no una garantía.
+
+**Si hace falta cambiar algo, te lo pide con la orden exacta.** En Pendientes
+ves la orden entera, tal cual se va a correr, y por qué no es sólo mirar.
+**Nada cambia sin tu sí**: ésa es la garantía. Si pasan más de 15 minutos
+desde que te lo pidió, aunque la apruebes no la corre (la PC ya puede estar
+distinta). Desde la notificación no se aprueba: hay que verla. Además, se
+niega a pedirte lo que toque las carpetas de tus proyectos (o una que las
+contenga), abra puertos, el cortafuegos o tailscale, accione docker, salte a
+WSL (donde están el hub y sus bases), pida administrador o vaya codificado. Si
+no puede leer tu registro de proyectos (o una carpeta de las que declara),
+no sabe cuáles proteger y no te pide cambiar nada hasta que se pueda; mirar
+sí sigue. Es una red para lo evidente, no una garantía: una orden puede llegar a una
+carpeta sin nombrarla, y por eso lo que importa es que la leas antes de
+aprobarla. Mirar y cambiar, sólo cuando le hablas tú: nunca desde un
+disparador. Si algo que está leyendo (un mensaje, un correo) le pidiera correr
+algo, para cambiar seguiría necesitando tu sí. Sólo en Windows, con el hub
+instalado en WSL.
+Desde la terminal, para ver qué haría con una orden:
+`uv run python -m hub.orden_pc clasificar "<orden>"`.
+
+**Lo que no sabe hacer, no lo improvisa:** no tiene una terminal de Linux ni
+acceso a tus archivos fuera de lo que le diste. Crear un proyecto o un slot lo hace igual que el botón de la
 pantalla: la misma función, con el agente acotado a la carpeta nueva. Cambiar
 algo en un proyecto que ya existe se lo encarga al
 [orquestador](09-orquestador-e-intercambio.md).
+
+**Sabe del hub.** Pregúntale cuántas ideas esperan en el tablero, qué fichas
+de cambios hay abiertas (si las usas: `parte_fichas` en `secretario.yml`; si
+no, te dice que no hay), cuánto llevas gastado en Claude Code (siempre con las
+fechas que cubre: el registro se poda a los 30 días), qué versión del hub
+tienes y si hay otra, o dónde está algo («¿dónde veo el respaldo?»): te da la
+pantalla y, con el agente de Windows conectado, te la abre en la PC.
+
+**Hace por ti cosas del hub que antes eran sólo botones**, siempre que se
+lo pidas tú en la conversación (nunca desde un disparador):
+
+- **Descartar una idea del tablero** («descarta la idea 12, ya lo hace la
+  interfaz nueva»): con su número y la razón, que queda escrita en el tablero.
+  No tiene vuelta atrás.
+- **Archivar o desarchivar un slot** («archiva el slot del login»). Borrar un
+  slot no lo hace: eso es sólo tu botón. Y no te lo propone él porque lleve
+  tiempo sin tocarse.
+- **Detener o reanudar una tarea del orquestador** («para esa tarea»,
+  «reanúdala»). Detener interrumpe a las sesiones que trabajan para ella, como
+  el botón. Al reanudar no le añade ninguna nota: si quieres decirle algo al
+  orquestador, lo escribes tú en su pantalla.
+- **Arrancar, parar o reiniciar un contenedor** («para el contenedor
+  tienda-db»): uno cada vez y por su nombre exacto, de los que salen en
+  Servicios. No borra contenedores ni toca los de un proyecto con guardrail
+  never. Después mira cómo quedó y te lo dice.
+
+Todas **preguntan siempre**: no se pueden poner en auto, y su aviso al
+teléfono no trae Aprobar y Rechazar. Se deciden viendo el detalle —qué slot y
+de qué proyecto, de quién es el contenedor, qué pedía la tarea, y cómo está
+cada cosa en ese momento—, y eso sólo sale en la tarjeta **Pide tu permiso**
+del chat y en Pendientes: el aviso lleva el número o el nombre de lo que es,
+nunca el pedido de la tarea ni el nombre del proyecto.
+
+**Sabe de cada persona.** «¿Cuándo hablé con Ana?» o «¿qué le debo a Ana?»:
+junta en qué chats escribe, su último mensaje, el tuyo en su chat privado, los
+compromisos abiertos con ella o para ella y las notas que la nombran. Busca el
+nombre como palabra entera («Ana» no es «Anabel») y tal como sale en sus
+mensajes: si en un chat la tienes guardada con otro nombre, pregúntale por ése.
 
 **Sabe qué te espera.** Pregúntale «¿qué tengo pendiente?» o «¿qué me
 espera?»: junta lo que sólo se mueve si haces algo —lo que espera tu permiso,
@@ -503,10 +815,15 @@ clave sale en la lista con `--todos`).
 
 **Te espera, en la pantalla.** Cuando hay algo que no has visto, encima de la
 conversación (en /secretario y en el panel de las demás pantallas) sale un
-globo: «Te espera: 2», con lo que aún no has visto. Pulsándolo vas a **Te
-espera**, arriba de Pendientes, donde cada cosa dice de qué es (una pregunta
+globo: «Te espera: 2 nuevas», con lo que aún no has visto. Pulsándolo vas a **Te
+espera**, arriba de Pendientes: su cabecera dice cuántas cosas hay y cuántas
+son nuevas (las mismas del globo), y cada una nueva lleva la marca «nuevo». Ahí cada cosa dice de qué es (una pregunta
 del orquestador, lo que bloquea un proyecto, lo que te dice un proyecto…) y
-lleva sus botones:
+lleva sus botones. Arriba y abierto, lo que sólo contestas tú; debajo, los
+bloqueos de cada proyecto en una línea plegada («La tienda · 2 bloqueos») y
+lo que vence en otra («3 compromisos vencidos o de hoy»). Un grupo con algo
+nuevo llega abierto. En cada fila, la acción que se te propone va destacada y
+las demás, en su menú (⋯):
 
 - un **permiso**: Aprobar o Rechazar, como siempre;
 - una **pregunta del orquestador**: la contestas ahí mismo, o confirmas que
@@ -520,8 +837,13 @@ lleva sus botones:
   proyectos»), lo das por **Hecho** o pulsas **No me lo sugieras más**;
 - un **relevo**: lo haces en la PC y lo das por **Hecho** (quien lo pidió no
   lee respuestas, así que no se contesta escribiendo);
-- lo que **vence** te lleva a tus compromisos, y una pregunta de una sesión o
-  del canal, a su pantalla.
+- lo que **el navegante tiene en pausa** (una petición del navegador que
+  modifica algo y espera tu permiso): sale con la acción y el sitio, sin la
+  dirección entera, y **Ver y contestar** te lleva a Navegante, donde se ve
+  todo y se da el permiso; aquí no se aprueba ni se calla, y si el guardián
+  no está en marcha la fila lo dice;
+- lo que **vence** te lleva a tus compromisos (un solo enlace para todo el
+  grupo), y una pregunta de una sesión o del canal, a su pantalla.
 
 **Lo que no se delega, se prepara.** Si el asunto habla de firmar, contratos,
 trámites, pagar o publicar en tu nombre, o si el orquestador aún no tiene
@@ -535,7 +857,7 @@ compromiso tuyo y no se delega.
 
 Lo que tienes delante deja de contar como nuevo cuando llegas por el globo o
 tocas la página; una pantalla que se abre sola sin nadie delante no lo da por
-visto, y lo que sigue plegado (las fichas) tampoco hasta que lo abres. Las
+visto, y lo que sigue plegado (las fichas, un grupo cerrado) tampoco hasta que lo abres. Las
 fichas no cuentan en el globo. Lo callado se recupera en **Reabrir lo callado**, al final del bloque.
 
 **Lo que sólo tú puedes hacer en la PC te espera en la PC** (el relevo): un
@@ -564,6 +886,9 @@ trámite digital en cada proyecto. Se dan **una vez** y sirven para todos.
 - Si ya lo diste para un proyecto, en el siguiente no te lo vuelve a
   preguntar. Si encuentra otro valor, te lo propone al lado del que tienes, y
   sigue usando el tuyo hasta que elijas («Usar el nuevo» o «Dejar el de antes»).
+- **Confirmar** y **Usar el nuevo** confirman el valor que tenías delante. Si
+  mientras mirabas la pestaña llegó otro, no confirman nada y te dicen «cambió
+  mientras lo mirabas»: revisa el que hay ahora y vuelve a pulsar.
 - **Antes de mandar uno a otro sitio te pide permiso**, aunque esa acción
   esté en *auto*: un encargo al orquestador, un lienzo, la nota de un slot, una
   idea del tablero. La
@@ -577,7 +902,8 @@ Viven en `HUB_HOME/secretario/mis-datos.yml`, que sólo puede leer tu usuario,
 ficha y de ella no queda copia (por eso tampoco se recupera de ningún
 respaldo). Lo que no borra: lo que le dijiste en el chat y lo que ya salió en
 algo que aprobaste, que sigue en su historial. En su bitácora lo apunta
-tapado. No guardes ahí contraseñas ni llaves: las rechaza.
+tapado, también el que te propone y no llega a guardarse, y también si lo
+escribe en el motivo. No guardes ahí contraseñas ni llaves: las rechaza.
 
 **Las preguntas del orquestador pasan por él.** Lo operativo lo contesta solo
 (lo ves en la bitácora de `/orquestador`); lo tuyo te lo trae. Puedes
@@ -703,6 +1029,10 @@ de prueba» comprueba que llegan.
   permiso abre la app para decidir.
 - **Android y PC:** el aviso de un permiso trae **Aprobar** y **Rechazar**. Lo
   que no tiene vuelta atrás llega sin botones: se decide con la app abierta.
+  El de un recordatorio trae **Hecho** (lo cierra, como su botón en
+  Pendientes) y **En 1 h** (te lo vuelve a recordar dentro de una hora; la
+  hora se cambia en Pendientes con Editar). Sin conexión con el hub, el botón
+  abre la app.
 - **Fuera de casa**, entrando por el nombre de Tailscale. En la PC funciona
   también en `127.0.0.1`.
 - El aviso va cifrado hasta tu aparato: el servicio de avisos del navegador
@@ -733,12 +1063,23 @@ formas de crearlos:
 - se lo pides: «recuérdame el lunes a las 10 revisar los PR»;
 - lo dijiste tú en un chat con un plazo: «lo mando el viernes».
 
+Lo que **te pide otro** en un chat o una reunión con plazo («para el viernes
+necesito la propuesta») queda en Pendientes con ese plazo, pero no te suena en
+el teléfono. Si quieres que te lo recuerde, pídeselo: «recuérdame lo de Ana el
+jueves a las 10». Lo que le apuntas tú en su chat con un plazo («apunta que
+Ana me pidió la propuesta para el viernes») sí avisa: cuenta como pedírselo.
+Lo que te piden **sin plazo** («¿me pasas el link?») no llega a Pendientes:
+queda como nota en Memoria («Luis le pidió: …»).
+
 **Cuándo avisa** de lo que sale de tus chats y reuniones: con la antelación
 que pide lo que hay que hacer. Unos minutos antes si es ir a una reunión, una
 hora si es contestar algo, varias horas si hay que preparar un entregable. Si
 el plazo es sólo un día, esa mañana a las 9. Si la antelación ya pasó cuando lo
 lee, avisa en ese momento. Un plazo que ya pasó no avisa, y un compromiso sin
 plazo tampoco. Lo que le pides tú («recuérdame a las 10») avisa a esa hora exacta.
+
+**Aún no repite recordatorios.** Si le pides uno «cada lunes», te dice que no
+sabe repetirlo y apunta sólo el primero.
 
 El orden de los canales se cambia en `secretario.yml`
 (`avisos: [webpush, telegram]` es el de por omisión). El calendario, igual:
@@ -758,6 +1099,9 @@ Con eso ya tiene tu agenda, el resumen del día y los avisos antes de cada
 evento. La dirección es una llave de tu calendario: si se filtra, en esa misma
 pantalla se «restablece». No puede crear eventos.
 
+Sin ninguna de las dos, el secretario no cuenta con tu agenda: ni la nombra ni
+intenta leerla. Desde la siguiente conversación después de conectarla, sí.
+
 **Para que también ponga cosas en tu calendario**, conecta Google:
 
 1. En Google Cloud, crea un cliente OAuth de tipo **Escritorio** con la API de
@@ -775,7 +1119,9 @@ pantalla se «restablece». No puede crear eventos.
    verifique: al entrar sale un aviso que se pasa con «Avanzado».
 
 «Poner en tu calendario» empieza en **ask**: te pregunta antes de crear cada
-evento hasta que tú cambies el nivel. Con los dos conectados manda Google;
+evento hasta que tú cambies el nivel. Sin Google conectado (con sólo la
+dirección iCal, o sin calendario) ni lo intenta: en Confianza sale **sin
+configurar**. Con los dos conectados manda Google;
 `agenda: ical` en `secretario.yml` elige la dirección iCal.
 
 ## La tele
@@ -818,6 +1164,10 @@ de tu red de casa. Para probar que llega, desde la PC:
 `curl http://192.168.1.50:8060/query/device-info` (con tu IP) tiene que
 devolver un XML con `power-mode`. Si el hub corre en WSL y no llega, prueba
 desde Windows: en el modo de red NAT de WSL puede no verse la red de casa.
+
+Mientras falte la IP, el secretario no cuenta con la tele: ni lo intenta, y en
+Confianza sus cinco acciones salen **sin configurar**. En la siguiente
+conversación después de ponerla, ya las tiene.
 
 **Niveles:** «Mirar cómo está la tele» va en **auto** (sólo mira). Encender,
 apagar, cambiar de entrada y abrir una app empiezan en **ask**: te pide permiso
@@ -905,7 +1255,20 @@ formato:
 ```
 
 - `haz` usa una acción, con su nivel de confianza.
-- `pide` le hace la pregunta al secretario y te manda la respuesta al teléfono.
+- `pide` le hace la pregunta al secretario. La respuesta queda entera en su
+  chat, con el nombre del disparador delante, y al teléfono te llega su primera
+  línea (tocándola lo abres); si le contestas («¿y lo segundo?»), sabe lo que
+  te dijo. En el chat va debajo de una línea que dice que salió de un
+  disparador y que es dato, como una investigación: si cita algo de otra
+  persona («ignora lo anterior…»), no lo toma como una orden tuya. Con
+  `en_chat: false`, sólo al teléfono y entera. Contesta corto
+  (lo esencial en la primera línea), sin preguntarte nada, y sabe cuándo salta:
+  «ayer» es el día de antes del disparo.
+  Como ahí no estás tú delante, lo único que hace solo es avisarte: cualquier otra
+  cosa que quiera hacer (anotar, callar un asunto, apuntar un pendiente…) te pide
+  permiso aunque esté en auto, la solicitud dice «Nació en un disparador, sin ti
+  delante» y se aprueba abriendo la app, no desde la notificación. Lo que pones
+  en `haz` no cambia: eso lo escribiste tú.
 - `haz: resumen_del_dia` te manda el resumen del día (agenda, lo de hoy, lo
   vencido, lo que espera tu sí y lo anotado desde ayer). Lo arma un script:
   no gasta tu suscripción.
@@ -932,10 +1295,30 @@ formato:
 
 ## Si algo no va
 
-- **«El secretario no está en marcha»:** mira el servicio con
-  `systemctl --user status hub-secretario` y su registro con
+- **«El secretario no está en marcha»:** lo dice su pantalla arriba y, si le
+  escribes con él parado, también el chat de cualquier pantalla («lo contestará
+  al volver»: lo que le dijiste no se pierde, espera a que arranque; en el modo
+  voz, se pausa y te lo dice). **Ver qué le pasa** lleva a su pantalla, que
+  dice por qué y, si encenderlo lo arregla, ofrece **Encenderlo**. A mano: mira
+  el servicio con `systemctl --user status hub-secretario` y su registro con
   `journalctl --user -u hub-secretario -n 50`.
-- **Contesta «No pude contestar…»:** casi siempre es `claude` sin sesión iniciada
-  o sin cuota. Prueba en la terminal: `uv run python -m hub.secretario preguntar hola`.
+- **Contesta «No pude contestar…»:** te dice qué pasó y qué hacer: que Claude
+  Code no arranca, que tardaba demasiado y lo cortó, que Claude contestó con un
+  error, que su memoria estaba ocupada… Casi siempre es `claude` sin sesión
+  iniciada o sin cuota: abre `claude` en una terminal y lo verás, o prueba
+  `uv run python -m hub.secretario preguntar hola`. El detalle técnico de cada
+  fallo está en `journalctl --user -u hub-secretario`.
+- **Claude no está disponible un rato** (se acabó el uso, no hay sesión
+  iniciada, no hay conexión): lo que va leyendo de tus fuentes **no se pierde
+  ni se aparta**. Espera sin clasificar y el secretario lo reintenta solo, cada
+  vez más espaciado (de medio minuto a un cuarto de hora); cuando Claude
+  vuelve, saca los pendientes y avisos de todo lo que entró mientras. Las
+  conversaciones quietas tampoco se cierran sin resumen. Queda una línea en
+  su bitácora («El modelo no está disponible…»), otra cuando vuelve («El
+  modelo vuelve a contestar…»), y el parte de la mañana lo dice en «Falló»:
+  si ya volvió, dice que ya volvió. Sólo se aparta un grupo de mensajes —siguen pudiéndose
+  buscar, pero no dan pendientes— cuando falla tres veces **y** Claude sí
+  contesta a una pregunta de prueba: entonces el problema son esos mensajes.
+  Esa pregunta de prueba es una llamada mínima al modelo.
 - **Una fuente dice «no lee»:** la pestaña Fuentes dice qué falta.
 - **Ver cómo va todo de un vistazo:** `uv run python -m hub.secretario estado`.

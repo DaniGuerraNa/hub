@@ -107,6 +107,17 @@ if "--input-format" in args:
         print(json.dumps(res(f"{{os.getpid()}}:{{n}}:{{texto}}")), flush=True)
 elif "stream-json" in args:
     texto = sys.stdin.read()
+    # `endswith`: el turno repetido tras un corte llega con el aviso delante.
+    if texto.endswith("trozos") and "--include-partial-messages" in args:
+        # El de un solo uso también da trozos si se le piden (C-0274): una
+        # frase, una herramienta y la respuesta en otro mensaje, como el abierto.
+        for mensaje in (["Déjame ", "pensarlo."], ["El plan, ", "pensado."]):
+            print(json.dumps(ev({{"type": "message_start"}})), flush=True)
+            for t in mensaje:
+                print(json.dumps(ev({{"type": "content_block_delta", "delta": {{"type": "text_delta", "text": t}}}})),
+                      flush=True)
+        print(json.dumps(res("El plan, pensado.")), flush=True)
+        sys.exit(0)
     for l in (HERRAMIENTA_ENTERA if texto == "herramienta" else []):
         print(json.dumps(l), flush=True)
     if texto == "muere":
@@ -282,7 +293,8 @@ def test_el_turno_guarda_lo_dicho_antes_de_la_herramienta_y_marca_lo_que_llego_p
     real = motor.llamar
     monkeypatch.setattr(motor, "llamar", lambda prompt, **kw: enviados.append(prompt) or real("trozos", **kw))
     conversacion.atender(con)
-    assert enviados[0].startswith("(por voz) ")
+    # Pegada a lo que dijo; delante sólo va cuándo lo dijo (C-0272).
+    assert enviados[0].startswith("(Te lo dice el ") and enviados[0].endswith(".)\n\n(por voz) trozos")
     respuesta = con.execute("SELECT texto, estado FROM turno WHERE rol = 'secretario'").fetchone()
     assert tuple(respuesta) == ("Déjame mirarlo.\n\nTienes dos cosas.", "listo")
 
@@ -434,6 +446,22 @@ def test_el_turno_guarda_lo_que_hace_con_su_rotulo_y_lo_vacia_al_acabar(falso, m
     assert t["actividad"] is None
 
 
+def test_el_turno_contestado_por_el_proceso_de_verdad_deja_su_linea_con_las_cifras(falso, monkeypatch, capsys):
+    """C-0321, por el camino entero: el `claude` de mentira, el proceso
+    abierto y `contestar`. Una herramienta usada cuenta una, no dos."""
+    monkeypatch.setattr(conversacion, "sistema", lambda: "S")
+    con = memoria.conectar()
+    t = conversacion.recibir(con, "herramienta")
+    real = motor.llamar
+    # El guion del `claude` de mentira se elige con el prompt a secas.
+    monkeypatch.setattr(motor, "llamar", lambda prompt, **kw: real("herramienta", **kw))
+    conversacion.atender(con)
+    [linea] = [l for l in capsys.readouterr().out.splitlines() if l.startswith("[turno]")]
+    assert linea.startswith(f"[turno] {t['turno']}: primer_trozo=") and "primer_trozo=- " not in linea
+    assert "herramientas=1 estado=listo" in linea and "voz=no" in linea
+    assert "Hecho" not in linea and "Ana" not in linea
+
+
 def test_un_turno_que_falla_o_se_corta_no_deja_actividad_colgada(falso, monkeypatch):
     monkeypatch.setattr(conversacion, "sistema", lambda: "S")
     con = memoria.conectar()
@@ -463,12 +491,39 @@ def test_al_repetir_el_turno_avisa_y_pide_terminar_sin_rehacer_lo_hecho(falso):
     assert "no lo repitas" in r.texto and r.texto.endswith("api_error"), "lleva su mensaje por si no se guardó"
 
 
+def _el_abierto_se_cae(monkeypatch):
+    """El proceso abierto muere, calla o da error de la API: `_en_abierto` da None."""
+    monkeypatch.setattr(motor.Suscripcion, "_en_abierto", lambda self, *a, **k: None)
+
+
+def test_un_turno_que_ya_venia_cortado_no_lleva_el_aviso_dos_veces(falso, monkeypatch):
+    """Cortado por un reinicio del servicio, `contestar` ya le pone el aviso
+    (C-0269); si además muere `claude`, el motor lo anteponía otra vez (C-0314)."""
+    _el_abierto_se_cae(monkeypatch)
+    r = _abierta(motor.RETOMAR + "apunta lo del lunes", nueva=True)
+    assert r.texto == _otra_vez("apunta lo del lunes")
+    assert r.texto.count(motor.RETOMAR) == 1
+
+
+def test_el_turno_repetido_tras_un_corte_tambien_se_ve_escribir(falso, monkeypatch):
+    """El reintento por `--resume` no pasaba `al_trozo`: la respuesta llegaba
+    entera de golpe aunque la llamada suelta ya sabe darla por trozos (C-0274)."""
+    _el_abierto_se_cae(monkeypatch)
+    trozos: list[str] = []
+    r = _abierta("trozos", nueva=True, al_trozo=trozos.append)
+    assert r.texto == "El plan, pensado."
+    assert trozos and trozos[0].startswith("Déjame") and trozos[-1] == "Déjame pensarlo.\n\nEl plan, pensado."
+
+
 def test_al_repetirse_el_turno_la_pantalla_tira_lo_del_intento_cortado(falso, monkeypatch):
     """Seguía enseñando «Déjame mirarlo.» del intento tirado, y con texto la
     pantalla no enseña el rótulo de lo que hace."""
     monkeypatch.setattr(conversacion, "sistema", lambda: "S")
     con = memoria.conectar()
     conversacion.recibir(con, "trozos-y-api_error")
+    # El falso reconoce el mensaje a secas: sin la marca de la hora (C-0272).
+    llamar = motor.llamar
+    monkeypatch.setattr(motor, "llamar", lambda prompt, **kw: llamar("trozos-y-api_error", **kw))
     real = motor.Suscripcion._suelta
     durante = []
 
@@ -508,3 +563,67 @@ def test_el_volcado_al_journal_no_saca_lo_que_devolvio_una_herramienta_ni_llaves
     err = capsys.readouterr().err
     assert "user/tool_result" in err, "la clase y el tamaño sí: es lo que dice dónde se paró"
     assert "hunter2-largo" not in err and "abcdef0123456789xyz" not in err
+
+
+# ── el de un solo uso también se ve escribir (C-0274) ────────────────────────
+
+def _suelta(prompt, **kw):
+    return motor.llamar(prompt, modelo="claude-opus-5-5", sesion="s-1", herramientas=False, trabajo="mayor", **kw)
+
+
+def test_la_llamada_de_un_solo_uso_da_la_respuesta_por_trozos_si_se_le_piden(falso):
+    """La del modelo mayor tras escalar iba sin mensajes parciales: medido, 89 s
+    con «Pensándolo a fondo» y ni una palabra (en voz, silencio)."""
+    vistos, eventos = [], []
+    r = _suelta("trozos", al_trozo=vistos.append, al_evento=eventos.append)
+    assert r.texto == "El plan, pensado."
+    assert vistos[0].startswith("Déjame") and "Déjame pensarlo." in vistos
+    # Acumulado, con todos sus mensajes, y una última vez entero: como el proceso abierto.
+    assert vistos[-1] == "Déjame pensarlo.\n\nEl plan, pensado."
+    [llamada] = falso()
+    assert "--include-partial-messages" in llamada["args"] and "--input-format" not in llamada["args"]
+
+
+def test_los_trozos_solos_tambien_valen_sin_pedir_la_actividad(falso):
+    vistos = []
+    assert _suelta("trozos", al_trozo=vistos.append).texto == "El plan, pensado."
+    assert vistos[-1] == "Déjame pensarlo.\n\nEl plan, pensado."
+
+
+def test_quien_no_pide_trozos_en_la_de_un_solo_uso_no_cambia_de_linea(falso):
+    eventos = []
+    assert _suelta("herramienta", al_evento=eventos.append).texto == "una-vez:herramienta"
+    assert {"tipo": "herramienta", "nombre": "buscar", "args": {"texto": "Ana"}} in eventos
+    assert "--include-partial-messages" not in falso()[0]["args"]
+
+
+def test_al_escalar_la_respuesta_del_modelo_mayor_se_va_viendo(falso, monkeypatch):
+    """El turno escalado pasaba por `motor.llamar` sin `al_trozo`: la pantalla
+    se quedaba vacía hasta el final."""
+    monkeypatch.setattr(conversacion, "sistema", lambda: "S")
+    con = memoria.conectar()
+    conversacion.recibir(con, "planéame la migración")
+    real = motor.llamar
+    durante: list[str] = []
+
+    def llamar(prompt, **kw):
+        if kw.get("trabajo") == "mayor":
+            # Lo que la pantalla lee de la base mientras el mayor escribe.
+            trozo = kw["al_trozo"]
+
+            def espiar(texto):
+                trozo(texto)
+                durante.append(memoria.conectar().execute(
+                    "SELECT texto FROM turno WHERE rol = 'secretario'").fetchone()[0])
+            return real("trozos", **{**kw, "al_trozo": espiar})
+        monkeypatch.setenv("SECRETARIO_HILO", kw["entorno_extra"]["SECRETARIO_HILO"])
+        monkeypatch.delenv("SECRETARIO_TURNO", raising=False)
+        herramientas._escalar(con, {"motivo": "plan de varios pasos"})
+        return real("hola", **kw)
+
+    monkeypatch.setattr(motor, "llamar", llamar)
+    conversacion.atender(con)
+    assert durante and durante[0].startswith("Déjame"), "no se vio nada mientras escribía"
+    fila = con.execute("SELECT texto, estado, modelo FROM turno WHERE rol = 'secretario'").fetchone()
+    assert fila["texto"] == "Déjame pensarlo.\n\nEl plan, pensado." and fila["estado"] == "listo"
+    assert "escalado" in fila["modelo"]

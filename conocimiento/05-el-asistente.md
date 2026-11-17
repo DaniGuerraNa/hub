@@ -88,4 +88,6 @@ Si acabas de instalarlo, el asistente es la forma más rápida de aprenderlo:
 
 La pantalla **[Guía](/guia)** tiene los primeros pasos. Cada uno se marca solo
 cuando el hub ve que está hecho, y su botón **Guíame** le hace al asistente la
-pregunta de ese paso.
+pregunta de ese paso. Si el secretario es quien te habla en todas las
+pantallas, el asistente está retirado: el primer paso es conocer al
+secretario, y «Guíame» le pregunta a él.

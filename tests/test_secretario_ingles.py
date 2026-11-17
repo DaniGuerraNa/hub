@@ -90,6 +90,17 @@ def test_en_ingles_no_se_contesta_al_orquestador(con, monkeypatch):
     assert r["ok"] is False and "inglés" in r["error"]
 
 
+def test_en_ingles_investigar_no_se_encarga_y_dice_que_salga_del_modo(con, monkeypatch):
+    """SEC-24: un «we should look that up» de la práctica no encarga gasto ni
+    saca nada a buscadores; el freno es del código, no del prompt."""
+    from hub.secretario import investigar
+    conversacion.poner_ingles(con, True)
+    _contestando(con, "we should look that up", monkeypatch)
+    r = herramientas.todas()["investigar"].funcion(con, {"pregunta": "¿Qué dice la norma de facturación?"})
+    assert not r.get("encargado") and "inglés" in r["error"]
+    assert not memoria.leer(con, investigar.CLAVE)
+
+
 def test_el_turno_llega_al_modelo_marcado_y_la_respuesta_hereda_la_marca(con, monkeypatch):
     vistos = []
 

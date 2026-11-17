@@ -32,7 +32,7 @@ import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config
+from . import config, reloj
 
 PATRON = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 ETIQUETA = re.compile(r"refs/tags/v(\d+\.\d+\.\d+)$")
@@ -44,6 +44,9 @@ CADA = timedelta(hours=1)
 # más de esto (decisión 296): quien entra ahí quiere saberlo ahora, y un día de
 # retraso dejó a un usuario viendo la 0.3.0 con la 0.3.1 ya publicada.
 AL_ENTRAR = timedelta(minutes=5)
+# Lo apuntado con más de esto ya no es «se mira cada hora»: el ciclo lento no
+# está mirando, y la pantalla lo dice en vez de prometerlo (C-0294).
+ATRASADO = 2 * CADA
 
 
 def clave(version: str) -> tuple[int, int, int]:
@@ -123,13 +126,11 @@ def buscar_remota(raiz: Path | None = None, *, ahora: datetime | None = None,
     # dónde mirar: no es un fallo que enseñar, es que no aplica. Sin git, o
     # con git colgado, sí lo es, y se dice en vez de dar un 500 (C-0121).
     try:
-        sin_remoto = subprocess.run(["git", "-C", str(raiz), "remote", "get-url", "origin"],
-                                    capture_output=True, text=True, timeout=5).returncode != 0
+        if sin_remoto(raiz):
+            return None
     except (OSError, subprocess.SubprocessError) as exc:
         datos["error"] = f"no se pudo ejecutar git: {exc}"[:200]
         return _apuntar(datos)
-    if sin_remoto:
-        return None
     try:
         r = subprocess.run(
             ["git", "-C", str(raiz), "ls-remote", "--tags", "origin"],
@@ -137,13 +138,33 @@ def buscar_remota(raiz: Path | None = None, *, ahora: datetime | None = None,
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
         )
         if r.returncode != 0:
-            raise RuntimeError((r.stderr or "git ls-remote falló").strip().splitlines()[-1])
+            raise RuntimeError(_lo_que_explica(r.stderr) or "git ls-remote falló")
         vistas = etiquetas(r.stdout)
         datos["ultima"] = vistas[-1] if vistas else None
         datos.pop("error", None)
     except Exception as exc:  # noqa: BLE001 — sin red no es una avería del hub
         datos["error"] = str(exc)[:200]
     return _apuntar(datos)
+
+
+def sin_remoto(raiz: Path | None = None) -> bool:
+    """Si este clon no tiene `origin`, o sea de dónde mirar. Lanza si git no se
+    puede ejecutar: eso sí es un fallo, y quien llama decide cómo decirlo."""
+    return subprocess.run(["git", "-C", str(raiz or config.RAIZ_REPO), "remote", "get-url", "origin"],
+                          capture_output=True, text=True, timeout=5).returncode != 0
+
+
+def _lo_que_explica(stderr: str | None) -> str:
+    """De lo que git escribe al fallar, las líneas que dicen qué pasó.
+
+    Antes se guardaba la última, y la última de un «no se pudo leer el remoto»
+    es «and the repository exists.», media frase de un consejo (C-0294). Las
+    que empiezan por `fatal:` o `error:` son las que explican; sin ninguna, las
+    dos últimas.
+    """
+    lineas = [x.strip() for x in (stderr or "").splitlines() if x.strip()]
+    explican = [x for x in lineas if x.lower().startswith(("fatal:", "error:"))]
+    return " · ".join(explican or lineas[-2:])[:300]
 
 
 def _apuntar(datos: dict) -> dict:
@@ -249,6 +270,23 @@ def para_la_guia(raiz: Path | None = None) -> dict:
     except OSError:
         datos["novedades"] = ""
     datos["url_novedades"] = url_novedades(raiz) if datos["hay_nueva"] else None
+    # Sólo en esta pantalla, que ya sale a mirar al entrar: en el raíl sería un
+    # `git` por petición. Un clon sin `origin` no busca, y lo apuntado de antes
+    # —un error de cuando lo tenía, o de otro clon— no dice nada de éste
+    # (C-0294). Si git no se puede ejecutar, se deja como está: el error ya lo
+    # apunta `buscar_remota`.
+    try:
+        datos["sin_remoto"] = sin_remoto(raiz)
+    except (OSError, subprocess.SubprocessError):
+        datos["sin_remoto"] = False
+    if datos["sin_remoto"] or not datos["buscar"]:
+        datos.update(buscar=False, error=None, mirado_en=None)
+    try:
+        atraso = datetime.now(timezone.utc) - datetime.fromisoformat(datos["mirado_en"])
+    except (TypeError, ValueError):
+        atraso = None
+    datos["atrasado"] = atraso is not None and atraso > ATRASADO
+    datos["mirado_local"] = reloj.a_local(datos["mirado_en"], "%d/%m %H:%M")
     return datos
 
 

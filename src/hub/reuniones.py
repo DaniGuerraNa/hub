@@ -333,6 +333,49 @@ def agente() -> dict:
     return l
 
 
+# ── si el agente de Windows está al día (C-0379) ──────────────────────────────
+# Tras actualizar el hub no había forma de saber si tocaba «Copiar el agente».
+# Hay tres versiones: la que dice el agente en cada latido (la que CORRE), la
+# que trae el componente y la que quedó copiada en su carpeta de Windows. Se
+# leen del texto de `agente.py`, sin importarlo: es código de Windows.
+_VERSION = re.compile(r"""^VERSION\s*=\s*["']([^"'\n]{1,32})["']""", re.M)
+
+
+def _version_en(archivo: Path) -> str | None:
+    try:
+        m = _VERSION.search(archivo.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
+def _tupla(version: str | None) -> tuple[int, ...] | None:
+    try:
+        return tuple(int(p) for p in str(version).split("."))
+    except ValueError:
+        return None
+
+
+def version_agente(latido: dict | None = None) -> dict:
+    """`estado`: «al-dia», «vieja» (hay una más nueva sin copiar), «copiada»
+    (copiada, pero el que llama sigue con la de antes) o None.
+
+    🔴 None cuando no se puede comparar (regla dura 13): un agente que no dice
+    su versión, un componente que no se encuentra o un agente MÁS nuevo que el
+    del hub —quien desarrolla el agente—, al que «Copiar» bajaría de versión."""
+    corre = (latido if latido is not None else agente()).get("agente") or None
+    hay = _version_en(proyecto() / "agente" / "agente.py")
+    copiada = _version_en(carpeta_agente() / "agente.py")
+    a, b = _tupla(corre), _tupla(hay)
+    estado = None
+    if a is not None and b is not None:
+        if a == b:
+            estado = "al-dia"
+        elif a < b:
+            estado = "copiada" if _tupla(copiada) == b else "vieja"
+    return {"estado": estado, "corre": corre, "hay": hay, "copiada": copiada}
+
+
 def pedir_miniaturas() -> None:
     (carpeta() / "pedir-miniaturas").touch()
 
@@ -451,6 +494,18 @@ def _estado_procesado(id_: str, p: dict) -> str | None:
     return p.get("estado")
 
 
+def procesando() -> list[str]:
+    """Las reuniones que se están procesando ahora: las que tienen un modelo
+    de Whisper cargado en la GPU (C-0312). El banco de dictado no mide con
+    otro a la vez. Un «procesando» cuyo proceso ya murió no cuenta («se
+    cortó»); uno que lanzó otro a mano sí, porque de ése no se sabe."""
+    r = raiz()
+    if not r.is_dir():
+        return []
+    return [d.name for d in sorted(r.iterdir()) if ID.match(d.name)
+            and _estado_procesado(d.name, _leer(d / "procesado.json") or {}) == "procesando"]
+
+
 def _comprimiendo(d: Path) -> bool:
     marca = d / "comprimiendo"
     if not marca.exists():
@@ -500,8 +555,55 @@ def lanzar_nombres(id_: str, nombres: dict[str, str], resumen: bool) -> None:
     _lanzar("nombres", id_, *pares, *(["--resumen"] if resumen else []), ids=(id_,), estado="procesar")
 
 
-def _tamano(d: Path) -> int:
-    return sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+#: Lo que ocupa cada subcarpeta de una reunión terminada (`fotos/`), con la
+#: fecha de la carpeta cuando se midió: `{ruta: (st_mtime_ns, bytes)}`.
+_SUBCARPETAS: dict[str, tuple[int, int]] = {}
+
+
+def _tamano(d: Path, terminada: bool = False) -> int:
+    """Lo que ocupa la carpeta de una reunión, en bytes (C-0276).
+
+    `/reuniones` tardaba 6,6–7,9 s y casi todo era esto: `rglob` + `is_file` +
+    `stat` por archivo sobre el disco de Windows (9p), 6,8 s para 19
+    grabaciones y ~1 000 archivos, en cada carga y cada 5 s mientras se graba.
+    `os.scandir` no pide dos veces cada archivo (0,94 s medido sobre lo mismo).
+
+    Y las fotos de una reunión terminada no cambian —el agente deja de
+    escribirlas al parar—: su subcarpeta se recuerda por su fecha, que cambia
+    si se añade o se quita una. Lo de arriba (el audio, que se comprime, y los
+    `.json` del procesado) se mide siempre. Mientras se graba, todo entero.
+    """
+    return _sumar(str(d), recordar=terminada)
+
+
+def _sumar(ruta: str, recordar: bool = False) -> int:
+    total = 0
+    try:
+        with os.scandir(ruta) as it:
+            entradas = list(it)
+    except OSError:
+        return 0
+    for e in entradas:
+        # Un archivo que desaparece entre listar y medir (se está comprimiendo)
+        # no puede tumbar la pantalla: lo que ya no está no ocupa.
+        try:
+            if e.is_dir(follow_symlinks=False):
+                total += _subcarpeta(e) if recordar else _sumar(e.path)
+            elif e.is_file():
+                total += e.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _subcarpeta(e: os.DirEntry) -> int:
+    fecha = e.stat(follow_symlinks=False).st_mtime_ns
+    visto = _SUBCARPETAS.get(e.path)
+    if visto and visto[0] == fecha:
+        return visto[1]
+    total = _sumar(e.path)
+    _SUBCARPETAS[e.path] = (fecha, total)
+    return total
 
 
 def _comprimida(d: Path) -> bool:
@@ -551,7 +653,7 @@ def lista(n: int = 50) -> list[dict]:
                     "app": (meta.get("proceso") or {}).get("nombre"), "duracion": dur,
                     "estado": _estado_procesado(d.name, p) or ("grabando" if not meta.get("fin") else "sin procesar"),
                     "tareas": len(res.get("tareas") or []), "terminada": bool(meta.get("fin")),
-                    "tamano": _tamano(d), "comprimida": _comprimida(d),
+                    "tamano": _tamano(d, terminada=bool(meta.get("fin"))), "comprimida": _comprimida(d),
                     "comprimiendo": _comprimiendo(d),
                     "error_compresion": (_leer(d / "comprimido.json") or {}).get("error")})
     return out
@@ -562,9 +664,11 @@ def detalle(id_: str) -> dict:
     procesado = _leer(d / "procesado.json") or {}
     if procesado:
         procesado = {**procesado, "estado": _estado_procesado(id_, procesado)}
+    meta = _leer(d / "meta.json") or {}
     return {"id": id_, "carpeta": str(d), "guia_voces": f"{proyecto()}/README.md",
-            "meta": _leer(d / "meta.json") or {}, "procesado": procesado,
-            "tamano": _tamano(d), "comprimida": _comprimida(d), "comprimiendo": _comprimiendo(d),
+            "meta": meta, "procesado": procesado,
+            "tamano": _tamano(d, terminada=bool(meta.get("fin"))), "comprimida": _comprimida(d),
+            "comprimiendo": _comprimiendo(d),
             "compresion": _leer(d / "comprimido.json"),
             "resumen": _leer(d / "resumen.json"), "transcripcion": _leer(d / "transcripcion.json") or [],
             "nombres": _leer(d / "nombres.json") or {},

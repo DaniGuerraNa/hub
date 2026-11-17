@@ -144,6 +144,74 @@ def test_un_slot_sin_marcar_no_vuelve_aunque_estuviera_abierto(con):
     assert "Sin marcar" not in [p["nombre"] for p in plan]
 
 
+# ──────────── lo que ya está abierto no se abre otra vez (C-0299) ────────────
+#
+# Tras un reinicio, tmux-continuum devuelve las ventanas por su cuenta y el
+# muestreo las vuelve a atar a sus slots. El plan, en cambio, se armaba entero
+# desde la muestra preservada: la portada ofrecía «Abrir 19 ventanas» con esas
+# mismas ventanas ya vivas, y un clic las duplicaba.
+
+
+def test_una_ventana_que_ya_esta_abierta_no_entra_en_el_plan(con):
+    _muestra(con, 10, 111, paneles=[("work", 0, 0, "/p/trabajo", "claude", 1)])
+    _muestra(con, 11, 222, preservado=0, paneles=[("work", 0, 0, "/p/trabajo", "bash", 1)])
+    assert restauracion.plan_de_restauracion(con, existe=TODO_EXISTE) == []
+
+
+def test_solo_se_resta_lo_abierto_y_lo_que_falta_del_slot_sigue_en_el_plan(con):
+    _muestra(con, 10, 111, paneles=[("work", 0, 0, "/p/trabajo", "claude", 1),
+                                    ("work", 1, 0, "/p/trabajo/b", "bash", 1)])
+    _muestra(con, 11, 222, preservado=0, paneles=[("work", 0, 0, "/p/trabajo", "bash", 1)])
+    plan = restauracion.plan_de_restauracion(con, existe=TODO_EXISTE)
+    assert [p["ruta"] for p in plan] == ["/p/trabajo/b"]
+
+
+def test_dos_ventanas_en_la_misma_ruta_se_restan_de_una_en_una(con):
+    """Una ventana abierta cubre una ventana del plan, no todas las de su ruta."""
+    _muestra(con, 10, 111, paneles=[("work", 0, 0, "/p/trabajo", "claude", 1),
+                                    ("work", 1, 0, "/p/trabajo", "claude", 1)])
+    _muestra(con, 11, 222, preservado=0, paneles=[("work", 3, 0, "/p/trabajo", "bash", 1)])
+    assert len(restauracion.plan_de_restauracion(con, existe=TODO_EXISTE)) == 1
+
+
+def test_una_ruta_rancia_abierta_hoy_en_su_montaje_bueno_cuenta_como_abierta(con):
+    _muestra(con, 10, 111, paneles=[("work", 0, 0, "/mnt/c_stale2/p/x", "claude", 1)])
+    _muestra(con, 11, 222, preservado=0, paneles=[("work", 0, 0, "/mnt/c/p/x", "bash", 1)])
+    assert restauracion.plan_de_restauracion(con, existe=TODO_EXISTE) == []
+
+
+def test_un_slot_marcado_fuera_de_la_muestra_que_ya_tiene_ventana_no_recibe_otra(con):
+    """El contrato de la 165 es una ventana por slot: si ya la tiene, está cumplido."""
+    con.execute("UPDATE slot SET restaurar=1 WHERE id=2")
+    _muestra(con, 10, 111, paneles=[("work", 0, 0, "/p/trabajo", "claude", 1)])
+    _muestra(con, 11, 222, preservado=0, paneles=[("otro", 0, 0, "/p/otro/sub", "bash", 2)])
+    plan = restauracion.plan_de_restauracion(con, existe=TODO_EXISTE)
+    assert [p["nombre"] for p in plan] == ["Trabajo"]
+
+
+def test_si_tmux_murio_lo_de_su_ultima_muestra_no_cuenta_como_abierto(con):
+    """La última muestra preservada es de un servidor muerto: nada suyo sigue
+    abierto, y restarla dejaría el botón sin nada justo después del apagón."""
+    _muestra(con, 10, 111, paneles=[("work", 0, 0, "/p/trabajo", "claude", 1)])
+    assert len(restauracion.plan_de_restauracion(con, existe=TODO_EXISTE)) == 1
+
+
+def test_la_portada_solo_nombra_los_slots_marcados_que_no_tienen_ventana(con):
+    """El bloque sale si falta alguno, y nombra los que faltan, no todos."""
+    from hub import api
+
+    con.execute("UPDATE slot SET restaurar=1 WHERE id=2")
+    _muestra(con, 10, 111, paneles=[("work", 0, 0, "/p/trabajo", "claude", 1)])
+    _muestra(con, 11, 222, preservado=0, paneles=[("work", 0, 0, "/p/trabajo", "bash", 1)])
+    r = api.resumen(con)
+    assert [s["nombre"] for s in r["para_restaurar"]] == ["Sin marcar"]
+    assert [v["nombre"] for v in r["restauracion"]["ventanas"]] == ["Sin marcar"]
+
+    _muestra(con, 12, 222, preservado=0, paneles=[("work", 0, 0, "/p/trabajo", "bash", 1),
+                                                  ("otro", 0, 0, "/p/otro", "bash", 2)])
+    assert api.resumen(con)["para_restaurar"] == []
+
+
 # ─────────────────────────── qué comando ───────────────────────────
 
 
@@ -319,3 +387,27 @@ def test_si_se_abre_en_otra_carpeta_no_se_reanuda(con):
     _con_conversacion(con, SESION, cwd="/p/ya-no-esta")
     (v,) = restauracion.plan_de_restauracion(con, existe=lambda r: r != "/p/ya-no-esta")
     assert v["ruta"] == "/p/trabajo" and v["comando"] == "claude"
+
+
+def test_la_portada_ofrece_reabrir_si_al_slot_le_falta_una_de_sus_ventanas(con, monkeypatch):
+    """El slot tenía dos ventanas y tmux devolvió una: el plan pide la otra, y
+    el bloque de la portada tiene que salir aunque el slot ya tenga alguna
+    (decisión 206). Lo encontró la revisión cruzada de C-0299."""
+    from hub import api
+
+    monkeypatch.setattr(restauracion.Path, "is_dir", lambda self: True)
+    _muestra(con, 10, 111, 1, [("demo", 0, 0, "/p/trabajo", "claude", 1),
+                               ("demo", 1, 0, "/p/trabajo/api", "bash", 1)])
+    _muestra(con, 11, 222, 0, [("demo", 0, 0, "/p/trabajo", "bash", 1)])
+    resumen = api.resumen(con)
+    assert len(resumen["restauracion"]["ventanas"]) == 1
+    assert [s["id"] for s in resumen["para_restaurar"]] == [1]
+
+
+def test_la_portada_no_ofrece_reabrir_si_volvieron_todas(con, monkeypatch):
+    from hub import api
+
+    monkeypatch.setattr(restauracion.Path, "is_dir", lambda self: True)
+    _muestra(con, 10, 111, 1, [("demo", 0, 0, "/p/trabajo", "claude", 1)])
+    _muestra(con, 11, 222, 0, [("demo", 0, 0, "/p/trabajo", "bash", 1)])
+    assert api.resumen(con)["para_restaurar"] == []

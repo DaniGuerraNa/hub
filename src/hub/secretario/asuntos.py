@@ -39,7 +39,7 @@ from . import memoria, tiempo
 
 #: Lista cerrada (379): añadir una clase exige una decisión escrita, como en
 #: `avisos.CLASES`. El orden es el de la lista y el del parte.
-CLASES = ("permiso", "orquestador", "sesion", "canal", "ficha", "bloqueo", "vence", "relevo", "proyecto", "dato")
+CLASES = ("permiso", "orquestador", "sesion", "canal", "ficha", "bloqueo", "vence", "relevo", "proyecto", "dato", "navegante")
 #: Cómo se dice cada clase en pantalla (C-0231): la clave es una palabra del
 #: programa («sesion» sin tilde, «relevo») y salía tal cual. Aquí, junto a la
 #: lista, para que una clase nueva no llegue sin el suyo (lo vigila un test).
@@ -54,6 +54,7 @@ ROTULOS = {
     "relevo": "Te toca en la PC",
     "proyecto": "Te dice un proyecto",
     "dato": "Uno de tus datos",
+    "navegante": "El navegante pide permiso",
 }
 #: Las que nacen aquí y viven en la tabla; las demás se leen en vivo.
 PROPIAS = ("relevo", "proyecto", "dato")
@@ -64,7 +65,7 @@ APARTADAS = ("callada", "resuelta")
 #: va al teléfono (360), así que las demás —las sugerencias— no entran en él.
 DEL_PARTE = ("permiso", "orquestador", "sesion", "canal", "ficha")
 #: Las que sólo él contesta, y por la puerta de su dueño: no se delegan (381).
-SOLO_EL = frozenset({"permiso", "orquestador", "sesion", "canal", "ficha", "relevo", "dato"})
+SOLO_EL = frozenset({"permiso", "orquestador", "sesion", "canal", "ficha", "relevo", "dato", "navegante"})
 #: Las que no cuentan en el globo como nuevas (las fichas: van plegadas).
 SIN_GLOBO = frozenset({"ficha"})
 #: Lo que el dueño ya decidió sobre un asunto: no se anota ni se delega otra vez.
@@ -219,10 +220,9 @@ def _de_las_fichas(con, hub, momento):
     no las tiene."""
     from .. import fichas
     from . import piezas
-    carpeta = piezas.ajuste("parte_fichas")
-    if not carpeta:
+    carpeta = piezas.carpeta_de_fichas()
+    if carpeta is None:
         return []
-    carpeta = Path(str(carpeta)).expanduser()
     if not carpeta.is_dir():
         raise FileNotFoundError(f"no existe la carpeta {carpeta}")
     ayer = (momento - timedelta(days=1)).date().isoformat()
@@ -351,6 +351,42 @@ def _de_los_compromisos(con, hub, momento):
     return out
 
 
+def _del_navegante(con, hub, momento):
+    """Las peticiones del navegador que el guardián tiene en pausa (C-0423).
+
+    🔴 Sólo se ve y se enlaza: el permiso se da en `/navegante`, donde se ve la
+    dirección entera y el método (256). Aquí sale la acción y el **host**,
+    nunca la dirección ni su consulta, que pueden llevar una llave o el nombre
+    de un recurso de un cliente: esta lista la lee también el modelo (reglas
+    5 y 22). Nada de este módulo contesta una pregunta."""
+    from urllib.parse import urlsplit
+
+    from .. import navegante
+    if not navegante.instalado():
+        return []
+    vivo = navegante.guardian_vivo()
+    out = []
+    for p in navegante.preguntas(limite=200):
+        if p.get("estado") != "pendiente" or not navegante.ID_VALIDO.match(str(p.get("id") or "")):
+            continue
+        try:
+            host = urlsplit(str(p.get("url") or "")).hostname or ""
+        except ValueError:
+            host = ""
+        que = memoria.ocultar_secretos(str(p.get("accion") or "una petición"))
+        texto = f"El navegante pide permiso: {que}" + (f" en {memoria.ocultar_secretos(host)}" if host else "")
+        if not vivo:
+            # Sin guardián nadie la va a caducar: que se vea en vez de esconderla.
+            texto += " (el guardián no está en marcha)"
+        try:
+            fecha = datetime.fromtimestamp(float(p.get("creada")), timezone.utc).isoformat(timespec="seconds")
+        except (TypeError, ValueError, OverflowError, OSError):
+            fecha = ""
+        out.append(Asunto(clave=f"navegante:{p['id']}", clase="navegante", texto=corto(texto, 160),
+                          origen="", enlace="/navegante#preguntas", fecha=fecha))
+    return out
+
+
 #: clase → (cómo se dice si no se puede leer, quién la lee).
 _FUENTES = (
     ("permiso", "los permisos", _permisos),
@@ -360,6 +396,7 @@ _FUENTES = (
     ("ficha", "las fichas", _de_las_fichas),
     ("bloqueo", "tus proyectos", _de_los_proyectos),
     ("vence", "tus compromisos", _de_los_compromisos),
+    ("navegante", "el navegante", _del_navegante),
 )
 
 

@@ -230,7 +230,9 @@ def _refresco(cuerpo: str):
     from pathlib import Path
     if not shutil.which("node"):
         pytest.skip("hace falta node")
-    guion = (Path(web.__file__).parent / "static" / "navegante.js").read_text()
+    estaticos = Path(web.__file__).parent / "static"
+    # `sondeo.js` va en el <head> de todas las páginas (C-0277): el de verdad.
+    guion = (estaticos / "sondeo.js").read_text() + (estaticos / "navegante.js").read_text()
     programa = """
     let recargas = 0, refrescos = 0, tick = null, parado = 0, hay = true;
     const avisos = [], oyentes = {};
@@ -259,7 +261,7 @@ def _refresco(cuerpo: str):
     global.document = {activeElement: null,
       querySelector: (s) => s === '[data-refrescar]' && hay ? {dataset: {refrescar: '5'}} : null,
       querySelectorAll: (s) => campos.filter((c) => coincide(c, s)),
-      addEventListener: (ev, f) => { oyentes[ev] = f; }};
+      addEventListener: (ev, f) => { oyentes[ev] = f; }, removeEventListener: () => {}};
     global.location = {reload: () => recargas++};
     global.setInterval = (f) => { tick = f; return 7; };
     global.clearInterval = () => { parado++; };

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ titulo }} · Puente KVM</title>
+{# Dentro del espacio de trabajo, cada página se ve en el marco de la izquierda
+   y la cabecera ya está arriba: la propia sobra. Antes de pintar, para que no parpadee. #}
+<script>if (window.top !== window.self) document.documentElement.classList.add('en-marco');</script>
+<link rel="stylesheet" href="/static/app.css?v=12">
+{% block cabeza %}{% endblock %}
+</head>
+<body data-pagina="{% block pagina %}{% endblock %}">
+<header class="cabecera">
+  <a class="marca" href="/">Puente KVM</a>
+  <nav class="nav">
+    <a href="/panel" target="{% block destino %}_self{% endblock %}" data-nav="/panel" class="{{ 'activa' if titulo == 'Panel' }}">Panel</a>
+    <a href="/claude" target="{{ self.destino() }}" data-nav="/claude" class="{{ 'activa' if titulo == 'Claude' }}">Claude</a>
+    <a href="/ajustes" target="{{ self.destino() }}" data-nav="/ajustes" class="{{ 'activa' if titulo == 'Ajustes' }}">Ajustes</a>
+  </nav>
+  <div class="derecha">
+    <span class="placa" id="placa-aparato">{{ estado.dispositivo.tipo }}</span>
+    <span class="placa" id="placa-control">…</span>
+    <button class="peligro" data-control="parar" title="Corta lo que esté haciendo Claude, ya">Parar</button>
+  </div>
+</header>
+<main class="{% block main_clase %}{% endblock %}">
+{% block contenido %}{% endblock %}
+</main>
+<script src="/static/app.js?v=7"></script>
+{% block guiones %}{% endblock %}
+</body>
+</html>

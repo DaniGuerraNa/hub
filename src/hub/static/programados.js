@@ -38,7 +38,7 @@
   const ESPERA_BLOQUE = 250;
   const INTENTOS_BLOQUE = 12;
   let porMirar = INTENTOS_BLOQUE;
-  let latido = 0;
+  let latido = null;   // lo que lo para: `HubSondeo.cada`
   let abierta = false;
 
   function escapar(s) {
@@ -282,8 +282,9 @@
   /* Se sondea también con la hoja cerrada, pero despacio: lo que cambia solo es
    * el estado —un pendiente que pasa a entregado o a caducado—, y abrir la
    * pestaña para encontrarse una lista vieja es peor que el sondeo. Sin punto de
-   * aviso: nada automático reclama atención aquí (principio 9). */
+   * aviso: nada automático reclama atención aquí (principio 9). Con la pestaña
+   * oculta, no (C-0277): al volver se pregunta enseguida. */
   refrescar();
-  latido = setInterval(refrescar, CADENCIA);
-  window.addEventListener('beforeunload', () => clearInterval(latido));
+  latido = window.HubSondeo.cada(refrescar, CADENCIA);
+  window.addEventListener('beforeunload', latido);
 })();

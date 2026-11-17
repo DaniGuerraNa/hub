@@ -290,3 +290,309 @@ def test_la_suite_no_acciona_systemd_por_omision():
     """El seguro de `conftest`: aunque una ruta llegue a `salud.encender`, la
     orden no sale de la suite."""
     assert salud._orden("enable", "--now", "hub-secretario")[0] != 0
+
+
+# ── C-0309: el ciclo lento va en su hilo y su estado viaja en el latido ──────
+#
+# Sacarlo del latido tiene un precio: si se cuelga en un `stat` sobre el disco
+# de Windows, el latido sigue tan tranquilo y el respaldo, el consumo y la
+# salud del equipo se quedan con cifras viejas sin que nada lo diga. Por eso
+# Salud lo juzga. Sólo en pantalla: no es una clase de `avisos.CLASES`.
+
+def _latido_con_lento(visto_desde=AHORA, **lento):
+    """Un latido reciente con el estado del ciclo lento; las fechas se dan en
+    segundos hacia atrás desde `visto_desde`."""
+    def hace(segundos):
+        return (visto_desde - timedelta(seconds=segundos)).isoformat(timespec="seconds")
+
+    estado = {"desde": hace(7200), "corriendo": False, "dentro": False, "empezo": None,
+              "acabo": None, "duro": None, "paso": None, "paso_desde": None, "pasos": {},
+              "fallo": None, "fallaron": {}}
+    for clave, valor in lento.items():
+        estado[clave] = hace(valor) if clave in ("desde", "empezo", "acabo", "paso_desde") else valor
+    (config.HUB_HOME / salud.ARCHIVO_LATIDO).write_text(json.dumps(
+        {"en": hace(5), "pid": 1, "lento": estado}))
+
+
+def test_las_mediciones_lentas_estan_bien_si_la_ultima_vuelta_acabo_hace_poco():
+    _latido_con_lento(acabo=240, duro=52.0)
+    fila = salud.mediciones_lentas(AHORA)
+    assert fila["clave"] == "lento" and fila["estado"] == "ok"
+    assert "hace 4 min" in fila["detalle"] and "52 s" in fila["detalle"]
+    assert not fila.get("arreglo")
+
+
+def test_mas_de_media_hora_sin_acabar_una_vuelta_es_un_aviso_con_su_arreglo():
+    _latido_con_lento(acabo=35 * 60, duro=52.0, corriendo=True, empezo=33 * 60)
+    fila = salud.mediciones_lentas(AHORA)
+    assert fila["estado"] == "aviso" and "35 min" in fila["detalle"]
+    assert "systemctl --user restart hub-snapshotter" in fila["arreglo"]
+    assert "las cifras del respaldo" in fila["detalle"]
+
+
+def test_al_despertar_de_una_suspension_no_manda_reiniciar_lo_que_se_arregla_solo():
+    """El equipo estuvo ocho horas suspendido: el latido es de ahora y la
+    última vuelta lenta, de anoche. No hay ninguna en marcha y ninguna falló:
+    la siguiente se pide sola en menos de diez minutos, y «reinicia el
+    muestreo» era un consejo que no hacía falta seguir."""
+    _latido_con_lento(acabo=8 * 3600, duro=52.0)
+    fila = salud.mediciones_lentas(AHORA)
+    assert fila["estado"] == "aviso" and "8 h" in fila["detalle"]
+    assert "próxima vuelta" in fila["detalle"]
+    assert not fila.get("arreglo") and "restart" not in fila["detalle"]
+
+    # Y si nunca acabó ninguna, no dice que «acabó»: dice desde cuándo espera.
+    _latido_con_lento(desde=45 * 60)
+    fila = salud.mediciones_lentas(AHORA)
+    assert fila["estado"] == "aviso" and "arrancó hace 45 min" in fila["detalle"]
+    assert "acabó hace" not in fila["detalle"] and not fila.get("arreglo")
+
+
+def test_si_en_la_ultima_vuelta_fallaron_pasos_la_fila_dice_cuales_y_no_sale_bien():
+    _latido_con_lento(acabo=120, duro=3.0,
+                      fallaron={"repos": "OSError: [Errno 5] Input/output error",
+                                "consumo": "OSError: [Errno 5] Input/output error",
+                                "uno-nuevo": "ValueError: x"})
+    fila = salud.mediciones_lentas(AHORA)
+    assert fila["estado"] == "aviso", "aviso, nunca «mal»: el muestreo de ventanas no depende de esto"
+    assert "el respaldo de los repos, el consumo y «uno-nuevo»" in fila["detalle"]
+    assert "journalctl --user -u hub-snapshotter" in fila["arreglo"]
+    assert "restart" not in fila["arreglo"]
+
+    _latido_con_lento(acabo=120, duro=3.0, fallaron="basura")
+    assert salud.mediciones_lentas(AHORA)["estado"] == "ok"
+
+
+def test_si_nunca_acabo_una_vuelta_se_cuenta_desde_que_arranco():
+    _latido_con_lento(desde=600)
+    assert salud.mediciones_lentas(AHORA)["estado"] == "ok"
+    _latido_con_lento(desde=45 * 60, fallo="OperationalError: disk I/O error")
+    fila = salud.mediciones_lentas(AHORA)
+    assert fila["estado"] == "aviso" and "45 min" in fila["detalle"]
+    assert "disk I/O error" in fila["detalle"], "si la última falló, se dice con qué"
+
+
+def test_mas_de_diez_minutos_en_un_paso_es_un_aviso_que_dice_cual():
+    """El hilo colgado en un `stat` sobre 9p: sin esto sería un silencio."""
+    _latido_con_lento(acabo=14 * 60, duro=52.0, corriendo=True, empezo=11 * 60 + 5,
+                      paso="repos", paso_desde=11 * 60)
+    fila = salud.mediciones_lentas(AHORA)
+    assert fila["estado"] == "aviso"
+    assert "11 min" in fila["detalle"] and "respaldo de los repos" in fila["detalle"]
+    assert "restart hub-snapshotter" in fila["arreglo"]
+
+    _latido_con_lento(acabo=11 * 60, duro=52.0, corriendo=True, empezo=65,
+                      paso="repos", paso_desde=60)
+    assert salud.mediciones_lentas(AHORA)["estado"] == "ok"
+
+
+def test_un_paso_que_salud_no_conoce_sale_con_su_clave():
+    _latido_con_lento(acabo=60, corriendo=True, empezo=700, paso="uno-nuevo", paso_desde=700)
+    assert "«uno-nuevo»" in salud.mediciones_lentas(AHORA)["detalle"]
+
+
+def test_si_se_mide_dentro_del_latido_porque_el_hilo_no_arranca_se_dice():
+    _latido_con_lento(acabo=120, duro=52.0, dentro=True)
+    fila = salud.mediciones_lentas(AHORA)
+    assert fila["estado"] == "aviso" and "dentro del muestreo" in fila["detalle"]
+
+
+def test_sin_estado_del_ciclo_lento_no_hay_fila_ni_un_bien_por_omision():
+    """Regla dura 13: un snapshotter de antes de esto, o uno parado, no ha
+    dicho nada del ciclo lento; lo que no se sabe no sale."""
+    assert salud.mediciones_lentas(AHORA) is None           # sin latido
+    _latido(15)
+    assert salud.mediciones_lentas(AHORA) is None           # latido sin `lento`
+    _latido_con_lento(acabo=60, duro=52.0)
+    (config.HUB_HOME / salud.ARCHIVO_LATIDO).write_text(json.dumps(
+        {"en": (AHORA - timedelta(hours=2)).isoformat(), "pid": 1,
+         "lento": {"acabo": (AHORA - timedelta(hours=2)).isoformat()}}))
+    assert salud.mediciones_lentas(AHORA) is None           # parado: lo dice «Muestreo»
+
+
+def test_un_estado_a_medias_o_con_basura_no_tumba_la_pantalla():
+    (config.HUB_HOME / salud.ARCHIVO_LATIDO).write_text(json.dumps(
+        {"en": (AHORA - timedelta(seconds=5)).isoformat(), "pid": 1,
+         "lento": {"acabo": "ayer por la tarde", "paso": 7, "duro": "mucho"}}))
+    assert salud.mediciones_lentas(AHORA) is None
+    (config.HUB_HOME / salud.ARCHIVO_LATIDO).write_text(json.dumps(
+        {"en": (AHORA - timedelta(seconds=5)).isoformat(), "pid": 1, "lento": "sí"}))
+    assert salud.mediciones_lentas(AHORA) is None
+
+
+def test_latir_escribe_el_estado_del_ciclo_lento_y_sin_el_el_latido_de_siempre():
+    salud.latir()
+    assert "lento" not in json.loads((config.HUB_HOME / salud.ARCHIVO_LATIDO).read_text())
+    salud.latir(lento={"corriendo": True, "pasos": {"repos": 1.5}})
+    assert json.loads((config.HUB_HOME / salud.ARCHIVO_LATIDO).read_text())["lento"]["pasos"] == {"repos": 1.5}
+
+
+def test_un_estado_que_no_se_puede_escribir_no_deja_al_hub_sin_latido(capsys):
+    """El latido dice «estoy vivo» (decisión 289): no se pierde por un dato
+    de más que no cabe en JSON."""
+    salud.latir(lento={"corriendo": object()})
+    assert salud.muestreo()["estado"] == "ok"
+    assert "lento" not in json.loads((config.HUB_HOME / salud.ARCHIVO_LATIDO).read_text())
+    assert "ciclo lento" in capsys.readouterr().out
+
+
+def test_la_fila_de_las_mediciones_lentas_sale_en_salud_y_no_es_un_aviso_al_telefono(cliente):  # noqa: F811
+    from hub import avisos
+    _latido_con_lento(datetime.now(timezone.utc), acabo=35 * 60, duro=52.0, fallo="OSError: roto")
+    fila = next(r for r in cliente.get("/api/salud").json()["revisiones"] if r["clave"] == "lento")
+    assert fila["estado"] == "aviso"
+    assert "Mediciones lentas" in cliente.get("/maquina").text
+    assert not [c for c in avisos.CLASES if "lento" in c], "sólo en pantalla (regla dura 3)"
+
+
+# ── C-0378: lo que falla, arriba; lo que está bien, plegado y con su glifo ───
+
+
+def _revisiones(*estados):
+    return [{"clave": f"c{i}", "nombre": f"Comprobación {i}", "estado": e,
+             "detalle": f"detalle {i}", **({"arreglo": f"arreglo {i}"} if e != "ok" else {})}
+            for i, e in enumerate(estados)]
+
+
+def _pliegue(html: str) -> tuple[str, str]:
+    """Lo que hay en la tarjeta de salud antes del pliegue y lo de dentro."""
+    tarjeta = html.split('id="salud"', 1)[1].split("</div>\n<style>", 1)[0]
+    antes, _, dentro = tarjeta.partition('<details class="salud-pie"')
+    return antes, dentro
+
+
+def test_lo_que_no_esta_bien_sale_fuera_del_pliegue_y_lo_que_si_dentro(cliente, monkeypatch):  # noqa: F811
+    """Diez «bien» seguidos empujaban debajo justo lo que fallaba (UI-43)."""
+    monkeypatch.setattr(salud, "revisar", lambda slots, medidas=None: _revisiones("mal", *["ok"] * 9))
+    antes, dentro = _pliegue(cliente.get("/maquina").text)
+    assert "Comprobación 0" in antes and "arreglo 0" in antes
+    assert "Comprobación 1" not in antes
+    assert "Lo demás en pie · 9 comprobaciones" in dentro
+    assert all(f"Comprobación {i}" in dentro for i in range(1, 10))
+
+
+def test_con_todo_bien_queda_una_sola_linea_plegada(cliente, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(salud, "revisar", lambda slots, medidas=None: _revisiones(*["ok"] * 10))
+    antes, dentro = _pliegue(cliente.get("/maquina").text)
+    assert "Comprobación" not in antes
+    assert "Todo en pie · 10 comprobaciones" in dentro and "<details" not in dentro.split("</summary>")[0][1:]
+
+
+def test_cada_estado_de_salud_lleva_glifo_color_y_palabra(cliente, monkeypatch):  # noqa: F811
+    """`base.html` pide los tres: «bien» iba sólo con color y palabra."""
+    from hub import insignias
+    monkeypatch.setattr(salud, "revisar", lambda slots, medidas=None: _revisiones("mal", "aviso", "ok"))
+    html = cliente.get("/maquina").text
+    for estado in ("mal", "aviso", "ok"):
+        i = insignias.de("salud", estado)
+        assert i is not None, f"«{estado}» saldría sin glifo"
+        assert f'<span class="insignia {i.tono}" title="{i.porque}">' in html
+        assert f'<span class="glifo" aria-hidden="true">{i.glifo}</span><span>{i.texto}</span>' in html
+
+
+# ── C-0448: esperar la señal de un servicio, suelta ──────────────────────────
+#
+# Estaba dentro de `encender`, después de un `enable --now`. `actualizar.sh`
+# necesita lo mismo tras reiniciar: que el servicio dé señales de vida
+# posteriores al reinicio, no que `systemctl` devolviera 0 (decisión 151).
+
+class _RelojFalso:
+    """El `time` de `salud`: cada `sleep` avanza el reloj sin esperar."""
+
+    def __init__(self):
+        self.t = 1000.0
+        self.dormido = 0.0
+
+    def monotonic(self):
+        return self.t
+
+    def sleep(self, segundos):
+        self.t += segundos
+        self.dormido += segundos
+
+
+DESDE = "2026-11-13T10:00:00+00:00"
+
+
+@pytest.fixture
+def reloj_falso(monkeypatch):
+    r = _RelojFalso()
+    monkeypatch.setattr(salud, "time", r)
+    return r
+
+
+def _senal(monkeypatch, nombre, valores):
+    """La señal de `nombre` devuelve `valores` uno tras otro y se queda en el último."""
+    pendientes = list(valores)
+    monkeypatch.setitem(salud.SENALES, nombre,
+                        lambda: pendientes.pop(0) if len(pendientes) > 1 else pendientes[0])
+
+
+def _activo(monkeypatch, como):
+    monkeypatch.setattr(salud, "_systemctl", lambda *a: como if a[0] == "is-active" else "")
+
+
+def test_una_senal_posterior_al_reinicio_es_ok_sin_agotar_la_espera(monkeypatch, reloj_falso):
+    _senal(monkeypatch, "hub-snapshotter",
+           [None, "2026-11-13T09:59:40+00:00", "2026-11-13T10:00:03+00:00"])
+    _activo(monkeypatch, "active")
+    assert salud.esperar_senal("hub-snapshotter", DESDE, espera=60) == "ok"
+    assert reloj_falso.dormido == 2
+
+
+def test_un_latido_de_antes_del_reinicio_no_cuenta_y_en_marcha_es_sin_senal(monkeypatch, reloj_falso):
+    """El de antes lo dio el proceso viejo: no dice nada del nuevo."""
+    _senal(monkeypatch, "hub-snapshotter", ["2026-11-13T09:59:59+00:00"])
+    _activo(monkeypatch, "active")
+    assert salud.esperar_senal("hub-snapshotter", DESDE, espera=60) == "sin-senal"
+    assert reloj_falso.dormido >= 60
+
+
+def test_sin_senal_y_sin_quedar_en_marcha_es_caido(monkeypatch, reloj_falso):
+    """Con `Restart=always`, uno que revienta al arrancar pasa la espera entre
+    intentos en `activating`: no está en marcha."""
+    _senal(monkeypatch, "hub-secretario", [None])
+    _activo(monkeypatch, "activating")
+    assert salud.esperar_senal("hub-secretario", DESDE, espera=5) == "caido"
+
+
+def test_una_senal_ilegible_no_cuenta_ni_revienta(monkeypatch, reloj_falso):
+    _senal(monkeypatch, "hub-snapshotter", ["no es una fecha"])
+    _activo(monkeypatch, "active")
+    assert salud.esperar_senal("hub-snapshotter", DESDE, espera=3) == "sin-senal"
+
+
+@pytest.mark.parametrize("como, esperado", [("active", "sin-medir"), ("failed", "caido")])
+def test_lo_que_no_tiene_senal_propia_solo_se_mira_si_sigue_en_marcha(monkeypatch, reloj_falso,
+                                                                      como, esperado):
+    """Canal y encargos no laten: se dice «sin medir» y no se espera por nada."""
+    _activo(monkeypatch, como)
+    assert "hub-canal" not in salud.SENALES
+    assert salud.esperar_senal("hub-canal", DESDE, espera=60) == esperado
+    assert reloj_falso.dormido == 0
+
+
+def test_la_senal_del_muestreo_es_su_latido(monkeypatch):
+    _activo(monkeypatch, "active")
+    salud.latir()
+    assert salud.esperar_senal("hub-snapshotter", "2026-01-01T00:00:00+00:00", espera=0) == "ok"
+    assert salud.esperar_senal("hub-snapshotter", "2999-01-01T00:00:00+00:00", espera=0) == "sin-senal"
+
+
+def test_cada_servicio_que_se_enciende_tiene_su_senal():
+    """`encender` da por encendido al ver la señal: uno sin ella saldría siempre «sin medir»."""
+    assert set(salud.ENCENDIBLES) <= set(salud.SENALES)
+    assert set(salud.SENALES) <= set(salud.SERVICIOS)
+
+
+def test_la_orden_senal_dice_como_quedo_y_rechaza_nombres_y_fechas_raros(monkeypatch, capsys):
+    """Lo que corre `actualizar.sh`: una palabra por salida, y el nombre del
+    servicio tiene que ser uno del hub."""
+    _activo(monkeypatch, "active")
+    assert salud.main(["senal", "hub-canal", "--desde", DESDE, "--espera", "0"]) == 0
+    assert capsys.readouterr().out.strip() == "sin-medir"
+    for argumentos in (["senal", "hub-canal; reboot", "--desde", DESDE],
+                       ["senal", "hub-canal", "--desde", "ayer"]):
+        with pytest.raises(SystemExit) as salida:
+            salud.main(argumentos)
+        assert salida.value.code == 2

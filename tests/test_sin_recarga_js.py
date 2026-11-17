@@ -127,11 +127,24 @@ const PAGINAS = {
     N('div', { dataset: { region: 'ideas' }, texto: 'nueva' }),
   ])])]),
   'sin-regiones': () => N('html', {}, [N('body', {}, [N('div', { texto: 'otra cosa' })])]),
+  // La misma pantalla, pintada con la otra interfaz: las mismas regiones, otro marco.
+  'otra-interfaz': () => N('html', { dataset: { interfaz: 'nueva' } }, [N('body', {}, [N('div', { clases: ['envoltura'] }, [
+    N('header'),
+    N('div', { dataset: { avisoFugaz: '' }, clases: ['aviso-accion', 'fugaz'], texto: 'Descartada' }),
+    N('div', { dataset: { region: 'ideas' }, texto: 'nueva' }),
+  ])])]),
+  // La misma interfaz con otro juego de colores: el marco casa, `<html>` no.
+  'otros-colores': () => N('html', { dataset: { interfaz: 'nueva', colores: 'brasa' } }, [N('body', {}, [N('div', { clases: ['envoltura'] }, [
+    N('header'),
+    N('div', { dataset: { avisoFugaz: '' }, clases: ['aviso-accion', 'fugaz'], texto: 'Descartada' }),
+    N('div', { dataset: { region: 'ideas' }, texto: 'nueva' }),
+  ])])]),
   // La pantalla tal cual se cargó: lo que el servidor contestaría si nada cambió.
   'la-misma': () => N('html', {}, [N('body', {}, [N('div', { clases: ['envoltura'] }, [
     N('header'), clonar(globalThis.REGION)])])]),
 };
 global.DOMParser = class { parseFromString(t) { const r = PAGINAS[t](); return {
+  documentElement: r,
   querySelectorAll: (s) => r.querySelectorAll(s), querySelector: (s) => r.querySelector(s) }; } };
 
 const oyentesSubmit = [];
@@ -140,6 +153,7 @@ global.document = {
   querySelectorAll: (s) => RAIZ.querySelectorAll(s),
   querySelector: (s) => s === '[data-params-de-region]' ? (globalThis.PARAMS || null) : RAIZ.querySelector(s),
   adoptNode: (n) => n,
+  documentElement: RAIZ,
   body: RAIZ.hijos[0],
   addEventListener(ev, fn) { if (ev === 'submit') oyentesSubmit.push(fn); },
   dispatchEvent(e) { eventos.push([e.type, e.detail]); },
@@ -258,6 +272,16 @@ def test_un_formulario_fuera_de_la_region_se_vacia_si_salio_bien(tmp_path):
     r = _correr(tmp_path, "ENVIAR(FORM_FUERA, null)")
 
     assert r["reseteadoFuera"] == 1
+
+
+def test_un_formulario_que_conserva_lo_elegido_no_se_vacia(tmp_path):
+    """`data-conserva`: lo elegido es para la siguiente vez. En Intercambio, la
+    sesión a la que se pasan rutas: vaciado tras la primera, la segunda ruta
+    iría a la primera sesión de la lista sin que nadie lo eligiera (C-0385)."""
+    r = _correr(tmp_path, "FORM_FUERA.dataset.conserva = ''; ENVIAR(FORM_FUERA, null)")
+
+    assert r["errores"] == []
+    assert r["reseteadoFuera"] == 0
 
 
 def test_si_vuelve_un_fallo_lo_escrito_no_se_borra(tmp_path):
@@ -461,3 +485,50 @@ def test_un_fallo_que_llega_en_error_se_ensena_entero_aunque_se_repita(tmp_path)
                  accion="ENVIAR(FORM_FUERA, null); setTimeout(FOTO, 5);")
     assert r["asignada"] == "http://localhost/conexiones?error=ya%20existe"
     assert r["reseteadoFuera"] == 0
+
+
+# ── otra interfaz en otra pestaña (C-0169) ──
+
+def test_si_la_pagina_llega_con_otra_interfaz_navega_en_vez_de_mezclar_medio_marco(tmp_path):
+    """La interfaz se cambió desde otra pestaña (la cookie es del aparato): el
+    raíl que llega trae el marcado de la otra, y pintado aquí quedaba sin su
+    hoja de estilo. Las regiones casan, así que antes se sustituían."""
+    r = _correr(tmp_path, "ENVIAR(FORM_LISTA, BOTON)", texto="otra-interfaz")
+
+    assert r["errores"] == []
+    assert r["asignada"] == "http://localhost/tablero?aviso=Descartada&fugaz=1"
+    assert r["region"] == "vieja" and r["mismaRegion"] is True
+    assert ["hub:repintado", {"regiones": ["ideas"]}] not in r["eventos"]
+
+
+def test_un_sondeo_que_trae_otra_interfaz_recarga_la_pagina(tmp_path):
+    r = _correr(tmp_path, "HubSinRecarga.refrescar()", texto="otra-interfaz",
+                url="http://localhost/tablero", redirigida=False)
+
+    assert r["errores"] == []
+    assert r.get("recargada") is True and r["region"] == "vieja"
+
+
+def test_con_la_misma_interfaz_en_las_dos_se_sigue_sustituyendo(tmp_path):
+    r = _correr(tmp_path, "RAIZ.dataset.interfaz = 'nueva'; ENVIAR(FORM_LISTA, BOTON)", texto="otra-interfaz")
+
+    assert r["region"] == "nueva" and "asignada" not in r and "recargada" not in r
+
+
+def test_si_llega_con_otros_colores_navega_porque_los_colores_van_en_html(tmp_path):
+    """Los colores se cambiaron desde otra pestaña (fase 1b): las regiones y
+    el marco casan, pero el juego va en `<html>`, que no se sustituye. Sin
+    navegar, la pantalla se quedaba con los de antes hasta recargar."""
+    antes = "RAIZ.dataset.interfaz = 'nueva'; RAIZ.dataset.colores = 'pizarra'; "
+    r = _correr(tmp_path, antes + "ENVIAR(FORM_LISTA, BOTON)", texto="otros-colores")
+
+    assert r["errores"] == []
+    assert r["asignada"] == "http://localhost/tablero?aviso=Descartada&fugaz=1"
+    assert r["region"] == "vieja"
+
+
+def test_con_los_mismos_colores_en_las_dos_se_sigue_sustituyendo(tmp_path):
+    antes = "RAIZ.dataset.interfaz = 'nueva'; RAIZ.dataset.colores = 'brasa'; "
+    r = _correr(tmp_path, antes + "ENVIAR(FORM_LISTA, BOTON)", texto="otros-colores")
+
+    assert r["region"] == "nueva" and "asignada" not in r and "recargada" not in r

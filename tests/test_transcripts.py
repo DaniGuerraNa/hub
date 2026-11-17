@@ -75,7 +75,7 @@ def test_el_slug_ignora_la_barra_final_para_no_generar_dos_directorios():
 
 
 def test_el_slug_resuelve_las_rutas_reales_de_un_proyecto(tmp_path, monkeypatch):
-    monkeypatch.setattr(transcripts, "TRANSCRIPTS", tmp_path)
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path))
     proyecto = Proyecto(
         id="tienda", nombre="Tienda", asiento="/mnt/c/proyectos/tienda",
         rutas=[Ruta(ruta="/home/ana/dev/tienda")],
@@ -85,6 +85,41 @@ def test_el_slug_resuelve_las_rutas_reales_de_un_proyecto(tmp_path, monkeypatch)
     assert [d.name for d in transcripts.directorios_de(proyecto)] == [
         "-home-ana-dev-tienda"
     ]
+
+
+# --------------------------------------------------------------------------- #
+# La raíz: una sola puerta, y respeta HUB_TRANSCRIPTS (C-0049, C-0091)
+# --------------------------------------------------------------------------- #
+
+
+def test_la_raiz_es_la_de_HUB_TRANSCRIPTS_y_se_lee_en_cada_llamada(tmp_path, monkeypatch):
+    """`INSTALAR.md` documenta la variable, y sólo `consumo` la leía: quien la
+    ponía veía Consumo e Inventario en una carpeta y /contexto, las
+    conversaciones y el orquestador en otra."""
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path / "una"))
+    assert transcripts.raiz() == tmp_path / "una"
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path / "otra"))
+    assert transcripts.raiz() == tmp_path / "otra"
+    monkeypatch.delenv("HUB_TRANSCRIPTS")
+    assert transcripts.raiz() == transcripts.Path.home() / ".claude" / "projects"
+
+
+def test_la_carpeta_de_un_cwd_cuelga_de_la_raiz_con_su_slug(tmp_path, monkeypatch):
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path))
+    assert transcripts.directorio_de("/home/ana_/dev/") == tmp_path / "-home-ana--dev"
+
+
+def test_una_sesion_se_encuentra_bajo_HUB_TRANSCRIPTS(tmp_path, monkeypatch):
+    """La búsqueda sin carpeta (en todas) y la de un proyecto miran la misma raíz."""
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path))
+    sid = "33333333-3333-3333-3333-333333333333"
+    directorio = transcripts.directorio_de("/home/ana/dev/tienda")
+    directorio.mkdir()
+    archivo = _escribir(directorio / f"{sid}.jsonl", [_user("u1", "hola")])
+    proyecto = Proyecto(id="tienda", nombre="Tienda", asiento="/home/ana/dev/tienda")
+
+    assert transcripts.ruta_de_sesion(sid) == archivo
+    assert transcripts.directorios_de(proyecto) == [directorio]
 
 
 # --------------------------------------------------------------------------- #
@@ -190,7 +225,7 @@ def test_un_archivo_sin_mensajes_utiles_no_entra_en_el_indice(tmp_path):
 def test_listar_sesiones_filtra_por_fecha_antes_de_abrir_los_archivos(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(transcripts, "TRANSCRIPTS", tmp_path)
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path))
     directorio = tmp_path / transcripts.slug_de("/tmp/demo")
     directorio.mkdir()
     vieja = _escribir(directorio / "11111111-1111-1111-1111-111111111111.jsonl",
@@ -204,6 +239,102 @@ def test_listar_sesiones_filtra_por_fecha_antes_de_abrir_los_archivos(
     sesiones = transcripts.listar_sesiones([proyecto], desde="2026-01-01T00:00:00Z")
     assert [s["id"] for s in sesiones] == ["22222222-2222-2222-2222-222222222222"]
     assert sesiones[0]["proyecto_id"] == "demo"
+
+
+# --------------------------------------------------------------------------- #
+# La ficha recordada (C-0310)
+# --------------------------------------------------------------------------- #
+
+
+def test_tapar_pasa_por_el_argumento_de_cada_herramienta_antes_de_recortarlo(tmp_path):
+    """C-0419: la etiqueta se corta en 59 caracteres; una llave que cruza el
+    corte, tapada después, ya no casaba con su patrón y salía a medias."""
+    ruta = _escribir(tmp_path / "s.jsonl", [_assistant("a1", [
+        {"type": "text", "text": "La clave es CLAVE-1"},
+        {"type": "tool_use", "name": "Bash", "input": {"command": "x" * 55 + " CLAVE-2 y más"}}])])
+    def tapar(s):
+        return s.replace("CLAVE-1", "[oculta]").replace("CLAVE-2", "[oculta]")
+    [m] = transcripts.esqueleto(ruta, tapar=tapar)["mensajes"]
+    assert "CLA" not in m["herramientas"][0] and "[o" in m["herramientas"][0]
+    assert tapar(transcripts.esqueleto(ruta)["mensajes"][0]["herramientas"][0]).count("CLA") == 1, \
+        "tapada después del corte, la llave cortada no casa"
+    assert m["texto"] == "La clave es CLAVE-1", "el texto lo tapa quien lo enseña"
+
+
+def _contando_lecturas(monkeypatch) -> list[str]:
+    leidas: list[str] = []
+    original = transcripts.leer_lineas
+
+    def leer_lineas(ruta):
+        leidas.append(ruta.stem)
+        return original(ruta)
+
+    monkeypatch.setattr(transcripts, "leer_lineas", leer_lineas)
+    return leidas
+
+
+def test_la_ficha_recordada_es_la_misma_que_leyendo_y_mutarla_no_la_cambia(sesion):
+    """`listar_sesiones` le añade el proyecto a lo devuelto: sin copia, ese
+    proyecto quedaría escrito en la ficha recordada para todos."""
+    primera = transcripts.resumir_sesion(sesion)
+    assert primera == transcripts._resumir(sesion)
+    primera["proyecto_id"] = "otro"
+    primera["titulo"] = "pisado"
+    assert transcripts.resumir_sesion(sesion) == transcripts._resumir(sesion)
+
+
+def test_una_sesion_que_sigue_escribiendose_se_vuelve_a_resumir(sesion, monkeypatch):
+    leidas = _contando_lecturas(monkeypatch)
+    assert transcripts.resumir_sesion(sesion)["turnos"] == 1
+    assert transcripts.resumir_sesion(sesion)["turnos"] == 1
+    with sesion.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(_user("u3", "y ahora otra cosa")) + "\n")
+    assert transcripts.resumir_sesion(sesion)["turnos"] == 2
+    assert len(leidas) == 2
+
+
+def test_pedir_el_indice_dos_veces_no_relee_los_transcripts(tmp_path, monkeypatch):
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(tmp_path))
+    directorio = tmp_path / transcripts.slug_de("/tmp/demo")
+    directorio.mkdir()
+    for i in (1, 2):
+        _escribir(directorio / f"{i}{i}{i}{i}{i}{i}{i}{i}-1111-1111-1111-111111111111.jsonl",
+                  [_user(f"u{i}", f"pedido {i}")])
+    proyecto = Proyecto(id="demo", nombre="Demo", asiento="/tmp/demo")
+    leidas = _contando_lecturas(monkeypatch)
+
+    primera = transcripts.listar_sesiones([proyecto])
+    segunda = transcripts.listar_sesiones([proyecto])
+    assert primera == segunda and len(primera) == 2
+    assert len(leidas) == 2
+    # Y lo que añadió la lista no quedó en lo recordado.
+    assert all("proyecto_id" not in transcripts.resumir_sesion(directorio / f"{s['id']}.jsonl")
+               for s in primera)
+
+
+def test_api_sesiones_no_pasa_del_tope(monkeypatch):
+    from hub import api
+
+    pedidos = []
+    monkeypatch.setattr(transcripts, "listar_sesiones",
+                        lambda proyectos, proyecto, desde, limite: pedidos.append((proyecto, desde, limite)) or [])
+    api.sesiones("", "", 5000)
+    api.sesiones("demo", "2026-11-01", 3)
+    assert pedidos == [(None, None, api.SESIONES_MAX), ("demo", "2026-11-01", 3)]
+
+
+def test_la_ruta_de_sesiones_lee_por_la_costura_de_api(monkeypatch):
+    """La ruta llamaba a `transcripts` por su cuenta (C-0310): el futuro MCP
+    se monta sobre `api.py` y cada camino paralelo lo rompe."""
+    from fastapi.testclient import TestClient
+
+    from hub import api, web
+
+    pedidos = []
+    monkeypatch.setattr(api, "sesiones", lambda *a: pedidos.append(a) or [{"id": "x"}])
+    r = TestClient(web.app).get("/api/sesiones", params={"proyecto": "demo", "limite": 5})
+    assert r.json() == {"sesiones": [{"id": "x"}]}
+    assert pedidos == [("demo", "", 5)]
 
 
 # --------------------------------------------------------------------------- #

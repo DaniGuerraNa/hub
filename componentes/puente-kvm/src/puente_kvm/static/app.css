@@ -1,0 +1,292 @@
+/* Un lienzo oscuro y un acento, sin sombras ni degradados: la profundidad se
+   hace con tono. La excepción es lo que flota encima de la página (el
+   diálogo, los avisos), que lleva sombra para separarse de lo de debajo. */
+:root {
+  --lienzo: #0d1117;
+  --superficie: #131a23;
+  --superficie2: #1a232e;
+  --elevado: #243040;
+  --velo: rgba(15, 16, 26, .72);
+  --borde: #232e3c;
+  --texto: #e3e9f2;
+  --texto-2: #b6c2d4;
+  --texto-3: #8b99b0;
+  --texto-4: #7a89a1; /* horas y números de línea: 4,9:1 sobre la tarjeta (con #6b7a91 era 4,0) */
+  --acento: #3fb9d4;
+  --acento-tinta: #06222a;
+  --acento-hover: #55c8e0;
+  --ok: #4ec98a;
+  --espera: #e0a95c;
+  --riesgo: #e8735c;
+  --neutro: #8b99b0;
+  --quita: rgba(232, 115, 92, .14);
+  --pone: rgba(78, 201, 138, .14);
+  --r-nav: 10px; --r-tarjeta: 16px; --r-input: 10px; --r-boton: 9px;
+  --fuente: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, 'DejaVu Sans Mono', monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+/* `hidden` tiene que ganar a los `display` de los componentes (un botón es inline-flex). */
+[hidden] { display: none !important; }
+html, body { margin: 0; background: var(--lienzo); color: var(--texto); font: 14px/1.5 var(--fuente); }
+a { color: var(--acento); text-decoration: none; }
+a:hover { text-decoration: underline; }
+/* El foco del teclado, siempre visible y del mismo color en todo. */
+a:focus-visible, button:focus-visible, .boton:focus-visible, summary:focus-visible,
+input[type="checkbox"]:focus-visible, .divisor:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+code, pre, textarea.mono, .mono { font-family: var(--mono); }
+
+/* ── cabecera ─────────────────────────────────────────────────────────── */
+.cabecera {
+  position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px;
+  padding: 10px 20px; background: var(--lienzo); border-bottom: 1px solid var(--borde);
+}
+.marca { font-weight: 650; color: var(--texto); letter-spacing: .2px; }
+.marca:hover { text-decoration: none; }
+.nav { display: flex; gap: 4px; }
+.nav a { padding: 6px 10px; border-radius: var(--r-nav); color: var(--texto-2); }
+.nav a.activa, .nav a:hover { background: var(--superficie2); color: var(--texto); text-decoration: none; }
+.cabecera .derecha { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+@media (max-width: 700px) {
+  .cabecera { flex-wrap: wrap; padding: 10px 16px; row-gap: 8px; }
+  /* Aparato, control y Parar en una sola fila: las placas se acortan, Parar no se mueve. */
+  .cabecera .derecha { margin-left: 0; width: 100%; flex-wrap: nowrap; min-width: 0; }
+  .cabecera .derecha .placa { min-width: 0; flex: 0 1 auto; }
+  .cabecera .derecha #placa-control { flex: none; } /* quién tiene el Mac se lee entero */
+  .cabecera .derecha .peligro { margin-left: auto; flex: none; }
+  main { padding: 16px; }
+  td, th { padding: 6px 4px; }
+}
+
+main { padding: 20px; max-width: 1600px; margin: 0 auto; }
+h1 { font-size: 20px; margin: 0 0 4px; font-weight: 650; }
+h2 { font-size: 15px; margin: 0 0 12px; font-weight: 600; color: var(--texto); }
+.sub { color: var(--texto-3); margin: 0 0 18px; }
+.rotulo { color: var(--texto-3); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+
+/* ── tarjetas y rejillas ──────────────────────────────────────────────── */
+.tarjeta { background: var(--superficie); border: 1px solid var(--borde); border-radius: var(--r-tarjeta); padding: 16px; }
+.tarjeta + .tarjeta { margin-top: 16px; }
+.rejilla-panel > .tarjeta, .rejilla-2 > .tarjeta { margin-top: 0; }
+.casilla { display: inline-flex; gap: 6px; align-items: center; margin: 0; }
+.casilla input { width: auto; }
+.rejilla-panel { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+.rejilla-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 1100px) {
+  .rejilla-panel, .rejilla-2 { grid-template-columns: minmax(0, 1fr); }
+  /* En una columna (p. ej. junto a la terminal), control y «leer» van lado a lado. */
+  .rejilla-panel > aside { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  .rejilla-panel > aside > .tarjeta + .tarjeta { margin-top: 0; }
+  .rejilla-panel > aside > .tarjeta:last-child { grid-column: 1 / -1; }
+  .rejilla-panel .grande { padding: 9px 14px; font-size: 14px; }
+}
+@media (max-width: 560px) { .rejilla-panel > aside { grid-template-columns: minmax(0, 1fr); } }
+td a { overflow-wrap: anywhere; }
+
+/* ── placas de estado ─────────────────────────────────────────────────── */
+/* Una placa no se sale de su caja: si no cabe, se corta con «…» (el texto
+   entero queda en su `title` cuando lo pone el guion). */
+.placa { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;
+  padding: 2px 9px; border-radius: 999px; font-size: 12px; line-height: 1.5;
+  background: var(--superficie2); color: var(--texto-2); white-space: nowrap; }
+.placa::before { content: ""; display: inline-block; vertical-align: 1px; margin-right: 6px;
+  width: 7px; height: 7px; border-radius: 50%; background: var(--neutro); }
+.placa.ok::before { background: var(--ok); }
+.placa.espera::before { background: var(--espera); }
+.placa.riesgo::before { background: var(--riesgo); }
+.placa.accion::before { background: var(--acento); }
+
+/* ── botones y campos ─────────────────────────────────────────────────── */
+button, .boton {
+  font: inherit; border: 0; border-radius: var(--r-boton); padding: 8px 14px; cursor: pointer;
+  background: var(--superficie2); color: var(--texto); display: inline-flex; gap: 6px; align-items: center;
+}
+button:hover, .boton:hover { background: var(--elevado); text-decoration: none; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.cta { background: var(--acento); color: var(--acento-tinta); font-weight: 600; }
+.cta:hover { background: var(--acento-hover); }
+.peligro { background: var(--riesgo); color: #1a0703; font-weight: 700; }
+.peligro:hover { background: #f08a75; }
+.grande { padding: 12px 18px; font-size: 15px; width: 100%; justify-content: center; }
+input, select, textarea {
+  font: inherit; color: var(--texto); background: var(--lienzo); border: 1px solid var(--borde);
+  border-radius: var(--r-input); padding: 8px 10px; width: 100%;
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--acento); outline-offset: -1px; }
+label { display: block; color: var(--texto-2); font-size: 13px; margin: 10px 0 4px; }
+.fila { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fila > input { flex: 1; min-width: 160px; }
+.pila > * + * { margin-top: 8px; }
+
+/* ── pantalla en directo ─────────────────────────────────────────────── */
+.pantalla { position: relative; background: #000; border-radius: var(--r-input); overflow: hidden; line-height: 0; }
+.pantalla img { width: 100%; height: auto; display: block; }
+.pantalla .region { position: absolute; border: 2px dashed var(--acento); pointer-events: none; }
+.pantalla .seleccion { position: absolute; border: 2px solid var(--espera); background: rgba(224,169,92,.12); pointer-events: none; }
+
+/* ── control ─────────────────────────────────────────────────────────── */
+.control-estado { font-size: 18px; font-weight: 650; margin: 2px 0 4px; }
+.control-estado.claude { color: var(--acento); }
+.control-estado.parado { color: var(--riesgo); }
+.tarea { color: var(--texto-2); min-height: 21px; }
+
+/* ── bitácora ────────────────────────────────────────────────────────── */
+.bitacora { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow: auto; font-size: 13px; }
+.bitacora li { display: grid; grid-template-columns: 58px 1fr; gap: 8px; padding: 5px 0; border-top: 1px solid var(--borde); }
+.bitacora li:first-child { border-top: 0; }
+.bitacora li.vacio { display: block; }
+.bitacora .hora { color: var(--texto-4); font-variant-numeric: tabular-nums; }
+.bitacora .tipo { color: var(--texto-3); }
+.bitacora .persona .tipo { color: var(--espera); }
+.bitacora .error .tipo, .bitacora .corte .tipo { color: var(--riesgo); }
+
+/* ── tablas ──────────────────────────────────────────────────────────── */
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; color: var(--texto-3); font-weight: 500; font-size: 12px; padding: 6px 8px; }
+td { padding: 8px; border-top: 1px solid var(--borde); vertical-align: top; }
+td.num { font-variant-numeric: tabular-nums; color: var(--texto-2); }
+.vacio { color: var(--texto-3); padding: 12px 0; }
+
+/* ── lectura: páginas ────────────────────────────────────────────────── */
+.cifras { display: flex; gap: 22px; flex-wrap: wrap; margin: 14px 0 0; }
+.cifra b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+.cifra span { color: var(--texto-3); font-size: 12px; }
+.pagina { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; }
+.pagina + .pagina { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--borde); }
+.pagina .captura { background: #fff; border-radius: var(--r-input); overflow: hidden; line-height: 0; }
+.pagina .captura img { width: 100%; height: auto; cursor: zoom-in; }
+.pagina textarea { min-height: 360px; height: 100%; font-size: 12px; line-height: 1.45; white-space: pre; overflow: auto; resize: vertical; }
+.pagina .cab { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+.errores { color: var(--riesgo); font-size: 13px; margin: 6px 0 0; padding-left: 18px; }
+@media (max-width: 1100px) { .pagina { grid-template-columns: 1fr; } }
+
+.conflicto { padding: 10px 0; border-top: 1px solid var(--borde); }
+.conflicto:first-of-type { border-top: 0; }
+.version { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
+.version pre { flex: 1; margin: 0; padding: 6px 8px; background: var(--lienzo); border-radius: var(--r-input); overflow: auto; }
+
+/* ── diff de un cambio ───────────────────────────────────────────────── */
+.diff { font-family: var(--mono); font-size: 12.5px; background: var(--lienzo); border-radius: var(--r-input); overflow: auto; }
+.diff > div { display: grid; grid-template-columns: 54px 18px 1fr; white-space: pre; padding: 0 8px; }
+.diff > div > span:not(.placa) { min-height: 19px; }
+.diff .n { color: var(--texto-4); text-align: right; padding-right: 8px; }
+.diff .menos { background: var(--quita); }
+.diff .mas { background: var(--pone); }
+.diff .ctx { color: var(--texto-3); }
+.tramo + .tramo { margin-top: 16px; }
+.tramo .cab { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+.tramo .comprobacion { margin-top: 10px; background: #fff; border-radius: var(--r-input); overflow: hidden; line-height: 0; }
+.tramo .comprobacion img { width: 100%; }
+
+.aviso { border-left: 3px solid var(--espera); padding: 8px 12px; background: var(--superficie2); border-radius: 0 var(--r-input) var(--r-input) 0; color: var(--texto-2); }
+.aviso.riesgo { border-left-color: var(--riesgo); }
+.aviso.ok { border-left-color: var(--ok); }
+details summary { cursor: pointer; color: var(--texto-2); }
+pre.consulta { background: var(--lienzo); padding: 10px; border-radius: var(--r-input); overflow: auto; font-size: 12px; }
+.huella { font-family: var(--mono); font-size: 12px; word-break: break-all; color: var(--texto-2); }
+
+/* ── diálogo (flota: lleva sombra) ───────────────────────────────────── */
+.velo { position: fixed; inset: 0; background: var(--velo); display: grid; place-items: center; z-index: 50; }
+.dialogo { background: var(--superficie); border: 1px solid var(--borde); border-radius: var(--r-tarjeta);
+  padding: 20px; width: min(460px, calc(100vw - 32px)); box-shadow: 0 18px 50px rgba(0,0,0,.5); }
+.dialogo p { margin: 0 0 16px; color: var(--texto-2); }
+.dialogo .fila { justify-content: flex-end; }
+.fugaz { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--elevado);
+  color: var(--texto); padding: 10px 16px; border-radius: var(--r-input); z-index: 60; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+.fugaz.riesgo { background: #4a2219; }
+
+/* ── espacio de trabajo: el puente a la izquierda, Claude Code a la derecha ── */
+.en-marco .cabecera { display: none; }
+body[data-pagina="espacio"] { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+main.espacio { max-width: none; padding: 0; flex: 1; min-height: 0; width: 100%; }
+.espacio-rejilla {
+  --ancho-dock: 46%;
+  display: grid; grid-template-columns: minmax(0, 1fr) 6px var(--ancho-dock); height: 100%;
+}
+.espacio-rejilla.plegado { grid-template-columns: minmax(0, 1fr) 6px 44px; }
+.espacio-rejilla iframe { width: 100%; height: 100%; border: 0; background: var(--lienzo); }
+.divisor { cursor: col-resize; background: var(--borde); }
+.divisor:hover, .divisor.arrastrando { background: var(--acento); }
+.dock { display: flex; flex-direction: column; min-width: 0; background: var(--superficie); }
+.dock-barra { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--borde); }
+.dock-acciones { margin-left: auto; display: flex; gap: 6px; }
+.dock-acciones button { padding: 5px 10px; font-size: 13px; }
+.plegado .dock-barra > b, .plegado .dock-barra > .placa, .plegado [data-reiniciar-claude] { display: none; }
+.plegado .terminal { display: none; }
+.plegado .dock-barra { flex-direction: column; padding: 8px 4px; }
+/* El marco sin padding y el padding en .xterm, que es el que FitAddon descuenta:
+   con padding en el marco pide columnas que no caben (medido en un navegador). */
+.terminal { flex: 1; min-height: 0; background: #0b0f15; overflow: hidden; }
+.terminal .xterm { padding: 8px 4px 8px 10px; height: 100%; letter-spacing: normal; }
+@media (max-width: 900px) {
+  .espacio-rejilla, .espacio-rejilla.plegado { --alto-dock: 45%; grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) 8px var(--alto-dock); }
+  .espacio-rejilla.plegado { grid-template-rows: minmax(0, 1fr) 8px 44px; }
+  .divisor { cursor: row-resize; touch-action: none; }
+  .plegado .dock-barra { flex-direction: row; padding: 8px 12px; }
+}
+@media (max-width: 600px) {
+  /* En el teléfono la barra de la terminal no cabe entera: fuera el rótulo
+     (se sabe qué es), las placas se acortan y los botones no se parten. */
+  .dock-barra { gap: 6px; padding: 6px 10px; }
+  .dock-barra > b { display: none; }
+  .dock-barra .placa { min-width: 0; flex: 0 1 auto; }
+  .dock-barra #placa-terminal { flex: none; }
+  .dock-acciones { flex: none; }
+  .dock-acciones button { white-space: nowrap; }
+  .solo-ancho { display: none; }
+}
+/* El aviso de «Claude propone un cambio» va sobre el puente, a la izquierda:
+   abajo a la derecha tapaba justo la línea donde se le escribe a Claude. */
+.aviso-flotante { position: fixed; left: 18px; bottom: 18px; z-index: 60; display: flex; gap: 10px; align-items: center;
+  background: var(--elevado); color: var(--texto); padding: 10px 14px; border-radius: var(--r-input);
+  box-shadow: 0 10px 30px rgba(0,0,0,.4); max-width: min(520px, calc(100vw - 32px)); }
+@media (max-width: 900px) { .aviso-flotante { bottom: auto; top: 112px; left: 16px; right: 16px; } }
+
+/* ── Claude: skills, permisos y actividad ─────────────────────────────── */
+.skills { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-top: 12px; }
+.skill { background: var(--superficie2); border-radius: var(--r-input); padding: 12px 14px; }
+.skill p { margin: 8px 0 0; color: var(--texto-2); font-size: 13px; }
+.skill .skill-acceso { color: var(--texto-3); }
+.skill-nombre { color: var(--acento); font-size: 14px; }
+.permisos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.permisos ul { margin: 8px 0 0; padding-left: 18px; color: var(--texto-2); }
+.permisos li { margin: 3px 0; }
+@media (max-width: 900px) { .permisos { grid-template-columns: minmax(0, 1fr); } }
+.dock-barra .placa { max-width: 46%; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── conversaciones con Claude (el menú flota: lleva sombra) ─────────── */
+.conv-envoltura { position: relative; min-width: 0; flex: 0 1 auto; }
+.conv-boton { padding: 4px 10px; font-size: 13px; max-width: 260px; min-width: 0; }
+.conv-boton > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.conv-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: min(440px, calc(100vw - 32px));
+  max-height: min(70vh, 540px); overflow: auto; background: var(--superficie); border: 1px solid var(--borde);
+  border-radius: var(--r-tarjeta); padding: 14px; box-shadow: 0 18px 50px rgba(0,0,0,.5); }
+.conv-cab p { margin: 4px 0 10px; font-size: 13px; }
+.conv-lista { list-style: none; margin: 0; padding: 0; }
+.conv-item { padding: 10px 0; border-top: 1px solid var(--borde); display: grid; gap: 4px; }
+.conv-item.abierta { background: var(--superficie2); border-radius: var(--r-input); padding: 10px; border-top: 0; margin-bottom: 4px; }
+.conv-item .sub { margin: 0; font-size: 12.5px; }
+.conv-fila { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.conv-nombre { font-weight: 600; overflow-wrap: anywhere; }
+.conv-acciones button { padding: 5px 10px; font-size: 13px; }
+.conv-pie { margin-top: 12px; }
+.plegado .conv-envoltura, .plegado #placa-modelo { display: none; }
+@media (max-width: 900px) {
+  .conv-menu { position: fixed; left: 16px; right: 16px; top: 70px; width: auto; max-height: calc(100dvh - 90px); }
+}
+/* Lo que cabe en la barra depende del ancho de la terminal (el divisor lo
+   cambia), no de la ventana: si no cabe todo, se queda lo que más importa —la
+   conversación, su modelo y los botones—; el estado de la conexión y lo que
+   hace Claude se ven dentro de la propia terminal y en la pestaña Claude. */
+.dock { container-type: inline-size; }
+#placa-modelo { flex: none; max-width: none; }
+@container (max-width: 820px) {
+  .dock-barra > b, .dock-barra #placa-terminal, .dock-barra #placa-claude { display: none; }
+  .dock-barra .solo-ancho { display: none; }
+  .conv-boton { max-width: 34cqw; }
+}
+@container (max-width: 420px) {
+  #placa-modelo { flex: 0 1 auto; min-width: 0; max-width: 40cqw; }
+}

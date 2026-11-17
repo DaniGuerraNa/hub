@@ -32,6 +32,11 @@ aparece arriba, en la bandeja, y la contestas ahí mismo.
   **Reanudar** la vuelve a poner en marcha desde donde estaba, con su plan y su
   bitácora; puedes añadirle una nota (escrita o dictada) con lo que viste
   mientras estaba parada. Si hay otra en curso, vuelve a la cola.
+- Los slots `orq-…` que abrió una tarea, y sus ventanas, no se cierran solos
+  al acabar. En una tarea terminada o detenida, **«Lo que dejó abierto»** los
+  enumera, y su botón cierra esas ventanas y archiva esos slots, con
+  confirmación (un slot archivado conserva su nota y se recupera desde la
+  ficha del proyecto). Con la tarea en marcha no se ofrece.
 - Necesita el muestreo en marcha (`hub-snapshotter`): es quien lo despierta
   cuando una sesión termina. Sin él, la tarea se queda encolada.
 
@@ -131,11 +136,64 @@ transcripcion:
 ese Python. Sin transcriptor, la tarea se escribe a mano y todo lo demás
 funciona igual.
 
+Con el guion del hub, el dictado del secretario, del tablero y de la terminal
+deja el modelo cargado un rato (se apaga solo tras 15 minutos sin uso) y lo
+empieza a cargar en cuanto pulsas grabar: el primer dictado tras un rato no
+espera a cargarlo de cero mientras hablas.
+
 Puedes declarar otro programa: recibe el audio donde pongas `{audio}` y escribe
 el texto en su salida. Si no escribe nada, el hub entiende que en el audio no
 se oyó a nadie; cualquier código de salida distinto de cero es un fallo, y un
 audio de un encargo se reintenta un rato antes de entregarse con el hueco
 dicho. El código 3 como «no se oyó nada» es sólo del guion del hub.
+
+### Medir el dictado con tu voz (`/voz/banco`)
+
+Qué modelo de Whisper te entiende mejor sólo se sabe midiéndolo con tu voz.
+La pantalla **Banco de dictado** (`/voz/banco`, también en la guía) te enseña
+una frase cada vez:
+
+1. Elige el aparato, PC o teléfono (sale solo según el ancho de la pantalla).
+   Conviene grabar en los dos: el micrófono cambia mucho el resultado.
+2. Pulsa **Grabar**, lee la frase en voz alta como hablas siempre y pulsa
+   **Parar**. Se guarda en tu máquina con lo que tenías que decir; **no
+   transcribe nada** y no necesita la GPU.
+3. **Siguiente** pasa a la que falta; **Repetir** la vuelve a grabar. Son unos
+   diez minutos por aparato.
+
+Graba con los mismos ajustes de micrófono que el chat del secretario, y apunta
+lo que el micrófono aplicó de verdad.
+
+Las frases salen de una plantilla genérica con los nombres de tus proyectos y
+de tu secretario. Puedes poner las tuyas antes de grabar:
+
+```bash
+uv run python -m hub.banco_dictado frases > mis-frases.yml   # la de ahora, para editarla
+uv run python -m hub.banco_dictado sembrar --de mis-frases.yml
+```
+
+La lista se congela con la primera grabación; para cambiarla, vacía antes el
+banco (sección «Vaciar», en cada aparato).
+
+Para medir, en una terminal en la carpeta del hub:
+
+```bash
+uv run python -m hub.banco_dictado medir --modelos small,large-v3-turbo
+uv run python -m hub.banco_dictado resultados
+```
+
+Carga cada modelo en su propio servidor de Whisper, le pasa todas las
+grabaciones y lo apaga. Antes apaga el del dictado, y no empieza si Reuniones
+está procesando: un modelo a la vez. Da el error por palabras (WER, con y sin
+tildes), por letras (CER), cuántos términos propios acertó, el tiempo por
+frase y lo que tardó en cargar, por categoría (cortas, técnicas, cifras…) y
+por aparato; la última medida sale también en la sección «Medir» de la
+pantalla. `--tipos float16,int8_float16` prueba tipos de cálculo y
+`--dispositivo cpu` fuerza la CPU.
+
+Las grabaciones viven en `~/.local/share/hub/voz/banco/`, sólo para tu
+usuario; no caducan ni van en la copia diaria de la base. Nada sale de tu
+máquina.
 
 ## El intercambio (`/intercambio`)
 
@@ -144,9 +202,12 @@ el hub escriba nunca dentro de tus proyectos:
 
 Es una carpeta **de paso**: lo que quieras conservar, guárdalo en tu proyecto.
 
-- **Del teléfono a una sesión:** súbelo aquí eligiendo su proyecto o slot y, en
-  «Más», pulsa *Escribir la ruta ahí*. La ruta aparece en el cuadro de Claude
-  **sin Enter**, para que añadas qué quieres que haga con él.
+- **Del teléfono a una sesión:** pulsa *Elegir archivos* (puedes elegir
+  varios), su proyecto o slot y *Subir*. Elige la sesión en *Sesión a la que
+  pasar rutas* y, en el menú ⋯ del archivo, pulsa *Escribir la ruta en la
+  sesión elegida*. La ruta aparece en el cuadro de Claude **sin Enter**, para
+  que añadas qué quieres que haga con él. La sesión elegida se queda para el
+  siguiente archivo.
 - **De la terminal:** lo que arrastras o pegas sobre la terminal de `/trabajo`
   cae aquí solo, en la carpeta del proyecto y el slot de esa ventana.
 - **De una sesión a ti:** pídele a la sesión que lo copie en la carpeta de su
@@ -156,6 +217,9 @@ Se agrupa como el resto del hub: **por proyecto y, dentro, por slot**, lo más
 nuevo primero. También se puede ver por **fecha**, **tipo**, **tema** (el
 principio del nombre) o todo en fila con **Recientes**. Lo último que llegó
 lleva la marca *nuevo*.
+
+Las imágenes (png, jpg, gif, webp) de hasta 1 MB se ven en miniatura; tócala
+para verla entera. Borrar está en el mismo menú ⋯ y pregunta antes.
 
 Hasta 64 MB por archivo. **Lo arrastrado o pegado en la terminal se borra solo a
 los 10 días**, y cada archivo dice el día. Lo que subes desde aquí o deja una

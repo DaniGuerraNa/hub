@@ -8,6 +8,7 @@ zona, y que el módulo siga siendo una hoja que cualquiera puede importar.
 from __future__ import annotations
 
 import ast
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -171,7 +172,8 @@ def test_la_web_enseña_la_hora_en_la_misma_zona_que_el_secretario(monkeypatch):
 
     monkeypatch.setenv("TZ", "Asia/Tokyo")
 
-    assert api._hora_local("2026-10-26T16:00:00+00:00") == "27/10 01:00"
+    # El año sólo sale si no es el de ahora: el día y la hora, siempre.
+    assert re.fullmatch(r"27/10(/2026)? 01:00", api._hora_local("2026-10-26T16:00:00+00:00"))
 
 
 def test_el_secretario_y_la_web_usan_la_misma_zona_y_la_misma_conversion():
@@ -192,3 +194,85 @@ def test_una_fecha_guardada_sin_zona_se_lee_como_utc_y_se_puede_comparar():
     assert sin_zona == con_zona and sin_zona.tzinfo is not None
     assert reloj.instante() - con_zona > timedelta(0)
     assert abs(reloj.instante(None) - datetime.now(timezone.utc)) < timedelta(seconds=5)
+
+
+# ── Un instante, de una sola forma (C-0396) ─────────────────────────────────
+#
+# Había ocho formatos de fecha en las pantallas y la mitad en UTC. `cuando` da
+# las piezas —local, «hace», edad— y `ui.cuando` las pinta: lo que se fija aquí
+# es que «hace» y «local» salgan del MISMO instante, también sin zona.
+
+#: Las 14:41 en la casa (UTC-6 todo el año desde 2022).
+AHORA = datetime(2026, 11, 13, 20, 41, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def casa(monkeypatch):
+    monkeypatch.setenv("TZ", "America/Mexico_City")
+
+
+def test_cuando_pasa_de_utc_a_la_casa_y_dice_cuanto_hace(casa):
+    c = reloj.cuando("2026-11-13T17:41:00+00:00", AHORA)
+
+    assert c == {"iso": "2026-11-13T11:41:00-06:00", "local": "13/11 11:41", "dia": "13/11",
+                 "hora": "11:41", "hace": "hace 3 h", "edad_s": 10800}
+
+
+def test_cuando_lee_una_hora_sin_zona_como_hora_de_la_casa_igual_que_a_local(casa):
+    """🔴 Regla 19: con `instante` (sin zona = UTC) el «hace» y el «local» de
+    la misma fecha discreparían seis horas. Las dos salen del mismo lector."""
+    sin_zona = "2026-11-13T11:41:00"
+
+    c = reloj.cuando(sin_zona, AHORA)
+
+    assert c["local"] == reloj.a_local(sin_zona, "%d/%m %H:%M") == "13/11 11:41"
+    assert c["hace"] == "hace 3 h" and c["edad_s"] == 10800
+
+
+def test_cuando_de_algo_que_vendra_dice_en_y_su_edad_es_negativa(casa):
+    c = reloj.cuando("2026-11-15T20:41:00+00:00", AHORA)
+
+    assert c["hace"] == "en 2 d" and c["edad_s"] == -172800
+
+
+def test_cuando_no_baja_de_hace_un_momento_para_no_repintar_a_cada_sondeo(casa):
+    assert reloj.cuando("2026-11-13T20:40:31+00:00", AHORA)["hace"] == "hace un momento"
+    assert reloj.cuando("2026-11-13T20:39:30+00:00", AHORA)["hace"] == "hace 1 min"
+    assert reloj.cuando(AHORA.timestamp() - 30, AHORA)["hace"] == "hace un momento"
+
+
+def test_cuando_de_una_fecha_sin_hora_dice_hoy_o_ayer_y_no_inventa_la_hora(casa):
+    assert reloj.cuando("2026-11-13", AHORA)["hace"] == "hoy"
+    assert reloj.cuando("2026-11-12", AHORA)["hace"] == "ayer"
+    assert reloj.cuando("2026-11-14", AHORA)["hace"] == "mañana"
+    c = reloj.cuando("2026-11-03", AHORA)
+    assert (c["local"], c["dia"], c["hora"], c["hace"], c["iso"]) == ("03/11", "03/11", "", "hace 10 d", "2026-11-03")
+
+
+def test_cuando_lleva_el_ano_solo_si_no_es_el_actual(casa):
+    c = reloj.cuando("2025-11-13T17:41:00+00:00", AHORA)
+
+    assert (c["local"], c["dia"]) == ("13/11/2025 11:41", "13/11/2025")
+
+
+def test_cuando_de_lo_que_no_es_una_fecha_no_devuelve_nada(casa):
+    for basura in (None, "", "ayer", "2026-13-45", True, object()):
+        assert reloj.cuando(basura, AHORA) is None, basura
+
+
+def test_la_duracion_cambia_de_unidad_en_sus_cortes():
+    cortes = {0: "0 s", 40: "40 s", 119: "119 s", 120: "2 min", 7199: "119 min",
+              7200: "2 h", 172799: "47 h", 172800: "2 d", 9 * 86400: "9 d"}
+
+    assert {s: reloj.duracion(s) for s in cortes} == cortes
+
+
+def test_las_dos_copias_de_hace_usan_la_duracion_de_reloj():
+    """`salud` y la fuente de WhatsApp tenían su `_hace`, con cortes distintos:
+    «120 h» en una y «5 días» en la otra para el mismo lapso."""
+    from hub import salud
+    from hub.secretario.fuentes import whatsapp
+
+    for modulo in (salud, whatsapp):
+        assert not hasattr(modulo, "_hace"), modulo.__name__
+        assert "reloj.duracion(" in Path(modulo.__file__).read_text(encoding="utf-8"), modulo.__name__

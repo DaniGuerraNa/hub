@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block pagina %}lectura{% endblock %}
+{% block contenido %}
+<div data-lectura="{{ l.id }}" data-estado="{{ l.estado }}">
+  <div class="fila" style="justify-content: space-between; align-items:flex-start">
+    <div>
+      <h1>{{ l.nombre }}</h1>
+      <p class="sub" style="margin:0">Lectura <code>{{ l.id }}</code></p>
+    </div>
+    <div class="fila">
+      <a class="boton" href="/api/lecturas/{{ l.id }}/texto" download="{{ l.nombre }}.sql">Descargar la copia</a>
+    </div>
+  </div>
+
+  <div class="cifras">
+    <div class="cifra"><b>{{ r.paginas }}</b><span>páginas capturadas</span></div>
+    <div class="cifra"><b>{{ r.transcritas }}</b><span>transcritas</span></div>
+    <div class="cifra"><b>{{ r.lineas or '—' }}</b><span>líneas</span></div>
+    <div class="cifra"><b>{{ r.conflictos }}</b><span>conflictos</span></div>
+    <div class="cifra"><b>{{ r.huecos|length }}</b><span>huecos</span></div>
+    <div class="cifra"><b>
+      {% if l.estado == 'capturando' %}<span class="placa accion">capturando</span>
+      {% elif l.estado in ('error','cortada') %}<span class="placa riesgo">{{ l.estado }}</span>
+      {% elif r.verificada %}<span class="placa ok">exacta</span>
+      {% elif r.completo %}<span class="placa espera">completa, sin verificar</span>
+      {% else %}<span class="placa espera">incompleta</span>{% endif %}
+    </b><span>estado</span></div>
+  </div>
+  {% if l.error %}<p class="aviso riesgo" style="margin-top:14px">{{ l.error }}</p>{% endif %}
+  {% if r.inestables %}<p class="aviso" style="margin-top:14px">{{ r.inestables|length }} {{ 'página se capturó' if r.inestables|length == 1 else 'páginas se capturaron' }} mientras la pantalla aún se movía (pág. {{ r.inestables|join(', ') }}): pueden estar a medio pintar. Míralas antes de fiarte de su transcripción; si alguna lo está, vuelve a leer el documento.</p>{% endif %}
+
+  <div class="rejilla-2" style="margin-top:16px">
+    <section class="tarjeta">
+      <h2>¿Es exacta? La huella de la base</h2>
+      {% if r.verificada %}
+        <p class="aviso ok">La copia es <b>exacta byte a byte</b>: coincide con la huella de la base ({{ r.variante }}).</p>
+      {% elif not r.completo %}
+        <p class="aviso">Antes hay que terminar: {% if r.pendientes %}{{ r.pendientes|length }} {{ 'página sin transcribir' if r.pendientes|length == 1 else 'páginas sin transcribir' }}{% endif %}{% if r.conflictos %}{{ ', ' if r.pendientes }}{{ r.conflictos }} {{ 'conflicto' if r.conflictos == 1 else 'conflictos' }}{% endif %}{% if r.huecos %}{{ ', ' if (r.pendientes or r.conflictos) }}huecos en {% for a, b in r.huecos %}{{ a }}{% if b != a %}–{{ b }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}{% endif %}.</p>
+      {% elif l.huella_referencia %}
+        <p class="aviso riesgo">La huella <b>no coincide</b> con ninguna de las 36 formas de calcularla. Hay al menos un carácter distinto: revisa las páginas marcadas o relee la que dudes.</p>
+      {% else %}
+        <p class="sub">Saca la huella del procedimiento en el cliente del Mac (consulta abajo) y pégala aquí. Si coincide, la copia es exacta; si no, algo está mal leído.</p>
+      {% endif %}
+      <div class="fila" style="margin-top:10px">
+        <input id="huella" class="mono" placeholder="p. ej. 9F2C…" value="{{ l.huella_referencia }}">
+        <button class="cta" data-huella-lectura {{ 'disabled' if not r.completo }}>Comprobar</button>
+      </div>
+      {% if estado.dispositivo.huella_base %}
+      <p class="sub" style="margin:8px 0 0">Simulador: la base daría <span class="huella">{{ estado.dispositivo.huella_base }}</span>
+        <button data-copiar="{{ estado.dispositivo.huella_base }}">Usarla</button></p>
+      {% endif %}
+      <details style="margin-top:12px">
+        <summary>Consulta para sacar la huella</summary>
+        <label for="objeto">Objeto</label>
+        <input id="objeto" class="mono" value="dbo.{{ l.nombre }}">
+        {% for motor, sql in consultas.items() %}
+          <div class="rotulo" style="margin-top:12px">{{ motor }}</div>
+          <pre class="consulta" data-plantilla="{{ sql }}">{{ sql.replace('{objeto}', 'dbo.' ~ l.nombre) }}</pre>
+        {% endfor %}
+        <p class="sub" style="margin:8px 0 0">Sólo lee el catálogo. Lo que devuelve puede llevar la cabecera <code>CREATE</code> distinta de la que enseña el editor: si nunca coincide, compara a ojo la primera línea.</p>
+      </details>
+    </section>
+
+    <section class="tarjeta">
+      <h2>Conflictos</h2>
+      {% if ens.conflictos %}
+        <p class="sub">Dos páginas leyeron la misma línea de forma distinta. Mira las dos capturas y elige.</p>
+        {% for c in ens.conflictos %}
+        <div class="conflicto">
+          <div class="rotulo">Línea {{ c.linea }}</div>
+          {% for v in c.versiones %}
+          <div class="version">
+            <pre>{{ v.texto }}</pre>
+            <span class="sub" style="margin:0">pág. {{ v.paginas|join(', ') }}</span>
+            <button data-resolver="{{ c.linea }}" data-texto="{{ v.texto }}">Usar esta</button>
+          </div>
+          {% endfor %}
+        </div>
+        {% endfor %}
+      {% else %}
+        <p class="vacio">Ninguno. {% if r.transcritas > 1 %}Las páginas que se solapan dicen lo mismo.{% endif %}</p>
+      {% endif %}
+      {% if cambios %}
+        <h2 style="margin-top:18px">Cambios sobre esta lectura</h2>
+        {% for c in cambios %}<p style="margin:4px 0"><a href="/cambios/{{ c.id }}">{{ c.descripcion }}</a> {% include "_estado_cambio.html" %}</p>{% endfor %}
+      {% endif %}
+    </section>
+  </div>
+
+  <section class="tarjeta" style="margin-top:16px">
+    <div class="fila" style="justify-content: space-between; margin-bottom: 12px">
+      <h2 style="margin:0">Páginas</h2>
+      <span class="sub" style="margin:0">A la izquierda lo que se vio; a la derecha lo transcrito, con su número de línea. Puedes corregir y guardar.</span>
+    </div>
+    {% for p in l.paginas %}
+    <div class="pagina" id="p{{ p.n }}">
+      <div>
+        <div class="cab">
+          <b>Página {{ p.n }}</b>
+          {% if p.transcrita %}
+            <span class="placa {{ 'riesgo' if p.errores else 'ok' }}">{{ 'Claude' if p.quien == 'claude' else 'tú' }} · líneas {{ p.primera }}–{{ p.ultima }}</span>
+          {% else %}<span class="placa espera">sin transcribir</span>{% endif %}
+          {% if p.inestable %}<span class="placa espera" title="Capturada sin que la pantalla se quedara quieta">la pantalla se movía</span>{% endif %}
+        </div>
+        <a class="captura" href="/api/lecturas/{{ l.id }}/paginas/{{ p.n }}.png" target="_blank">
+          <img loading="lazy" src="/api/lecturas/{{ l.id }}/paginas/{{ p.n }}.png" alt="Captura de la página {{ p.n }}">
+        </a>
+      </div>
+      <div style="display:flex; flex-direction:column">
+        <textarea class="mono" spellcheck="false" data-pagina-texto="{{ p.n }}" placeholder="Sin transcribir. Formato: número|contenido">{{ textos[p.n] }}</textarea>
+        {% if p.errores %}<ul class="errores">{% for e in p.errores %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+        <div class="fila" style="margin-top:8px; justify-content:flex-end">
+          <button data-guardar-pagina="{{ p.n }}">Guardar corrección</button>
+        </div>
+      </div>
+    </div>
+    {% else %}
+      <p class="vacio">{% if l.estado == 'capturando' %}Capturando… las páginas aparecen aquí al recargar.{% else %}Sin páginas.{% endif %}</p>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}

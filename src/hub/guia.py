@@ -35,7 +35,7 @@ PANTALLAS: list[dict[str, Any]] = [
                    "Dejar un mensaje para que Claude lo lea a una hora, una sola vez (pestaña Programados)",
                    "Organizar desde la bandeja las ventanas que aún no tienen slot"]},
     {"grupo": "El día a día", "ruta": "/secretario", "nombre": "Secretario",
-     "para_que": "Un asistente que lee tus fuentes (reuniones, notas de slots, Telegram), te contesta con de dónde "
+     "para_que": "Lee tus fuentes (reuniones, notas de slots, Telegram), te contesta con de dónde "
                  "lo sacó, apunta lo que quedaste en hacer y te lo recuerda en el teléfono.",
      "que_haces": ["Preguntarle por escrito o con «Hablar», y oír la respuesta («Leer las respuestas en voz alta»)",
                    "Aprobar o rechazar lo que te pide permiso, y cerrar compromisos (pestaña Pendientes)",
@@ -78,6 +78,13 @@ PANTALLAS: list[dict[str, Any]] = [
                    "Leer el resumen y lo que te toca", "Buscar en la transcripción con sus capturas",
                    "Comprimir el audio de las reuniones ya procesadas",
                    "La primera vez: preparar el procesado e instalar el agente de Windows, paso a paso"]},
+    # Herramienta opcional (438): en el mapa sólo si está encendida.
+    {"grupo": "El día a día", "ruta": "/puente", "nombre": "Puente KVM", "opcional": "puente-kvm",
+     "para_que": "Claude lee y escribe en un Mac de otra persona a través de un JetKVM. Es un programa "
+                 "aparte: aquí ves si contesta, si está conectado al aparato y quién tiene el control.",
+     "que_haces": ["Ver si el puente contesta y si llega al aparato",
+                   "La primera vez: prepararlo paso a paso («Preparar con Claude»)",
+                   "Abrirlo en una pestaña aparte, desde la PC donde corre"]},
     {"grupo": "El día a día", "ruta": "/intercambio", "nombre": "Intercambio",
      "para_que": "La carpeta por la que pasan archivos entre el teléfono y las sesiones.",
      "que_haces": ["Subir un archivo desde el teléfono", "Bajarte lo que dejó una sesión",
@@ -122,12 +129,24 @@ PANTALLAS: list[dict[str, Any]] = [
     {"grupo": "Ajustes", "ruta": "/encargos", "nombre": "Encargos",
      "para_que": "Encargos que te manda otra gente por el bot, y quién puede mandarlos.",
      "que_haces": ["Ver los encargos y su conversación", "Dar de alta a quien puede mandarlos"]},
+    {"grupo": "Ajustes", "ruta": "/voz/banco", "nombre": "Banco de dictado",
+     "para_que": "Medir qué Whisper te entiende mejor con tu voz: lees unas frases en voz alta y se guardan en "
+                 "esta máquina con lo que tenías que decir. Nada sale de aquí.",
+     "que_haces": ["Grabar las frases una a una, en la PC y en el teléfono",
+                   "Repetir o borrar una toma, o vaciar lo de un aparato",
+                   "Medir con «python -m hub.banco_dictado medir» y ver la tabla (sección Medir)"]},
 ]
 
 
 def pasos(proyectos: list[dict], slots: list[dict], repos: list[dict], paneles: list[dict],
-          niveles: dict[str, str], existe=lambda ruta: True) -> list[dict[str, Any]]:
+          niveles: dict[str, str], existe=lambda ruta: True,
+          secretario: str | None = None) -> list[dict[str, Any]]:
     """Los primeros pasos, cada uno con `hecho` medido sobre el estado real.
+
+    `secretario` es su nombre cuando él es la voz del hub (C-0160). Entonces
+    el asistente está retirado aunque siga declarado, y la guía no puede
+    mandar a instalarlo ni a pedirle nada (C-0355): el primer paso es
+    conocerle a él, y «Guíame» le pregunta a él.
 
     Todo llega de fuera —de `api.py`—: el registro entero (archivados incluidos,
     que es como cuenta el raíl), los slots activos, los repos medidos, los
@@ -140,6 +159,11 @@ def pasos(proyectos: list[dict], slots: list[dict], repos: list[dict], paneles: 
     nada (visto en la sala limpia del 16-oct).
     """
     hay_asistente = any(p.get("tipo") == "asistente" for p in proyectos)
+    # Cómo se le nombra en una frase: por su nombre, o «el secretario» si no
+    # le han puesto uno (el mismo criterio que la portada).
+    a_quien = None
+    if secretario:
+        a_quien = "al secretario" if secretario == "Secretario" else f"a {secretario}"
     filas = sorted((p for p in proyectos if p.get("tipo") not in ("asistente", "kit")), key=lambda p: p["id"])
     propios = [p["id"] for p in filas if p.get("asiento") and existe(p["asiento"])]
     fantasmas = [p["id"] for p in filas if not (p.get("asiento") and existe(p["asiento"]))]
@@ -147,16 +171,26 @@ def pasos(proyectos: list[dict], slots: list[dict], repos: list[dict], paneles: 
     con_nivel = sum(1 for n in niveles.values() if n and n != "nada")
     primero = propios[0] if propios else None
 
+    voz = {"id": "asistente", "titulo": "Instala el asistente",
+           "por_que": "Es el chat de abajo a la derecha. Te explica cada pantalla, te lleva a ella y "
+                      "hace contigo lo básico: registrar proyectos, crear slots, apuntar notas.",
+           "como": "En una terminal, dentro de la carpeta del hub: bash scripts/sembrar-asistente.sh. "
+                   "Se declara solo; en menos de un minuto sale el chat.",
+           "hecho": hay_asistente, "enlace": None, "pregunta": None}
+    if a_quien:
+        # Hecho por definición: sólo es la voz si está montado.
+        voz = {"id": "secretario", "titulo": f"Conoce {a_quien}",
+               "por_que": "Es quien te habla en todas las pantallas. Te explica cada una y hace contigo "
+                          "lo básico: registrar proyectos, crear slots, apuntar lo que quedas en hacer.",
+               "como": "Tiene su panel en cada pantalla y su propia pantalla en el menú. "
+                       "Pregúntale por escrito o con «Hablar».",
+               "hecho": True, "enlace": {"ruta": "/secretario", "etiqueta": "Ir a su pantalla"},
+               "pregunta": None}
     lista = [
-        {"id": "asistente", "titulo": "Instala el asistente",
-         "por_que": "Es el chat de abajo a la derecha. Te explica cada pantalla, te lleva a ella y "
-                    "hace contigo lo básico: registrar proyectos, crear slots, apuntar notas.",
-         "como": "En una terminal, dentro de la carpeta del hub: bash scripts/sembrar-asistente.sh. "
-                 "Se declara solo; en menos de un minuto sale el chat.",
-         "hecho": hay_asistente, "enlace": None, "pregunta": None},
+        voz,
         {"id": "proyecto", "titulo": "Registra tu primer proyecto",
          "por_que": "Todo lo que el hub enseña sale de su registro. Sin proyectos, las pantallas están vacías.",
-         "como": "Si ya existe, pídeselo al asistente («quiero registrar un proyecto que ya tengo»). "
+         "como": f"Si ya existe, pídeselo {a_quien or 'al asistente'} («quiero registrar un proyecto que ya tengo»). "
                  "Si es nuevo, botón «Proyecto nuevo» en el Panorama."
                  + (f" En tu registro hay {len(fantasmas)} cuya carpeta no existe "
                     f"({', '.join(fantasmas[:3])}{'…' if len(fantasmas) > 3 else ''}): no cuentan. "
@@ -192,14 +226,19 @@ def pasos(proyectos: list[dict], slots: list[dict], repos: list[dict], paneles: 
     for p in lista:
         p.setdefault("opcional", False)
         p["siguiente"] = p is siguiente
-        if not hay_asistente:
-            p["pregunta"] = None     # sin asistente, «Guíame» sólo podría fallar
+        if not (hay_asistente or a_quien):
+            p["pregunta"] = None     # sin nadie que conteste, «Guíame» sólo podría fallar
     return lista
 
 
-def mapa() -> list[dict[str, Any]]:
-    """Las pantallas, agrupadas en el orden en que se presentan."""
+def mapa(encendidas: frozenset[str] | set[str] = frozenset()) -> list[dict[str, Any]]:
+    """Las pantallas, agrupadas en el orden en que se presentan.
+
+    Las de una herramienta opcional, sólo si está en `encendidas` (438): lo
+    encendido llega de `api`, como todo lo demás."""
     grupos: dict[str, list[dict[str, Any]]] = {}
     for p in PANTALLAS:
+        if p.get("opcional") and p["opcional"] not in encendidas:
+            continue
         grupos.setdefault(p["grupo"], []).append(p)
     return [{"grupo": g, "pantallas": ps} for g, ps in grupos.items()]

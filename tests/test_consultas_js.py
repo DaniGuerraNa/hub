@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 GUION = Path(__file__).resolve().parents[1] / "src" / "hub" / "static" / "consultas.js"
+SONDEO = GUION.parent / "sondeo.js"   # va en el <head> de todas las páginas (C-0277)
 
 ARNES = r"""
 const nodos = {};
@@ -72,6 +73,7 @@ global.document = {
     if (sel === '[data-filtro]') return filtros;
     return [];
   },
+  addEventListener(){}, removeEventListener(){},
 };
 global.window = { addEventListener(){} };
 global.setInterval = () => 0;
@@ -106,7 +108,7 @@ def _correr(preguntas: list[dict], abrir: bool = False, filtro: str = "") -> dic
         f"const PREGUNTAS = {json.dumps(preguntas)};\n"
         f"const ABRIR = {json.dumps(abrir)};\n"
         f"const FILTRO = {json.dumps(filtro)};\n"
-        + ARNES.replace("__GUION__", GUION.read_text(encoding="utf-8"))
+        + ARNES.replace("__GUION__", SONDEO.read_text(encoding="utf-8") + GUION.read_text(encoding="utf-8"))
     )
     salida = subprocess.run([node, "-e", guion], capture_output=True, text=True, timeout=30)
     assert salida.returncode == 0, salida.stderr

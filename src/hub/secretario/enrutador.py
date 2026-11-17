@@ -16,6 +16,12 @@ La tabla se puede cambiar en `HUB_HOME/secretario/modelos.yml` (p.ej.
 `conversacion: haiku` para probar si basta con escalar), siempre dentro de
 `modelos.PERMITIDOS`. Cada turno guarda qué modelo contestó y si escaló: es lo
 que permite medir antes de afinar.
+
+3. **Y si el dueño nombra uno, manda él** (decisión 405, 11-nov: *«debería de
+   poder él decidir qué modelo si yo se lo pido»*). Lo que admite elegir
+   (`investigar`, `pedir_modelo_mayor`) pasa `pedido`; sin él, la tabla. Uno
+   de `modelos.A_PETICION` (Fable) sólo con `a_peticion`, que da el código
+   cuando él lo nombró en su mensaje, nunca el modelo de la conversación.
 """
 
 from __future__ import annotations
@@ -42,16 +48,31 @@ ESFUERZO = {"triaje": "low", "cierre": "low", "conversacion": "medium", "consult
 
 def tabla() -> dict[str, str]:
     try:
-        propia = yaml.safe_load((memoria.carpeta() / "modelos.yml").read_text(encoding="utf-8")) or {}
+        propia = yaml.safe_load((memoria.carpeta(crear=False) / "modelos.yml").read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError):
         propia = {}
     return POR_OMISION | {k: v for k, v in propia.items() if k in POR_OMISION and isinstance(v, str)}
 
 
-def modelo(trabajo: str) -> str:
-    """El id exacto (decisión 91), comprobado contra el techo."""
+def modelo(trabajo: str, pedido: str | None = None, *, a_peticion: bool = False) -> str:
+    """El id exacto (decisión 91), comprobado contra el techo. `pedido` (alias
+    o id): el que se eligió para este trabajo en vez del de la tabla (405).
+    Lanza `ValueError` si no vale."""
+    if pedido and str(pedido).strip():
+        return modelos.resolver(str(pedido), a_peticion=a_peticion)
     return modelos.resolver(tabla().get(trabajo) or POR_OMISION[trabajo])
 
 
 def esfuerzo(trabajo: str) -> str:
     return ESFUERZO.get(trabajo, "medium")
+
+
+def por_que_no(pedido) -> str:
+    """Por qué `pedido` no vale (lo que `modelo` rechazó), dicho para el modelo
+    de la conversación: que lo sepa en el mismo turno y se lo diga a él."""
+    pedido = str(pedido or "").strip()
+    if modelos.ALIAS.get(pedido.lower(), pedido) in modelos.A_PETICION:
+        return (f"«{pedido}» sólo si el dueño lo nombra en su mensaje (gasta su uso más rápido que Opus). Usa "
+                f"otro, o dile que si lo quiere con ése te lo pida nombrándolo («con {pedido.lower()}»): un «sí» "
+                "suelto no lo nombra.")
+    return f"no conozco el modelo «{pedido}»: elige uno de {', '.join(modelos.PARA_QUE)}"

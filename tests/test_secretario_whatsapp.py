@@ -57,7 +57,7 @@ def test_su_carpeta_cuelga_de_la_del_secretario(monkeypatch, tmp_path):
     """C-0052: la armaba a mano con `HUB_HOME / "secretario"`. Dónde vive lo del
     secretario lo dice `memoria.carpeta()`; dos sitios que deben coincidir
     acaban no coincidiendo."""
-    monkeypatch.setattr(memoria, "carpeta", lambda: tmp_path / "otra")
+    monkeypatch.setattr(memoria, "carpeta", lambda crear=True: tmp_path / "otra")
     assert whatsapp.carpeta() == tmp_path / "otra" / "whatsapp"
 
 

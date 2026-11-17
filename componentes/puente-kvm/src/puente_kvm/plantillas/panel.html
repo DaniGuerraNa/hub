@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block pagina %}panel{% endblock %}
+{% block contenido %}
+<div class="rejilla-panel">
+  <section class="tarjeta">
+    <div class="fila" style="justify-content: space-between; margin-bottom: 10px">
+      <h2 style="margin:0">Pantalla del Mac</h2>
+      <label class="casilla"><input type="checkbox" id="ver-region" checked> marcar la región del editor</label>
+    </div>
+    <div class="pantalla" id="pantalla" data-ancho="{{ estado.dispositivo.ancho or 1920 }}" data-alto="{{ estado.dispositivo.alto or 1080 }}"
+         data-conectado="{{ 'si' if estado.dispositivo.conectado else 'no' }}">
+      <img id="directo" src="/api/pantalla.mjpg" alt="Pantalla del Mac en directo">
+      <div class="region" id="region"></div>
+    </div>
+    {% if estado.error_conexion %}
+    <div class="aviso riesgo" style="margin-top:12px">
+      <p style="margin:0 0 8px"><b>No hay conexión con el aparato.</b> {{ estado.error_conexion }}</p>
+      <div class="fila"><button data-reconectar>Reintentar</button><a class="boton" href="/ajustes">Revisar los ajustes</a></div>
+    </div>
+    {% elif estado.dispositivo.aviso %}
+    <p class="aviso" style="margin-top:12px">{{ estado.dispositivo.aviso }}</p>
+    {% endif %}
+  </section>
+
+  <aside>
+    <section class="tarjeta">
+      <div class="rotulo">Quién tiene el Mac</div>
+      <div class="control-estado" id="control-estado">…</div>
+      <p class="sub" id="control-ayuda" style="margin-bottom:12px"></p>
+      <div class="pila">
+        <button class="cta grande" data-control="dar" id="boton-dar">Dar el control a Claude</button>
+        <button class="grande" data-control="retomar" id="boton-retomar">Retomar el Mac</button>
+      </div>
+      <p class="tarea" id="tarea"></p>
+    </section>
+
+    <section class="tarjeta">
+      <h2>Leer un documento</h2>
+      <p class="sub" style="margin-bottom:8px">Deja el documento abierto en el editor del Mac. El puente lo recorre página a página desde el principio.</p>
+      <div class="fila">
+        <input id="nombre-lectura" placeholder="Nombre, p. ej. usp_ConciliarMovimientos">
+        <button class="cta" data-leer>Leer</button>
+      </div>
+    </section>
+
+    <section class="tarjeta">
+      <h2>Bitácora</h2>
+      <ul class="bitacora" id="bitacora"></ul>
+    </section>
+  </aside>
+</div>
+
+<div class="rejilla-2" style="margin-top:16px">
+  <section class="tarjeta">
+    <h2>Lecturas</h2>
+    {% if lecturas %}
+    <table>
+      <tr><th>Documento</th><th>Páginas</th><th>Líneas</th><th>Estado</th></tr>
+      {% for r in lecturas %}
+      <tr>
+        <td><a href="/lecturas/{{ r.id }}">{{ r.nombre }}</a></td>
+        <td class="num">{{ r.transcritas }}/{{ r.paginas }}</td>
+        <td class="num">{{ r.lineas or '—' }}</td>
+        <td>
+          {% if r.estado == 'capturando' %}<span class="placa accion">capturando</span>
+          {% elif r.estado in ('error', 'cortada') %}<span class="placa riesgo">{{ r.estado }}</span>
+          {% elif r.verificada %}<span class="placa ok">exacta</span>
+          {% elif r.conflictos %}<span class="placa riesgo">{{ r.conflictos }} conflictos</span>
+          {% elif r.transcritas < r.paginas %}<span class="placa espera">por transcribir</span>
+          {% else %}<span class="placa espera">sin verificar</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}<p class="vacio">Aún no hay lecturas.</p>{% endif %}
+  </section>
+  <section class="tarjeta">
+    <h2>Cambios</h2>
+    {% if cambios %}
+    <table>
+      <tr><th>Cambio</th><th>Tramos</th><th>Estado</th></tr>
+      {% for c in cambios %}
+      <tr>
+        <td><a href="/cambios/{{ c.id }}">{{ c.descripcion }}</a></td>
+        <td class="num">{{ c.tramos|length }}</td>
+        <td>{% include "_estado_cambio.html" %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}<p class="vacio">Claude propone los cambios; aquí los apruebas.</p>{% endif %}
+  </section>
+</div>
+<script>window.PERFIL = {{ estado.perfil | tojson }};</script>
+{% endblock %}

@@ -495,3 +495,75 @@ def test_entregar_a_mano_lleva_la_respuesta_al_panel_elegido(cliente, monkeypatc
     assert pregunta["estado"] == "entregada"
     assert pregunta["slot_id"] == 3
     assert escrito and escrito[0][0] == "%9" and "sí" in escrito[0][1]
+
+
+# ── cada persona en lectura, con «Editar» (C-0370) ────────────────────────────
+
+def _persona(cuerpo: str) -> str:
+    sec = _sec(cuerpo, "personas")
+    return sec.split('class="tarjeta persona"')[1].split('<details class="plegado-permisos"')[0]
+
+
+def test_una_persona_activa_sale_en_lectura_con_editar(cliente):
+    """UI-35: un formulario con «Guardar» por persona, siempre abierto. Se lee
+    cómo se le llama, su estado y si recibe los avisos; el formulario de
+    siempre, entero, tras «Editar»."""
+    _activar(cliente, acciones=["responder"])
+    persona = _persona(cliente.get("/canal").text)
+
+    lectura, editar = persona.split('<details class="editar-fila">')
+    assert "ana" in lectura and 'name="alias"' not in lectura
+    assert "no recibe los avisos" in lectura
+    # Los tres campos van juntos: sin `es_dueno`, la ruta desmarca al dueño.
+    for campo in ('name="alias"', 'name="estado"', 'name="es_dueno"'):
+        assert campo in editar
+
+
+def test_una_persona_pendiente_tiene_su_formulario_a_la_vista_y_guardar_no_lo_cierra(cliente):
+    """Quien acaba de escribir al bot es lo único de esta pantalla que pide
+    una acción tuya: su formulario no va tras «Editar». Dentro de un plegable
+    abierto, guardarla sin activarla lo cerraba hasta recargar (`sin-recarga.js`
+    cierra el plegable de edición al guardar bien): fuera de él no hay nada
+    que cerrar, y sigue así mientras siga pendiente."""
+    for _ in range(2):
+        persona = _persona(cliente.get("/canal").text)
+        assert 'name="alias"' in persona and "editar-fila" not in persona
+        cliente.post("/canal/usuario", data={"user_id": 777, "alias": "ana", "estado": "pendiente"})
+
+
+# ── sólo los proyectos con algo, y un selector para los demás (C-0372) ────────
+
+def test_los_permisos_ensenan_solo_los_proyectos_con_algo_y_un_selector(cliente):
+    """HER-11: por persona, cada proyecto registrado por tres acciones (105
+    casillas con 35) para 8 permisos reales en 2. Se ven los que tienen algo;
+    los demás, en «Dar acceso a otro proyecto»."""
+    con = web.conexion()
+    con.execute("INSERT INTO proyecto (id, nombre) VALUES ('tercero','Tercero')")
+    con.commit()
+    con.close()
+    _activar(cliente, acciones=["responder"])
+
+    permisos = _sec(cliente.get("/canal").text, "personas").split('class="plegado-permisos"')[1]
+
+    assert permisos.count('class="permiso-proy"') == 1 and 'class="proy-nombre">Contabilidad</span>' in permisos
+    selector = permisos.split('class="dar-acceso"')[1].split("</form>")[0]
+    assert "Dar acceso a otro proyecto" in selector
+    assert '<option value="otro">Otro</option>' in selector and '<option value="tercero">Tercero</option>' in selector
+    assert 'value="contab"' not in selector
+    for accion in canal.ACCIONES:
+        assert f'name="accion" value="{accion}"' in selector
+
+
+def test_dar_acceso_desde_el_selector_concede_por_la_ruta_de_siempre(cliente):
+    _activar(cliente, acciones=["responder"])
+    r = cliente.post("/canal/permiso", data={"user_id": 777, "proyecto_id": "otro", "accion": "leer-estado"},
+                     follow_redirects=False)
+    assert r.status_code == 303 and "error=" not in r.headers["location"]
+    con = web.conexion()
+    try:
+        assert canal.puede(con, 777, "otro", "leer-estado") is True
+    finally:
+        con.close()
+    permisos = _sec(cliente.get("/canal").text, "personas").split('class="plegado-permisos"')[1]
+    assert permisos.count('class="permiso-proy"') == 2
+    assert 'class="dar-acceso"' not in permisos, "ya no queda otro proyecto que ofrecer"

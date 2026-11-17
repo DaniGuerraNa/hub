@@ -44,8 +44,7 @@ def _sesion(directorio, sid, pedidos, cuando="2026-10-22T10:00:00Z", titulo=None
 @pytest.fixture
 def registro(tmp_path, monkeypatch):
     raiz = tmp_path / "claude-projects"
-    monkeypatch.setattr(transcripts, "TRANSCRIPTS", raiz)
-    conversaciones._FICHAS.clear()
+    monkeypatch.setenv("HUB_TRANSCRIPTS", str(raiz))
     return raiz
 
 
@@ -101,6 +100,20 @@ def test_no_se_retoma_una_ajena_ni_una_abierta_ni_un_id_raro(con, slot_demo, reg
     _con_panel_vivo(con, UNO)
     with pytest.raises(ValueError, match="ya está abierta"):
         conversaciones.retomable(con, slot_demo, UNO)
+
+
+def test_los_slots_y_el_indice_de_sesiones_comparten_una_sola_ficha_recordada(
+        con, slot_demo, registro, monkeypatch):
+    """Había dos: la de los slots aquí y ninguna en `/api/sesiones`, que
+    releía entero lo que los slots ya tenían (C-0310)."""
+    _sesion(registro / transcripts.slug_de("/tmp/demo"), UNO, ["hola"])
+    leidas = []
+    original = transcripts.leer_lineas
+    monkeypatch.setattr(transcripts, "leer_lineas", lambda r: leidas.append(r) or original(r))
+    conversaciones.de_slot(con, slot_demo)
+    transcripts.listar_sesiones([Proyecto(id="demo", nombre="Demo", asiento="/tmp/demo")])
+    conversaciones.de_slot(con, slot_demo)
+    assert len(leidas) == 1
 
 
 def test_retomar_abre_una_ventana_del_slot_con_resume(cliente, registro, monkeypatch):  # noqa: F811

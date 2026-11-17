@@ -12,7 +12,9 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import time
+from collections.abc import Callable
 
 from . import version as _version
 from . import (busqueda, conexiones, config, consumo, copia_base, db, intercambio, maquina, modelos, orquestador,
@@ -175,8 +177,13 @@ def capturar(con: sqlite3.Connection, atribuidor: Atribuidor) -> int | None:
     """Toma una muestra. Devuelve el id del snapshot, o None si tmux no responde."""
     pid = tmux.servidor_pid()
     paneles = tmux.listar_paneles()
-    if pid is None and not paneles:
+    if not paneles:
         # Sin servidor: no se escribe un snapshot vacío que pise al bueno.
+        # Y sin paneles aunque haya PID, igual (C-0283): un servidor vivo
+        # tiene al menos uno, y el PID y la lista son dos llamadas. Si muere
+        # entre ellas —el corte exacto para el que existe esto— llegaba un PID
+        # vivo con la lista vacía, se escribía la muestra vacía con el PID
+        # viejo y el ciclo siguiente preservaba ésa en vez de la buena.
         detectar_corte(con, None)
         return None
 
@@ -228,7 +235,13 @@ def capturar(con: sqlite3.Connection, atribuidor: Atribuidor) -> int | None:
                  p["cwd"], p["titulo"], p["comando"], etiqueta, proyecto_id, slot_id,
                  conversaciones.get(p["pane_id"]), ocupados[p["pane_id"]]),
             )
-            if slot_id:
+            # 🔴 Sólo si su agente está trabajando (decisión 393), no por tener
+            # una ventana: con eso, una `bash` olvidada o un slot de encargos
+            # sin mensajes desde hacía meses salía como trabajo de hoy y
+            # encabezaba la lista (C-0297, regla dura 13). Lo que se hace en
+            # una shell a mano no se ve desde aquí, y se acepta: es mejor una
+            # fecha que se queda corta que una que miente.
+            if slot_id and ocupados[p["pane_id"]]:
                 con.execute(
                     "UPDATE slot SET ultima_actividad=? WHERE id=?", (ahora(), slot_id)
                 )
@@ -290,18 +303,85 @@ def un_ciclo(con: sqlite3.Connection) -> int | None:
         print(f"[snapshotter] el barrido de espejos falló: {exc}", flush=True)
 
     proyectos = registry.cargar()
-    registry.sincronizar(con, proyectos)
-    conexiones.sincronizar(con, registry.cargar_conexiones())
+    # 🔴 Cada sincronización en su `try`, antes de muestrear (regla dura 2,
+    # decisión 376): un `alias` repetido en `conexiones:` daba un error de
+    # integridad en cada ciclo y, al ir en el mismo paso, no se tomaba ni una
+    # muestra más mientras el latido seguía vivo. Lo derivado se queda como
+    # estaba hasta que se arregle el registro; la muestra no espera.
+    for clave, sincronizar in (
+        ("el registro de proyectos", lambda: registry.sincronizar(con, proyectos)),
+        ("las conexiones", lambda: conexiones.sincronizar(con, registry.cargar_conexiones())),
+    ):
+        try:
+            sincronizar()
+            _racha_lenta(clave, None)
+        except Exception as exc:  # noqa: BLE001 — se dice una vez por racha y se sigue (regla 21)
+            _racha_lenta(clave, f"no se pudo sincronizar {clave}: {type(exc).__name__}: {exc}")
     return capturar(con, Atribuidor(proyectos))
 
 
-def ciclo_lento(con: sqlite3.Connection) -> dict:
+# Qué medición del ciclo lento está fallando y con qué mensaje (EJE-27). Una
+# racha se dice al empezar y al terminar, no cada diez minutos: «docker no está
+# instalado» salió 787 veces en seis días y tapaba lo que sí había que leer.
+# Mismo criterio que `rele_base.pasos`, aquí aparte para no tocar los relés.
+_RACHAS_LENTO: dict[str, str] = {}
+
+
+def _racha_lenta(clave: str, mensaje: str | None) -> None:
+    """Apunta al empezar una racha (o si cambia el mensaje) y al terminarla.
+
+    Nunca lanza: decirlo mal no puede tumbar el bucle (regla dura 2).
+    """
+    try:
+        if mensaje is None:
+            if _RACHAS_LENTO.pop(clave, None) is not None:
+                print(f"[snapshotter] {clave}: vuelve a medirse", flush=True)
+        elif _RACHAS_LENTO.get(clave) != mensaje:
+            _RACHAS_LENTO[clave] = mensaje
+            print(f"[snapshotter] {mensaje} (se apunta una vez por racha)", flush=True)
+    except Exception:  # noqa: BLE001 - el aviso no puede romper el ciclo
+        pass
+
+
+def _decir_paso(al_paso: Callable | None, clave: str, duro: float | None = None,
+                fallo: str | None = None) -> None:
+    """Avisa a quien sigue el ciclo lento de que un paso empieza (`duro` None)
+    o de cuánto duró y, si lanzó, con qué. Nunca lanza: apuntarlo mal no puede
+    dejar sin medir (regla dura 2), pero se dice (regla 21)."""
+    if al_paso is None:
+        return
+    try:
+        al_paso(clave, duro, fallo)
+    except Exception as exc:  # noqa: BLE001
+        _racha_lenta("el paso", f"no se pudo apuntar el paso del ciclo lento: {exc}")
+
+
+def ciclo_lento(con: sqlite3.Connection, al_paso: Callable | None = None,
+                sai: bool = True) -> dict:
     """Lo que consulta procesos externos: git y docker.
 
     Cada medición va en su propio `try`: que docker no esté levantado no puede
     dejar sin medir el respaldo de los repos, que es lo que de verdad importa.
+
+    `al_paso(clave, duro, fallo)` se llama al empezar cada paso (`duro` None)
+    y al acabarlo, con los segundos que tardó y, si lanzó, con qué (C-0309):
+    desde que esto corre en su hilo, un paso colgado ya no para el latido, así
+    que hay que poder decir cuál es; y como cada paso va en su `try`, una
+    vuelta puede acabar con todos fallando, y eso también hay que poder
+    decirlo. Lo que «se conserva» porque no se pudo preguntar (docker
+    apagado, sin git) no es un fallo. El registro cuenta como paso aunque no
+    mida nada: es un `stat` por ruta sobre el disco de Windows, lo que se
+    cuelga.
+
+    `sai=False` cuando esto corre a la vez que el latido: el SAI lo mide
+    sólo él (decisión 249; el porqué, en `maquina.medir`).
     """
-    proyectos = registry.cargar()
+    _decir_paso(al_paso, "registro")
+    empieza = time.monotonic()
+    try:
+        proyectos = registry.cargar()
+    finally:
+        _decir_paso(al_paso, "registro", time.monotonic() - empieza)
     resultado = {"repos": 0, "servicios": 0, "indice": 0}
     for clave, funcion in (
         ("repos", lambda: repos.escanear(con, proyectos)),
@@ -315,7 +395,7 @@ def ciclo_lento(con: sqlite3.Connection) -> dict:
         # La salud del equipo: `nvidia-smi` y un `powershell`, ~1 s. Caro para
         # el latido de 20 s y barato aquí. Importa sobre todo cuando no hay
         # nadie delante, que es cuando nadie oye el ventilador.
-        ("maquina", lambda: maquina.escanear(con)),
+        ("maquina", lambda: maquina.escanear(con, sai=sai)),
         # La copia diaria de la base (decisión 277): una por día, así que
         # aquí casi siempre es mirar que la de hoy existe y seguir.
         ("copia_base", lambda: copia_base.hacer(con)),
@@ -328,6 +408,9 @@ def ciclo_lento(con: sqlite3.Connection) -> dict:
         # El audio de un dictado que falló, a los diez días (decisión 362).
         ("dictados", lambda: transcribir.podar_dictados()),
     ):
+        _decir_paso(al_paso, clave)
+        empieza = time.monotonic()
+        fallo = None
         try:
             resultado[clave] = funcion()
         except (servicios.NoRespondio, repos.RespaldoNoMedido,
@@ -337,10 +420,168 @@ def ciclo_lento(con: sqlite3.Connection) -> dict:
             # Con git ausente vale lo mismo, y aún más: un cero de respaldo que
             # en realidad significa «no he mirado» es la peor cifra del hub.
             resultado[clave] = None
-            print(f"[snapshotter] {clave}: {exc}; se conserva lo anterior", flush=True)
+            _racha_lenta(clave, f"{clave}: {exc}; se conserva lo anterior")
         except Exception as exc:
-            print(f"[snapshotter] {clave} falló: {exc}", flush=True)
+            fallo = f"{type(exc).__name__}: {exc}"
+            _racha_lenta(clave, f"{clave} falló: {exc}")
+        else:
+            _racha_lenta(clave, None)
+        _decir_paso(al_paso, clave, time.monotonic() - empieza, fallo)
     return resultado
+
+
+class CicloLento:
+    """El ciclo lento en su propio hilo, con su conexión y de uno en uno (C-0309).
+
+    Dentro de la vuelta, cada diez minutos la muestra tardaba 69–75 s en vez
+    de 20 (medido), y con ella los programados y el despertar del orquestador:
+    justo lo que la regla dura 14 dice que no puede pasar. Aquí el latido sólo
+    **pide** la vuelta lenta y sigue.
+
+    - **Su conexión**, abierta dentro del hilo: la del latido lleva la
+      transacción de la muestra y SQLite no deja compartirla entre hilos. Dos
+      conexiones escribiendo no es nuevo —la web y los relés ya escriben la
+      misma base desde otros procesos—, y en WAL el que llega segundo espera.
+    - **De uno en uno, sin cola**: si el anterior sigue, `pedir` dice que no y
+      no guarda nada. Encolar haría que tras media hora de disco colgado
+      salieran tres escaneos seguidos justo al volver.
+    - **Regla dura 2**: cada vuelta en su `try`; si aun así el hilo muere, el
+      siguiente `pedir` levanta otro; y si no se puede levantar, `pedir` lanza
+      y quien llama mide `dentro`, como antes de esto.
+    - **Lo que le pasa se ve desde fuera**: `estado()` viaja en el latido y lo
+      juzga `salud`. Un hilo colgado en un `stat` no para nada, así que sin
+      eso sería un silencio.
+    """
+
+    def __init__(self, trabajo: Callable | None = None, conectar: Callable | None = None) -> None:
+        # Por nombre y en el momento de llamar, no la función de ahora: quien
+        # sustituye `ciclo_lento` o `db.conectar` después de crear esto (los
+        # tests) tiene que ver su sustituto.
+        # Sin el SAI: con esto, lo mide sólo el latido, corra la vuelta en
+        # el hilo o `dentro`.
+        self._trabajo = trabajo or (lambda con, al_paso: ciclo_lento(con, al_paso, sai=False))
+        self._conectar = conectar or (lambda: db.conectar())
+        self._cerrojo = threading.Lock()
+        self._pedido = threading.Event()
+        self._hilo: threading.Thread | None = None
+        self._estado: dict = {
+            # Desde cuándo existe: si nunca acabó una vuelta, «lleva sin
+            # acabar» se cuenta desde aquí.
+            "desde": ahora(),
+            "corriendo": False,
+            # True si la última vuelta corrió en el hilo del latido porque el
+            # suyo no arrancó.
+            "dentro": False,
+            "empezo": None,
+            # Sólo la que acabó BIEN: una vuelta que lanza no cuenta, o un
+            # ciclo lento que falla siempre parecería sano.
+            "acabo": None,
+            "duro": None,
+            "paso": None,
+            "paso_desde": None,
+            "pasos": {},
+            "fallo": None,
+            # Los pasos que lanzaron en la última vuelta acabada, con qué. La
+            # vuelta «acaba bien» aunque fallen todos (cada uno va en su
+            # `try`): sin esto, un ciclo lento que no mide nada parecería sano.
+            "fallaron": {},
+        }
+        self._fallan_en_esta: dict[str, str] = {}
+
+    def estado(self) -> dict:
+        """Una copia, lista para escribirse como JSON en el latido."""
+        with self._cerrojo:
+            return {**self._estado, "pasos": dict(self._estado["pasos"]),
+                    "fallaron": dict(self._estado["fallaron"])}
+
+    def pedir(self) -> bool:
+        """Pide una vuelta. False si la anterior sigue: ni se solapa ni se encola.
+
+        Si el hilo no existe o murió, levanta otro; si no se puede levantar,
+        lanza lo que lance `Thread.start`, y quien llama decide (la vuelta del
+        snapshotter mide `dentro`)."""
+        with self._cerrojo:
+            vivo = self._hilo is not None and self._hilo.is_alive()
+            if vivo and self._estado["corriendo"]:
+                return False
+            if not vivo:
+                hilo = threading.Thread(target=self._bucle, name="ciclo-lento", daemon=True)
+                hilo.start()
+                self._hilo = hilo
+            self._empezar(dentro=False)
+            self._pedido.set()
+            return True
+
+    def dentro(self, con: sqlite3.Connection) -> None:
+        """La vuelta en el hilo y con la conexión de quien llama: la salida si
+        el hilo no arranca. Lleva la misma cuenta, y deja dicho que fue dentro
+        para que Salud lo enseñe: así la muestra vuelve a esperar al ciclo
+        lento, que es lo que esto existe para evitar."""
+        with self._cerrojo:
+            self._empezar(dentro=True)
+        empieza = time.monotonic()
+        fallo = None
+        try:
+            self._trabajo(con, self._al_paso)
+        except Exception as exc:
+            fallo = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            self._acabar(empieza, fallo)
+
+    def _empezar(self, *, dentro: bool) -> None:
+        # `fallaron` no se limpia aquí: mientras corre la vuelta nueva sigue
+        # valiendo lo de la última acabada.
+        self._fallan_en_esta = {}
+        self._estado.update(corriendo=True, dentro=dentro, empezo=ahora(),
+                            paso=None, paso_desde=None, pasos={}, fallo=None)
+
+    def _acabar(self, empieza: float, fallo: str | None) -> None:
+        with self._cerrojo:
+            self._estado.update(corriendo=False, paso=None, paso_desde=None, fallo=fallo,
+                                fallaron=dict(self._fallan_en_esta))
+            if fallo is None:
+                self._estado.update(acabo=ahora(), duro=round(time.monotonic() - empieza, 1))
+
+    def _al_paso(self, clave: str, duro: float | None = None, fallo: str | None = None) -> None:
+        with self._cerrojo:
+            if duro is None:
+                self._estado.update(paso=clave, paso_desde=ahora())
+            else:
+                self._estado["pasos"][clave] = round(duro, 1)
+                self._estado.update(paso=None, paso_desde=None)
+                if fallo:
+                    self._fallan_en_esta[clave] = fallo
+
+    def _bucle(self) -> None:
+        con: sqlite3.Connection | None = None
+        while True:
+            self._pedido.wait()
+            self._pedido.clear()
+            empieza = time.monotonic()
+            # Si sale algo que no es `Exception` el hilo muere, pero no con
+            # `corriendo` puesto: el `finally` lo deja dicho y `pedir` levanta otro.
+            fallo: str | None = "el hilo del ciclo lento murió a media vuelta"
+            try:
+                if con is None:
+                    con = self._conectar()
+                self._trabajo(con, self._al_paso)
+                fallo = None
+            except Exception as exc:  # noqa: BLE001 — el hilo no muere por una vuelta mala (regla dura 2)
+                fallo = f"{type(exc).__name__}: {exc}"
+                print(f"[snapshotter] ciclo lento fallido: {fallo}", flush=True)
+                # Tras un fallo no se sabe cómo quedó la conexión (una
+                # transacción a medias, la base que no abría): la siguiente
+                # vuelta abre otra.
+                if con is not None:
+                    try:
+                        con.close()
+                    except Exception as exc_cierre:  # noqa: BLE001
+                        print(f"[snapshotter] la conexión del ciclo lento no cerró: {exc_cierre}",
+                              flush=True)
+                    con = None
+            finally:
+                self._acabar(empieza, fallo)
 
 
 def ciclo_mensajes(con: sqlite3.Connection) -> dict:
@@ -365,18 +606,53 @@ def ciclo_mensajes(con: sqlite3.Connection) -> dict:
     return programados.entregar_pendientes(con)
 
 
-def vuelta(con: sqlite3.Connection, ciclos: int) -> None:
+def _pedir_lo_caro(lento: CicloLento | None) -> bool:
+    """Toca medir lo caro: se le pide al hilo. Devuelve True si no hay hilo al
+    que pedírselo y hay que medirlo dentro del latido, como antes de C-0309:
+    más lento, pero el respaldo y la copia diaria de la base no se quedan sin
+    hacer."""
+    if lento is None:
+        return True
+    try:
+        pedido = lento.pedir()
+    except Exception as exc:  # noqa: BLE001 — sin hilo se mide dentro, y se dice
+        _racha_lenta("el hilo del ciclo lento",
+                     f"el hilo del ciclo lento no arranca ({exc}): se mide dentro del latido")
+        return True
+    _racha_lenta("el hilo del ciclo lento", None)
+    # Que el anterior siga a los diez minutos es un disco colgado o un escaneo
+    # eterno: no se lanza otro encima, y se dice una vez por racha.
+    _racha_lenta("el ciclo lento", None if pedido else
+                 "el ciclo lento anterior no ha acabado: no se lanza otro encima")
+    return False
+
+
+def vuelta(con: sqlite3.Connection, ciclos: int, lento: CicloLento | None = None) -> None:
     """Una vuelta del demonio, cada paso en su `try` (reglas duras 2 y 21,
     decisión 376): uno que falla siempre no puede dejar sin hacer los demás.
 
     El 7-nov una carpeta de OneDrive ilegible tumbó el muestreo durante
     minutos, y con él los programados y el despertar del orquestador, que
     venían detrás en el mismo `try`.
+
+    Con `lento`, lo caro no se mide aquí: se le pide a su hilo y la vuelta
+    sigue (C-0309). Sin él se mide dentro, como siempre.
     """
     # El latido va primero y aparte: es lo que dice «estoy vivo» aunque no
-    # haya tmux que muestrear o el ciclo falle (decisión 289).
+    # haya tmux que muestrear o el ciclo falle (decisión 289). Y el estado del
+    # ciclo lento se lee antes y en su `try`: un dato de más no puede dejar al
+    # hub sin latido.
+    estado_lento = None
+    if lento is not None:
+        try:
+            estado_lento = lento.estado()
+        except Exception as exc:
+            print(f"[snapshotter] estado del ciclo lento: {exc}", flush=True)
     try:
-        salud.latir()
+        if estado_lento is None:
+            salud.latir()
+        else:
+            salud.latir(lento=estado_lento)
     except Exception as exc:
         print(f"[snapshotter] latido: {exc}", flush=True)
     try:
@@ -398,32 +674,57 @@ def vuelta(con: sqlite3.Connection, ciclos: int) -> None:
             print(f"[snapshotter] orquestador: {hecho}", flush=True)
     except Exception as exc:
         print(f"[snapshotter] orquestador falló: {exc}", flush=True)
+    sai_medido = False
     try:
         # Al arrancar se mide una vez: tras un reinicio de WSL, el panorama
         # no puede estar en blanco esperando diez minutos.
-        if ciclos % CADA_CUANTOS_CICLOS_LO_CARO == 0:
-            ciclo_lento(con)
-        elif ciclos % CADA_CUANTOS_CICLOS_EL_SAI == 0:
-            # Aparte del ciclo lento y más a menudo: el SAI aguanta ~22 min
-            # y enterarse del corte a los diez gastaría media reserva
-            # esperando. Cuesta un `powershell`, así que cabe (regla 14).
-            # `elif` para no medirlo dos veces en el mismo ciclo.
+        if ciclos % CADA_CUANTOS_CICLOS_LO_CARO == 0 and _pedir_lo_caro(lento):
+            if lento is None:
+                ciclo_lento(con)
+                sai_medido = True
+            else:
+                lento.dentro(con)
+    except Exception as exc:
+        print(f"[snapshotter] ciclo lento: {exc}", flush=True)
+    try:
+        # Aparte del ciclo lento y más a menudo: el SAI aguanta ~22 min
+        # y enterarse del corte a los diez gastaría media reserva
+        # esperando. Cuesta un `powershell`, así que cabe (regla 14).
+        # Se queda en el latido, y SÓLO en él (decisión 249): el ciclo lento
+        # de un `CicloLento` no lo mide, porque su lectura, guardada segundos
+        # después, pisaba la más fresca de aquí. Sólo se salta sin hilo
+        # (`lento=None`), donde el ciclo lento acaba de medirlo aquí mismo.
+        if not sai_medido and ciclos % CADA_CUANTOS_CICLOS_EL_SAI == 0:
             maquina.escanear_ups(con)
     except Exception as exc:
-        print(f"[snapshotter] ciclo lento o sai: {exc}", flush=True)
+        print(f"[snapshotter] sai: {exc}", flush=True)
+
+
+def espera_hasta_la_siguiente(transcurrido: float) -> float:
+    """Cuánto duerme el bucle tras una vuelta que tardó `transcurrido` segundos.
+
+    A plazo fijo: dormir el intervalo entero después de cada vuelta daba un
+    periodo de 20 s más lo que durase (22,9 s de media, medido), y «cada 30
+    vueltas» ya no eran diez minutos. Al menos un segundo: una vuelta más
+    larga que el intervalo no puede dejar el bucle girando sin pausa."""
+    return max(1.0, config.INTERVALO_SEGUNDOS - transcurrido)
 
 
 def main() -> None:  # pragma: no cover - bucle del demonio
     config.asegurar_home()
     con = db.abrir()
+    # El hilo se levanta con el primer `pedir`, en la primera vuelta. Si no
+    # arranca, esa vuelta y las siguientes miden dentro (`_pedir_lo_caro`).
+    lento = CicloLento()
     ciclos = 0
     while True:
+        empieza = time.monotonic()
         try:
-            vuelta(con, ciclos)
+            vuelta(con, ciclos, lento)
         except Exception as exc:  # el demonio nunca muere por un ciclo malo
             print(f"[snapshotter] ciclo fallido: {exc}", flush=True)
         ciclos += 1
-        time.sleep(config.INTERVALO_SEGUNDOS)
+        time.sleep(espera_hasta_la_siguiente(time.monotonic() - empieza))
 
 
 if __name__ == "__main__":  # pragma: no cover

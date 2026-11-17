@@ -1,0 +1,7 @@
+{% if c.estado == 'propuesto' %}<span class="placa espera">espera tu aprobación</span>
+{% elif c.estado == 'aprobado' %}<span class="placa accion">aprobado</span>
+{% elif c.estado == 'escribiendo' %}<span class="placa accion">escribiendo</span>
+{% elif c.estado == 'escrito' %}<span class="placa espera">escrito, sin guardar</span>
+{% elif c.estado == 'verificado' %}<span class="placa ok">verificado</span>
+{% elif c.estado == 'rechazado' %}<span class="placa">rechazado</span>
+{% else %}<span class="placa riesgo">{{ c.estado }}</span>{% endif %}

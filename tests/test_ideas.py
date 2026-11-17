@@ -216,3 +216,58 @@ def test_lo_que_no_va_a_entrar_no_se_lee(con, monkeypatch):
     assert "no entró: b.txt" in aviso and "hasta 1" in aviso
     (i,) = ideas.listar(con)
     assert [a["archivo"] for a in ideas.adjuntos(i["id"])] == ["a.txt"]
+
+
+# ── una idea que nace de un hueco del secretario (C-0252) ────────────────────
+
+def test_apuntar_con_hueco_deja_la_marca_al_final_del_detalle(con):
+    i = ideas.apuntar(con, "poder cancelar una cita", "con su motivo", origen="secretario",
+                      hueco="cancelar una   cita")
+
+    idea = ideas.ver(con, i)
+    assert idea["detalle"] == "con su motivo\nHueco: cancelar una cita"
+    assert ideas.hueco_de(idea) == "cancelar una cita"
+
+
+def test_la_marca_del_hueco_sobrevive_a_un_detalle_larguisimo(con):
+    i = ideas.apuntar(con, "algo", "x" * (ideas.LARGO_DETALLE + 500), hueco="mover un archivo")
+
+    idea = ideas.ver(con, i)
+    assert len(idea["detalle"]) <= ideas.LARGO_DETALLE and ideas.hueco_de(idea) == "mover un archivo"
+
+
+def test_sin_hueco_la_idea_se_apunta_como_siempre(con):
+    i = ideas.apuntar(con, "algo", "su detalle")
+
+    idea = ideas.ver(con, i)
+    assert idea["detalle"] == "su detalle" and ideas.hueco_de(idea) == ""
+
+
+def test_el_secretario_pasa_el_hueco_limpio_a_la_misma_puerta(con):
+    from hub.secretario import memoria, piezas
+    m = memoria.conectar()
+    try:
+        piezas.acciones()["apuntar_idea"].ejecutar(
+            m, {"texto": "cancelar citas", "hueco": "cancelar una cita con sk-ant-api03-" + "a" * 40})
+    finally:
+        m.close()
+    (i,) = ideas.listar(con)
+    assert ideas.hueco_de(i).startswith("cancelar una cita") and "sk-ant-api03" not in i["detalle"]
+
+
+def test_no_se_hacer_sigue_sin_crear_ideas_y_pregunta_antes_de_apuntar(con):
+    from hub.secretario import herramientas, memoria
+    m = memoria.conectar()
+    try:
+        r = herramientas.todas()["no_se_hacer"].funcion(m, {"que": "cancelar una cita"})
+    finally:
+        m.close()
+    assert r["hecho"] is True and ideas.listar(con) == []
+    assert "PREGÚNTALE" in r["nota"] and r["hueco"] == "cancelar una cita"
+    assert "pregunta" in herramientas.todas()["no_se_hacer"].descripcion.lower()
+
+
+def test_el_sistema_dice_que_se_pregunta_antes_de_apuntar_y_antes_de_mandar_trabajar():
+    from hub.secretario import conversacion
+    assert "¿lo apunto como mejora en el tablero?" in conversacion.SISTEMA
+    assert "Nunca apuntes la idea ni la mandes trabajar sin que él lo diga" in conversacion.SISTEMA

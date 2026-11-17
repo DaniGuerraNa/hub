@@ -59,6 +59,29 @@ def test_el_yaml_manda_lo_que_se_quita_desaparece(con):
     assert [f[0] for f in con.execute("SELECT alias FROM conexion")] == ["nueva"]
 
 
+def test_unas_conexiones_que_no_cambian_no_se_vuelven_a_escribir(con, tmp_path):
+    """C-0275: borrar y reinsertar las conexiones cada 20 s para dejarlas
+    igual era escritura gratuita en el disco."""
+    lista = [Conexion(alias="vps", host="h", proyectos=["facturador", "hub"],
+                      referencia_secreto=f"{tmp_path}/config#vps")]
+    conexiones.sincronizar(con, lista)
+    antes = con.total_changes
+    assert conexiones.sincronizar(con, lista) is False
+    assert con.total_changes == antes
+
+
+def test_un_puntero_que_aparece_se_refleja_aunque_el_yaml_no_cambie(con, tmp_path):
+    """Lo que se compara es lo que se escribiría, no el YAML: que el archivo
+    del puntero aparezca cambia `puntero_ok` sin tocar `projects.yml`."""
+    archivo = tmp_path / "config"
+    lista = [Conexion(alias="vps", referencia_secreto=f"{archivo}#vps")]
+    conexiones.sincronizar(con, lista)
+    archivo.write_text("x", encoding="utf-8")
+
+    assert conexiones.sincronizar(con, lista) is True
+    assert con.execute("SELECT puntero_ok FROM conexion").fetchone()[0] == 1
+
+
 def test_se_cargan_del_mismo_projects_yml(tmp_path):
     """Van en el mismo archivo a propósito: un segundo sitio que recordar es
     exactamente el problema que el hub existe para resolver."""

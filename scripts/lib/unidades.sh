@@ -7,14 +7,12 @@
 SERVICIOS_HUB="hub-web hub-snapshotter hub-canal hub-encargos hub-secretario"
 
 generar_unidades() {
-  local uv servicio destino
-  uv=$(command -v uv)
+  local servicio destino
   mkdir -p "$UNIDADES"
   for servicio in $SERVICIOS_HUB; do
     destino="$UNIDADES/$servicio.service"
     sed -e "s|@RAIZ@|$RAIZ|g" \
         -e "s|@HUB_HOME@|$HUB_HOME|g" \
-        -e "s|@UV@|$uv|g" \
         -e "s|@PATH@|$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin|g" \
         -e "s|@HOST@|$HUB_HOST|g" \
         -e "s|@PUERTO@|$HUB_PORT|g" \

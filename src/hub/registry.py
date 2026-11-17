@@ -16,13 +16,14 @@ import os
 import re
 import sqlite3
 import tempfile
+import threading
 from pathlib import Path
 
 import yaml
 
 from typing import get_args
 
-from . import config
+from . import config, db, recordar, tiempos
 from .models import Conexion, Dominio, Proyecto, Ruta
 
 
@@ -112,7 +113,7 @@ def _escribir_atomico(ruta: Path, texto: str) -> None:
         raise
 
 
-class _SinDuplicados(yaml.SafeLoader):
+class _SinDuplicados(config.cargador_yaml()):
     """YAML que se queja si una clave aparece dos veces.
 
     🔴 Por defecto PyYAML se queda con la última y no dice nada. En un registro
@@ -136,7 +137,9 @@ def _mapa_sin_duplicados(loader, nodo, deep=False):
                 clave.start_mark,
             )
         visto.add(k)
-    return yaml.SafeLoader.construct_mapping(loader, nodo, deep)
+    # Del constructor y no de `SafeLoader`: el cargador puede ser el de libyaml
+    # (C-0279), que comparte constructor pero no analizador.
+    return yaml.constructor.SafeConstructor.construct_mapping(loader, nodo, deep)
 
 
 _SinDuplicados.add_constructor(
@@ -144,9 +147,14 @@ _SinDuplicados.add_constructor(
 )
 
 
-def _leer(ruta: Path | None) -> dict:
+def _leer(ruta: Path | None, *, estricto: bool = False) -> dict:
     ruta = ruta or config.projects_yml()
     if not ruta.exists():
+        # Para quien protege con el registro (`estricto`), que no esté —la
+        # ruta mal puesta, el disco sin montar— es no saber, como que no se
+        # lea: devolver «sin proyectos» abría la red (C-0314, EJE-26).
+        if estricto:
+            raise YamlInvalido(f"No encuentro `{ruta}`: sin el registro no sé qué proyectos hay.")
         return {}
     try:
         crudo = ruta.read_text(encoding="utf-8")
@@ -171,8 +179,15 @@ def _leer(ruta: Path | None) -> dict:
         raise YamlInvalido(f"`{ruta}` no es YAML válido.\n\n{exc}") from exc
 
 
-def cargar(ruta: Path | None = None) -> list[Proyecto]:
+def cargar(ruta: Path | None = None, *, estricto: bool = False) -> list[Proyecto]:
     """Los proyectos declarados, o `YamlInvalido` diciendo qué está mal.
+
+    `estricto`: un patrón que no se deja leer lanza su `OSError` en vez de
+    servir su última expansión buena (o ninguna) y marcarlo en
+    `Proyecto.patrones_sin_leer` (C-0435), y un registro que no existe lanza
+    `YamlInvalido` en vez de dar la lista vacía. Es para quien protege con
+    ellas (`orden_pc.rutas_vetadas`): ahí una ruta que falta abre la red
+    (EJE-26, C-0314).
 
     🔴 Todo error de formato sale por `YamlInvalido` y ninguno como `KeyError`,
     `TypeError` o `AttributeError` crudos. La diferencia se midió: de 20
@@ -183,7 +198,7 @@ def cargar(ruta: Path | None = None) -> list[Proyecto]:
     propósito (decisión 7), así que equivocarse al escribirlo es lo normal, no
     un caso raro.
     """
-    datos = _leer(ruta)
+    datos = _leer(ruta, estricto=estricto)
     if not isinstance(datos, dict):
         raise YamlInvalido(
             "`projects.yml` debe empezar por `proyectos:` con la lista debajo."
@@ -221,9 +236,13 @@ def cargar(ruta: Path | None = None) -> list[Proyecto]:
         asiento = _normalizar(str(crudo["asiento"])) if crudo.get("asiento") else None
         try:
             rutas: list[Ruta] = []
+            sin_leer: list[str] = []
             for r in declaradas:
                 if isinstance(r, dict) and "patron" in r:
-                    rutas.extend(_expandir_patron(asiento, str(r["patron"]), id_))
+                    expandidas, leido = _expandir_patron(asiento, str(r["patron"]), id_, estricto=estricto)
+                    rutas.extend(expandidas)
+                    if not leido:
+                        sin_leer.append(str(r["patron"]))
                 elif isinstance(r, dict):
                     rutas.append(Ruta(ruta=_normalizar(r["ruta"]), tipo=r.get("tipo", "repo")))
                 else:
@@ -248,6 +267,7 @@ def cargar(ruta: Path | None = None) -> list[Proyecto]:
                     status=crudo.get("status", "activo"),
                     nota=crudo.get("nota", ""),
                     contenedores=[str(c) for c in crudo.get("contenedores", []) or []],
+                    patrones_sin_leer=sin_leer,
                 )
             )
         except Exception as exc:  # pydantic y cía.
@@ -539,8 +559,53 @@ def _normalizar(ruta: str) -> str:
     return str(Path(ruta).expanduser()).rstrip("/")
 
 
-def _expandir_patron(asiento: str | None, patron: str, id_: str) -> list[Ruta]:
-    """`- patron: "*/repos/*"` → un `Ruta` por cada repo git que encaje (decisión 150).
+#: Cuánto se fía lo que encontró un `patron` (C-0415): un repo recién clonado
+#: debajo tarda hasta esto en aparecer. Lo aceptó el dueño el 13-nov.
+PLAZO_PATRON = 60
+
+
+def _coincidencias(raiz: Path, relativo: str) -> tuple[str, ...]:
+    """Las carpetas con `.git` que encajan en `relativo` bajo `raiz`, ordenadas.
+
+    Sin memoria: es lo caro (un `stat` por candidata, sobre 9p en el disco de
+    Windows). `()` si la raíz no existe; `OSError` si existe y no se deja leer.
+    Una tupla de cadenas, para que lo recordado no lo pueda cambiar nadie."""
+    if not raiz.is_dir():
+        return ()
+    return tuple(sorted(
+        str(c).rstrip("/") for c in raiz.glob(relativo)
+        if c.is_dir() and (c / ".git").exists()
+    ))
+
+
+#: Los patrones `(id, raíz, relativo)` que están en racha de no dejarse leer,
+#: para decirlo al empezar y al acabar y no en cada lectura: el latido lee el
+#: registro cada 20 s y una racha de OneDrive dura horas (regla 21 sin ruido).
+#: No guarda nada leído: lo leído vive en `recordar`.
+_ILEGIBLES: set[tuple[str, str, str]] = set()
+_CERROJO_ILEGIBLES = threading.Lock()
+
+
+def _decir_racha(racha: tuple[str, str, str], mensaje: str | None) -> None:
+    """`mensaje` al empezar una racha de un patrón ilegible; con None, que
+    terminó, si había una."""
+    with _CERROJO_ILEGIBLES:
+        if mensaje is None:
+            if racha not in _ILEGIBLES:
+                return
+            _ILEGIBLES.discard(racha)
+            mensaje = f"[registro] «{racha[0]}»: {racha[1]} vuelve a leerse"
+        elif racha in _ILEGIBLES:
+            return
+        else:
+            _ILEGIBLES.add(racha)
+    print(mensaje, flush=True)
+
+
+def _expandir_patron(asiento: str | None, patron: str, id_: str, *,
+                     estricto: bool = False) -> tuple[list[Ruta], bool]:
+    """`- patron: "*/repos/*"` → un `Ruta` por cada repo git que encaje (decisión 150),
+    y si se pudo leer.
 
     Para un asiento que **contiene** repos —un workspace con `{ambiente}/repos/`—
     listarlos uno a uno en `projects.yml` es una lista que caduca en cuanto se
@@ -552,6 +617,19 @@ def _expandir_patron(asiento: str | None, patron: str, id_: str) -> list[Ruta]:
     worktrees cuenten): lo demás bajo `repos/` no se mide, y medirlo daría un
     cero que se lee como «todo a salvo». Un patrón sin coincidencias no es un
     error: un workspace recién instalado está vacío a propósito.
+
+    Lo encontrado se recuerda `PLAZO_PATRON` segundos en este proceso
+    (`recordar.por_tiempo`, C-0415): eran 0,48 de los 0,53 s de `cargar`, en
+    cada latido, en cada vuelta del secretario y en cada portada. La clave
+    lleva la raíz ya resuelta, no el patrón escrito: dos asientos con
+    `*/repos/*` no se pisan. `estricto` expande en fresco y ni lee ni escribe
+    lo recordado: quien protege con esto no se fía de ello (decisión 410).
+
+    Si el disco no deja leer (C-0435), lo que no se pudo leer no es «no hay»:
+    sin `estricto` se sirve la última expansión buena si la hubo
+    (`recordar.ultimo`, de cuando sea: no es lo recordado un minuto, y no lo
+    renueva), y el segundo valor dice `False` para que `cargar` lo marque en
+    `Proyecto.patrones_sin_leer`. Con `estricto`, el `OSError` sube.
     """
     if not patron:
         raise KeyError("patron vacío")
@@ -574,60 +652,107 @@ def _expandir_patron(asiento: str | None, patron: str, id_: str) -> list[Ruta]:
             fijas.append(parte)
         raiz = Path(*fijas) if fijas else Path("/")
         relativo = str(Path(*partes[len(fijas):]))
+    clave = ("registry.patron", str(raiz), relativo)
+    racha = (id_, str(raiz), relativo)
     try:
-        if not raiz.is_dir():
-            return []
-        encontradas = sorted(
-            str(c).rstrip("/") for c in raiz.glob(relativo)
-            if c.is_dir() and (c / ".git").exists()
-        )
+        if estricto:
+            encontradas = _coincidencias(raiz, relativo)
+        else:
+            # Un fallo de lectura no se recuerda: `por_tiempo` no guarda si
+            # calcular lanza, así que la llamada siguiente lo reintenta.
+            encontradas = recordar.por_tiempo(
+                clave, lambda: _coincidencias(raiz, relativo), PLAZO_PATRON)
     except OSError as exc:
         # Una carpeta que existe pero no se deja leer (OneDrive a medio
         # sincronizar dio EIO el 7-nov) lanzaba aquí, y `cargar` lo usa todo el
-        # hub: el snapshotter dejó de latir. El proyecto se queda sin estas
-        # rutas mientras tanto y se dice en voz alta (reglas duras 2 y 21).
-        print(f"[registro] «{id_}»: no se puede leer {raiz} ({exc.strerror or exc}); "
-              "sin sus rutas hasta que se pueda", flush=True)
-        return []
-    return [Ruta(ruta=r) for r in encontradas]
+        # hub: el snapshotter dejó de latir. No tumba el registro y se dice en
+        # voz alta, una vez por racha (reglas duras 2 y 21).
+        if estricto:
+            raise
+        ultima = recordar.ultimo(clave)
+        if ultima is None:
+            que = "sin sus rutas hasta que se pueda"
+        else:
+            que = f"se usan las {len(ultima)} rutas de la última lectura buena hasta que se pueda"
+        _decir_racha(racha, f"[registro] «{id_}»: no se puede leer {raiz} ({exc.strerror or exc}); "
+                            f"{que}, y sus repos no se dan por desaparecidos (se apunta una vez por racha)")
+        return [Ruta(ruta=r) for r in ultima or ()], False
+    if not estricto:
+        _decir_racha(racha, None)
+    return [Ruta(ruta=r) for r in encontradas], True
 
 
-def sincronizar(con: sqlite3.Connection, proyectos: list[Proyecto]) -> None:
-    """Refleja projects.yml en el índice. El YAML manda: lo que no está, se va."""
-    ids = {p.id for p in proyectos}
+def _filas_del_registro(proyectos: list[Proyecto]) -> tuple[dict[str, tuple], list[tuple]]:
+    """Lo que dejaría escrito `sincronizar`: `{id: fila de proyecto}` y las
+    filas de `proyecto_ruta` en el orden en que quedarían (por `rowid`)."""
+    filas: dict[str, tuple] = {}
+    rutas: dict[str, list[tuple]] = {}
     for p in proyectos:
-        con.execute(
-            """INSERT INTO proyecto (id, nombre, dominio, tipo, asiento, estado_ref,
-                                     base_version, guardrail, status, nota)
-               VALUES (?,?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(id) DO UPDATE SET
-                 nombre=excluded.nombre, dominio=excluded.dominio,
-                 tipo=excluded.tipo, asiento=excluded.asiento,
-                 estado_ref=excluded.estado_ref,
-                 base_version=excluded.base_version, guardrail=excluded.guardrail,
-                 status=excluded.status, nota=excluded.nota""",
-            (p.id, p.nombre, p.dominio, p.tipo, p.asiento, p.estado_ref,
-             p.base_version, p.guardrail, p.status, p.nota),
-        )
-        con.execute("DELETE FROM proyecto_ruta WHERE proyecto_id=?", (p.id,))
-        vistas = set()
+        filas[p.id] = (p.id, p.nombre, p.dominio, p.tipo, p.asiento, p.estado_ref,
+                       p.base_version, p.guardrail, p.status, p.nota)
+        propias: list[tuple] = []
+        vistas: set[str] = set()
         if p.asiento:
-            con.execute(
-                "INSERT INTO proyecto_ruta (proyecto_id, ruta, tipo) VALUES (?,?,?)",
-                (p.id, p.asiento, "asiento"),
-            )
+            propias.append((p.id, p.asiento, "asiento"))
             vistas.add(p.asiento)
         for r in p.rutas:
-            if r.ruta in vistas:
-                continue
-            vistas.add(r.ruta)
+            if r.ruta not in vistas:
+                vistas.add(r.ruta)
+                propias.append((p.id, r.ruta, r.tipo))
+        # Borrar y reinsertar las rutas de un proyecto las manda al final de
+        # la tabla: sacar la clave y volver a ponerla imita ese orden.
+        rutas.pop(p.id, None)
+        rutas[p.id] = propias
+    return filas, [fila for propias in rutas.values() for fila in propias]
+
+
+def sincronizar(con: sqlite3.Connection, proyectos: list[Proyecto]) -> bool:
+    """Refleja projects.yml en el índice. El YAML manda: lo que no está, se va.
+
+    Devuelve si escribió. El latido lo llama cada 20 s y el registro casi nunca
+    cambia: reescribirlo igual eran ~350 filas en autocommit y 1,6 MB de WAL
+    por ciclo (C-0275). Así que primero se compara lo que se escribiría con lo
+    que hay, y sólo si difiere se escribe, todo en una transacción —entre el
+    `DELETE` de las rutas y sus `INSERT`, otra conexión veía un proyecto sin
+    rutas—. Se compara con la base y no con una huella en memoria: otro proceso
+    (la web al arrancar, un alta) también escribe aquí, y la base es la que
+    lee todo el mundo. Rehacerlo entero sigue siendo correcto (regla dura 1).
+    """
+    if not proyectos:
+        # Como siempre: un registro vacío no vacía el índice.
+        return False
+    filas, rutas = _filas_del_registro(proyectos)
+    hay = {f[0]: tuple(f) for f in con.execute(
+        "SELECT id, nombre, dominio, tipo, asiento, estado_ref, base_version,"
+        " guardrail, status, nota FROM proyecto")}
+    hay_rutas = [tuple(f) for f in con.execute(
+        "SELECT proyecto_id, ruta, tipo FROM proyecto_ruta ORDER BY rowid")]
+    if hay == filas and hay_rutas == rutas:
+        return False
+
+    # Si quien llama ya tiene una transacción abierta, se escribe dentro de la suya.
+    with contextlib.nullcontext() if con.in_transaction else db.transaccion(con):
+        for p in proyectos:
             con.execute(
-                "INSERT INTO proyecto_ruta (proyecto_id, ruta, tipo) VALUES (?,?,?)",
-                (p.id, r.ruta, r.tipo),
+                """INSERT INTO proyecto (id, nombre, dominio, tipo, asiento, estado_ref,
+                                         base_version, guardrail, status, nota)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(id) DO UPDATE SET
+                     nombre=excluded.nombre, dominio=excluded.dominio,
+                     tipo=excluded.tipo, asiento=excluded.asiento,
+                     estado_ref=excluded.estado_ref,
+                     base_version=excluded.base_version, guardrail=excluded.guardrail,
+                     status=excluded.status, nota=excluded.nota""",
+                filas[p.id],
             )
-    if ids:
-        marcas = ",".join("?" * len(ids))
-        con.execute(f"DELETE FROM proyecto WHERE id NOT IN ({marcas})", tuple(ids))
+            con.execute("DELETE FROM proyecto_ruta WHERE proyecto_id=?", (p.id,))
+            con.executemany(
+                "INSERT INTO proyecto_ruta (proyecto_id, ruta, tipo) VALUES (?,?,?)",
+                [fila for fila in rutas if fila[0] == p.id],
+            )
+        marcas = ",".join("?" * len(filas))
+        con.execute(f"DELETE FROM proyecto WHERE id NOT IN ({marcas})", tuple(filas))
+    return True
 
 
 class Atribuidor:
@@ -651,3 +776,20 @@ class Atribuidor:
             if cwd == ruta or cwd.startswith(ruta + "/"):
                 return proyecto_id
         return None
+
+
+@tiempos.medido
+def atribuidor(con: sqlite3.Connection) -> Atribuidor:
+    """El mismo repartidor que usa el snapshotter, armado desde el índice.
+
+    Reutilizarlo en vez de reescribir el criterio es lo que evita que un mismo
+    directorio sea de dos proyectos distintos según quién pregunte: el panel lo
+    vería de uno y el comando de otro, y sólo se notaría el día que importe.
+    Vive junto a `Atribuidor` y no en `api` (C-0102): de quién es una ruta lo
+    decide el registro, y `sincronizar`, que llena `proyecto_ruta`, es suyo.
+    """
+    rutas: dict[str, list[Ruta]] = {}
+    for f in con.execute("SELECT proyecto_id, ruta, tipo FROM proyecto_ruta"):
+        rutas.setdefault(f["proyecto_id"], []).append(Ruta(ruta=f["ruta"], tipo=f["tipo"]))
+    # `nombre` no lo mira el repartidor; se rellena porque el modelo lo exige.
+    return Atribuidor([Proyecto(id=pid, nombre=pid, rutas=rs) for pid, rs in rutas.items()])

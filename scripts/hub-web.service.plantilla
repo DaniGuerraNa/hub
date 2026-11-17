@@ -9,7 +9,10 @@ Environment=HUB_HOME=@HUB_HOME@
 # 🔴 El PATH de systemd no trae ~/.local/bin (decisión 81), y lo que el hub lanza
 # en tmux —`claude`, sobre todo— sí lo necesita. Probarlo a mano no lo detecta,
 # porque una shell interactiva sí lo tiene.
-Environment=PATH=@PATH@
+# Lo que ponía `uv run` y aquí se pone a mano (C-0266): el `bin` del entorno
+# delante del PATH y `VIRTUAL_ENV`, para que lo que el hub lanza vea lo mismo.
+Environment=PATH=@RAIZ@/.venv/bin:@PATH@
+Environment=VIRTUAL_ENV=@RAIZ@/.venv
 # El puerto también aquí, no sólo en ExecStart: lo que comprueba si la web
 # contesta (pánico, avisos) lee `config.WEB_PORT`, y sin esto valía 8787 aunque
 # el hub se hubiera instalado en otro puerto.
@@ -19,7 +22,13 @@ Environment=HUB_PORT=@PUERTO@
 # el fallo se veía como «se cayó el hub» y no había por dónde empezar. Con esto
 # el volcado de Python sale en `journalctl`, que es donde se va a mirar.
 Environment=PYTHONFAULTHANDLER=1
-ExecStart=@UV@ run uvicorn hub.web:app --host @HOST@ --port @PUERTO@
+# Sin el registro de accesos de uvicorn (C-0245): el 98 % del journal eran
+# «200 OK» y sólo cabían seis días. `web.py` apunta lo que importa: errores y lentas.
+# Con el Python del entorno y no con `uv run` (C-0266): el envoltorio era un
+# proceso de más que salía con 143 en cada parada —«Failed» en cada reinicio
+# hecho a propósito, que tapaba los fallos de verdad— y miraba el lock al
+# arrancar. El entorno lo dejan listo `instalar.sh` y `actualizar.sh`.
+ExecStart=@RAIZ@/.venv/bin/python -m uvicorn hub.web:app --host @HOST@ --port @PUERTO@ --no-access-log
 Restart=always
 RestartSec=10
 

@@ -152,6 +152,7 @@ def entrar() -> None:  # pragma: no cover - interactivo
 class ProveedorIcal(Calendario):
     id = "ical"
     nombre = "Calendario por dirección iCal (sólo lectura)"
+    crea = False
 
     def disponible(self) -> str | None:
         return disponible()

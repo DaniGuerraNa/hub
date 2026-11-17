@@ -32,6 +32,16 @@ from . import Aviso, Canal
 
 #: El texto se recorta para que el mensaje cifrado no pase de ~4 KB.
 TOPE_TEXTO = 1500
+#: Lo que de verdad manda es el tamaño en BYTES (C-0432): 4 096 de cuerpo
+#: cifrado es lo que el RFC 8030 garantiza y lo que admiten FCM y Apple. Al
+#: cifrar se suman la cabecera (sal 16 + tamaño de registro 4 + largo de la
+#: clave 1 + clave 65) y el delimitador (1) con la etiqueta de AES-GCM (16):
+#: quedan 3 993 bytes para el JSON. Contar caracteres dejaba pasar 1 500
+#: emoji (6 240 bytes cifrados): el servicio lo rechazaba y no llegaba.
+TOPE_BYTES = 4096 - (16 + 4 + 1 + 65) - (1 + 16)
+#: Un título más largo no se lee en una notificación; recortarlo es lo
+#: primero cuando no cabe.
+TOPE_TITULO = 120
 #: Un aviso que no se pudo entregar en un día ya no sirve.
 TTL = 24 * 3600
 
@@ -44,8 +54,8 @@ def carpeta() -> Path:
 LLAVES = (llavero.Llave("secretario-webpush", "las llaves VAPID de los avisos al teléfono", lambda: str(carpeta())),)
 
 
-def _ruta_publica() -> Path:
-    return memoria.carpeta() / "push_publica.txt"
+def _ruta_publica(crear: bool = False) -> Path:
+    return memoria.carpeta(crear=crear) / "push_publica.txt"
 
 
 def preparar() -> str:
@@ -62,7 +72,7 @@ def preparar() -> str:
         os.chmod(privada_ruta, 0o600)
     publica = cp.b64(cp.publica_cruda(_privada()))
     if not _ruta_publica().is_file() or _ruta_publica().read_text(encoding="utf-8").strip() != publica:
-        _ruta_publica().write_text(publica, encoding="utf-8")
+        _ruta_publica(crear=True).write_text(publica, encoding="utf-8")
     return publica
 
 
@@ -121,6 +131,46 @@ def carga(aviso: Aviso, origen: str) -> dict:
         "title": aviso.titulo, "body": aviso.texto[:TOPE_TEXTO], "navigate": destino}}
     if aviso.solicitud is not None:
         datos["secretario"] = {"solicitud": aviso.solicitud, "decidir": aviso.decidir_desde_aviso}
+    elif aviso.compromiso is not None:
+        datos["secretario"] = {"compromiso": aviso.compromiso}
+    return _que_quepa(datos)
+
+
+def claro(datos: dict) -> bytes:
+    """Lo que se cifra, tal como viaja: lo que mide el tope es esto."""
+    return json.dumps(datos, ensure_ascii=False).encode()
+
+
+def _que_quepa(datos: dict) -> dict:
+    """Recorta título y cuerpo hasta que `claro(datos)` quepa en `TOPE_BYTES`
+    (C-0432). Primero el título, a `TOPE_TITULO`; luego el cuerpo, lo justo,
+    con «…». Se recorta por caracteres y se mide en bytes del JSON ya
+    codificado (lo que escapa JSON cuenta), así que nunca se parte un
+    carácter en UTF-8."""
+    n = datos["notification"]
+
+    def cabe() -> bool:
+        return len(claro(datos)) <= TOPE_BYTES
+
+    if cabe():
+        return datos
+    titulo = str(n["title"] or "")
+    if len(titulo) > TOPE_TITULO:
+        n["title"] = titulo[:TOPE_TITULO - 1].rstrip() + "…"
+        if cabe():
+            return datos
+    cuerpo = str(n["body"] or "")
+    # El trozo más largo que cabe con su «…»: por bisección, que con 1 500
+    # caracteres son once medidas y no mil.
+    bajo, alto = 0, len(cuerpo)
+    while bajo < alto:
+        medio = (bajo + alto + 1) // 2
+        n["body"] = cuerpo[:medio].rstrip() + "…"
+        if cabe():
+            bajo = medio
+        else:
+            alto = medio - 1
+    n["body"] = cuerpo[:bajo].rstrip() + "…"
     return datos
 
 
@@ -131,7 +181,11 @@ class CanalWebPush(Canal):
     def disponible(self):
         if not (carpeta() / "vapid.key").is_file():
             return "falta preparar las claves (lo hace el servicio al arrancar)"
-        con = memoria.conectar()
+        # Sólo mira: lo pinta también `hub-web`, que no crea ni migra la
+        # memoria (C-0061, C-0099). Sin base, no hay aparatos.
+        con = memoria.abrir_lectura()
+        if con is None:
+            return "ningún aparato tiene los avisos activados"
         try:
             if not memoria.suscripciones(con):
                 return "ningún aparato tiene los avisos activados"
@@ -144,11 +198,15 @@ class CanalWebPush(Canal):
         try:
             entregados, errores = 0, []
             for s in memoria.suscripciones(con):
-                claro = json.dumps(carga(aviso, s["origen"]), ensure_ascii=False).encode()
+                # Cada aparato en su `try`, y con todo (C-0433): una dirección
+                # mal formada lanza `http.client.InvalidURL`, que no es `OSError`
+                # ni `ValueError`, y cortaba el bucle sin probar los demás ni
+                # apuntar en cuál fue. Lo que falle se anota en el suyo.
                 try:
-                    estado = _enviar(s, cp.cifrar(claro, s["p256dh"], s["auth"]), aviso.solicitud is not None)
-                except (OSError, ValueError) as exc:
-                    estado, motivo = 0, str(exc)
+                    mensaje = claro(carga(aviso, s["origen"]))
+                    estado = _enviar(s, cp.cifrar(mensaje, s["p256dh"], s["auth"]), aviso.solicitud is not None)
+                except Exception as exc:  # noqa: BLE001 — se apunta en ese aparato y se sigue
+                    estado, motivo = 0, str(exc) or type(exc).__name__
                 else:
                     motivo = f"el servicio de push respondió {estado}"
                 if 200 <= estado < 300:

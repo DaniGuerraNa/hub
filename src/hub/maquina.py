@@ -33,6 +33,7 @@ import shutil
 import sqlite3
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -376,16 +377,76 @@ def _arranque() -> list[Medida]:
     return medidas
 
 
-def medir() -> list[Medida]:
+# ── El último arranque (C-0381, C-0014) ───────────────────────────────────────
+# Si el hub vuelve solo tras un apagón se planteaba como un ensayo que montar,
+# y los apagones y pantallazos reales ya dejan la evidencia: faltaba apuntarla
+# para cruzarla con `windows.arranque`. Dos instantes que systemd anota al
+# arrancar, en la hora de pared:
+#   - `UserspaceTimestamp` del sistema: cuando arrancó Linux en WSL.
+#   - `FinishTimestamp` del usuario: cuando su gestor —con linger, al arrancar—
+#     terminó de lanzar sus servicios, que son los del hub.
+# 🔴 No `btime` de `/proc/stat`: medido el 13-nov, salía cinco horas más tarde
+# que el arranque de verdad (16:51 en `journalctl --list-boots`), porque el
+# reloj de arranque de WSL no cuenta la VM en pausa. Ni el `ActiveEnterTimestamp`
+# de `hub-web`: cambia en cada reinicio del servicio y deja de ser el del
+# arranque. Los dos de aquí cuadraron el 13-nov con el arranque del 6-nov:
+# Windows 22:50:24Z, Linux 22:51:13Z (lo mismo que `journalctl`), servicios
+# 22:51:49Z (regla dura 19).
+_INSTANTES = (
+    ("encendido.wsl", ["systemctl", "show", "-p", "UserspaceTimestamp", "--value", "--timestamp=unix"]),
+    ("encendido.hub", ["systemctl", "--user", "show", "-p", "FinishTimestamp", "--value", "--timestamp=unix"]),
+)
+
+
+def _hay_systemd() -> bool:
+    """Lo que mira `sd_booted()`: sin systemd de PID 1 no hay a quién preguntar."""
+    return os.path.isdir("/run/systemd/system")
+
+
+def _de_unix(crudo: str) -> str:
+    """`@1794005473` → `2026-11-06T22:51:13Z`, el formato de `windows.arranque`.
+    Vacío si no es eso: un instante que no se entiende no se guarda (regla 13)."""
+    crudo = crudo.strip()
+    if not (crudo.startswith("@") and crudo[1:].isdigit() and int(crudo[1:]) > 0):
+        return ""
+    return datetime.fromtimestamp(int(crudo[1:]), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _encendido() -> list[Medida]:
+    """Cuándo arrancaron Linux en WSL y los servicios del hub, la última vez."""
+    if not _hay_systemd():
+        raise NoHay("no hay systemd: no se sabe cuándo arrancó el hub")
+    medidas: list[Medida] = []
+    for clave, comando in _INSTANTES:
+        # Cada uno en su `try` (regla dura 14). Un systemd viejo sin
+        # `--timestamp=unix` lo diría cada diez minutos: se dice una vez (21).
+        try:
+            iso = _de_unix(_salida(comando))
+        except subprocess.CalledProcessError as exc:
+            _decir_que_falta(NoHay(f"systemctl no dio {clave}: {(exc.stderr or '').strip()[:120]}"))
+            continue
+        if iso:
+            medidas.append(Medida(clave, texto=iso))
+    return medidas
+
+
+def medir(sai: bool = True) -> list[Medida]:
     """Todo lo que se puede leer, cada cosa en su propio `try`.
 
     🔴 Que no haya GPU no puede dejar sin medir el disco, que es lo que de
     verdad se llena. Es la regla dura 14 aplicada dentro de la propia medición,
     no sólo alrededor de ella.
+
+    `sai=False` deja fuera el SAI, para quien mide a la vez que el latido (el
+    ciclo lento en su hilo, C-0309). Esto lee el SAI a mitad y se guarda al
+    final, segundos después y con la fecha del guardado: una lectura que el
+    latido hiciera entre medias quedaba pisada por la vieja hasta un minuto,
+    y un corte de luz justo ahí se veía como «volvió» y «se fue».
     """
     medidas: list[Medida] = []
     fallos = 0
-    for fuente in (_gpu, _discos, _memoria_y_carga, _windows, _ups, _tailscale, _arranque):
+    fuentes = (_gpu, _discos, _memoria_y_carga, _windows, _ups, _tailscale, _arranque, _encendido)
+    for fuente in fuentes if sai else tuple(f for f in fuentes if f is not _ups):
         try:
             medidas.extend(fuente())
         except NoHay as exc:
@@ -418,14 +479,17 @@ def escanear_ups(con: sqlite3.Connection) -> int:
     return _guardar(con, medidas)
 
 
-def escanear(con: sqlite3.Connection) -> int:
+def escanear(con: sqlite3.Connection, sai: bool = True) -> int:
     """Guarda la última lectura de cada magnitud. Devuelve cuántas se tomaron.
 
     Sólo la última: esto no es un histórico. Volver a medir lo reconstruye
     entero (regla dura 1), y guardar la serie convertiría al hub en un sistema
     de monitorización, que es precisamente lo que el principio 9 dice que no es.
+
+    `sai=False`: todo menos el SAI, que entonces sólo lo guarda
+    `escanear_ups` (ver `medir`).
     """
-    return _guardar(con, medir())
+    return _guardar(con, medir() if sai else medir(sai=False))
 
 
 def _guardar(con: sqlite3.Connection, medidas: list[Medida]) -> int:

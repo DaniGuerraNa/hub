@@ -89,6 +89,29 @@ def encargos_yml() -> Path:
     return Path(declarado) if declarado else HUB_HOME / "encargos.yml"
 
 
+def cargador_yaml():
+    """El cargador seguro de YAML: el de libyaml si este PyYAML lo trae (C-0279).
+
+    `projects.yml` (15,7 KB) se leía con el de Python puro: 14,9 ms por carga
+    frente a 1,6 ms con libyaml, y el registro se lee dos veces por latido, en
+    cada vuelta del secretario y en muchas pantallas. Mismo resultado (lo
+    compara `tests/test_leer_yaml.py` con todo lo del repo): el analizador es
+    C, pero quien construye los objetos sigue siendo el `SafeConstructor`. Sin
+    libyaml, el de siempre.
+    """
+    import yaml
+
+    return getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+def leer_yaml(texto: str):
+    """`yaml.safe_load` con `cargador_yaml()`. Un YAML roto lanza
+    `yaml.YAMLError`, con su línea y columna, igual que antes."""
+    import yaml
+
+    return yaml.load(texto, Loader=cargador_yaml())
+
+
 def leer_ajustes(ruta: Path) -> dict:
     """Un archivo de ajustes (`canal.yml`, `encargos.yml`). Sin archivo, `{}`:
     sin configurar no es un error, es lo normal al llegar.

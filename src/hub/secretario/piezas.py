@@ -26,6 +26,7 @@ import re
 import importlib
 import pkgutil
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -77,7 +78,9 @@ class Fuente:
 
 #: Lo que una acción puede romper. Manda sobre el nivel: lo `irreversible` y
 #: lo que `sale-de-la-maquina` pregunta siempre, aunque el dueño lo ponga en
-#: `auto` (decisión 303).
+#: `auto` (decisión 303). Quien pregunte «¿ésta tiene techo?» lo hace con
+#: `con_techo(accion)`, no mirando esta lista: también lo tiene la que declara
+#: `siempre_pregunta` (C-0422).
 RIESGOS = ("lectura", "reversible", "irreversible", "sale-de-la-maquina")
 CON_TECHO = ("irreversible", "sale-de-la-maquina")
 #: Cómo lo lee el dueño en Confianza (C-0231): salía «riesgo: reversible».
@@ -89,6 +92,10 @@ ROTULOS_RIESGO = {
     "irreversible": "No tiene vuelta atrás",
     "sale-de-la-maquina": "Sale de tu máquina",
 }
+#: Cómo lee el dueño el estado de una solicitud cuando la palabra de dentro no
+#: lo dice (C-0315). `cortada` es la del hub para lo que murió a medias; para
+#: él es una duda, y eso es lo que tiene que leer. Los demás se enseñan tal cual.
+ROTULOS_ESTADO = {"cortada": "no sé si se hizo"}
 #: Los niveles no llevan rótulo a propósito: `auto`, `ask` y `never` son las
 #: palabras de los guardrails de los proyectos, y el dueño ya las conoce así.
 NIVELES = ("never", "ask", "auto")
@@ -105,8 +112,10 @@ ROTULOS_PARAMETROS = {
     "minutos_aviso": "aviso, minutos antes", "noche": "con las últimas 24 h", "nombre": "nombre", "nota": "nota",
     "origen": "de dónde sale", "para_quien": "para quién", "pedido": "pedido", "plantilla": "plantilla",
     "proyecto": "proyecto", "que": "qué", "quien": "quién", "recordar_en": "aviso", "ruta": "ruta",
-    "slot": "slot", "tema": "tema", "texto": "texto", "titulo": "título", "valor": "valor", "vence": "vence",
+    "slot": "slot", "comando": "orden", "tema": "tema", "texto": "texto", "titulo": "título", "valor": "valor", "vence": "vence",
     "ventana": "ventana",
+    # Los de las acciones que entran por una puerta del hub (C-0422).
+    "activo": "activo", "contenedor": "contenedor", "razon": "por qué", "tarea": "tarea",
 }
 
 
@@ -136,6 +145,74 @@ class Accion:
     #: permiso aunque esté en `auto` (decisión 382): el dato es suyo y él
     #: decide adónde va. Lo comprueba `herramientas.usar_accion`, no el prompt.
     saca_datos: bool = False
+    #: Sólo cuando el dueño le habla en una conversación (C-0240, decisión 404):
+    #: nunca desde un disparador, ni con `haz` ni con `pide`, que pueden llevar
+    #: el texto de un tercero. Lo comprueban `herramientas.usar_accion` (sin
+    #: hilo, no), `herramientas.todas` (sin `SECRETARIO_HILO` no se sirve) y
+    #: `disparadores` (no se guarda en `haz`).
+    solo_con_el_dueno: bool = False
+    #: Los segundos que vale su sí: aprobada más tarde, `ejecutar_aprobadas` no
+    #: la hace. Un sí horas después actuaría sobre otro estado de la máquina.
+    caduca_s: int | None = None
+    #: Nunca pasa a `auto` aunque tenga vuelta atrás (C-0422): el acto es del
+    #: dueño —archivar un slot (regla dura 3), parar un contenedor (12),
+    #: detener una tarea (15)— y lo hace su toque sobre esa solicitud, cada
+    #: vez. No es un riesgo: llamarlo «irreversible» para que pregunte sería
+    #: mentirle en Confianza. Su aviso sale sin Aprobar/Rechazar: se decide
+    #: viendo el detalle de la solicitud —cuál es, de quién y cómo está
+    #: ahora (`detalle`)—, que la notificación no enseña
+    #: (`herramientas.usar_accion`).
+    siempre_pregunta: bool = False
+    #: Nada de lo que redacta el modelo queda escrito al pedirla (C-0418): no
+    #: se le ofrece `motivo` y, si lo manda, se descarta; y de sus parámetros
+    #: sólo pasan los declarados que sean un número o un sí/no. Es para la
+    #: que borra algo que no debe sobrevivir en la solicitud, en la bitácora
+    #: ni en el aviso (`olvidar_nota`): que no lo copie ahí era una frase de
+    #: su descripción, y eso es prompt, no código. Lo que se guarda como
+    #: motivo es sólo lo que devuelve `comprobar`. Lo hace `herramientas`.
+    sin_texto_del_modelo: bool = False
+    #: Los parámetros que SON un dato suyo de `misdatos` aunque aún no esté en
+    #: la ficha: el que trae `proponer_dato`, se guarde o no (C-0431). La
+    #: bitácora los tapa siempre, y también donde salgan en el motivo: tapar
+    #: por la ficha no llega a lo que no se guardó.
+    campos_propios: tuple[str, ...] = ()
+    #: Si se le ofrece ahora al modelo: el mismo concepto y la misma forma
+    #: que `herramientas.Herramienta.disponible` (C-0408, C-0389) —una función
+    #: sin argumentos, con `staticmethod`, o None si no depende de nada—. La
+    #: que no está configurada sólo puede fallar: servirla cuesta su esquema
+    #: en cada turno y un intento con un error técnico. Confianza la sigue
+    #: enseñando, «sin configurar» y con `como_configurar`, para que el dueño
+    #: sepa que existe. Lo mira `se_ofrece`, nunca cada uno por su cuenta.
+    disponible: Callable[[], bool] | None = None
+    #: Dónde se configura, dicho para el dueño: lo lee en Confianza mientras
+    #: `disponible` diga que no.
+    como_configurar: str = ""
+
+    def datos_propios(self, params) -> list[str]:
+        """Los valores de `campos_propios` que trae `params`, para `misdatos.tapar(…, ademas=…)`."""
+        if not isinstance(params, dict):
+            return []
+        return [str(params[k]) for k in self.campos_propios if str(params.get(k) or "").strip()]
+
+    def comprobar(self, params: dict) -> str:
+        """Antes de pedir permiso o de hacerla: lanza si no se puede ni pedir,
+        y lo que devuelve se añade al motivo que lee el dueño."""
+        return ""
+
+    def detalle(self, con: sqlite3.Connection, params: dict) -> list[tuple[str, str]]:
+        """Lo que su solicitud enseña mientras espera, además de sus parámetros:
+        pares `(rótulo, valor)` leídos en ese instante, de la memoria (`con`)
+        o de donde viva lo que toca.
+
+        Es para lo que el dueño tiene que ver antes de decir que sí y **no
+        debe quedar escrito** en la solicitud ni en la bitácora, ni salir en
+        el aviso: el texto de la nota que pide olvidar (C-0418), el pedido de
+        una tarea o el proyecto de un contenedor, que pueden nombrar a un
+        cliente (regla dura 22), y cómo está ahora, que escrito al pedirlo
+        sería viejo al aprobarlo (C-0422). Lo que devuelve `comprobar` sí se
+        guarda, con el motivo; esto no. Sólo lee, y barato: se pinta en cada
+        sondeo del chat (regla dura 14)."""
+        return []
 
     def ejecutar(self, con: sqlite3.Connection, params: dict) -> str:
         """La hace y devuelve qué pasó, para el modelo y para la bitácora.
@@ -170,9 +247,22 @@ def proveedores(capacidad: str) -> dict[str, Proveedor]:
 def ajuste(clave: str):
     """Un valor de `secretario.yml`, o None."""
     try:
-        return (yaml.safe_load((memoria.carpeta() / "secretario.yml").read_text(encoding="utf-8")) or {}).get(clave)
+        return (yaml.safe_load((memoria.carpeta(crear=False) / "secretario.yml").read_text(encoding="utf-8"))
+                or {}).get(clave)
     except (OSError, yaml.YAMLError, AttributeError):
         return None
+
+
+def carpeta_de_fichas() -> Path | None:
+    """Dónde están las fichas de cambios, si `secretario.yml` lo dice
+    (`parte_fichas`). Son del flujo con que se desarrolla el hub y quien
+    instala el producto no las tiene: entonces, None.
+
+    No comprueba que exista, porque cada uno hace algo distinto si no: el
+    parte y «Te espera» lo dicen como fallo, la lectura `fichas` se lo cuenta
+    al modelo y Confianza se queda en el estado de la idea."""
+    valor = ajuste("parte_fichas")
+    return Path(str(valor)).expanduser() if valor else None
 
 
 def proveedor(capacidad: str, por_omision: str) -> Proveedor:
@@ -217,11 +307,64 @@ def acciones() -> dict[str, Accion]:
     return out
 
 
+def se_ofrece(cosa) -> bool:
+    """Si una herramienta o una acción se le ofrece ahora al modelo: lo dice
+    su `disponible` (C-0408, C-0389). Sólo para ésas: el `disponible` de una
+    fuente o de un proveedor devuelve qué falta, no un sí.
+
+    Uno que revienta cuenta como que no: la lista que se sirve no se cae por
+    una configuración rota, y quien la use igual dice qué falta."""
+    disponible = getattr(cosa, "disponible", None)
+    if disponible is None:
+        return True
+    try:
+        return bool(disponible())
+    except Exception:  # noqa: BLE001 — el porqué lo dice la pieza al usarla
+        return False
+
+
+def nombre_de_accion(accion_id: str, catalogo: dict[str, Accion] | None = None) -> str:
+    """Cómo se llama una acción para el dueño: el nombre que tiene en
+    Confianza. Una que ya no existe —o lo que apunta el servicio sin ser una
+    acción, un disparador o el triaje—, su id sin guiones bajos.
+
+    Una sola regla para Pendientes, la tarjeta del chat, la bitácora y el
+    «No lo hago…» (C-0395): el chat lo decía con el id, `escribir_en_sesion`.
+    `catalogo`: el de `acciones()`, si quien llama ya lo tiene; para no
+    recorrer los módulos en cada fila."""
+    a = (acciones() if catalogo is None else catalogo).get(accion_id)
+    return (a.nombre or a.id) if a else str(accion_id).replace("_", " ")
+
+
+def params_tapados(accion_id: str, params):
+    """Los parámetros de `accion_id` como pueden quedarse guardados: con sus
+    datos tapados (`misdatos.tapar`), también los suyos que no están en la
+    ficha (`Accion.campos_propios`). Para la bitácora y para la solicitud ya
+    resuelta (C-0431): la de la pantalla y la del servicio, la misma."""
+    from . import misdatos
+    accion = acciones().get(accion_id)
+    return misdatos.tapar(params, accion.datos_propios(params) if accion else [])
+
+
+def solicitud_tapada(con: sqlite3.Connection, sid: int):
+    """Los parámetros de la solicitud `sid`, tapados, para cerrarla con ellos
+    (`memoria.resolver_solicitud(…, params=…)`). None si no existe."""
+    import json
+    fila = con.execute("SELECT accion, params FROM solicitud WHERE id = ?", (sid,)).fetchone()
+    if fila is None:
+        return None
+    try:
+        params = json.loads(fila["params"] or "{}")
+    except ValueError:
+        params = {}
+    return params_tapados(fila["accion"], params)
+
+
 # ───────────────────────────── ajustes de fuentes ─────────────────────────────
 
 
-def _fuentes_yml() -> Path:
-    return memoria.carpeta() / "fuentes.yml"
+def _fuentes_yml(crear: bool = False) -> Path:
+    return memoria.carpeta(crear=crear) / "fuentes.yml"
 
 
 def ajustes_fuentes() -> dict:
@@ -239,7 +382,7 @@ def ajustes_fuentes() -> dict:
 
 
 def guardar_ajustes_fuentes(datos: dict) -> None:
-    _fuentes_yml().write_text(yaml.safe_dump(datos, allow_unicode=True, sort_keys=True), encoding="utf-8")
+    _fuentes_yml(crear=True).write_text(yaml.safe_dump(datos, allow_unicode=True, sort_keys=True), encoding="utf-8")
 
 
 def _sin_tildes(texto: str) -> str:
@@ -289,8 +432,8 @@ def conversacion_admitida(ajustes: dict, conversacion: str) -> bool:
 # ───────────────────────────── niveles de confianza ─────────────────────────────
 
 
-def _permisos_yml() -> Path:
-    return memoria.carpeta() / "permisos.yml"
+def _permisos_yml(crear: bool = False) -> Path:
+    return memoria.carpeta(crear=crear) / "permisos.yml"
 
 
 def niveles() -> dict[str, str]:
@@ -301,11 +444,18 @@ def niveles() -> dict[str, str]:
     return {k: v for k, v in datos.items() if v in NIVELES}
 
 
+def con_techo(accion: Accion) -> bool:
+    """Si la acción no puede estar en `auto`: por lo que puede romper
+    (`CON_TECHO`, 303) o porque el acto es del dueño (`siempre_pregunta`).
+    La única pregunta que hacen `nivel`, Confianza y el aviso al teléfono."""
+    return accion.riesgo in CON_TECHO or bool(accion.siempre_pregunta)
+
+
 def nivel(accion: Accion) -> str:
     """El nivel que manda ahora: el del dueño, o el inicial de la acción. Con
-    techo para lo que no tiene vuelta atrás."""
+    techo para lo que no tiene vuelta atrás y para lo que pregunta siempre."""
     n = niveles().get(accion.id, accion.nivel_inicial)
-    if n == "auto" and accion.riesgo in CON_TECHO:
+    if n == "auto" and con_techo(accion):
         return "ask"
     return n
 
@@ -317,4 +467,4 @@ def poner_nivel(accion_id: str, nuevo: str) -> None:
         raise ValueError("esa acción no existe")
     datos = niveles()
     datos[accion_id] = nuevo
-    _permisos_yml().write_text(yaml.safe_dump(datos, sort_keys=True), encoding="utf-8")
+    _permisos_yml(crear=True).write_text(yaml.safe_dump(datos, sort_keys=True), encoding="utf-8")

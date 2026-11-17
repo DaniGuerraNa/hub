@@ -3,7 +3,7 @@
 {% block contenido %}
 <style>
   .reu { display:grid; gap:14px; grid-template-columns:minmax(0,1fr); }
-  .reu .tarjeta h2 { margin:0 0 10px; font-size:15px; }
+  .reu .tarjeta h2 { margin:0 0 10px; font-size:var(--letra-4); }
   .reu ul { margin:0; padding-left:18px; display:grid; gap:4px; }
   .linea { display:grid; gap:6px; }
   .linea .dice { display:grid; grid-template-columns:70px 70px minmax(0,1fr); gap:8px; font-size:14px; }
@@ -14,7 +14,7 @@
   .linea .foto img { max-width:min(100%, 520px); border-radius:var(--r-input); border:1px solid var(--borde); }
   @media (max-width: 620px) { .linea .dice { grid-template-columns:60px minmax(0,1fr); }
                               .linea .dice .hora { grid-row:span 2; } }
-  .marca { font-size:11px; padding:1px 8px; border-radius:999px; }
+  .marca { font-size:var(--letra-1); padding:1px 8px; border-radius:var(--r-pildora); }
   .marca.fallo { color:var(--riesgo); background:color-mix(in srgb, var(--riesgo) 14%, transparent); }
   .marca.procesando { color:var(--espera); background:color-mix(in srgb, var(--espera) 14%, transparent); }
 </style>
@@ -33,7 +33,8 @@
   {% endif %}
 </div>
 
-{% macro peso(b) %}{% if b >= 1e9 %}{{ '%.1f' | format(b / 1e9) }} GB{% else %}{{ (b / 1e6) | round | int }} MB{% endif %}{% endmacro %}
+{# Con `tamano`, como todo peso del hub: en múltiplos de 1024 y con coma (C-0398). #}
+{% macro peso(b) %}{{ tamano(b) }}{% endmacro %}
 {# Una región (C-0167): las acciones y el refresco solo cambian esto, sin
    recargar la página. #}
 <div data-region="reunion" class="reu" {% if d.procesado.estado == 'procesando' or d.comprimiendo %}data-refrescar="5"{% endif %}>
@@ -74,6 +75,30 @@
   {% if r.momentos %}<div class="tarjeta"><h2>Momentos</h2><ul>{% for m in r.momentos %}<li><a href="#t-{{ m.t }}">{{ m.t }}</a> — {{ m.que }}</li>{% endfor %}</ul></div>{% endif %}
   {% endif %}
 
+  {# Lo que el secretario sacó de esta reunión y sigue abierto (C-0380): de una
+     reunión vieja se cierra de una vez, no uno a uno. Cerrar es suyo y se
+     confirma (regla dura 3); van los ids que ve, no «todos los que haya». #}
+  {% if d.compromisos %}
+  {% set n = d.compromisos | length %}
+  {% set cuales = 'El compromiso de arriba sale' if n == 1 else 'Los ' ~ n ~ ' compromisos de arriba salen' %}
+  <form data-sin-recarga class="tarjeta" method="post" action="/reuniones/{{ d.id }}/compromisos">
+    <h2>Compromisos abiertos de esta reunión</h2>
+    <ul>{% for c in d.compromisos %}
+      <li>{% if c.quien not in ('yo', 'Yo') %}<strong>{{ c.quien }}</strong>: {% endif %}{{ c.que }}{% if c.vence %}
+        <span class="tenue">(vence {{ ui.cuando(c.vence, forma='local', con_hace=false) }})</span>{% endif %}<input type="hidden" name="id" value="{{ c.id }}"></li>{% endfor %}
+    </ul>
+    <div class="barra" style="gap:10px;margin-top:10px;flex-wrap:wrap;align-items:center">
+      <span class="tenue" style="font-size:var(--letra-2)">Se cierran también en el secretario y en «Te espera».</span>
+      <button class="boton" name="estado" value="descartado" style="margin-left:auto"
+              data-confirmar-titulo="Descartar los compromisos de esta reunión" data-confirmar-ok="Descartarlos"
+              data-confirmar="{{ cuales }} de tus compromisos sin darse por hechos. No se puede deshacer.">Descartarlos</button>
+      <button class="boton principal" name="estado" value="hecho"
+              data-confirmar-titulo="Dar por hechos los compromisos de esta reunión" data-confirmar-ok="Darlos por hechos"
+              data-confirmar="{{ cuales }} de tus compromisos como hechos. No se puede deshacer.">Darlos por hechos</button>
+    </div>
+  </form>
+  {% endif %}
+
   {# Quién es quién. La pista de la aplicación mezcla a todos; se separan en
      Persona 1, 2… por la voz, y aquí se les pone nombre. #}
   {% if d.voces and d.procesado.estado not in ('procesando', 'se cortó') %}
@@ -103,7 +128,7 @@
       {# La primera vez hace falta autorizar la descarga del modelo: sin
          decir dónde están los pasos, el error no tiene salida. #}
       {% if d.procesado.etapas and (d.procesado.etapas.voces or '').startswith('sin separar') %}
-      <br><span class="tenue" style="font-size:12.5px">La primera vez hay que autorizar la descarga
+      <br><span class="tenue" style="font-size:var(--letra-2)">La primera vez hay que autorizar la descarga
         del modelo en Hugging Face: los pasos están en <code>{{ d.guia_voces }}</code>, apartado
         «Separar las voces».</span>{% endif %}</span>
     <button class="boton" name="que" value="voces" style="margin-left:auto">Separar las voces</button>

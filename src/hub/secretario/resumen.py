@@ -25,7 +25,6 @@ import sqlite3
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from . import agenda, asuntos, memoria, tiempo
 
@@ -72,15 +71,20 @@ def del_dia(con: sqlite3.Connection, ahora: datetime | None = None, *, noche: bo
         dia.append("Agenda: nada hoy.")
 
     abiertos = memoria.compromisos(con, "abierto")
-    vencidos = [c for c in abiertos if c.get("vence") and c["vence"] < ahora_utc]
-    de_hoy = [c for c in abiertos if c not in vencidos
+    # La regla de la pantalla (`memoria.vencidos`): los dos cuentan lo mismo.
+    vencidos = memoria.vencidos(con, ahora_utc)
+    ya_vencidos = {c["id"] for c in vencidos}
+    de_hoy = [c for c in abiertos if c["id"] not in ya_vencidos
               and ((c.get("vence") and c["vence"] < fin_hoy_utc) or (c.get("recordar_en") and c["recordar_en"] < fin_hoy_utc))]
     if de_hoy:
         dia.append("Para hoy:\n" + "\n".join(
             f"· {c['que']}" + (f" ({_hora(c.get('recordar_en') or c.get('vence'))})") for c in de_hoy[:TOPE]))
     if vencidos:
         extra = f" (y {len(vencidos) - TOPE} más)" if len(vencidos) > TOPE else ""
-        dia.append(f"Vencidos: {len(vencidos)}{extra}\n" + "\n".join(f"· {c['que']}" for c in vencidos[:TOPE]))
+        # Dónde se repasan de una vez (SEC-34, C-0373): se acumulaban sin que
+        # nada los mirara. Decirlo no es cerrarlos: eso lo hace él (regla 3).
+        dia.append(f"Vencidos: {len(vencidos)}{extra}\n" + "\n".join(f"· {c['que']}" for c in vencidos[:TOPE])
+                   + "\nSe cierran de una vez en Pendientes, «Vencidos o de hoy».")
 
     # Lo que espera de él, de su dueño en vivo (380). Sin noche, sólo cuántos
     # permisos: es lo único de eso que dice el resumen de siempre.
@@ -253,9 +257,15 @@ def _nombre_accion(accion: str) -> str:
 def _de_la_memoria(con: sqlite3.Connection, p: _Parte, desde: str) -> None:
     from . import piezas
     error_avisos = memoria.leer(con, "avisos_error")
+    from . import motor
     hechas, fallos, sin_salir = Counter(), {}, 0
+    volvio = None      # la última vez que el modelo volvió a contestar (C-0307)
     for b in memoria.bitacora(con, 500, desde=desde):
         if b["accion"] == "resumen_del_dia" and b["ok"]:   # el propio parte de ayer; si no salió, sí cuenta
+            continue
+        if b["accion"] == motor.ACCION_VUELTA and b["ok"]:
+            # Que volviera no es algo que «hizo»: sirve para decirlo abajo.
+            volvio = volvio or b["id"]
             continue
         if b["ok"]:
             hechas[b["accion"]] += 1
@@ -265,8 +275,13 @@ def _de_la_memoria(con: sqlite3.Connection, p: _Parte, desde: str) -> None:
             sin_salir += 1
         else:
             # Lo más nuevo primero: el primero que se ve de cada una es su último error.
-            f = fallos.setdefault(b["accion"], {"n": 0, "resultado": b["resultado"]})
+            f = fallos.setdefault(b["accion"], {"n": 0, "resultado": b["resultado"], "id": b["id"]})
             f["n"] += 1
+    for f in fallos.values():
+        # Una caída del modelo que ya pasó se dice como pasada: sigue siendo
+        # un fallo de la noche, pero no algo que haya que ir a mirar.
+        if volvio and f["id"] < volvio and str(f["resultado"]).startswith(motor.NO_DISPONIBLE):
+            f["resultado"] = "el modelo no estuvo disponible un rato; ya volvió y sigo con lo que esperaba"
     if hechas:
         top = hechas.most_common(3)
         resto = sum(hechas.values()) - sum(n for _, n in top)
@@ -372,10 +387,9 @@ def _de_las_fichas(p: _Parte, ahora: datetime) -> None:
     tiene. Las que esperan algo de él son de «Te espera», y salen de `asuntos`."""
     from .. import fichas
     from . import piezas
-    carpeta = piezas.ajuste("parte_fichas")
-    if not carpeta:
+    carpeta = piezas.carpeta_de_fichas()
+    if carpeta is None:
         return
-    carpeta = Path(str(carpeta)).expanduser()
     if not carpeta.is_dir():
         raise FileNotFoundError(f"no existe la carpeta {carpeta}")
     ayer = (ahora - timedelta(days=1)).date().isoformat()

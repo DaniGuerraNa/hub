@@ -12,7 +12,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from hub import busqueda, db, servicios, snapshotter, tmux, web
+from hub import busqueda, db, interfaz, servicios, snapshotter, tmux, web
 
 
 @pytest.fixture
@@ -85,6 +85,27 @@ def test_la_vista_de_proyecto_trae_estado_capa_repos_y_servicios(cliente):
     assert "sin capa base" in cuerpo
     assert "demo-postgres" in cuerpo
     assert "250" in cuerpo
+
+
+def test_un_estado_largo_se_lee_entero_desplegandolo_en_la_ficha(cliente, tmp_path):
+    """Se cortaba a media palabra y sin forma de leer el resto (C-0353): el
+    resumen acaba en «…» y el texto entero va dentro de un `<details>`."""
+    asiento = tmp_path / "largo"
+    asiento.mkdir()
+    largo = " ".join(f"palabra{i}" for i in range(120))
+    (asiento / "ESTADO.md").write_text(f"## Estado\n\n{largo}\n\n## Bloqueado por\n\nnada\n", encoding="utf-8")
+    con = web.conexion()
+    con.execute("INSERT INTO proyecto (id, nombre, asiento, estado_ref) VALUES ('largo','Largo',?,'ESTADO.md')",
+                (str(asiento),))
+    con.commit()
+    con.close()
+
+    cuerpo = cliente.get("/proyecto/largo").text
+
+    desplegable = re.search(r"<details[^>]*>\s*<summary>Leer entero</summary>(.*?)</details>", cuerpo, re.S)
+    assert desplegable and largo in desplegable.group(1)
+    assert "palabra119" not in cuerpo.replace(desplegable.group(0), "")   # fuera, sólo el resumen
+    assert cuerpo.count("<summary>Leer entero</summary>") == 1            # «nada» no se despliega
 
 
 def test_cada_entrada_del_indice_de_proyecto_tiene_su_seccion(cliente):
@@ -311,7 +332,7 @@ def cliente_con_tmux(cliente, monkeypatch):
         terminal, "sesiones_disponibles",
         lambda: [{"session": "114", "paneles": 1}, {"session": "otra", "paneles": 1}],
     )
-    monkeypatch.setattr(web, "_ventana_activa", lambda s: 0)
+    monkeypatch.setattr(web.api, "ventana_activa", lambda s: 0)
     # Un slot de verdad y sin ninguna ventana: es el caso entero.
     con = web.conexion()
     con.execute(
@@ -677,6 +698,23 @@ def test_marcar_que_un_slot_vuelve_se_ve_en_el_rail_y_en_la_cabecera(cliente, tm
     assert cliente.post("/api/slot/999/restaurar", json={"restaurar": True}).status_code == 404
 
 
+def test_reabrir_los_slots_persistentes_no_se_ofrece_si_ya_tienen_ventana(cliente, tmp_path):
+    """C-0299: tras un reinicio tmux devuelve las ventanas solo, y el botón,
+    ofrecido igual, las duplicaba con un clic."""
+    con = web.conexion()
+    con.execute("INSERT INTO slot (id, proyecto_id, nombre, ruta, restaurar, creado_en) "
+                "VALUES (5,'demo','back',?,1,'2026-10-22')", (str(tmp_path),))
+    con.close()
+    assert "Reabrir tus slots persistentes" in cliente.get("/").text
+
+    con = web.conexion()
+    con.execute("INSERT INTO snapshot (id, tomado_en, server_pid) VALUES (1,'2026-11-12T10:00:00+00:00',7)")
+    con.execute("INSERT INTO panel (snapshot_id, pane_id, session, window_idx, pane_idx, cwd, comando, slot_id) "
+                "VALUES (1,'%1','work',0,0,?,'bash',5)", (str(tmp_path),))
+    con.close()
+    assert "Reabrir tus slots persistentes" not in cliente.get("/").text
+
+
 def test_la_terminal_sabe_que_cierre_significa_no_reintentes(cliente):
     """El 4404 lo pone `web.py` y lo lee el script: cambiado en un solo lado no
     falla nada, se queda reintentando. Se comprueba en el HTML servido porque
@@ -716,3 +754,157 @@ def test_no_queda_la_api_de_recuperacion_sin_consumidor():
     """`/api/recuperacion` no la pedía ninguna página ni test (C-0108): la
     recuperación se ve en el panorama, que la lee de `api` al pintar."""
     assert "/api/recuperacion" not in {getattr(r, "path", "") for r in web.app.routes}
+
+
+def test_sin_docker_servicios_no_ofrece_accionar_ni_dice_corriendo(cliente, monkeypatch):
+    """C-0293: la lectura guardada se enseña como lo que se vio, con su fecha,
+    y ningún botón de arrancar, parar o reiniciar queda activo."""
+    monkeypatch.setattr(servicios, "disponible", lambda: False)
+    html = cliente.get("/servicios").text
+    assert "Docker no está instalado en este entorno" in html
+    assert "última lectura buena" in html
+    botones = re.findall(r"<button[^>]*accion-svc[^>]*>", html)
+    assert botones and all("disabled" in b for b in botones)
+    assert "de 2 corriendo" not in html
+    assert 'class="cuenta">1<' not in html, "el raíl seguía contando el contenedor"
+
+
+# ── C-0300: una dirección que no lleva a nada lo dice en una página del hub ──
+
+
+def test_una_direccion_que_no_existe_da_una_pagina_del_hub_y_no_json_en_ingles(cliente):
+    r = cliente.get("/no-existe", headers={"accept": "text/html,application/xhtml+xml"})
+    assert r.status_code == 404
+    assert r.headers["content-type"].startswith("text/html")
+    assert "Aquí no hay nada" in r.text and "/no-existe" in r.text
+    assert 'href="/talleres"' in r.text, "sin el raíl no hay por dónde seguir"
+    assert "Not Found" not in r.text
+
+
+def test_a_la_api_y_a_los_estaticos_se_les_sigue_contestando_como_siempre(cliente):
+    assert cliente.get("/api/no-existe", headers={"accept": "text/html"}).json() == {"detail": "Not Found"}
+    r = cliente.get("/static/no-existe.js")
+    assert r.status_code == 404 and "Aquí no hay nada" not in r.text
+
+
+def test_un_proyecto_que_no_existe_vuelve_al_panorama_diciendolo(cliente):
+    r = cliente.get("/proyecto/no-existe", follow_redirects=False)
+    assert r.status_code == 303
+    assert "aviso=" in r.headers["location"]
+    destino = cliente.get(r.headers["location"]).text
+    assert "No hay ningún proyecto «no-existe»" in destino
+
+
+# ── estructura accesible (C-0347) ─────────────────────────────────────────────
+
+def _primer_control(html: str) -> str:
+    """La primera etiqueta enfocable del cuerpo: la que alcanza el primer Tab."""
+    cuerpo = html.split("<body", 1)[1]
+    return re.search(r"<(?:a|button|input|select|textarea|summary)\b[^>]*>", cuerpo).group(0)
+
+
+def _estructura(html: str) -> None:
+    assert html.count("<main") == 1 and '<main id="contenido"' in html
+    assert re.search(r"<h1[\s>]", html), "sin h1"
+    primero = _primer_control(html)
+    assert 'class="saltar"' in primero and 'href="#contenido"' in primero, primero
+
+
+@pytest.mark.parametrize("ruta", ["/", "/respaldo", "/servicios", "/conexiones", "/inventario"])
+def test_cada_pantalla_tiene_un_main_un_h1_y_el_salto_como_primer_tab(cliente, ruta):
+    """Medido en Panorama: ningún `main`, ningún `h1` y diez tabuladores por el
+    raíl antes de llegar a «Buscar» (C-0347)."""
+    _estructura(cliente.get(ruta).text)
+
+
+def test_trabajo_tiene_un_solo_main_y_su_h1(cliente_con_tmux):
+    """Su `<main class="centro">` era el único del hub; con el de la base
+    serían dos, y una página tiene uno."""
+    _estructura(cliente_con_tmux.get("/trabajo").text)
+
+
+def test_el_rail_se_nombra_y_marca_la_pantalla_en_la_que_estas(cliente):
+    html = cliente.get("/respaldo").text
+    rail = html.split('<nav class="rail-global"')[1].split("</nav>")[0]
+    assert 'aria-label="Secciones del hub"' in rail.split(">", 1)[0]
+    marcadas = re.findall(r"<a [^>]*aria-current=\"page\"[^>]*>", rail)
+    assert len(marcadas) == 1 and 'href="/respaldo"' in marcadas[0], marcadas
+
+
+def test_la_paleta_tiene_nombre(cliente):
+    html = cliente.get("/respaldo").text
+    assert re.search(r'<dialog class="dlg paleta" id="paleta" aria-label="[^"]+"', html)
+    assert re.search(r'<input type="text" id="paleta-q"[^>]*aria-label="[^"]+"', html)
+
+
+# ── El porqué de cada pantalla, plegado (C-0399, UI-49) ─────────────────────
+
+@pytest.mark.parametrize("ruta, porque", [
+    ("/canal", "Esto no es un canal para mandar instrucciones"),
+    ("/conexiones", "El hub nunca guarda el secreto"),
+    ("/servicios", "docker stop $(docker ps -q)"),
+    ("/consumo", "convertir tokens a dinero"),
+])
+def test_el_porque_de_la_pantalla_va_plegado_bajo_una_linea_y_no_como_primera_tarjeta(cliente, ruta, porque):
+    """Servía la primera vez y luego empujaba el contenido: en Canal y
+    Conexiones ocupaba la primera pantalla del teléfono. Queda una línea, y
+    el texto largo detrás de «¿Por qué así?»."""
+    html = cliente.get(ruta).text
+    plegados = re.findall(r'<details class="porque">(.*?)</details>', html, re.S)
+    assert len(plegados) == 1, ruta
+    resumen, _, largo = plegados[0].partition("</summary>")
+    assert "¿Por qué así?" in resumen and porque not in resumen
+    assert porque in largo.replace("&#39;", "'").replace("&amp;", "&")
+    assert html.count(porque) == 1, "el porqué no se repite fuera del plegable"
+
+
+# ── Una acción principal por región (C-0402, UI-39) ─────────────────────────
+
+def _con_cta(nodo) -> bool:
+    """Si el trozo de plantilla pinta un `.cta` por sí mismo."""
+    from jinja2 import nodes
+    for n in nodo.find_all((nodes.TemplateData, nodes.Const)):
+        texto = n.data if isinstance(n, nodes.TemplateData) else n.value
+        if isinstance(texto, str) and re.search(r'class="[^"]*\bcta\b|^\s*cta\b|\scta\s*$', texto):
+            return True
+    return False
+
+
+#: Lo que sí puede repetirse por fila: el «Guardar» de renombrar en su sitio,
+#: que está oculto hasta que se edita UNA fila.
+CTA_POR_FILA_ADMITIDA = {"nombre_editable"}
+
+
+def test_lo_que_se_repite_por_fila_no_es_la_accion_principal():
+    """`.cta` es «lo siguiente que hay que hacer». Repetida en cada fila —46
+    en Pendientes con datos de verdad, «Aprobar» en cada solicitud— deja de
+    decirlo; lo de cada fila es `.aceptar`. Mira el árbol de cada plantilla:
+    un `.cta` dentro de un `for`, o una macro con `.cta` llamada desde uno."""
+    from jinja2 import Environment, nodes
+    entorno = Environment()
+    # Por ruta y no por nombre: `base.html` y `nueva/base.html` chocaban en la
+    # clave y la de siempre no se miraba (tras la revisión de C-0402).
+    raiz = web._AQUI / "templates"
+    arboles = {str(a.relative_to(raiz)): entorno.parse(a.read_text(encoding="utf-8"))
+               for a in sorted(raiz.rglob("*.html"))}
+    # La nueva no viaja con el producto (C-0169): allí sólo se exige la de siempre.
+    esperadas = {"base.html", "nueva/base.html"} if interfaz.disponible() else {"base.html"}
+    assert esperadas <= set(arboles)
+    con_cta = {m.name for arbol in arboles.values() for m in arbol.find_all(nodes.Macro)
+               if _con_cta(m)} - CTA_POR_FILA_ADMITIDA
+    culpables = []
+    for nombre, arbol in arboles.items():
+        for bucle in arbol.find_all(nodes.For):
+            if any(_con_cta(n) for n in bucle.body):
+                culpables.append(f"{nombre}:{bucle.lineno} .cta dentro del bucle")
+            for llamada in bucle.find_all(nodes.Call):
+                quien = llamada.node
+                nombre_llamado = getattr(quien, "attr", None) or getattr(quien, "name", None)
+                if nombre_llamado in con_cta:
+                    culpables.append(f"{nombre}:{llamada.lineno} {nombre_llamado}() con .cta en un bucle")
+    assert not culpables, culpables
+
+
+def test_encolar_es_la_accion_principal_del_orquestador(cliente):
+    html = cliente.get("/orquestador").text
+    assert re.search(r'<button class="[^"]*\bcta\b[^"]*">Encolar</button>', html), "Encolar salía gris"

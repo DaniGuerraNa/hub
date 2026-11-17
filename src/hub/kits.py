@@ -28,6 +28,7 @@ repo, con el humano mirando. El hub indexa; el proyecto decide.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import re
 import subprocess
@@ -36,7 +37,7 @@ from pathlib import Path
 
 import yaml
 
-from . import config
+from . import config, recordar, tiempos
 
 # Qué versión de la capa base exige el hub. La base es el kit obligatorio: sólo
 # entra en ella lo que necesitan TODOS los proyectos, y añadir algo sube `major`
@@ -117,17 +118,33 @@ class Kit:
         ]
 
 
+@tiempos.medido
 def leer_manifiesto(raiz: Path) -> Kit:
     """Lee `kit.yml` y valida el contrato.
 
     Se valida al leer y no al usar: un manifiesto roto descubierto a mitad de
     aplicar un kit deja el proyecto a medias, que es el peor momento posible.
+
+    Lo leído se recuerda mientras `kit.yml` no cambie (C-0310): Contexto
+    releía en cada visita los manifiestos de todos los kits, uno por kit y
+    otra vez por cada kit instalado. Tres cosas a propósito: un manifiesto
+    inválido no se recuerda (se vuelve a leer, y a decir qué falla, hasta que
+    se arregle); cada quien recibe su copia, porque un `Kit` lleva listas y
+    diccionarios que quien lo usa podría tocar; y el instalador se vuelve a
+    comprobar siempre, porque es otro archivo y la huella de `kit.yml` no lo ve.
     """
-    ruta = Path(raiz) / "kit.yml"
+    kit = recordar.por_archivo(Path(raiz) / "kit.yml", _leer_kit_yml, copia=copy.deepcopy)
+    if kit.instalar and not (Path(raiz) / kit.instalar).is_file():
+        raise KitInvalido(f"`instalar` apunta a «{kit.instalar}», que no está en el kit")
+    return kit
+
+
+def _leer_kit_yml(ruta: Path) -> Kit:
+    raiz = ruta.parent
     if not ruta.is_file():
         raise KitInvalido(f"no hay kit.yml en {raiz}")
     try:
-        datos = yaml.safe_load(ruta.read_text(encoding="utf-8")) or {}
+        datos = config.leer_yaml(ruta.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as e:
         raise KitInvalido(f"kit.yml no es YAML válido: {e}") from e
     if not isinstance(datos, dict):
@@ -403,7 +420,7 @@ def catalogo() -> dict[str, dict]:
         if not ruta.is_file():
             continue
         try:
-            datos = yaml.safe_load(ruta.read_text(encoding="utf-8")) or {}
+            datos = config.leer_yaml(ruta.read_text(encoding="utf-8")) or {}
         except yaml.YAMLError:
             continue
         for entrada in datos.get("kits") or []:
@@ -496,7 +513,7 @@ def kits_declarados(raices: list[str]) -> list[dict]:
     if not ruta.is_file():
         return []
     try:
-        datos = yaml.safe_load(ruta.read_text(encoding="utf-8")) or {}
+        datos = config.leer_yaml(ruta.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError:
         return []
     return [k for k in (datos.get("kits") or []) if isinstance(k, dict) and k.get("id")]
@@ -800,6 +817,59 @@ def hay_binario(nombre: str) -> bool:
     # `shutil.which` y no `command -v`: éste resuelve también alias y funciones
     # del shell, que no existen para un subproceso. Ya pasó con `rg`.
     return shutil.which(nombre) is not None
+
+
+def prompt_mantenedor(
+    kit_nombre: str, consumidor: str, deriva: int, divergencias: int,
+    mantenimiento: dict | None = None,
+) -> str:
+    """Propuesta editable, no una orden.
+
+    Lleva la medición dentro para que el agente no tenga que redescubrirla, y
+    empieza por verificar en vez de por aplicar: el sistema propone, el usuario
+    decide.
+
+    🔴 Tres cosas que estaban mal y se arreglan juntas porque son la misma:
+    este texto era fijo y no leía nada del manifiesto.
+
+    - Mandaba usar «el agente mantenedor de X», que está **abolido** —el
+      procedimiento vive una vez, en la skill `mantener-kit`, no repetido en un
+      agente por kit—. Ahora nombra la skill.
+    - Remitía a «su ficha de `consumidores/`», el formato anterior a `kit.yml`
+      que `aplica:` sustituyó.
+    - E ignoraba `mantenimiento.notas` y `mantenimiento.verificar`, que el kit
+      declara justo para esto: se parseaban y no los leía nadie.
+
+    Vive aquí, junto a `prompt_aplicar`, y no en `api` (C-0102): redactar lo
+    que se le pide al agente es del dominio de los kits; `api` sólo lo pinta.
+    """
+    estado = (
+        f"El hub midió {deriva} archivo(s) con deriva real"
+        if deriva
+        else "El hub no detectó deriva (todos los archivos mapeados coinciden)"
+    )
+    partes = [
+        f"Sigue la skill `mantener-kit` para revisar el consumidor «{consumidor}» "
+        f"del kit {kit_nombre}.",
+        "",
+        f"{estado} y {divergencias} divergencia(s) declarada(s) por el propio "
+        "consumidor en su `.claude/hub/kits.yml`.",
+    ]
+
+    mantenimiento = mantenimiento or {}
+    if notas := str(mantenimiento.get("notas") or "").strip():
+        partes += ["", "Lo que este kit avisa a quien lo mantiene:", "", notas]
+    if gancho := str(mantenimiento.get("verificar") or "").strip():
+        partes += ["", f"Y trae su propia comprobación: ejecuta `{gancho}` "
+                       "desde la raíz del kit."]
+
+    partes += [
+        "",
+        "Antes de tocar nada: verifica la medición por tu cuenta y contrasta las "
+        "divergencias declaradas contra la realidad — pueden estar obsoletas. "
+        "Repórtame qué encontraste y qué propones antes de aplicar cambios.",
+    ]
+    return "\n".join(partes)
 
 
 def prompt_aplicar(proyecto_nombre: str, raiz: str, kit: Kit, plan: dict) -> str:

@@ -7,21 +7,21 @@
   /* Arriba, grabar: es lo que se hace con prisa cuando empieza la llamada.
      Abajo, lo grabado. */
   .reu { display:grid; gap:14px; grid-template-columns:minmax(0,1fr); }
-  .reu .tarjeta h2 { margin:0 0 10px; font-size:15px; }
+  .reu .tarjeta h2 { margin:0 0 10px; font-size:var(--letra-4); }
   .reu p.ayuda { margin:0 0 10px; color:var(--texto-3); font-size:13px; max-width:72ch; }
   .monitores { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:10px; }
-  .monitor { border:1px solid var(--borde); border-radius:12px; padding:8px; cursor:pointer;
+  .monitor { border:1px solid var(--borde); border-radius:var(--r-cifra); padding:8px; cursor:pointer;
              display:grid; gap:6px; background:var(--lienzo); }
   .monitor:has(input:checked) { border-color:var(--acento); background:color-mix(in srgb, var(--acento) 8%, var(--lienzo)); }
   .monitor img, .monitor .sin { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:8px;
                                 background:var(--elevado); display:grid; place-items:center;
                                 color:var(--texto-4); font-size:12px; }
-  .monitor > span:not(.placa) { font-size:12.5px; text-transform:none; letter-spacing:0; color:var(--texto-2); }
+  .monitor > span:not(.placa) { font-size:var(--letra-2); text-transform:none; letter-spacing:0; color:var(--texto-2); }
   .reu .dos label input, .reu .dos label select { display:block; width:100%; margin-top:6px;
                                                   text-transform:none; letter-spacing:0; font-size:14px; }
   .dos { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; }
   .acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
-  .marca { font-size:11px; padding:1px 8px; border-radius:999px; white-space:nowrap; }
+  .marca { font-size:var(--letra-1); padding:1px 8px; border-radius:var(--r-pildora); white-space:nowrap; }
   .marca.ok, .marca.hecho { color:var(--ok); background:color-mix(in srgb, var(--ok) 14%, transparent); }
   .marca.mal, .marca.fallo, .marca.se-cortó { color:var(--riesgo); background:color-mix(in srgb, var(--riesgo) 14%, transparent); }
   .marca.sin-comprimir { color:var(--texto-3); background:var(--elevado); }
@@ -36,9 +36,9 @@
   .lista-reu a.fila { display:grid; grid-template-columns:150px minmax(0,1fr) auto; gap:10px; align-items:baseline;
                       padding:10px 0; border-top:1px solid var(--borde); color:var(--texto); text-decoration:none; }
   .lista-reu a.fila:first-child { border-top:0; }
-  .lista-reu .cuando { font-variant-numeric:tabular-nums; color:var(--texto-3); font-size:12.5px; }
+  .lista-reu .cuando { font-variant-numeric:tabular-nums; color:var(--texto-3); font-size:var(--letra-2); }
   .reu input.llave { width:100%; font-family:ui-monospace, Menlo, Consolas, monospace; font-size:13px; }
-  .reu details.conexion summary { cursor:pointer; color:var(--texto-2); font-size:13.5px; }
+  .reu details.conexion summary { cursor:pointer; color:var(--texto-2); font-size:var(--letra-3); }
   .reu details.conexion form { margin-top:10px; }
   @media (max-width: 620px) { .lista-reu a.fila { grid-template-columns:minmax(0,1fr) auto; }
                               .lista-reu .cuando { grid-column:1 / -1; } }
@@ -47,7 +47,8 @@
 {{ ui.cabecera_vista('Reuniones', 'Graba la reunión de otro monitor mientras trabajas; luego, resumen, tareas y transcripción') }}
 
 {% set a = r.agente %}
-{% macro peso(b) %}{% if b >= 1e9 %}{{ '%.1f' | format(b / 1e9) }} GB{% else %}{{ (b / 1e6) | round | int }} MB{% endif %}{% endmacro %}
+{# Con `tamano`, como todo peso del hub: en múltiplos de 1024 y con coma (C-0398). #}
+{% macro peso(b) %}{{ tamano(b) }}{% endmacro %}
 {% set cx = r.conexion %}
 {# Una región (C-0167): las acciones y el refresco solo cambian esto, sin
    recargar la página. #}
@@ -117,6 +118,26 @@
   </form>
 {% endif %}
 
+{# Si el agente de Windows es el que trae el hub (C-0379): tras actualizar,
+   no se sabía si tocaba copiarlo. Sólo cuando se puede comparar. #}
+{% set v = r.version_agente %}
+{% if v.estado == 'vieja' %}
+  <form data-sin-recarga class="tarjeta" method="post" action="/reuniones/copiar-agente" id="version-agente">
+    <h2>Agente de Windows <span class="marca espera">hay una versión nueva</span></h2>
+    <p class="ayuda">El agente que llama es la {{ v.corre }} y el hub trae la {{ v.hay }}. Cópialo (no toca la llave)
+      y, en Windows, cierra <code>pythonw.exe</code> en el Administrador de tareas y abre
+      <code>{{ pr.windows }}\instalar.cmd</code>.</p>
+    <div class="acciones"><button class="boton">Copiar el agente a {{ pr.windows }}</button></div>
+  </form>
+{% elif v.estado == 'copiada' %}
+  <div class="tarjeta" id="version-agente">
+    <h2>Agente de Windows <span class="marca espera">falta reiniciarlo</span></h2>
+    <p class="ayuda">La {{ v.hay }} ya está copiada en <code>{{ pr.windows }}</code>, pero el agente que llama sigue
+      siendo la {{ v.corre }}. En Windows, cierra <code>pythonw.exe</code> en el Administrador de tareas y abre
+      <code>{{ pr.windows }}\instalar.cmd</code>.</p>
+  </div>
+{% endif %}
+
 {% if not a.vivo %}
   {# Sin preparar, lo que falta ya lo dice la tarjeta de arriba; salvo una
      llave rechazada, que es una avería y no un paso pendiente. #}
@@ -124,10 +145,10 @@
   <div class="tarjeta">
     <h2><span class="marca mal">agente desconectado</span></h2>
     {% if cx.rechazo is not none %}
-    <p class="ayuda"><strong>El agente está llamando, pero sin una llave que valga</strong> (hace {{ cx.rechazo }} s).
+    <p class="ayuda"><strong>El agente está llamando, pero sin una llave que valga</strong> (hace {{ cx.rechazo | duracion }}).
       {% if cx.hay_llave %}Saca otra abajo, en «Conexión del agente».{% endif %}</p>
     {% endif %}
-    <p class="ayuda">{% if a.hace is not none %}El agente de Windows dio señales hace {{ a.hace }} s.{% else %}El agente de
+    <p class="ayuda">{% if a.hace is not none %}El agente de Windows dio señales hace {{ a.hace | duracion }}.{% else %}El agente de
       Windows no ha llamado nunca a este hub.{% endif %} Arranca solo al iniciar sesión en Windows (desde la carpeta
       Inicio); a mano: <code>{{ pr.windows }}\iniciar.cmd</code>.</p>
   </div>
@@ -148,7 +169,8 @@
   </div>
 {% else %}
   <form data-sin-recarga class="tarjeta" method="post" action="/reuniones/accion">
-    <h2>Grabar <span class="marca ok">agente conectado · {{ a.equipo }}</span></h2>
+    <h2>Grabar <span class="marca ok">agente conectado · {{ a.equipo }}</span>
+      {%- if v.estado == 'al-dia' %} <span class="tenue" style="font-size:12px;font-weight:400">agente {{ v.corre }} · al día</span>{% endif %}</h2>
     <p class="ayuda">Graba el monitor elegido (1 captura por segundo, sólo se guardan las que cambian), el audio
       <strong>sólo</strong> de la aplicación elegida —otra música no entra— y tu micro aparte. Al parar, se
       transcribe aquí y Claude saca el resumen y las tareas. 🔴 Avisa a los demás de que grabas.</p>
@@ -181,7 +203,7 @@
       <label>De qué es (opcional)<input name="titulo" placeholder="Seguimiento infraestructura"></label>
     </div>
     <div class="acciones"><button class="boton principal" name="que" value="grabar">● Grabar</button>
-      <span class="tenue" style="font-size:12.5px">Si la aplicación no sale, entra primero en la llamada: abre su audio al empezar.</span></div>
+      <span class="tenue" style="font-size:var(--letra-2)">Si la aplicación no sale, entra primero en la llamada: abre su audio al empezar.</span></div>
   </form>
 {% endif %}
 
@@ -190,7 +212,7 @@
     {% if r.sin_comprimir.n %}
     <form data-sin-recarga method="post" action="/reuniones/accion" class="acciones" style="margin:0 0 10px">
       <span>{{ r.sin_comprimir.n }} sin comprimir · <strong>{{ peso(r.sin_comprimir.bytes) }}</strong>.
-        <span class="tenue" style="font-size:12.5px">Comprimir pasa el audio a Opus (unas 15 veces menos) y borra el WAV original.</span></span>
+        <span class="tenue" style="font-size:var(--letra-2)">Comprimir pasa el audio a Opus (unas 15 veces menos) y borra el WAV original.</span></span>
       <button class="boton" name="que" value="comprimir-todas" {{ 'disabled' if r.sin_comprimir.comprimiendo }}>
         {{ 'Comprimiendo…' if r.sin_comprimir.comprimiendo else 'Comprimir todas' }}</button>
     </form>

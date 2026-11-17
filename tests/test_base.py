@@ -106,6 +106,23 @@ def test_quita_la_tipografia_del_markdown():
     assert campos["estado"] == "Todo commiteado y verificado."
 
 
+_LARGO = " ".join(f"palabra{i}" for i in range(120))   # unos 1 000 caracteres, una línea
+
+
+def test_un_campo_largo_se_corta_en_una_palabra_y_lo_dice_con_puntos_suspensivos():
+    """Se cortaba a los 600 caracteres a secas: «…formulario de disparadores,
+    defen» (C-0353). Ahora termina en una palabra entera y con «…»."""
+    corto = base.extraer_minimo(f"## Estado\n\n{_LARGO}\n")["estado"]
+
+    assert len(corto) <= 600 and corto.endswith("…")
+    sin_puntos = corto[:-1].rstrip()
+    assert _LARGO.startswith(sin_puntos) and _LARGO[len(sin_puntos)] == " "
+
+
+def test_un_campo_corto_no_lleva_puntos_suspensivos():
+    assert base.extraer_minimo("## Estado\n\nen marcha\n")["estado"] == "en marcha"
+
+
 def test_descarta_las_tablas_que_sin_renderizar_son_ilegibles():
     campos = base.extraer_minimo(
         "## Estado\n\nVa bien.\n\n| Repo | Commit |\n|---|---|\n| idle | 055115f |\n"
@@ -140,6 +157,20 @@ def test_un_puntero_roto_se_reporta_como_roto_no_como_ausente(proyecto):
     estado = base.estado_de(proyecto)
     assert estado["existe"] is False
     assert estado["declarado"] == "docs/NO-EXISTE.md"
+
+
+def test_el_texto_entero_viaja_aparte_y_solo_si_se_pide(proyecto, tmp_path):
+    """La ficha del proyecto lo despliega con «Leer entero» (C-0353); el
+    contexto y el panorama siguen con el resumen, sin cargar con el resto."""
+    lineas = "\n".join(f"- punto {i}" for i in range(9))
+    _escribir(tmp_path / "repo" / "docs" / "ESTADO.md",
+              f"## Estado\n\n{_LARGO}\n\n## Próxima acción\n\n{lineas}\n")
+
+    assert "enteros" not in base.estado_de(proyecto)
+    estado = base.estado_de(proyecto, enteros=True)
+    assert estado["enteros"]["estado"] == _LARGO
+    assert estado["enteros"]["proxima_accion"] == lineas      # las 9, no sólo las 6 primeras
+    assert estado["campos"]["proxima_accion"].count("\n") == 5
 
 
 def test_sin_estado_ref_se_dice_que_nadie_declaro_cual_esta_vigente(proyecto):

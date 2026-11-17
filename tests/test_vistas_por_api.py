@@ -66,7 +66,9 @@ def test_acceso_da_todo_lo_que_lee_su_plantilla_menos_el_qr():
     assert acceso.canjear(codigo)
     otro = acceso.alta_pendiente("Tableta")
     datos = api.acceso(otro)
-    assert plantilla.nombres("acceso.html") <= set(datos) | {"qr", "enlace"}
+    # `rail` también sale de `api` (`api.rail`), y lo pone `_vista` en todas
+    # las pantallas: Acceso lo lee para nombrar a quien habla (C-0355).
+    assert plantilla.nombres("acceso.html") <= set(datos) | {"qr", "enlace", "rail"}
     assert plantilla.campos("acceso.html", "pendiente") <= set(datos["pendiente"])
     (aparato,) = datos["dispositivos"]
     assert plantilla.campos_de_cada("acceso.html", "dispositivos") <= set(aparato)
@@ -119,8 +121,11 @@ def test_maquina_da_todo_lo_que_lee_su_plantilla(con, monkeypatch):
     leidos = plantilla.campos_de_cada("maquina.html", "tarjetas")
     assert datos["tarjetas"] and all(leidos <= set(t) for t in datos["tarjetas"])
     # `arreglo` sólo lo trae lo que tiene arreglo, y la plantilla lo pregunta.
-    leidos = plantilla.campos_de_cada("maquina.html", "salud") - {"arreglo"}
+    # Cada fila la pinta `fila_salud`, abierta o plegada (C-0378).
+    leidos = plantilla.campos_de_macro("maquina.html", "fila_salud") - {"arreglo"}
+    assert {"estado", "nombre", "detalle"} <= leidos
     assert datos["salud"] and all(leidos <= set(r) for r in datos["salud"])
+    assert datos["salud_atencion"] + datos["salud_en_pie"] == datos["salud"]
     assert datos["medido_en"]
 
 

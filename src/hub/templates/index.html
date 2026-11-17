@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
+{% block refrescar %}{{ ui.refrescar(request) }}{% endblock %}
 {% block contenido %}
+{# La miga de la cabecera ya dice «Panorama»: el título sólo se oye (C-0347). #}
+<h1 class="solo-lector">Panorama</h1>
 
 {# ── Primer arranque ────────────────────────────────────────────────────────
    Un hub recién instalado enseña siete pantallas vacías, y quien acaba de
@@ -86,8 +89,9 @@
    Un botón, nunca algo automático (regla dura 3). Y deliberadamente poca cosa:
    abre las ventanas en su ruta con el comando ESCRITO Y SIN LANZAR (decisión
    165), así que no gasta cuota, no levanta sesiones sin nadie delante y no toca
-   docker. Sólo sale si hay slots marcados: un botón que no hace nada es peor
-   que ningún botón. #}
+   docker. Sólo sale si algún slot marcado se ha quedado sin ventana: un botón
+   que no hace nada es peor que ningún botón, y uno que duplica lo que tmux ya
+   devolvió, peor todavía (C-0299). #}
 {% if r.para_restaurar %}
 <div class="aviso" style="border-left-color:var(--acento)">
   {{ ui.placa('terminal', '', 'lg') }}
@@ -104,6 +108,11 @@
 
     {% set rr = r.restauracion %}
     {% if rr.candidatos %}
+    {# El plan, plegado si la muestra es de hace más de un día (C-0296); el
+       botón sigue a la vista. #}
+    <details {% if rr.reciente %}open{% endif %} style="margin-bottom:10px">
+    <summary>{% if (rr.ventanas | length) == 1 %}Ver la ventana y de qué muestra sale{% else %}Ver
+      las {{ rr.ventanas | length }} ventanas y de qué muestra salen{% endif %}</summary>
     {# 🔴 La muestra se elige a mano y se enseña el plan antes de abrir nada. El
        16-sep hubo dos muestras marcadas «antes de un corte» con los mismos slots
        y casi los mismos paneles, y sólo una era el escritorio de trabajo:
@@ -113,7 +122,8 @@
       <select name="muestra" onchange="this.form.submit()" style="width:auto;max-width:100%">
         {% for c in rr.candidatos %}
         <option value="{{ c.id }}" {% if rr.muestra and c.id == rr.muestra.id %}selected{% endif %}>
-          {{ c.tomado_en[8:10] }}/{{ c.tomado_en[5:7] }} {{ c.tomado_en[11:16] }} UTC ·
+          {#- Dentro de un <option> no cabe un <time>: el filtro, sin la macro. #}
+          {{ (c.tomado_en | cuando).local or c.tomado_en }} ·
           {{ c.ventanas }} ventana{{ 's' if c.ventanas != 1 }} ·
           {{ c.procesos | join(', ') or 'sin procesos' }}
         </option>
@@ -140,6 +150,7 @@
       <p class="tenue" style="margin:0;padding:12px">Esa muestra no tiene ninguna ventana de estos slots.</p>
       {% endif %}
     </div>
+    </details>
     {% endif %}
 
     <form method="post" action="/restaurar">
@@ -156,16 +167,29 @@
    recargar ni volver arriba, y en la página a la que vuelve ya no está. #}
 <div data-region="recuperacion">
 {% if r.recuperacion %}
-<div class="aviso">
+{% set rc = r.recuperacion %}
+<div class="aviso" data-que="corte">
   {# Envuelto: `.aviso` es flex en fila, y con el título, el párrafo, la lista
      y los botones sueltos dentro salían en cuatro columnas — y en el teléfono
      empujaban la página a 615 px (medido el 13-oct con datos reales). #}
   <div style="flex:1;min-width:0">
-  <h2>Se perdió una sesión de trabajo</h2>
-  <p class="tenue" style="margin:0 0 10px">
-    Última muestra antes del corte: {{ r.recuperacion.tomado_en }} ·
-    {{ r.recuperacion.paneles | length }} paneles
-    {% if r.recuperacion.proyectos %} en {{ r.recuperacion.proyectos | join(', ') }}{% endif %}
+  {# Plegado si el corte es de hace más de un día o tmux ya lo devolvió todo
+     con su agente (C-0296): cinco días después ocupaba 4 000 px encima de lo
+     de hoy. Plegar no es ocultar —el resumen dice cómo está y los botones
+     siguen a mano— y nada se da por revisado solo (principio 9). #}
+  <details {% if rc.abierta %}open{% endif %}>
+  <summary>
+    <h2 style="display:inline">{{ 'tmux devolvió las ventanas del corte' if rc.todo_devuelto
+                                  else 'Se perdió una sesión de trabajo' }}</h2>
+    <span class="tenue" style="display:block;margin-top:4px">
+      Corte del {{ ui.cuando(rc.tomado_en, forma='ambos') }} · {{ rc.ventanas }} ventana{{ 's' if rc.ventanas != 1 }}
+      {%- if rc.devueltas %} · tmux devolvió {{ rc.devueltas }}{% if rc.sin_su_agente %}, {{ rc.sin_su_agente }} sin su agente{% endif %}
+      {%- else %} · tmux no ha devuelto ninguna{% endif %}</span>
+  </summary>
+  <p class="tenue" style="margin:10px 0">
+    Última muestra antes del corte: {{ ui.cuando(rc.tomado_en, forma='local') }} ·
+    {{ rc.paneles | length }} paneles
+    {% if rc.proyectos %} en {{ rc.proyectos | join(', ') }}{% endif %}
   </p>
   <ul class="limpia">
     {% for p in r.recuperacion.paneles %}
@@ -181,6 +205,7 @@
     </li>
     {% endfor %}
   </ul>
+  </details>
   <div class="barra" style="margin-top:12px;flex-wrap:wrap">
     <a class="boton principal" href="/trabajo">Ir a trabajar</a>
     <form method="post" action="/recuperacion/{{ r.recuperacion.id }}/revisada" class="enlinea" data-sin-recarga>
@@ -200,7 +225,7 @@
   <div style="flex:1;min-width:0">
     <h2>{{ r.respaldo.commits_sin_respaldo }} commits sin respaldo</h2>
     <p style="margin:0 0 12px;color:var(--texto-2)">
-      Repartidos en {{ r.respaldo.repos_en_riesgo }} repo(s). Si esta máquina se apaga hoy,
+      Repartidos en {{ r.respaldo.repos_en_riesgo }} repo{{ 's' if r.respaldo.repos_en_riesgo != 1 }}. Si esta máquina se apaga hoy,
       es lo que no está en ningún otro sitio.
     </p>
     {% for x in r.respaldo.en_riesgo[:5] %}
@@ -220,9 +245,10 @@
 
 <p class="tenue">
   {% if r.snapshot %}
-    Última muestra {{ r.snapshot.tomado_en }} · {{ r.paneles_totales }} paneles abiertos
+    {#- 300 s: el latido ya va mal (`salud.MAL_SEGUNDOS`). #}
+    Última muestra {{ ui.cuando(r.snapshot.tomado_en, umbral=300) }} · {{ r.paneles_totales }} paneles abiertos
     {% if r.sin_atribuir %} · {{ r.sin_atribuir }} sin proyecto{% endif %}
-    {% if r.servicios.vivos %} · {{ r.servicios.vivos }} contenedores corriendo{% endif %}
+    {% if r.servicios.vivos and r.servicios.vigente %} · {{ r.servicios.vivos }} contenedores corriendo{% endif %}
   {% else %}
     Todavía no hay ninguna muestra. Pulsa «Refrescar» o arranca el snapshotter.
   {% endif %}
@@ -392,7 +418,7 @@
       {% for s in p.slots %}
       <li>
         <a href="/trabajo?slot={{ s.id }}">{{ s.nombre }}</a>
-        <span class="tenue">{% if s.ultima_actividad %} · {{ s.ultima_actividad[:10] }}{% endif %}</span>
+        <span class="tenue">{% if s.ultima_actividad %} · {{ ui.cuando(s.ultima_actividad, forma='dia', con_hace=false) }}{% endif %}</span>
       </li>
       {% endfor %}
     </ul>

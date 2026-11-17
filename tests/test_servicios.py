@@ -8,6 +8,8 @@ que es propio.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from hub import servicios
@@ -155,3 +157,72 @@ def test_un_nombre_que_docker_leeria_como_opcion_se_rechaza_antes_de_llegar(nomb
     with pytest.raises(servicios.AccionInvalida):
         servicios.accionar(nombre, "stop")
     assert not lanzados
+
+
+# ───────── una lectura vieja no se enseña como lo que hay ahora (C-0293) ─────────
+#
+# Sin Docker desde hacía nueve días, /servicios enseñaba «1 de 14 corriendo» y
+# ofrecía Parar y Reiniciar sobre aquella lectura, y el raíl contaba «1». La
+# pantalla que existe para no parar el contenedor equivocado (regla dura 12)
+# ofrecía accionar algo que podía no ser ya así.
+
+
+def _lectura(con, medido_en, estado="running"):
+    con.execute(
+        """INSERT INTO servicio (contenedor, proyecto_id, imagen, estado, detalle, medido_en)
+           VALUES ('web-1', NULL, 'nginx', ?, 'Up 35 seconds', ?)""", (estado, medido_en))
+
+
+def test_sin_docker_la_lectura_guardada_no_es_vigente_y_se_dice_por_que(con, monkeypatch):
+    from hub import api, reloj
+    monkeypatch.setattr(servicios, "disponible", lambda: False)
+    _lectura(con, reloj.ahora())
+    s = api.servicios(con)
+    assert s["vigente"] is False
+    assert "no está instalado" in s["motivo"]
+    assert s["vivos"] == 1, "lo que se vio no se borra: se dice de cuándo es"
+
+
+def test_una_lectura_de_hace_horas_no_es_vigente_aunque_docker_este(con, monkeypatch):
+    from hub import api
+    monkeypatch.setattr(servicios, "disponible", lambda: True)
+    _lectura(con, "2026-11-02T12:07:23+00:00")
+    s = api.servicios(con)
+    assert s["vigente"] is False
+    assert "no ha contestado desde el 02/11" in s["motivo"]
+    assert s["visto"].startswith("02/11")
+
+
+def test_una_lectura_reciente_con_docker_es_vigente(con, monkeypatch):
+    from hub import api, reloj
+    monkeypatch.setattr(servicios, "disponible", lambda: True)
+    _lectura(con, reloj.ahora())
+    s = api.servicios(con)
+    assert s["vigente"] is True and s["motivo"] == ""
+
+
+def test_el_rail_no_cuenta_contenedores_de_una_lectura_que_no_es_vigente(con, monkeypatch):
+    from hub import api, reloj
+    _lectura(con, reloj.ahora())
+    monkeypatch.setattr(servicios, "disponible", lambda: True)
+    assert api.rail(con)["servicios"] == 1
+    monkeypatch.setattr(servicios, "disponible", lambda: False)
+    assert not api.rail(con)["servicios"]
+
+
+def test_la_ultima_lectura_se_ve_en_la_hora_de_la_casa_y_no_en_utc(con, tmp_path, monkeypatch):
+    """HER-43 (C-0397): la pantalla enseñaba la UTC cruda y el dueño vive en
+    UTC-6; las 22:48 de Docker eran las 16:48 de su casa. Ahora va con
+    `ui.cuando` (C-0396), y una lectura de hace días se pinta de «vieja»."""
+    from fastapi.testclient import TestClient
+    from hub import db, web
+    monkeypatch.setenv("TZ", "America/Mexico_City")
+    monkeypatch.setattr(servicios, "disponible", lambda: True)
+    _lectura(con, "2026-11-06T22:48:19+00:00")
+    con.commit()
+    monkeypatch.setattr(web, "conexion", lambda: db.conectar(tmp_path / "hub.db"))
+
+    html = TestClient(web.app).get("/servicios").text
+
+    assert re.search(r'Última lectura <time class="cuando viejo"[^>]*>06/11(/2026)? 16:48 \(hace ', html), html
+    assert "22:48" not in html

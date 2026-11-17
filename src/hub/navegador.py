@@ -44,10 +44,19 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
+from . import recordar
+
 # Un directorio con `node_modules` dentro tiene decenas de miles de entradas y
 # ninguna de ellas es lo que se venía a buscar. Se corta y se DICE cuántas
 # quedaron: una lista truncada en silencio se lee como «no está» (regla 13).
 TOPE = 500
+
+# Cuánto se fía el navegador de cómo resolvió una ruta DECLARADA (C-0310).
+# Resolver las 269 del registro sobre la unidad de Windows eran 2 601 `lstat`
+# y 1,76 s en cada visita (perfil de C-0244). Un minuto, y no hasta el
+# siguiente ciclo lento: la web y el muestreo son procesos distintos y no
+# comparten memoria.
+PLAZO_DECLARADAS_S = 60
 
 
 class FueraDeRaiz(ValueError):
@@ -68,6 +77,25 @@ def normalizar(ruta: str | Path) -> Path:
     return Path(ruta).expanduser().resolve()
 
 
+def declarada(ruta: str) -> Path:
+    """Una ruta que el hub indexa —raíz o repo del registro—, resuelta y
+    recordada `PLAZO_DECLARADAS_S` (C-0310).
+
+    🔴 **Sólo las declaradas, nunca la que se pide.** La ruta que llega de
+    quien navega pasa siempre por `resolver`, en fresco: un enlace dentro de
+    un repo que hace un segundo apuntaba dentro y ahora apunta fuera se
+    rechaza igual. Lo que puede quedar viejo, como mucho un minuto, es el
+    confín, y en las dos direcciones es inofensivo: una raíz que ya no es
+    sigue enseñando lo que enseñaba hace un minuto, y una que apunta a otro
+    sitio tarda un minuto en abrirlo (el destino, resuelto en fresco, cae
+    fuera del confín viejo). Quitar una ruta del registro sí es inmediato:
+    la lista de declaradas se lee del índice en cada petición; sólo se
+    recuerda cómo se resuelve cada una.
+    """
+    return recordar.por_tiempo(("navegador.declarada", ruta), lambda: normalizar(ruta),
+                               PLAZO_DECLARADAS_S)
+
+
 def raices(rutas: Iterable[str]) -> list[Path]:
     """Las raíces, resueltas y sin repetidas.
 
@@ -75,11 +103,13 @@ def raices(rutas: Iterable[str]) -> list[Path]:
     una raíz es un symlink —`~/dev` apuntando a otro disco—, comparar un destino
     ya resuelto contra una raíz sin resolver **niega el acceso legítimo**, y el
     síntoma sería «el hub no ve mis repos» sin ninguna pista de por qué.
+
+    Son rutas declaradas: se resuelven por `declarada`, recordadas un minuto.
     """
     vistas: dict[Path, None] = {}
     for ruta in rutas:
         if ruta:
-            vistas.setdefault(normalizar(ruta), None)
+            vistas.setdefault(declarada(ruta), None)
     return list(vistas)
 
 
@@ -211,8 +241,17 @@ def minimas(confin: Sequence[Path]) -> list[Path]:
     No es lo mismo que quedarse con los asientos: los repos de un proyecto pueden
     vivir fuera de su asiento —`~/dev/algo` con el asiento en `/mnt/c/...`— y ésos
     sí tienen que salir arriba, porque no hay ninguna raíz desde la que llegar.
+
+    Por partes y no comparando cada raíz con todas (C-0310): medido con 260
+    raíces, eran 38 000 `is_relative_to` y 0,38 s de CPU en cada visita a la
+    portada. «Cuelga de otra» es que las partes de la otra sean un prefijo
+    propio de las suyas —`is_relative_to` mira lo mismo en `parents`—, y eso
+    se pregunta a un conjunto.
     """
-    return [r for r in confin if not any(r != otra and r.is_relative_to(otra) for otra in confin)]
+    todas = {r.parts for r in confin}
+    # Desde 1: el prefijo vacío sólo estaría entre las raíces con un `Path('.')`
+    # en el confín, y entonces tiraría todas las demás.
+    return [r for r in confin if not any(r.parts[:i] in todas for i in range(1, len(r.parts)))]
 
 
 def tamano(bytes_: int | None) -> str:

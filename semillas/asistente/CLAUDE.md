@@ -151,8 +151,8 @@ está enseñan sus pasos. Si preguntan cómo configurarlas, **mide antes de
 explicar**:
 
 ```
-hub componentes                     # qué falta en cada una, en esta máquina
-hub preparar <navegante|reuniones>  # la ventana con Claude y el encargo, sin Enter
+hub componentes                             # qué falta en cada una, en esta máquina
+hub preparar <navegante|reuniones|puente>   # la ventana con Claude y el encargo, sin Enter
 ```
 
 Cuenta sólo los pasos que faltan, en orden y con el comando exacto, y la guía
@@ -161,6 +161,13 @@ de la sesión que abre `hub preparar`, con la persona delante y pidiendo
 permiso: tú no instalas nada. Lo de Windows (el agente de Reuniones) lo hace
 ella desde la pantalla: elegir la carpeta, «Copiar el agente» y doble clic en
 `instalar.cmd`.
+
+El Puente KVM (`/puente`, `componentes/puente-kvm`) es una herramienta
+opcional y viene apagada: sólo sirve a quien tiene un JetKVM, y se enciende en
+Ajustes → Guía. La contraseña del JetKVM la pone la persona en su archivo de
+entorno; tú ni la escribes ni la pides. Todo lo suyo —prepararlo, por qué su
+carpeta de trabajo va fuera del clon, qué hacer al actualizar el hub— está en
+`@HUB@/conocimiento/15-puente-kvm.md`.
 
 ## Tus herramientas
 

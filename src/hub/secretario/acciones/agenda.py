@@ -24,6 +24,11 @@ class Agendar(Accion):
         "required": ["titulo", "inicio"]}
     riesgo = "reversible"
     nivel_inicial = "ask"
+    # Sin calendario, o sólo con la dirección iCal, sólo podría fallar: no se
+    # le ofrece al modelo (C-0391). Leerla es otra cosa: la lectura `agenda`.
+    disponible = staticmethod(lambda: agenda.conectada(para_crear=True))
+    como_configurar = ("Hace falta Google Calendar conectado (google-entrar): con la dirección iCal sólo se "
+                       "lee. Paso a paso en conocimiento/13-secretario.md, «Calendario».")
 
     def ejecutar(self, con, params):
         e = agenda.crear(params["titulo"], params["inicio"], params.get("fin"), params.get("descripcion", ""),

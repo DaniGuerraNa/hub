@@ -352,6 +352,62 @@ def listar_ventanas(session: str) -> list[dict]:
     return ventanas
 
 
+# El último fallo de tmux al leer la actividad, para decirlo una vez por racha
+# y no en cada carga de /trabajo (regla 21, revisión cruzada de C-0352).
+_FALLO_DE_ACTIVIDAD: str | None = None
+
+
+def actividad_de_ventanas() -> tuple[int | None, dict[tuple[str, int], dict]]:
+    """Cuándo arrancó el servidor y, por ventana, cuándo tuvo actividad y qué
+    corre AHORA en cada uno de sus paneles: `{(sesión, índice): {"actividad":
+    segundos desde 1970, "paneles": [{"pane_id", "pid", "comando"}]}}`. Sin
+    servidor, `(None, {})`.
+
+    `window_activity` lo mueve cualquier salida del panel —el prompt al nacer,
+    el eco de lo que se teclea—; medido en tmux 3.4 (C-0352): una shell recién
+    abierta queda en su segundo de creación hasta que alguien escribe. El
+    comando es `pane_current_command` en el instante de leer, no el de la
+    muestra, que puede tener 20 s (revisión cruzada): dentro del margen del
+    arranque, lanzar algo en una shell no la saca por la actividad, y sí por
+    esto. Sólo lectura, una llamada, y sin las sesiones espejo, que comparten
+    ventanas con la suya.
+    """
+    try:
+        crudo = _correr(["list-panes", "-a", "-F",
+                         "#{start_time}\t#{session_name}\t#{window_index}\t#{window_activity}\t"
+                         "#{pane_id}\t#{pane_pid}\t#{pane_current_command}"])
+    except TmuxNoDisponible:
+        return None, {}   # sin servidor no hay ventanas: nada que decir
+    except RuntimeError as exc:
+        # Se dice, una vez por racha: tragárselo dejaba la lista de shells sin
+        # usar vacía sin que nada dijera por qué (regla 21).
+        global _FALLO_DE_ACTIVIDAD
+        if str(exc) != _FALLO_DE_ACTIVIDAD:
+            print(f"[tmux] no se pudo leer la actividad de las ventanas: {exc}", flush=True)
+            _FALLO_DE_ACTIVIDAD = str(exc)
+        return None, {}
+    _decir_que_vuelve()
+    arranque, ventanas = None, {}
+    for linea in crudo.splitlines():
+        campos = linea.split("\t")
+        if len(campos) < 7 or not all(c.isdigit() for c in (campos[0], campos[2], campos[3], campos[5])):
+            continue
+        if campos[1].startswith(PREFIJO_ESPEJO):
+            continue
+        arranque = int(campos[0])
+        ventana = ventanas.setdefault((campos[1], int(campos[2])), {"actividad": int(campos[3]), "paneles": []})
+        ventana["paneles"].append({"pane_id": campos[4], "pid": int(campos[5]), "comando": campos[6]})
+    return arranque, ventanas
+
+
+def _decir_que_vuelve() -> None:
+    """El final de una racha de fallos de `actividad_de_ventanas`, dicho."""
+    global _FALLO_DE_ACTIVIDAD
+    if _FALLO_DE_ACTIVIDAD is not None:
+        print("[tmux] la actividad de las ventanas vuelve a leerse", flush=True)
+        _FALLO_DE_ACTIVIDAD = None
+
+
 # Directorios de usuario que systemd NO pone en el PATH y que sí están en el de
 # una shell de login. Se añaden a mano a todo lo que el hub lanza.
 _BIN_DE_USUARIO = ("~/.local/bin", "~/.npm-global/bin", "~/bin")
@@ -846,8 +902,50 @@ def capturar_panel(pane_id: str, unir_lineas: bool = False,
 BUFER = "hub-asistente"
 
 
-def pegar_en_panel(pane_id: str, texto: str, enter: bool = True) -> None:
+# Lo que se quita de un texto antes de pegarlo: C0 entero menos `\t` y `\n`,
+# `DEL` y C1 entero. `\r` no llega aquí: se normaliza antes.
+_DE_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+_FIN_DE_LINEA = re.compile(r"\r\n?")
+
+
+def limpiar_pegado(texto: str) -> tuple[str, int]:
+    """El texto sin caracteres de control, y cuántos se quitaron (C-0428).
+
+    🔴 `paste-buffer -p` envuelve el texto en `ESC[200~` … `ESC[201~`, y la TUI
+    de dentro se fía de esas dos marcas para saber qué es pegado y qué es
+    alguien tecleando. **tmux no filtra un `ESC[201~` que venga dentro del
+    texto.** Medido con tmux 3.4, en un panel propio que vuelca en crudo lo que
+    recibe: `hola ESC[201~ \\r Texto fuera del marco` llegó con DOS fines de
+    pegado, y lo de detrás del primero —el `\\r`, que es un Enter, y el resto—
+    como teclas sueltas. En un mensaje de fuera eso es teclear en la sesión de
+    otro, sin marco (reglas duras 15 y 22).
+
+    No se busca la secuencia `ESC[201~`: se quita **todo** carácter de control
+    (U+0000–U+001F, U+007F y U+0080–U+009F) menos el tabulador y el salto de
+    línea. Una lista de secuencias prohibidas siempre va por detrás de la
+    siguiente; sin `ESC` —ni U+009B, el `CSI` de un solo carácter— no hay
+    secuencia que empezar, y a un mensaje de texto no le hace falta ninguno.
+
+    `\\r\\n` y `\\r` son finales de línea (un formulario web, un texto de
+    Windows) y se vuelven `\\n` ANTES de quitar: quitarlos sin más pegaría una
+    línea con la siguiente. Eso no cuenta como quitar. Al panel le llega igual
+    que cualquier otro salto: `paste-buffer` saca cada LF como CR, pero dentro
+    del pegado.
+
+    La cuenta existe para decirlo (regla dura 21): un mensaje al que se le
+    quitó algo y nadie lo apunta es un mensaje cambiado a escondidas.
+
+    Función pura y aquí, en el adaptador, para que haya una sola copia: la usa
+    `entrega.entregar` (la puerta) y otra vez `pegar_en_panel` (segunda red).
+    """
+    return _DE_CONTROL.subn("", _FIN_DE_LINEA.sub("\n", texto))
+
+
+def pegar_en_panel(pane_id: str, texto: str, enter: bool = True) -> int:
     """Escribe un texto en un panel como si se hubiera pegado, y lo despacha.
+
+    Devuelve cuántos caracteres de control quitó del texto (`limpiar_pegado`):
+    lo normal es 0.
 
     🔴 Sólo se llama sobre el panel del asistente, y quien llama debe haberlo
     validado por id (regla dura 15). Aquí no se comprueba de quién es el panel:
@@ -868,13 +966,20 @@ def pegar_en_panel(pane_id: str, texto: str, enter: bool = True) -> None:
 
     El texto viaja por **stdin**, no en la línea de comandos: es texto libre del
     usuario y puede tener cualquier cosa dentro, incluidas comillas.
+
+    🔴 **Y va limpio de caracteres de control** (C-0428): `-p` pone las marcas
+    del pegado pero no quita las que traiga el texto. Aquí es la segunda red
+    —`entrega.entregar` ya lo limpió— y la única para quien no pasa por esa
+    puerta: `abrir_en`, restaurar, el asistente e `/intercambio`.
     """
     validar_panel(pane_id)
+    texto, quitados = limpiar_pegado(texto)
     _correr(["load-buffer", "-b", BUFER, "-"], entrada=texto)
     # `-d` borra el búfer tras pegarlo: no deja el mensaje colgando en la pila.
     _correr(["paste-buffer", "-b", BUFER, "-p", "-t", pane_id, "-d"])
     if enter:
         enter_en_panel(pane_id)
+    return quitados
 
 
 def enter_en_panel(pane_id: str) -> None:
@@ -902,9 +1007,3 @@ def tecla_en_panel(pane_id: str, tecla: str) -> None:
     if tecla not in TECLAS_PERMITIDAS:
         raise DestinoInvalido(f"tecla no permitida: {tecla!r}")
     _correr(["send-keys", "-t", pane_id, tecla])
-
-
-def comando_de_apertura(ruta: str, nombre: str, comando: str | None) -> str:
-    """El equivalente en texto, para poder copiarlo si se prefiere hacerlo a mano."""
-    base = f"tmux new-window -c {shlex.quote(literal(ruta))} -n {shlex.quote(literal(nombre))}"
-    return f"{base} {shlex.quote(comando)}" if comando else base

@@ -26,16 +26,16 @@
 {% block contenido %}
 <style>
   .corrida { display:grid; gap:14px; grid-template-columns:minmax(0,1fr); }
-  .corrida .tarjeta h2 { margin:0 0 10px; font-size:15px; }
+  .corrida .tarjeta h2 { margin:0 0 10px; font-size:var(--letra-4); }
   .tabla-scroll { overflow-x:auto; }
-  .datos-tabla { border-collapse:collapse; font-size:12.5px; min-width:100%; }
+  .datos-tabla { border-collapse:collapse; font-size:var(--letra-2); min-width:100%; }
   .datos-tabla th { text-align:left; color:var(--texto-3); font-weight:500; padding:4px 10px 4px 0;
                     border-bottom:1px solid var(--borde); white-space:nowrap; }
   .datos-tabla td { padding:5px 10px 5px 0; border-top:1px solid var(--borde); vertical-align:top;
                     overflow-wrap:anywhere; }
   .datos-tabla .datos-tabla { font-size:12px; }
   dl.datos { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:4px 12px; margin:0; }
-  dl.datos dt { color:var(--texto-3); font-size:12.5px; }
+  dl.datos dt { color:var(--texto-3); font-size:var(--letra-2); }
   dl.datos dd { margin:0; }
   .mono { font-family:ui-monospace, Menlo, Consolas, monospace; font-size:12px; overflow-wrap:anywhere; }
   .corrida img { max-width:100%; border-radius:var(--r-input); border:1px solid var(--borde); }
@@ -65,7 +65,7 @@
     <h2>Falló en el paso {{ f.paso }}</h2>
     <p>{{ f.error }}</p>
     <p class="mono">{{ f.definicion }}</p>
-    <p class="tenue" style="font-size:12.5px">En <span class="mono">{{ f.url }}</span>. Pídele a Claude que lo
+    <p class="tenue" style="font-size:var(--letra-2)">En <span class="mono">{{ f.url }}</span>. Pídele a Claude que lo
       mire: «lee el fallo de {{ c.flujo }} y propón el arreglo del flujo».</p>
   </div>
   <details class="tarjeta"><summary>Lo que se veía en la página</summary><pre class="vista">{{ f.lo_que_se_veia }}</pre></details>

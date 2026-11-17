@@ -90,6 +90,15 @@ def test_avisa_una_vez_antes_del_evento_con_lo_relacionado(con, antes_de_evento)
     assert "Revisión de presupuesto a las 10:00 · Sala 2" in t and "Llevar las cifras del presupuesto" in t
 
 
+def test_antes_del_evento_una_nota_sale_como_nota_y_no_como_none(con, antes_de_evento):
+    """`buscar` trae ya las notas delante (C-0414), y una nota no tiene conversación."""
+    memoria.anotar(con, "La revisión de presupuesto se mueve a la sala grande")
+    ev = [{"id": "e1", "titulo": "Revisión de presupuesto", "inicio": "2026-10-26T10:00:00-06:00"}]
+    assert disparadores.por_agenda(con, datetime(2026, 10, 26, 9, 50, tzinfo=MX), ev) == 1
+    t = _timbres()[0]["texto"]
+    assert "· nota: La revisión de presupuesto se mueve" in t and "None" not in t
+
+
 def test_un_aviso_antes_del_evento_sin_canal_se_reintenta_y_queda_en_la_bitacora(con, antes_de_evento, monkeypatch):
     """C-0063. Se marcaba hecho ANTES de mandar: sin canal, el aviso no salía
     nunca, cortaba la vuelta y no dejaba rastro."""
@@ -310,3 +319,13 @@ def test_grabar_pide_permiso_y_parar_no(con):
     acciones = piezas.acciones()
     assert acciones["grabar_reunion"].nivel_inicial == "ask"
     assert acciones["parar_grabacion"].nivel_inicial == "auto"
+
+
+def test_hub_slots_no_le_da_al_modelo_la_llave_de_la_nota_pero_si_el_resto(con, hub_con_datos):
+    llave = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"
+    hub_con_datos.execute("UPDATE slot SET nota = ? WHERE nombre = 'Login'",
+                          (f"rehacer el login, clave {llave} y probar el cron",))
+    hub_con_datos.commit()
+    (slot,) = herramientas.todas()["hub_slots"].funcion(con, {"proyecto": "web"})
+    assert "sk-ant-api03" not in slot["nota"] and "abcdefghijklmnop" not in slot["nota"]
+    assert "rehacer el login" in slot["nota"] and "probar el cron" in slot["nota"]

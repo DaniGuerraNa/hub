@@ -26,9 +26,21 @@ Proyecto → slot → ventanas, una dentro de otra. Bajo cada slot están sus
 ventanas abiertas, cada una con su punto de estado: pulsa una para verla, doble
 clic para renombrarla, **×** para cerrarla y **«+ Ventana»** para abrir otra en
 la carpeta del slot. Las ventanas que no son de ningún slot están al final, en
-«Sin organizar». En el escritorio el árbol sustituye a las pestañas de encima
-de la terminal; con el raíl plegado, a pantalla completa o en el móvil vuelven
-las pestañas.
+«Sin organizar»; su **⋯** tiene «Ocultar» (deja de salir en la lista y sigue
+corriendo) y «Cerrar» (con confirmación). En el escritorio el árbol sustituye
+a las pestañas de encima de la terminal; con el raíl plegado, a pantalla
+completa o en el móvil vuelven las pestañas. En el móvil, el selector de arriba
+marca lo que estás viendo; si no está en la lista (una ventana oculta, por
+ejemplo), lo dice con «Viendo: …».
+
+Después de reiniciar el equipo, tmux puede devolver como `bash` las ventanas
+de todo lo que tenías abierto. Debajo de la lista, **«N shells sin usar desde
+el arranque»** las reúne: shells a secas, sin nada en marcha dentro (ni un
+guion, ni algo en segundo plano), que no han tenido actividad desde que
+arrancó tmux. Ante la duda, una ventana no sale: la lista puede quedarse
+corta, nunca contar de más. Ninguna va marcada; marcas las que quieras
+quitar, **«Cerrar las marcadas»** te pide confirmación, y si en alguna has
+lanzado algo mientras tanto, no se cierra. Los slots no se tocan.
 
 ### Crear un proyecto o un slot
 
@@ -72,6 +84,10 @@ Además del nombre y la ruta, dos campos que conviene conocer:
 si lo hay. **Editar** cambia todo lo anterior, y su desplegable *mover a* pasa el
 slot a otro proyecto conservando su nota.
 
+Los slots se ordenan por su **última actividad**: la última vez que el
+muestreo vio trabajando a su agente (Claude Code o Codex). Tener una ventana
+abierta no cuenta, y lo que hagas a mano en una shell tampoco se ve desde ahí.
+
 **Archivar** lo quita de la lista y lo conserva entero. **Borrar** lo elimina —y
 🔴 **se lleva su nota**, que es lo único del hub que no se reconstruye
 escaneando—. Por eso pide confirmación y por eso existe archivar: si sólo
@@ -108,7 +124,9 @@ tmux.
   largo a Claude Code sin teclearlo. El `/voice` de Claude Code no sirve aquí:
   usa el micrófono de la máquina donde corre `claude`, no el de tu navegador.
   Necesita un transcriptor: si preparaste Reuniones, usa el suyo (Whisper);
-  si no, la terminal te dice cómo tenerlo.
+  si no, la terminal te dice cómo tenerlo. Si no puede usar el micrófono te
+  dice por qué (sin permiso, sin micrófono u ocupado por otra aplicación), y
+  si la subida falla por un corte de red la reintenta una vez sola.
 
 **No encoge tu terminal nativa.** Cada pestaña usa su propia sesión agrupada
 (`hub-<sesión>-<id>`), porque tmux dimensiona una sesión al cliente más pequeño.
@@ -138,6 +156,12 @@ slots.
 
 Es lo que te deja retomar sin reconstruirlo de memoria.
 
+El aviso compara aquella muestra con lo que hay ahora: dice cuántas ventanas
+devolvió tmux (si usas tmux-resurrect o tmux-continuum) y cuántas volvieron sin
+su agente. Si el corte es de hace más de un día, o tmux lo devolvió todo con su
+agente, sale **plegado en una línea**; se abre con un clic, y sólo desaparece
+cuando pulsas «Ya lo revisé».
+
 ### Marcar un slot como persistente
 
 Un slot **persistente** se reabre cuando vuelves a encender el equipo: la
@@ -154,6 +178,11 @@ ventana. Pulsas Enter y sigues donde estabas. Si no se sabe cuál era, o la
 carpeta ya no existe, deja `claude` a secas. Nunca pulsa Enter ni relanza nada
 por su cuenta.
 
+Lo que ya está abierto no se vuelve a abrir: si tmux devolvió las ventanas
+solo al arrancar (tmux-resurrect o tmux-continuum), el aviso sólo sale para
+los slots persistentes que se han quedado sin ninguna ventana, y el botón
+cuenta sólo las que faltan.
+
 Para cambiar qué se deja escrito, pon `HUB_RESTAURAR_CLAUDE` en el entorno de
 `hub-web`: `reanudar` (por omisión), `nuevo` (un `claude` nuevo) o `nada` (sólo
 la carpeta). Si trabajas con otro comando (por ejemplo `claude --model …`),
@@ -166,11 +195,17 @@ corriendo **antes**: es quien apunta qué ventanas tenías. En **Máquina →
 Salud del hub** ves, con su arreglo, si:
 
 - el muestreo late;
+- las mediciones lentas (respaldo de los repos, contenedores, consumo, salud
+  del equipo) siguen dando vueltas: se miden aparte, cada diez minutos, sin
+  parar el muestreo, y aquí sale un aviso si llevan media hora sin terminar
+  una, diez minutos atascadas en un paso o si alguna no se pudo tomar en la
+  última vuelta, que es cuando esas cifras se quedan viejas (al despertar el
+  equipo de una suspensión sale un rato y se va solo);
 - hay tmux abierto;
 - tienes algún slot persistente;
 - los servicios del hub están en marcha y arrancan solos;
 - el hub sigue vivo al cerrar todas las terminales (*linger*);
-- la copia diaria de la base está al día.
+- la copia diaria de la base está al día (y la de la memoria del secretario, si lo usas).
 
 Si el muestreo se para, **todas las pantallas lo dicen** con un aviso rojo.
 

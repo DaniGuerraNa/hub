@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block pagina %}espacio{% endblock %}
+{% block destino %}marco{% endblock %}
+{% block main_clase %}espacio{% endblock %}
+{% block cabeza %}<link rel="stylesheet" href="/static/xterm.css?v=1">{% endblock %}
+{% block contenido %}
+<div class="espacio-rejilla" id="espacio">
+  <iframe name="marco" id="marco" src="{{ ver }}" title="Pantalla del puente"></iframe>
+  <div class="divisor" id="divisor" role="separator" aria-orientation="vertical" title="Arrastra para cambiar el reparto"></div>
+  <section class="dock" id="dock" aria-label="Claude Code">
+    <div class="dock-barra">
+      <b>Claude Code</b>
+      <span class="conv-envoltura">
+        <button class="conv-boton" id="conv-boton" aria-haspopup="dialog" aria-expanded="false" aria-controls="conv-menu"
+                title="Conversaciones con Claude: cambiar, renombrar, quitar"><span id="conv-nombre">…</span> ▾</button>
+        <div class="conv-menu" id="conv-menu" role="dialog" aria-label="Conversaciones" hidden></div>
+      </span>
+      <span class="placa" id="placa-modelo" title="El modelo con que corre esta conversación (Ajustes → Modelo de Claude)">…</span>
+      <span class="placa" id="placa-terminal">conectando…</span>
+      <span class="placa" id="placa-claude" title="Lo que está haciendo Claude ahora (lo cuentan sus hooks)">…</span>
+      <span class="dock-acciones">
+        <button data-reiniciar-claude title="Abre una conversación nueva; la abierta se cierra y queda en la lista">Nueva<span class="solo-ancho"> conversación</span></button>
+        <button data-plegar title="Ocultar o mostrar la terminal">⇥</button>
+      </span>
+    </div>
+    <div class="terminal" id="terminal"></div>
+  </section>
+</div>
+{% endblock %}
+{% block guiones %}
+<script src="/static/xterm.js?v=1"></script>
+<script src="/static/addon-fit.js?v=1"></script>
+<script src="/static/espacio.js?v=4"></script>
+{% endblock %}

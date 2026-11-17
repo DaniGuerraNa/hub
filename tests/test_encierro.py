@@ -8,6 +8,7 @@ kernel. Sin user namespaces en la máquina, se saltan (y `servir` se niega).
 from __future__ import annotations
 
 import json
+import shutil
 import socket
 import sys
 import tempfile
@@ -44,8 +45,23 @@ json.dump(r, open(os.path.join(salida, "r.json"), "w"))
 '''
 
 
+#: Las carpetas de `_corta` de este test, para quitarlas al acabar: viven fuera
+#: de `tmp_path` (sus rutas son largas para un socket Unix) y nadie más las
+#: borraba; el 13-nov había 3 862 `enc-*` en `/tmp`, unas 2 100 de aquí (C-0325).
+_CORTAS: list[Path] = []
+
+
 def _corta(prefijo: str) -> Path:
-    return Path(tempfile.mkdtemp(prefix=prefijo))
+    ruta = Path(tempfile.mkdtemp(prefix=prefijo))
+    _CORTAS.append(ruta)
+    return ruta
+
+
+@pytest.fixture(autouse=True)
+def _sin_cortas_sueltas():
+    yield
+    while _CORTAS:
+        shutil.rmtree(_CORTAS.pop(), ignore_errors=True)
 
 
 @pytest.fixture

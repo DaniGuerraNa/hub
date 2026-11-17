@@ -72,8 +72,13 @@ pregunta. Las acciones que se pueden conceder son una lista cerrada
 
 2. El servicio `hub-canal` se instala **parado**. Arráncalo cuando el archivo
    esté listo: `systemctl --user enable --now hub-canal`.
-3. Cada persona escribe al bot y aparece en Canal como pendiente. Ahí le das
-   permisos por proyecto, y marcas quién eres tú (el dueño).
+3. Cada persona escribe al bot y aparece en Canal como pendiente, con su
+   formulario ya abierto: le pones un alias, la activas y marcas quién eres tú
+   (el dueño, el que recibe los avisos). Después cada persona se lee en una
+   línea y su formulario espera tras **Editar**. Los permisos se dan por
+   proyecto, en su plegado: ahí salen sólo los proyectos donde ya tiene algo
+   (pulsar una acción la quita o la pone) y, para otro, **Dar acceso a otro
+   proyecto**: eliges el proyecto y pulsas la acción.
 
 **Avisos.** Con el canal en marcha, al dueño le llegan avisos cortos de una
 lista cerrada: una sesión parada preguntando, una sesión quieta, el hub sin
@@ -111,7 +116,9 @@ ventana que estás mirando.
   pasos o una comparativa. Se publican con `hub lienzo nuevo` (o
   `POST /api/lienzo`) y se guardan en `~/.local/share/hub/lienzos/<proyecto>/`.
   En una lista de decisiones marcas tú cada punto, y la sesión lo lee de vuelta.
-  Si editas uno, nadie lo pisa sin que lo pidas. «Archivo» enseña los
+  Si editas uno, nadie lo pisa sin que lo pidas; y si la sesión publica una
+  versión nueva mientras lo tienes abierto, tu marca tampoco la pisa: el panel
+  te enseña la de ahora y lo vuelves a marcar. «Archivo» enseña los
   archivados.
 - **Consultas** — las preguntas que tus sesiones mandaron por el canal, con su
   respuesta. Filtros: todas, pendientes y contestadas.
@@ -194,8 +201,11 @@ mesa de mapas, su estudio y su rincón junto a la chimenea.
 
 - **La rana del yunque es la sesión.** Martilla si está trabajando; si está
   quieta, se duerme y el taller baja la luz; si espera tu permiso, levanta
-  «¿Me das permiso?» y el taller se marca. De Codex no se sabe leer el estado:
-  su rana se queda quieta, sin dormir.
+  «¿Me das permiso?» y el taller se marca. Si está quieta pero tiene
+  subagentes en marcha, está **delegando**: no se duerme y cuenta entre las
+  que trabajan. De Codex no se sabe leer el estado: su rana se queda quieta,
+  sin dormir.
+- Si dos talleres se llaman igual, su título lleva la ventana («· ventana 2»).
 - **Sus subagentes** entran por la puerta y van a la estación de su oficio:
   quien investiga, a la alquimia; quien diseña la arquitectura, a la mesa de
   mapas; quien explora o resume, a la biblioteca; quien diseña, al caballete;
@@ -224,6 +234,23 @@ pregunta a Windows con `powershell` y a la GPU con `nvidia-smi`. En Linux sin
 Windows saldrá casi vacía, y lo que no puede medir lo dice en vez de enseñar un
 cero.
 
+Arriba va **Salud del hub**: lo que pide algo sale abierto, con su arreglo al
+lado; lo que está bien queda plegado en una sola línea («Todo en pie · N
+comprobaciones», o «Lo demás en pie» si algo falla). Ábrela para ver el detalle.
+
+En **Encendido y apagones**, «Tras el último arranque» dice cuánto tardaron WSL
+y los servicios del hub en arrancar después de que encendiera Windows: si tras
+un apagón el hub no vuelve solo, ahí se ve dónde se quedó. Sale sólo cuando
+las horas son de la misma lectura y cuadran.
+
+**Diagnóstico de la PC**, más abajo, es para justo después de un pantallazo o
+con la red rara: «Diagnosticar ahora» lee en Windows los pantallazos (con su
+código), los volcados y los apagados recientes, y mide la latencia a la puerta
+de enlace y a dos servidores de referencia. Sólo lectura, pide confirmación,
+tarda unos segundos y no se guarda: al recargar, se va. Va uno a la vez: si
+ya hay uno en marcha, lo dice y no lanza otro. Es lo mismo que te contesta el
+secretario si se lo preguntas.
+
 ## Consumo
 
 **Dónde:** [Consumo](/consumo).
@@ -231,7 +258,11 @@ cero.
 Tokens por proyecto y por día, leídos del registro de Claude Code. 🔴 Son
 **los últimos días que quedan**, no el histórico: Claude Code borra su registro
 a los 30 días, y la pantalla dice de qué fecha a qué fecha cuenta. No convierte
-a dinero.
+a dinero: hace falta una tabla de precios que cambia sola y que no se puede
+verificar contra nada, y una cifra que no se puede defender no se enseña.
+
+El porqué de Consumo, Canal, Conexiones y Servicios está plegado bajo una línea
+de la cabecera («¿Por qué así?»): se lee una vez y luego no empuja el contenido.
 
 ## Buscar y moverse con el teclado
 
@@ -241,3 +272,10 @@ a dinero.
 | `g` y una letra | Ir a una pantalla: `p`anorama, `t`rabajo, `i`nventario, `r`espaldo, `s`ervicios, `c`onexiones, conte`x`to |
 | `?` | Todos los atajos |
 | `Esc` | Cerrar lo que esté abierto |
+
+Si la búsqueda no encuentra nada, lo dice («Nada con …»), y si el secretario es
+quien te habla en todas las pantallas, ofrece preguntárselo a él.
+
+Un slot se encuentra también por las palabras de su nota, pero en la lista sale
+con su proyecto y su ruta: la nota no se enseña, porque a veces lleva pegado
+algo que no debería verse en una lista que se abre con un atajo.

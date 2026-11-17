@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Lo que se trae del Mac es del trabajo: nunca al repo.
+trabajo/
+# Lo que Claude Code apunta al aprobar algo «para siempre» en esta carpeta: es de cada equipo.
+.claude/settings.local.json

@@ -8,6 +8,9 @@ nombre de archivo desde un móvil es exactamente donde se prueba `../`.
 
 from __future__ import annotations
 
+import re
+from urllib.parse import unquote
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -367,3 +370,229 @@ def test_la_poda_borra_solo_lo_de_paso_vencido_y_las_carpetas_que_quedan_vacias(
     assert not viejo.exists() and not viejo.parent.exists()
     assert nuevo.exists() and guardado.exists() and (home / "fuera.txt").exists()
     assert set(intercambio._leer_de_paso()) == {"blog/nuevo.png"}
+
+
+# ───────── miniaturas, un solo selector de sesión y subir varios (C-0385) ─────────
+#
+# Medido el 13-nov con 163 archivos: cada fila repetía el `<select>` de
+# sesiones (3.311 `<option>`, 718 KB de HTML), las imágenes salían sólo por su
+# nombre y el selector de archivo era el nativo, «Choose File» en inglés.
+
+PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000d49444154789c6360f8cf000000030101001899f05e"
+    "0000000049454e44ae426082")
+
+PANELES = [{"pane_id": f"%{n}", "slot_id": n, "proyecto_id": "tienda",
+            "proyecto_nombre": "Tienda", "slot_nombre": f"slot {n}"} for n in (1, 2, 3)]
+
+
+@pytest.fixture
+def con_sesiones(monkeypatch):
+    monkeypatch.setattr(web.api, "paneles_abiertos", lambda con: PANELES)
+
+
+def _fila(html: str, nombre: str) -> str:
+    """El trozo de la fila de un archivo: de su nombre al de la siguiente."""
+    desde = html.index(f'<span class="nombre">{nombre}')
+    desde = html.rindex('<div class="inter-fila">', 0, desde)
+    hasta = html.find('<div class="inter-fila">', desde + 1)
+    return html[desde:hasta if hasta > 0 else None]
+
+
+def test_una_imagen_raster_sale_con_su_miniatura_por_intercambio_ver(cliente, home):
+    intercambio.guardar("foto.png", PNG)
+
+    fila = _fila(cliente.get("/intercambio").text, "foto.png")
+
+    img = re.search(r"<img [^>]*>", fila).group(0)
+    assert 'src="/intercambio/ver/foto.png"' in img
+    assert 'loading="lazy"' in img and 'alt="foto.png"' in img
+    assert 'width="' in img and 'height="' in img
+
+
+def test_un_svg_o_un_heic_no_llevan_miniatura(cliente, home):
+    """🔴 Lo decide `ideas.TIPOS_IMAGEN`, la lista de `/intercambio/ver`, y no
+    el grupo «Imágenes», que mete svg y heic: un SVG en línea en el mismo
+    origen que la terminal es un XSS (343)."""
+    intercambio.guardar("dibujo.svg", b"<svg onload='alert(1)'/>")
+    intercambio.guardar("foto.heic", b"heic")
+
+    html = cliente.get("/intercambio").text
+
+    assert "<img" not in _fila(html, "dibujo.svg")
+    assert "<img" not in _fila(html, "foto.heic")
+    assert "/intercambio/ver/dibujo.svg" not in html
+
+
+def test_una_imagen_mayor_que_el_tope_sale_solo_con_su_nombre(cliente, home, monkeypatch):
+    """`/intercambio/ver` sirve el archivo entero: una foto de 5 MB por fila en
+    el teléfono no es una miniatura."""
+    monkeypatch.setattr(intercambio, "MINIATURA_HASTA", len(PNG))
+    intercambio.guardar("chica.png", PNG)
+    intercambio.guardar("grande.png", PNG + b"\0")
+
+    html = cliente.get("/intercambio").text
+
+    assert "<img" in _fila(html, "chica.png")
+    assert "<img" not in _fila(html, "grande.png")
+
+
+def test_la_pagina_lleva_un_solo_selector_de_sesion(cliente, home, con_sesiones):
+    for n in range(5):
+        intercambio.guardar(f"nota-{n}.txt", b"x")
+
+    html = cliente.get("/intercambio").text
+
+    assert html.count('name="pane_id"') == 1
+    assert html.count("<option value=\"%1\"") == 1
+    # Fuera de la región que se repinta: si no, elegir sesión se perdería en
+    # cada acción sin recargar.
+    region = html[html.index('data-region="archivos"'):]
+    assert 'id="inter-a-sesion"' not in region and 'id="inter-borrar"' not in region
+    assert "Sesión a la que pasar rutas" in html
+
+
+def test_el_boton_de_cada_fila_manda_su_archivo_al_formulario_comun(
+        cliente, home, con_sesiones, monkeypatch):
+    intercambio.guardar("captura.png", PNG)
+    html = cliente.get("/intercambio").text
+    boton = re.search(r'<button [^>]*form="inter-a-sesion"[^>]*>', _fila(html, "captura.png"))
+    assert boton and 'name="nombre"' in boton.group(0) and 'value="captura.png"' in boton.group(0)
+    escrito = {}
+    monkeypatch.setattr(web.entrega, "panel_apto", lambda pane_id: (True, ""))
+    monkeypatch.setattr(web.tmux, "pegar_en_panel",
+                        lambda pane_id, texto, enter=True: escrito.update(
+                            {"pane": pane_id, "texto": texto, "enter": enter}))
+
+    # Lo que manda el navegador: el `pane_id` del formulario y el `nombre` del botón.
+    cliente.post("/intercambio/a-la-sesion", data={"pane_id": "%2", "nombre": "captura.png"},
+                 follow_redirects=False)
+
+    assert escrito["pane"] == "%2" and escrito["enter"] is False
+    assert escrito["texto"].endswith("/intercambio/captura.png")
+
+
+def test_borrar_desde_el_menu_pregunta_y_lleva_peligro(cliente, home):
+    intercambio.guardar("viejo.txt", b"x")
+
+    fila = _fila(cliente.get("/intercambio").text, "viejo.txt")
+
+    boton = re.search(r'<button [^>]*form="inter-borrar"[^>]*>', fila).group(0)
+    assert 'name="nombre"' in boton and 'value="viejo.txt"' in boton
+    assert "peligro" in boton and "data-confirmar=" in boton
+    assert 'class="menu' in fila
+
+
+def test_el_selector_de_archivos_esta_en_castellano_y_admite_varios(cliente, home):
+    html = cliente.get("/intercambio").text
+
+    entrada = re.search(r'<input [^>]*type="file"[^>]*>', html).group(0)
+    assert "multiple" in entrada and 'name="archivo"' in entrada
+    # Sin `required`: escondido, el navegador bloquearía el envío sin decir nada.
+    assert "required" not in entrada
+    assert re.search(r'<label class="boton[^"]*"[^>]*>.*?Elegir archivos', html, re.S)
+
+
+def test_subir_varios_a_la_vez_guarda_cada_uno_y_dice_cuantos(cliente, home):
+    r = cliente.post("/intercambio/subir", files=[
+        ("archivo", ("uno.txt", b"1", "text/plain")),
+        ("archivo", ("dos.png", PNG, "image/png")),
+    ], follow_redirects=False)
+
+    assert (home / "intercambio/uno.txt").read_bytes() == b"1"
+    assert (home / "intercambio/dos.png").read_bytes() == PNG
+    aviso = unquote(r.headers["location"])
+    assert "Subidos 2" in aviso and "fugaz=1" in aviso
+
+
+def test_uno_que_no_cabe_no_impide_subir_los_demas(cliente, home):
+    r = cliente.post("/intercambio/subir", files=[
+        ("archivo", ("bueno.txt", b"1", "text/plain")),
+        ("archivo", ("vacio.txt", b"", "text/plain")),
+    ], follow_redirects=False)
+
+    assert (home / "intercambio/bueno.txt").exists()
+    assert not (home / "intercambio/vacio.txt").exists()
+    aviso = unquote(r.headers["location"])
+    assert "«vacio.txt»" in aviso and "vacío" in aviso and "Subido" in aviso
+    # Se hizo lo que se pudo: el formulario puede vaciarse, que volver a
+    # pulsar subiría otra vez los buenos.
+    assert "hecho=1" in aviso and "fugaz" not in aviso
+
+
+def test_subir_se_enciende_al_elegir_y_dice_que_se_eligio(cliente, home, tmp_path):
+    """Regla dura 11: el script en línea se ejecuta. Con el campo nativo
+    escondido, sin esto no se sabría qué se va a subir, y «Subir» sin nada
+    elegido mandaría un formulario vacío."""
+    from arnes_js import ejecutar, scripts_en_linea
+
+    html = cliente.get("/intercambio").text
+    guion = next(g for g in scripts_en_linea(html) if "inter-archivo" in g)
+    r = ejecutar(guion, tmp_path, accion="""
+      const e = nodo('inter-archivo'), s = nodo('inter-subir');
+      registro.valores.push('al cargar: ' + s.disabled);
+      e.files = [{ name: 'uno.png' }, { name: 'dos.pdf' }];
+      e.disparar('change');
+      registro.valores.push('elegidos: ' + s.disabled + ' ' + nodo('inter-elegidos').textContent);
+    """)
+
+    assert r["errores"] == []
+    assert r["valores"] == ["al cargar: true", "elegidos: false uno.png · dos.pdf"]
+
+
+# ──────────────────────── a qué subcarpeta va lo que llega ────────────────────────
+
+
+def test_lo_que_llega_va_a_la_subcarpeta_del_proyecto_o_del_slot_elegido(proyecto_demo, con):
+    """Lo decide `intercambio.destino` (C-0102: vivía en `api`, que es la
+    costura de lectura y no decide dónde se escribe)."""
+    from hub import slots
+
+    sid = slots.crear(con, proyecto_demo, "back")
+    assert intercambio.destino(con, "demo") == "demo"
+    assert intercambio.destino(con, f"demo:{sid}") == f"demo/{sid}-back"
+    assert intercambio.destino(con, slot_id=sid) == f"demo/{sid}-back"
+    assert intercambio.destino(con, f"otro:{sid}") == intercambio.SIN_PROYECTO   # un slot no cambia de proyecto
+    assert intercambio.destino(con, "no-existe") == intercambio.SIN_PROYECTO
+    assert intercambio.destino(con) == intercambio.SIN_PROYECTO
+
+
+def test_subir_lee_y_guarda_fuera_del_bucle_de_eventos(cliente, home, monkeypatch):
+    """Tras la revisión cruzada de C-0385: la ruta era `async` y guardaba en
+    síncrono, así que varios archivos grandes paraban el bucle de eventos, y
+    con él la terminal. Cada archivo se guarda en un hilo aparte: ahí no hay
+    bucle corriendo."""
+    import asyncio
+
+    donde, real = [], intercambio.guardar
+
+    def guardar(*args, **kwargs):
+        try:
+            asyncio.get_running_loop()
+            donde.append("en el bucle")
+        except RuntimeError:
+            donde.append("aparte")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(intercambio, "guardar", guardar)
+    cliente.post("/intercambio/subir", files=[
+        ("archivo", ("uno.txt", b"1", "text/plain")),
+        ("archivo", ("dos.txt", b"2", "text/plain")),
+    ], follow_redirects=False)
+
+    assert donde == ["aparte", "aparte"]
+    assert (home / "intercambio/uno.txt").exists() and (home / "intercambio/dos.txt").exists()
+
+
+def test_uno_que_pasa_del_tope_no_impide_subir_los_demas_y_dice_cuanto(cliente, home, monkeypatch):
+    monkeypatch.setattr(intercambio, "LIMITE", 4)
+    r = cliente.post("/intercambio/subir", files=[
+        ("archivo", ("grande.txt", b"0123456789", "text/plain")),
+        ("archivo", ("bueno.txt", b"1", "text/plain")),
+    ], follow_redirects=False)
+
+    assert (home / "intercambio/bueno.txt").exists()
+    assert not (home / "intercambio/grande.txt").exists()
+    aviso = unquote(r.headers["location"])
+    assert "«grande.txt»: son 10 B y el límite son 4 B" in aviso and "hecho=1" in aviso

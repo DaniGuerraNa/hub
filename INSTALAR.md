@@ -126,6 +126,10 @@ bash scripts/desinstalar.sh                       # servicios fuera, datos intac
 bash scripts/desinstalar.sh --datos               # además borra la carpeta de datos del servicio instalado
 ```
 
+Si preparaste el Puente KVM, quita antes su servicio, que no es del hub y
+`desinstalar.sh` no toca: `bash scripts/servicio.sh quitar` en
+`componentes/puente-kvm` (`conocimiento/15-puente-kvm.md`).
+
 ## Instalar en otro sitio o en otro puerto
 
 Los datos y el puerto salen de variables de entorno:
@@ -163,13 +167,17 @@ funciona. Están aquí porque la que no se documenta no existe.
 | `HUB_RETENCION` | `50` | Cuántas muestras se guardan antes de podar |
 | `HUB_TMUX_SOCKET` | *(ninguno)* | Servidor de tmux aparte (`tmux -L`). Los tests lo usan para no tocar tus sesiones |
 | `HUB_CONTEXTO_FICHERO` | `$HUB_HOME/asistente-contexto.json` | Dónde escribe el statusline del asistente su porcentaje de contexto. La leen el hub y el script, y el hub se la pasa al asistente al arrancarlo, así que los dos miran el mismo archivo |
-| `HUB_RESPALDO` | `$HUB_HOME/respaldos` | Dónde deja el snapshotter la copia diaria de `hub.db` (se guardan las 14 últimas). Apúntala a otro disco si quieres que sobreviva a éste |
+| `HUB_RESPALDO` | `$HUB_HOME/respaldos` | Dónde deja el snapshotter la copia diaria de `hub.db` (se guardan las 14 últimas). Mejor en el disco del hub: SQLite la escribe ahí |
+| `HUB_RESPALDO_EXTRA` | *(ninguna)* | Una segunda carpeta, en otro disco, adonde se lleva cada copia diaria ya hecha y comprobada (también las 14 últimas). Sin la variable, la primera línea de `$HUB_HOME/respaldo-extra.txt`, que se lee en cada copia: se enciende sin reiniciar. Tiene que existir; si no, la copia de siempre sale igual y `/respaldo` lo dice |
 | `NAV_LAB` | `componentes/navegador-lab` | El laboratorio de Navegante, si lo tienes en otro sitio (`conocimiento/12-navegante-y-reuniones.md`) |
 | `NAV_DATOS` | `~/.local/share/navegador-lab` | Los datos del Navegante: el perfil de Chrome con tus cookies, las preguntas del guardián y las corridas |
 | `REUNIONES_PROYECTO` | `componentes/reuniones` | El procesado de Reuniones, si lo tienes en otro sitio |
+| `PUENTE_KVM` | `componentes/puente-kvm` | El Puente KVM, si lo tienes en otro sitio (`conocimiento/15-puente-kvm.md`) |
+| `PUENTE_PUERTO` | `8794` | El puerto del Puente KVM: el mismo para el puente y para el hub |
 | `REUNIONES_AGENTE` | la carpeta que eliges en Reuniones | Dónde está el agente de Windows, visto desde WSL (`/mnt/c/…`) |
 | `REUNIONES_RAIZ` | junto al agente | Dónde están las grabaciones, vistas desde WSL |
 | `HUB_BUSCAR_VERSIONES` | `1` | Con `0`, el hub no mira si hay versión nueva publicada (un `git ls-remote` a la hora como mucho) |
+| `HUB_ESPERA_SENAL` | `60` | Cuántos segundos espera `actualizar.sh` a que el muestreo y el secretario den señales de vida tras reiniciarlos. Súbelo si tu máquina tarda más en arrancarlos |
 | `HUB_BIN` | `~/.local/bin` | Dónde enlaza `sembrar-asistente.sh` el comando `hub` |
 | `HUB_STATUSLINE_SIGUIENTE` | *(ninguno)* | Ver abajo |
 | `HUB_COMANDO_CLAUDE` | `claude` | Lo que «Restaurar» deja escrito (sin Enter) en las ventanas que tenían Claude Code. Va en el entorno de `hub-web` |
@@ -178,7 +186,8 @@ funciona. Están aquí porque la que no se documenta no existe.
 | `HUB_CANAL_YML` | `$HUB_HOME/canal.yml` | Ajustes del canal de consulta: el **puntero** al token del bot, nunca el token |
 | `HUB_ENCARGOS_YML` | `$HUB_HOME/encargos.yml` | Lo mismo para el bot de encargos, que es otro bot con otro token |
 | `HUB_COMANDOS_YML` | `$HUB_HOME/comandos.yml` | Los comandos preparados de Archivos. Sin archivo, ninguno |
-| `HUB_TRANSCRIPTS` | `~/.claude/projects` | Dónde busca los transcripts de Claude Code la pantalla de Consumo, y el «último uso» de Inventario |
+| `HUB_MAQUETAS` | `maquetas/` del repo | Prototipos HTML que se ven en `/maquetas/`, sólo para mirarlos y encerrados (no alcanzan nada del hub): sus `.css` y `.js` relativos se incrustan y lo de un CDN no carga. Sin la carpeta, la ruta da 404 |
+| `HUB_TRANSCRIPTS` | `~/.claude/projects` | Dónde busca el hub los transcripts de Claude Code, para todo lo que lee de ellos: Consumo, el «último uso» de Inventario, las conversaciones, el contexto, el orquestador, el asistente y Talleres |
 | `HUB_CADDY`, `HUB_DOMINIO_ENCARGOS` | *(ninguno)* | Sólo para `scripts/desplegar-encargo.sh` y `desplegar-chat.sh`: el Caddy del servidor y el dominio bajo el que se publica cada encargo. El relé los pasa desde `encargos.yml` |
 
 🔴 **`HUB_STATUSLINE_SIGUIENTE`, si ya tienes una statusline.** Sembrar el
@@ -200,12 +209,16 @@ bash scripts/actualizar.sh
 ```
 
 Baja la versión (sólo si avanza en línea recta: si tu clon tiene commits
-propios, para y lo dice), resuelve dependencias, aplica los pasos propios de
-cada versión que cruces (`scripts/migraciones/`), regenera los servicios con
-**tu** puerto y **tu** carpeta de datos, reinicia los que estaban en marcha,
-pone al día el asistente y comprueba que el hub contesta. Al final te enseña lo
+propios, para y lo dice), resuelve dependencias, copia tus bases tal como están
+(`hub.db` y la memoria del secretario), aplica los pasos propios de cada
+versión que cruces (`scripts/migraciones/`), regenera los servicios con **tu**
+puerto y **tu** carpeta de datos, reinicia los que estaban en marcha y pone al
+día el asistente. Después comprueba que el hub contesta, que cada servicio que
+reinició sigue en marcha y que el muestreo late; si el secretario aún no late,
+sólo te avisa (su primer latido puede tardar un minuto). Al final te enseña lo
 que cambió, sacado de [`CHANGELOG.md`](CHANGELOG.md). Si algo falla, para ahí y
-la versión no se da por instalada: volver a correrlo retoma.
+la versión no se da por instalada: volver a correrlo retoma. Y si ya había
+empezado a tocar algo, te dice cómo volver (abajo).
 
 `git pull` y reiniciar **no basta**: deja el código nuevo corriendo con los
 servicios y el asistente de antes. El hub lo detecta —compara la versión del
@@ -235,6 +248,59 @@ hace por su cuenta; se apaga con `HUB_BUSCAR_VERSIONES=0`.
 Y si **mueves la carpeta del clon**, vuelve a correr `bash scripts/instalar.sh`:
 la ruta va escrita dentro de los units, y sin regenerarlos apuntan a donde ya no
 estás.
+
+### Volver a la versión anterior
+
+Si `actualizar.sh` falla después de copiar tus bases —en un paso de versión, al
+reiniciar o en la comprobación final—, termina con «Para volver a como
+estaba» y el commit exacto en el que estaba tu clon antes de bajar:
+
+```bash
+git checkout <commit de antes>
+bash scripts/actualizar.sh --sin-bajar
+```
+
+Eso vuelve a poner el código de antes, sus dependencias y sus servicios, y los
+reinicia. Como al fallar la versión nueva no se apuntó, no repite ningún paso
+de versión. Para intentarlo otra vez más adelante, vuelve a tu rama y actualiza
+como siempre: `git switch main && bash scripts/actualizar.sh`.
+
+🔴 **Nada se deshace solo.** El hub no vuelve atrás por su cuenta, y lo que la
+versión nueva ya hizo se queda: los pasos de versión que ya corrieron no se
+deshacen (nunca borran nada: lo que reemplazan queda al lado), y si los
+servicios nuevos llegaron a arrancar, la base pudo recibir tablas o columnas
+nuevas. El código de antes no las usa y no le estorban, así que casi siempre
+basta con los dos comandos de arriba.
+
+**Las copias de antes.** Justo antes de los pasos de versión, `actualizar.sh`
+copia `hub.db` y la memoria del secretario, comprobadas, en la carpeta de las
+copias (`~/.local/share/hub/respaldos/`, o `HUB_RESPALDO`):
+`antes-hub-<fecha>.db` y `antes-secretario-<fecha>.db`. Se guardan las tres
+últimas de cada una, y van también a la segunda carpeta si la tienes
+(`HUB_RESPALDO_EXTRA`). Si lo intentas varias veces el mismo día, la copia es la
+del primer intento: el segundo ya no la rehace, porque para entonces el código
+nuevo pudo haber tocado la base. Tus datos para trámites (`mis-datos.yml`) no
+se copian nunca, a propósito.
+
+Sólo hacen falta si el hub de antes **no arranca** con la base como quedó.
+Restaurar una copia pisa todo lo escrito desde entonces —notas, slots, lo que
+te dijo el secretario—, así que se hace a mano y con los servicios parados,
+apartando la base en vez de borrarla. Con otro `HUB_HOME` u otro
+`HUB_RESPALDO`, cambia las rutas por las tuyas: las que dijo `actualizar.sh` al
+fallar son las buenas.
+
+```bash
+systemctl --user stop hub-web hub-snapshotter hub-canal hub-encargos hub-secretario
+mkdir -p ~/.local/share/hub/apartada
+mv ~/.local/share/hub/hub.db* ~/.local/share/hub/apartada/
+cp ~/.local/share/hub/respaldos/antes-hub-<fecha>.db ~/.local/share/hub/hub.db
+systemctl --user start hub-web hub-snapshotter
+```
+
+La memoria del secretario, igual, sólo si es ella la que no abre:
+`~/.local/share/hub/secretario/memoria.db*` a `apartada/` y
+`antes-secretario-<fecha>.db` en su sitio, con `hub-secretario` parado. Arranca
+después los que usabas (`hub-canal`, `hub-encargos`, `hub-secretario`).
 
 ## 🔴 La terminal da acceso de shell
 

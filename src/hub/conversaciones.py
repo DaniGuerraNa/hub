@@ -24,25 +24,17 @@ from . import api, modelos, transcripts
 # misma (`/resume`), no aquí, y cada una cuesta leer su archivo entero.
 LIMITE = 8
 
-# `resumir_sesion` lee el archivo entero, y una sesión larga pesa megas. Se
-# guarda la ficha mientras el archivo no cambie (misma fecha y tamaño).
-_FICHAS: dict[str, tuple[float, int, dict | None]] = {}
-
 
 def ficha(ruta: Path) -> dict | None:
-    """Lo que se enseña de una conversación de Claude Code, guardado mientras
-    su archivo no cambie. `None` si el archivo ya no está. La usan los slots y
-    el asistente (`asistente.conversaciones_anteriores`)."""
-    try:
-        st = ruta.stat()
-    except OSError:
-        return None
-    previa = _FICHAS.get(str(ruta))
-    if previa and previa[0] == st.st_mtime and previa[1] == st.st_size:
-        return previa[2]
-    resumen = transcripts.resumir_sesion(ruta)
-    _FICHAS[str(ruta)] = (st.st_mtime, st.st_size, resumen)
-    return resumen
+    """Lo que se enseña de una conversación de Claude Code. `None` si el
+    archivo ya no está o no tiene mensajes. La usan los slots y el asistente
+    (`asistente.conversaciones_anteriores`).
+
+    Delega en `transcripts.resumir_sesion`, que la recuerda mientras el
+    archivo no cambie (C-0310). La caché vivía aquí y sólo la usaban los
+    slots y el asistente: `/api/sesiones` releía entero lo que ellos ya
+    tenían guardado."""
+    return transcripts.resumir_sesion(ruta)
 
 
 def _rutas_del_slot(con: sqlite3.Connection, slot: dict) -> list[str]:
@@ -76,7 +68,7 @@ def de_slot(con: sqlite3.Connection, slot_id: int, limite: int = LIMITE) -> list
         return []
     archivos: dict[str, Path] = {}
     for ruta in _rutas_del_slot(con, slot):
-        directorio = transcripts.TRANSCRIPTS / transcripts.slug_de(ruta)
+        directorio = transcripts.directorio_de(ruta)
         if directorio.is_dir():
             for archivo in transcripts.jsonl_de(directorio):
                 archivos[archivo.stem] = archivo

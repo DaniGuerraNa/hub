@@ -44,3 +44,97 @@ def test_no_roba_teclas_mientras_escribes(ejecucion):
     lanzar — la peor forma posible de fallar aquí."""
     guion = script_estatico("paleta.js")
     assert ".xterm" in guion and "isContentEditable" in guion
+
+
+# ── Lo que dice cuando no encuentra (C-0354) ─────────────────────────────────
+
+# Las filas que pinta, con el texto de cada trozo: el arnés no guarda lo que se
+# mete en un elemento, así que se anota aquí. Y el `button` lleva su etiqueta
+# para poder pulsarlo.
+_FILAS = r"""
+const _crear = document.createElement;
+document.createElement = (tag) => {
+  const el = _crear(tag); el.tagName = String(tag).toUpperCase(); el.hijos = [];
+  el.append = (...xs) => { el.hijos.push(...xs); };
+  return el;
+};
+globalThis.FILAS = [];
+nodo('paleta-res').appendChild = (li) => {
+  FILAS.push(li);
+  registro.valores.push('FILA:' + JSON.stringify({
+    clase: li.className, textos: li.hijos.map((h) => h.textContent), boton: li.hijos.some((h) => h.tagName === 'BUTTON'),
+  }));
+};
+"""
+
+# El temporizador de 120 ms entre tecla y búsqueda, a cero: el arnés vuelca lo
+# que pasó a los 20 ms y no vería la respuesta.
+_TECLEAR = r"""
+const _st = setTimeout;
+globalThis.setTimeout = (fn, ms, ...r) => _st(fn, 0, ...r);
+nodo('paleta-q').value = 'zzzxxyyqq';
+nodo('paleta-q').disparar('input');
+globalThis.setTimeout = _st;
+"""
+
+_SECRETARIO = r"""
+window.HubSecretario = { preguntar: (t) => registro.valores.push('PREGUNTA:' + t) };
+nodo('secretario-panel').getAttribute = (a) => (a === 'aria-label' ? 'Atenea' : null);
+"""
+
+
+def _filas(ejecucion):
+    import json
+    return [json.loads(v[5:]) for v in ejecucion["valores"] if isinstance(v, str) and v.startswith("FILA:")]
+
+
+def test_sin_resultados_lo_dice_con_lo_que_se_busco(tmp_path):
+    """Con «zzzxxyyqq» la lista quedaba vacía y sin texto: no se distinguía
+    «no hay» de «aún busca» o «se ha roto»."""
+    ejecucion = ejecutar(script_estatico("paleta.js"), tmp_path, respuestas={"/api/buscar": []},
+                         previo=_FILAS, accion=_TECLEAR)
+
+    assert ejecucion["errores"] == []
+    (fila,) = _filas(ejecucion)
+    assert fila["clase"] == "vacio" and "Nada con «zzzxxyyqq»" in " ".join(fila["textos"])
+    assert fila["boton"] is False          # sin secretario, no se ofrece preguntarle
+
+
+def test_con_el_secretario_ofrece_preguntarselo_y_al_pulsar_le_llega_lo_buscado(tmp_path):
+    accion = _TECLEAR + r"""
+      _st(() => {
+        const boton = FILAS[0].hijos.find((h) => h.tagName === 'BUTTON');
+        registro.valores.push('ROTULO:' + boton.textContent);
+        boton.disparar('click');
+        registro.valores.push('ABIERTA:' + nodo('paleta').open);
+      }, 0);
+    """
+    ejecucion = ejecutar(script_estatico("paleta.js"), tmp_path, respuestas={"/api/buscar": []},
+                         previo=_FILAS + _SECRETARIO + "nodo('paleta').open = true;", accion=accion)
+
+    assert ejecucion["errores"] == []
+    valores = ejecucion["valores"]
+    assert "ROTULO:Preguntárselo a Atenea" in valores
+    (pregunta,) = [v for v in valores if isinstance(v, str) and v.startswith("PREGUNTA:")]
+    assert "zzzxxyyqq" in pregunta
+    assert "ABIERTA:false" in valores     # la paleta se cierra para dejar ver su panel
+
+
+def test_si_la_busqueda_falla_lo_dice_y_no_que_no_hay_nada(tmp_path):
+    ejecucion = ejecutar(script_estatico("paleta.js"), tmp_path,
+                         previo=_FILAS + _SECRETARIO + "fetch = () => Promise.reject(new Error('caído'));",
+                         accion=_TECLEAR)
+
+    assert ejecucion["errores"] == []
+    (fila,) = _filas(ejecucion)
+    texto = " ".join(fila["textos"])
+    assert "No se pudo buscar" in texto and "Nada con" not in texto
+    assert fila["boton"] is False
+
+
+def test_con_resultados_no_pinta_la_fila_de_vacio(tmp_path):
+    respuesta = [{"clase": "proyecto", "ref": "demo", "titulo": "Demo", "detalle": "", "url": "/proyecto/demo"}]
+    ejecucion = ejecutar(script_estatico("paleta.js"), tmp_path, respuestas={"/api/buscar": respuesta},
+                         previo=_FILAS, accion=_TECLEAR)
+
+    assert [f["clase"] for f in _filas(ejecucion)] == ["marcado"]

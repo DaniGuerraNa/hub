@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from hub import agentes, api, slots, snapshotter, tmux
+from hub import agentes, api, kits, slots, snapshotter, tmux
 from hub.models import Proyecto
 from hub.registry import Atribuidor
 
@@ -130,8 +130,10 @@ def test_el_prompt_nunca_se_interpola_en_crudo(malicioso):
 
 
 def test_el_prompt_del_mantenedor_lleva_la_medicion_dentro():
-    con_deriva = api.prompt_mantenedor("Kit", "Idle", 3, 2)
-    sin_deriva = api.prompt_mantenedor("Kit", "Idle", 0, 4)
+    """Lo redacta `kits`, junto a `prompt_aplicar`: es una decisión del dominio
+    de los kits, no de la costura de lectura (C-0102)."""
+    con_deriva = kits.prompt_mantenedor("Kit", "Idle", 3, 2)
+    sin_deriva = kits.prompt_mantenedor("Kit", "Idle", 0, 4)
 
     assert "3 archivo(s) con deriva real" in con_deriva
     assert "no detectó deriva" in sin_deriva

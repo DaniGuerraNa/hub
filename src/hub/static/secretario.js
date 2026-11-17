@@ -92,13 +92,18 @@ function filtrarNotas() {
   if (!caja || !document.getElementById('notas')) return;
   caja.addEventListener('input', aplicarFiltroNotas);
 }
+/* Sin mayúsculas ni tildes, como busca el servidor (`memoria.buscar_notas`):
+ * si no, tras guardar, el filtro escondía lo que la búsqueda había traído. */
+function sinTildes(texto) {
+  return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
 function aplicarFiltroNotas() {
   const caja = document.getElementById('filtro-notas');
   const notas = document.getElementById('notas');
   if (!caja || !notas) return;
-  const q = caja.value.trim().toLowerCase();
+  const q = sinTildes(caja.value.trim());
   notas.querySelectorAll('.nota').forEach(n => {
-    const texto = (n.querySelector('textarea').value + ' ' + n.querySelector('.tenue').textContent).toLowerCase();
+    const texto = sinTildes(n.querySelector('textarea').value + ' ' + n.querySelector('.tenue').textContent);
     n.hidden = Boolean(q) && !texto.includes(q);
   });
 }

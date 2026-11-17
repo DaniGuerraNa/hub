@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 GUION = Path(__file__).resolve().parents[1] / "src" / "hub" / "static" / "programados.js"
+SONDEO = GUION.parent / "sondeo.js"   # va en el <head> de todas las páginas (C-0277)
 
 ARNES = r"""
 const nodos = {};
@@ -101,6 +102,7 @@ global.document = {
     return SIN_SLOT ? null : nota;
   },
   querySelectorAll: (sel) => (sel === '.pest-lado button[data-hoja]' ? [pestana] : []),
+  addEventListener(){}, removeEventListener(){},
 };
 global.window = { addEventListener(){} };
 global.setInterval = () => 0;
@@ -161,7 +163,7 @@ def _correr(mensajes=None, accion="", sin_slot=False, sin_bloque=False,
         f"const SIN_SLOT = {json.dumps(sin_slot)};\n"
         f"const SIN_BLOQUE = {json.dumps(sin_bloque)};\n"
         f"const RESPUESTA_POST = {json.dumps(respuesta_post or {'ok': True, 'id': 3})};\n"
-        + ARNES.replace("__GUION__", GUION.read_text(encoding="utf-8"))
+        + ARNES.replace("__GUION__", SONDEO.read_text(encoding="utf-8") + GUION.read_text(encoding="utf-8"))
     )
     salida = subprocess.run(
         [node, "-e", guion], capture_output=True, text=True, timeout=30,
