@@ -228,3 +228,24 @@ def test_sin_pedir_permisos_y_el_teclado_espanol_se_eligen_en_ajustes(pagina):
         assert ajustes["claude"]["saltar_permisos"] is True
         assert ajustes["perfil"]["distribucion"] == "mac-es"
     assert pagina.errores == []
+
+
+def test_la_persona_usa_el_mac_desde_la_pantalla_con_su_teclado(pagina):
+    # Sin la web del JetKVM: un clic en «Usar el Mac desde aquí», otro en la
+    # imagen, y lo tecleado llega al Mac. Un clic fuera lo suelta.
+    sim = Simulador(lineas=[""])
+    with en_marcha(sim) as base:
+        pagina.goto(base + "/panel")
+        pagina.click("#mando-usar")
+        assert "usando" in pagina.locator("#pantalla").get_attribute("class")
+        pagina.click("#directo", position={"x": 200, "y": 150})
+        pagina.keyboard.type("hola")
+        pagina.keyboard.press("Shift+KeyA")
+        pagina.wait_for_timeout(400)
+        assert "holaA" in "".join(sim.editor.lineas)
+        pagina.click("h2")  # fuera de la imagen
+        assert "usando" not in (pagina.locator("#pantalla").get_attribute("class") or "")
+        pagina.keyboard.type("zz")
+        pagina.wait_for_timeout(300)
+        assert "zz" not in "".join(sim.editor.lineas)
+    assert pagina.errores == []

@@ -49,6 +49,16 @@ Todo se hace en **una sola pantalla: http://127.0.0.1:8794**.
    pulsa **«Dar el control a Claude»**; mientras, no toques el Mac. **Parar**
    (arriba) corta en el acto. Al terminar cada lectura o escritura, el control
    vuelve solo a ti.
+   - **Para usar el Mac tú, sin la web del JetKVM** (que admite una sola
+     sesión y desconectaría el puente): **«Usar el Mac desde aquí»**, bajo la
+     imagen. Desde ahí, tu teclado y tu ratón van al Mac; un clic fuera de la
+     imagen o «Dejar de usar» lo suelta. **Ctrl = ⌘** (marcado de fábrica)
+     cambia Ctrl y ⌘ de sitio, porque Windows se queda la tecla ⌘; ⌘Tab y
+     ⌘Espacio tienen botón, y «Pegar texto» teclea lo del portapapeles. Sólo
+     funciona mientras Claude no tiene el control. Lo que teclees no se guarda
+     en ningún sitio.
+   - Si en el Mac **la rueda va al revés** (el «desplazamiento natural»),
+     Ajustes → «Invertir la rueda del ratón».
 3. Pídele lo que necesites en la terminal. Lee el documento página a página;
    en la página de la lectura ves **cada captura junto a su transcripción** y la
    comprobación con la **huella** de la base.

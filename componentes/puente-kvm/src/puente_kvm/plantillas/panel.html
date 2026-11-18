@@ -9,9 +9,17 @@
     </div>
     <div class="pantalla" id="pantalla" data-ancho="{{ estado.dispositivo.ancho or 1920 }}" data-alto="{{ estado.dispositivo.alto or 1080 }}"
          data-conectado="{{ 'si' if estado.dispositivo.conectado else 'no' }}">
-      <img id="directo" src="/api/pantalla.mjpg" alt="Pantalla del Mac en directo">
+      <img id="directo" src="/api/pantalla.mjpg" alt="Pantalla del Mac en directo" draggable="false">
       <div class="region" id="region"></div>
     </div>
+    <div class="fila mando" id="mando">
+      <button id="mando-usar" class="cta">Usar el Mac desde aquí</button>
+      <label class="casilla" title="La tecla Windows se la queda Windows: así Ctrl+C copia, Ctrl+S guarda…"><input type="checkbox" id="mando-ctrl" checked> Ctrl = ⌘</label>
+      <button data-mando-atajo="cmd+tab" hidden>⌘Tab</button>
+      <button data-mando-atajo="cmd+space" hidden>⌘Espacio</button>
+      <button id="mando-pegar" hidden>Pegar texto</button>
+    </div>
+    <p class="sub" id="mando-ayuda">Con tu teclado y tu ratón, sin abrir la web del JetKVM (que desconectaría el puente). Sólo mientras Claude no tiene el control.</p>
     {% if estado.error_conexion %}
     <div class="aviso riesgo" style="margin-top:12px">
       <p style="margin:0 0 8px"><b>No hay conexión con el aparato.</b> {{ estado.error_conexion }}</p>

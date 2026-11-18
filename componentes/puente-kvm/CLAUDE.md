@@ -47,6 +47,11 @@ control del Mac.
 3. Mira si lo que te piden ya está leído (`trabajo/*.sql`, `trabajo/notas/`)
    antes de volver a leerlo del Mac.
 
+La persona puede usar el Mac desde la pantalla del puente cuando tú no tienes
+el control: lo que viste en una captura anterior puede haber cambiado. Mira la
+pantalla (`ver_pantalla`) antes de actuar sobre ella. La rueda: positivo baja
+el contenido; si el Mac la tiene invertida, el puente lo corrige solo (Ajustes).
+
 ## Las skills: cómo se hace cada encargo
 
 | Te piden… | Skill |

@@ -14,7 +14,7 @@ haga falta.
 | [`07-la-api.md`](07-la-api.md) | Leer lo que el hub mide desde un script |
 | [`08-sala-limpia.md`](08-sala-limpia.md) | Probar una instalación del hub o de un kit como la vería otra persona, y auditar un kit |
 | [`09-orquestador-e-intercambio.md`](09-orquestador-e-intercambio.md) | Mandar trabajo a las sesiones sin estar delante, sus permisos, pasar archivos desde el teléfono, dictar y medir el dictado con tu voz (banco de dictado) |
-| [`10-mas-pantallas.md`](10-mas-pantallas.md) | Entrar desde el móvil (Acceso), Telegram (Canal, avisos, pánico y Encargos), las pestañas Lienzos, Consultas y Programados de Trabajo, Archivos y comandos preparados, Tablero (ideas para después), Máquina, Consumo y los atajos |
+| [`10-mas-pantallas.md`](10-mas-pantallas.md) | Entrar desde el móvil (Acceso), Telegram (Canal, avisos, pánico y Encargos), las pestañas Lienzos, Consultas y Programados de Trabajo, Archivos y comandos preparados, Tablero (ideas para después), Máquina, Consumo, la interfaz nueva (vista previa) y los atajos |
 | [`11-versiones.md`](11-versiones.md) | Qué versión tengo, cómo me entero de que hay otra, cómo actualizo, cómo vuelvo a la de antes si falla y qué significa «falta terminar de actualizar» |
 | [`12-navegante-y-reuniones.md`](12-navegante-y-reuniones.md) | Qué son Navegante y Reuniones, cómo se preparan (el agente de Windows incluido) y qué hacer si no van |
 | [`13-secretario.md`](13-secretario.md) | El secretario: encenderlo, hablarle (también por voz), conectar Telegram y Google Calendar, recordatorios, confianza y disparadores |

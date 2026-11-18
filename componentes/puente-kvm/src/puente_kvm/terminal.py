@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import json
 import os
 import re
 import select
@@ -173,7 +174,16 @@ def orden_claude(conv: conversaciones.Conversacion | None = None, retomar: bool 
     # .claude/settings.json no preguntarían (medido con Claude Code en otra terminal web).
     # Saltarlos lo enciende la persona en Ajustes; tocar el Mac sigue pidiendo
     # que ella dé el control, que lo comprueba el puente, no Claude Code.
-    base = f"{claude} --dangerously-skip-permissions" if saltar_permisos() else f"{claude} --permission-mode default"
+    if saltar_permisos():
+        # 🔴 Una regla «ask» de los ajustes del proyecto gana al modo sin
+        # permisos (medido con la 2.1.322 y visto con la 2.1.327: seguía
+        # preguntando antes de cada clic). Así que sin la fuente «project», y sus
+        # ajustes —hooks, servidores, «deny»— van aparte sin la lista «ask».
+        base = (f"{claude} --dangerously-skip-permissions --setting-sources user,local"
+                f" --settings {shlex.quote(str(ajustes_sin_preguntar()))}"
+                f" --mcp-config {shlex.quote(str(config.espacio() / '.mcp.json'))}")
+    else:
+        base = f"{claude} --permission-mode default"
     if conv is None:
         lanzar = base
     else:
@@ -207,6 +217,17 @@ def _puede_desasir() -> bool:
 def existe() -> bool:
     r = subprocess.run([*tmux(), "has-session", "-t", f"={SESION}"], capture_output=True, timeout=10)
     return r.returncode == 0
+
+
+def ajustes_sin_preguntar() -> Path:
+    """Los ajustes de Claude del puente sin las reglas «ask», para «Sin pedir
+    permisos». Se escriben en cada arranque desde los del código, así que un
+    cambio en ellos llega solo; lo denegado sigue denegado."""
+    datos = json.loads((config.CODIGO / ".claude" / "settings.json").read_text())
+    datos.get("permissions", {}).pop("ask", None)
+    ruta = config.hogar() / "claude-sin-preguntar.json"
+    ruta.write_text(json.dumps(datos, indent=2, ensure_ascii=False))
+    return ruta
 
 
 def saltar_permisos() -> bool:

@@ -264,6 +264,18 @@ verificar contra nada, y una cifra que no se puede defender no se enseña.
 El porqué de Consumo, Canal, Conexiones y Servicios está plegado bajo una línea
 de la cabecera («¿Por qué así?»): se lee una vez y luego no empuja el contenido.
 
+## Interfaz nueva (vista previa)
+
+Al final de la **Guía**, «Probar la interfaz nueva» cambia el marco del hub en
+**ese aparato**: la navegación en nueve secciones (en la PC se pliegan con la
+flecha de arriba), una barra abajo en el teléfono y sus propios colores (Pizarra
+o Brasa, ahí mismo). Las pantallas por dentro son las de siempre y los demás
+aparatos no cambian. «Volver a la de siempre», en el mismo sitio, la apaga.
+
+Viene apagada porque aún se está puliendo: si la pruebas y algo no se ve bien o
+echas algo en falta, cuéntaselo a quien te instaló el hub o abre una incidencia
+en el repositorio de donde lo instalaste.
+
 ## Buscar y moverse con el teclado
 
 | | |

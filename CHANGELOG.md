@@ -13,6 +13,47 @@ bash scripts/actualizar.sh
 Al terminar te enseña esta misma lista, sólo con las versiones que acabas de
 cruzar.
 
+## 0.7.0 — 2026-11-17
+
+La interfaz nueva, apagada, para quien quiera probarla y dar su opinión; y en
+el Puente KVM, usar el Mac desde su pantalla, la rueda invertible y «Sin
+pedir permisos» sin preguntas antes de cada clic.
+
+### Qué tienes que hacer
+
+- **Actualiza** con el botón de **Actualizaciones** (o con
+  `bash scripts/actualizar.sh` en la carpeta del hub).
+- **Si usas el Puente KVM, reinícialo** (`systemctl --user restart
+  puente-kvm`, o vuelve a lanzar `scripts/arrancar.sh` en su carpeta con la
+  misma `PUENTE_TRABAJO` delante) y abre una conversación nueva.
+- Para probar la interfaz nueva: al final de la **Guía**, «Probar la
+  interfaz nueva». Si no quieres, no tienes que hacer nada.
+
+### Nuevo
+
+- **La interfaz nueva, para quien quiera probarla.** Viene apagada: al final
+  de la **Guía**, «Probar la interfaz nueva» la enciende sólo en ese aparato
+  (navegación en nueve secciones, barra abajo en el teléfono y sus colores) y
+  «Volver a la de siempre» la apaga. Las pantallas por dentro son las mismas.
+  Es una vista previa: lo que no se vea bien o eches en falta, cuéntalo.
+  Todo, en `conocimiento/10-mas-pantallas.md`.
+- **Puente KVM: usar el Mac desde la pantalla del puente.** «Usar el Mac
+  desde aquí», bajo la imagen: tu teclado y tu ratón van al Mac sin abrir la
+  web del JetKVM (que admite una sola sesión y desconectaba el puente). Ctrl
+  hace de ⌘ (se quita con su casilla), ⌘Tab y ⌘Espacio tienen botón y
+  «Pegar texto» teclea lo del portapapeles. Sólo mientras Claude no tiene el
+  control, y lo que teclees no se guarda en ningún sitio.
+- **Puente KVM: invertir la rueda.** En Ajustes, para cuando el Mac tiene el
+  «desplazamiento natural» y la rueda va al revés; vale para Claude y para ti.
+
+### Qué cambia en lo que ya usabas
+
+- **Puente KVM: «Sin pedir permisos» ya no pregunta antes de cada clic o
+  tecla.** Las reglas «pregúntame» del puente ganaban a ese modo; ahora, con
+  la casilla marcada, no se aplican. Lo que sigue frenando a Claude es el
+  control: sólo toca el Mac cuando se lo das. Vale para las conversaciones
+  que se abran después de reiniciar el puente.
+
 ## 0.6.1 — 2026-11-17
 
 Un parche del Puente KVM tras su primera prueba con un JetKVM de verdad.

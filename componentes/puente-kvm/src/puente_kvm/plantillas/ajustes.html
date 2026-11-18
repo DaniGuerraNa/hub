@@ -29,6 +29,8 @@
       Con «Español - ISO», el Mac tiene que tener el teclado como <b>ANSI</b> (si el asistente de teclado pregunta); con ISO, <code>&lt; &gt;</code> salen como <code>º ª</code>. La latinoamericana aún no está.</p>
     <label for="retardo">Pausa entre teclas (ms)</label>
     <input id="retardo" name="perfil.retardo_tecla_ms" type="number" min="2" max="200" value="{{ ajustes.perfil.retardo_tecla_ms }}">
+    <label class="fila" style="margin-top:12px"><input type="checkbox" id="invertir_rueda" name="perfil.invertir_rueda" {{ 'checked' if ajustes.perfil.invertir_rueda }}> Invertir la rueda del ratón</label>
+    <p class="sub" style="margin:6px 0 0">Márcala si en el Mac la rueda va al revés (pasa con el «desplazamiento natural» de macOS). Vale para Claude y para cuando usas el Mac desde aquí.</p>
 
     <h2 style="margin-top:20px">Claude Code</h2>
     <label for="modelo">Modelo de Claude</label>
@@ -39,7 +41,7 @@
       Va por su nombre exacto, nunca por un alias. Fable 5.2 necesita Claude Code 2.1.322 o posterior. «El de mi Claude Code» no le pasa ninguno: usa el que tengas configurado.</p>
     <label class="fila" style="margin-top:12px"><input type="checkbox" id="saltar_permisos" name="claude.saltar_permisos" {{ 'checked' if ajustes.claude.saltar_permisos }}> Sin pedir permisos</label>
     <p class="sub" style="margin:6px 0 0">Claude Code usa sus herramientas en este equipo (leer y escribir archivos, órdenes de terminal) sin preguntarte cada vez: <code>--dangerously-skip-permissions</code>.
-      Tocar el Mac sigue necesitando que le des el control aquí. Se aplica a la siguiente conversación nueva o retomada; la primera vez Claude Code te pide confirmarlo.</p>
+      Tampoco te pregunta antes de cada clic o tecla en el Mac: lo que lo frena es el control, que sólo tiene cuando se lo das aquí. Se aplica a la siguiente conversación nueva o retomada; la primera vez Claude Code te pide confirmarlo.</p>
   </section>
 
   <section class="tarjeta">

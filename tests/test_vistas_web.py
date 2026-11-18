@@ -887,7 +887,7 @@ def test_lo_que_se_repite_por_fila_no_es_la_accion_principal():
     raiz = web._AQUI / "templates"
     arboles = {str(a.relative_to(raiz)): entorno.parse(a.read_text(encoding="utf-8"))
                for a in sorted(raiz.rglob("*.html"))}
-    # La nueva no viaja con el producto (C-0169): allí sólo se exige la de siempre.
+    # La nueva viaja (C-0454); si a una copia le faltaran sus plantillas, se exige la de siempre.
     esperadas = {"base.html", "nueva/base.html"} if interfaz.disponible() else {"base.html"}
     assert esperadas <= set(arboles)
     con_cta = {m.name for arbol in arboles.values() for m in arbol.find_all(nodes.Macro)

@@ -70,9 +70,9 @@ def carpeta(interfaz: str) -> Path:
 def disponible() -> bool:
     """¿Están las plantillas de la interfaz nueva en esta instalación?
 
-    Mientras sea una vista previa puede no viajar con lo que se publica: donde
-    no está, el interruptor no se ofrece y la cookie no se obedece, en vez de
-    dar un 500 al buscar una plantilla que no hay.
+    Viaja con lo que se publica (C-0454), pero una copia a la que le falten
+    sus plantillas no puede dar un 500 al buscarlas: donde no están, el
+    interruptor no se ofrece y la cookie no se obedece.
     """
     return (carpeta(NUEVA) / "base.html").is_file()
 

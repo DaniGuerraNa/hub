@@ -352,6 +352,128 @@
     }
   });
 
+  // ── usar el Mac desde la pantalla del puente ────────────────────────────
+  // El ratón y el teclado de la persona van al Mac por /ws/mando. Se manda la
+  // tecla FÍSICA (KeyboardEvent.code → código HID), como la web del JetKVM: el
+  // Mac la convierte con su propia distribución. Nada de lo tecleado se guarda.
+  const HID = { Enter: 0x28, Escape: 0x29, Backspace: 0x2A, Tab: 0x2B, Space: 0x2C, Minus: 0x2D, Equal: 0x2E,
+    BracketLeft: 0x2F, BracketRight: 0x30, Backslash: 0x31, IntlHash: 0x32, Semicolon: 0x33, Quote: 0x34,
+    Backquote: 0x35, Comma: 0x36, Period: 0x37, Slash: 0x38, CapsLock: 0x39, PrintScreen: 0x46,
+    ScrollLock: 0x47, Pause: 0x48, Insert: 0x49, Home: 0x4A, PageUp: 0x4B, Delete: 0x4C, End: 0x4D,
+    PageDown: 0x4E, ArrowRight: 0x4F, ArrowLeft: 0x50, ArrowDown: 0x51, ArrowUp: 0x52, NumLock: 0x53,
+    NumpadDivide: 0x54, NumpadMultiply: 0x55, NumpadSubtract: 0x56, NumpadAdd: 0x57, NumpadEnter: 0x58,
+    NumpadDecimal: 0x63, IntlBackslash: 0x64, ContextMenu: 0x65, IntlRo: 0x87, IntlYen: 0x89,
+    ControlLeft: 0xE0, ShiftLeft: 0xE1, AltLeft: 0xE2, MetaLeft: 0xE3,
+    ControlRight: 0xE4, ShiftRight: 0xE5, AltRight: 0xE6, MetaRight: 0xE7 };
+  for (let i = 0; i < 26; i++) HID['Key' + String.fromCharCode(65 + i)] = 0x04 + i;
+  for (let i = 1; i <= 9; i++) { HID['Digit' + i] = 0x1D + i; HID['Numpad' + i] = 0x58 + i; }
+  HID.Digit0 = 0x27; HID.Numpad0 = 0x62;
+  for (let i = 1; i <= 12; i++) HID['F' + i] = 0x39 + i;
+  // Con «Ctrl = ⌘», Ctrl y ⌘ se cambian el sitio: Windows se queda la tecla ⌘.
+  const CAMBIO_CTRL = { ControlLeft: 0xE3, ControlRight: 0xE7, MetaLeft: 0xE0, MetaRight: 0xE4 };
+
+  const pantallaMando = $('#pantalla');
+  const botonUsar = $('#mando-usar');
+  if (pantallaMando && botonUsar) {
+    const imagen = $('#directo');
+    const casillaCtrl = $('#mando-ctrl');
+    const ayuda = $('#mando-ayuda');
+    const ayudaQuieto = ayuda.textContent;
+    const extras = $$('[data-mando-atajo], #mando-pegar');
+    let ws = null, activo = false, botones = 0, ultimoMov = 0, acumulado = 0;
+    try { casillaCtrl.checked = localStorage.getItem('puente-mando-ctrl') !== 'no'; } catch (e) { /* sin almacenamiento */ }
+    casillaCtrl.addEventListener('change', () => {
+      try { localStorage.setItem('puente-mando-ctrl', casillaCtrl.checked ? 'si' : 'no'); } catch (e) { /* idem */ }
+    });
+
+    const enviar = (o) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
+    const punto = (e) => {
+      const r = imagen.getBoundingClientRect();
+      const ancho = Number(pantallaMando.dataset.ancho) || 1920;
+      const alto = Number(pantallaMando.dataset.alto) || 1080;
+      return { x: Math.round((e.clientX - r.left) / r.width * ancho), y: Math.round((e.clientY - r.top) / r.height * alto) };
+    };
+    const codigoDe = (e) => (casillaCtrl.checked && e.code in CAMBIO_CTRL) ? CAMBIO_CTRL[e.code] : HID[e.code];
+    const bitDe = (boton) => ({ 0: 1, 2: 2, 1: 4 })[boton] || 0;
+
+    function parar(motivo) {
+      if (!activo) return;
+      activo = false;
+      enviar({ t: 'soltar' });
+      if (ws) { const v = ws; ws = null; setTimeout(() => v.close(), 50); }
+      botones = 0;
+      pantallaMando.classList.remove('usando');
+      botonUsar.textContent = 'Usar el Mac desde aquí';
+      extras.forEach((b) => { b.hidden = true; });
+      ayuda.textContent = ayudaQuieto;
+      if (motivo) fugaz(motivo, true);
+    }
+    function empezar() {
+      const v = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/mando');
+      ws = v;
+      v.onmessage = (m) => { let d = {}; try { d = JSON.parse(m.data); } catch (e) { return; } if (d.no) parar(d.no); };
+      v.onclose = () => { if (ws === v) parar('Se cortó la conexión con el puente.'); };
+      activo = true;
+      pantallaMando.classList.add('usando');
+      botonUsar.textContent = 'Dejar de usar';
+      extras.forEach((b) => { b.hidden = false; });
+      ayuda.textContent = 'Usando el Mac: lo que teclees y hagas sobre la imagen va al Mac. Para parar, «Dejar de usar» o un clic fuera de la imagen.';
+    }
+    botonUsar.addEventListener('click', () => (activo ? parar() : empezar()));
+
+    pantallaMando.addEventListener('mousemove', (e) => {
+      if (!activo || Date.now() - ultimoMov < 30) return;
+      ultimoMov = Date.now();
+      enviar({ t: 'raton', ...punto(e), b: botones });
+    });
+    pantallaMando.addEventListener('mousedown', (e) => {
+      if (!activo) return;
+      e.preventDefault();
+      botones |= bitDe(e.button);
+      enviar({ t: 'raton', ...punto(e), b: botones });
+    });
+    window.addEventListener('mouseup', (e) => {
+      if (!activo || !botones) return;
+      botones &= ~bitDe(e.button);
+      enviar({ t: 'raton', ...punto(e), b: botones });
+    });
+    pantallaMando.addEventListener('contextmenu', (e) => { if (activo) e.preventDefault(); });
+    pantallaMando.addEventListener('wheel', (e) => {
+      if (!activo) return;
+      e.preventDefault();
+      acumulado += e.deltaY;
+      const paso = e.deltaMode === 1 ? 3 : 100;  // líneas o píxeles por «clic» de rueda
+      while (Math.abs(acumulado) >= paso) {
+        const signo = Math.sign(acumulado);
+        enviar({ t: 'rueda', pasos: signo });  // positivo: el contenido baja
+        acumulado -= signo * paso;
+      }
+    }, { passive: false });
+    // Un clic fuera de la imagen y de la barra suelta el Mac.
+    document.addEventListener('mousedown', (e) => {
+      if (activo && !pantallaMando.contains(e.target) && !$('#mando').contains(e.target) && !e.target.closest('.velo')) parar();
+    }, true);
+    const tecla = (e) => {
+      if (!activo || $('.velo')) return;  // con un diálogo del puente abierto, el teclado es suyo
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;  // la repetición la hace el Mac mientras la tecla siga abajo
+      const codigo = codigoDe(e);
+      if (codigo) enviar({ t: 'tecla', codigo, abajo: e.type === 'keydown' });
+    };
+    document.addEventListener('keydown', tecla, true);
+    document.addEventListener('keyup', tecla, true);
+    window.addEventListener('blur', () => { if (activo) { botones = 0; enviar({ t: 'soltar' }); } });
+
+    $$('[data-mando-atajo]').forEach((b) => b.addEventListener('click', () => enviar({ t: 'combinacion', atajo: b.dataset.mandoAtajo })));
+    $('#mando-pegar').addEventListener('click', async () => {
+      let texto = null;
+      try { texto = await navigator.clipboard.readText(); } catch (e) { texto = null; }
+      if (!texto) texto = await pedir('Texto para teclear en el Mac', '', { max: 5000, si: 'Teclear', nota: 'Se teclea con la distribución de Ajustes, letra a letra.' });
+      if (texto) enviar({ t: 'pegar', texto });
+    });
+  }
+
   // ── ajustes: guardar y marcar la región arrastrando ─────────────────────
   const form = $('#ajustes');
   if (form) {

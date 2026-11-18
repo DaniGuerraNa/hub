@@ -105,6 +105,16 @@ def crear_dispositivo(ajustes: dict) -> Dispositivo:
     return Simulador(distribucion=ajustes.get("perfil", {}).get("distribucion", "mac-us"))
 
 
+# El directo: 2 imágenes por segundo mirando, ~8 mientras la persona usa el Mac.
+INTERVALO_DIRECTO = 0.5
+INTERVALO_MANDO = 0.12
+# Lo que la persona puede pulsar con un botón y no con su teclado (Windows se
+# queda la tecla ⌘ y algunas combinaciones).
+COMBINACIONES_MANDO = ("cmd+tab", "cmd+space")
+# Códigos de tecla HID que acepta el mando: de la «a» al Ctrl/Mayús/⌥/⌘ derechos.
+TECLA_MIN, TECLA_MAX = 0x04, 0xE7
+
+
 class Puente:
     def __init__(self, dispositivo: Dispositivo | None = None):
         self.ajustes = config.leer_ajustes()
@@ -115,6 +125,9 @@ class Puente:
         self.error_conexion = ""
         self.tareas: set[asyncio.Task] = set()
         self.actividad = repertorio.Actividad()
+        # Hasta cuándo la persona está usando el Mac desde la pantalla: mientras,
+        # el directo va más fluido.
+        self.mando_hasta = 0.0
 
     async def conectar(self) -> None:
         try:
@@ -331,7 +344,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                     datos = imagen_sin_video(str(e) or type(e).__name__)
                 yield (b"--fotograma\r\nContent-Type: image/jpeg\r\nContent-Length: "
                        + str(len(datos)).encode() + b"\r\n\r\n" + datos + b"\r\n")
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(INTERVALO_MANDO if time.time() < p.mando_hasta else INTERVALO_DIRECTO)
 
         return StreamingResponse(fotogramas(), media_type="multipart/x-mixed-replace; boundary=fotograma")
 
@@ -656,6 +669,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             nuevos["perfil"]["region_editor"] = r
             nuevos["perfil"]["aparcar_raton"] = [int(v) for v in nuevos["perfil"]["aparcar_raton"]]
             nuevos["perfil"]["retardo_tecla_ms"] = max(2, min(int(nuevos["perfil"]["retardo_tecla_ms"]), 200))
+            nuevos["perfil"]["invertir_rueda"] = nuevos["perfil"].get("invertir_rueda") is True
             config.guardar_ajustes(nuevos)
         except Exception as e:
             raise fallo(e) from e
@@ -804,6 +818,118 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         await cambiar(req, terminal.reiniciar)
         puente(req).bitacora.apuntar("terminal", "conversación nueva con Claude", quien="persona")
         return {"ok": True}
+
+    @app.websocket("/ws/mando")
+    async def ws_mando(ws: WebSocket):
+        """La persona usa el Mac desde la pantalla del puente: su ratón y su teclado.
+
+        Mismas puertas que la terminal (nombre y origen de esta web). Sólo vale
+        cuando Claude NO tiene el control ni hay una tarea en marcha: dos manos
+        en el mismo teclado escriben basura. 🔴 Lo tecleado no se guarda en
+        ningún sitio (puede ser una contraseña del Mac): la bitácora sólo dice
+        cuánto rato se usó.
+        """
+        anfitrion = ws.headers.get("host", "")
+        origen = ws.headers.get("origin", "")
+        if anfitrion not in admitidos or origen not in (f"http://{anfitrion}", f"https://{anfitrion}"):
+            await ws.close(code=4403)
+            return
+        await ws.accept()
+        p: Puente = ws.app.state.puente
+        teclas: list[int] = []
+        estado = {"mods": 0, "botones": 0, "x": 0, "y": 0, "desde": 0.0}
+
+        async def soltar() -> None:
+            if not (teclas or estado["mods"] or estado["botones"]):
+                return
+            teclas.clear()
+            estado["mods"] = 0
+            with contextlib.suppress(Exception):
+                await p.dispositivo.informe_teclado(0, [])
+            if estado["botones"]:
+                estado["botones"] = 0
+                with contextlib.suppress(Exception):
+                    await p.dispositivo.raton(estado["x"], estado["y"], 0)
+
+        async def pulsar(pulsacion: hid.Pulsacion) -> None:
+            retardo = p.ajustes["perfil"].get("retardo_tecla_ms", 12) / 1000
+            await p.dispositivo.informe_teclado(pulsacion.modificadores, [pulsacion.tecla])
+            await asyncio.sleep(retardo)
+            await p.dispositivo.informe_teclado(0, [])
+            await asyncio.sleep(retardo)
+
+        try:
+            while True:
+                m = await ws.receive()
+                if m["type"] == "websocket.disconnect":
+                    break
+                try:
+                    orden = json.loads(m.get("text") or "{}")
+                    tipo = orden.get("t")
+                except (ValueError, AttributeError):
+                    continue
+                p.control.estado()  # que caduque el control de Claude si toca
+                if p.control.modo == "claude" or p.motor.tarea:
+                    await soltar()
+                    await ws.send_json({"no": "Claude tiene el Mac ahora: retómalo para usarlo tú."
+                                        if p.control.modo == "claude" else
+                                        f"Hay una tarea en marcha ({p.motor.tarea}): espera o pulsa Parar."})
+                    continue
+                if not estado["desde"]:
+                    estado["desde"] = time.time()
+                p.mando_hasta = time.time() + 3
+                try:
+                    if tipo == "raton":
+                        ancho = getattr(p.dispositivo, "ancho", 1920) or 1920
+                        alto = getattr(p.dispositivo, "alto", 1080) or 1080
+                        estado["x"] = max(0, min(int(orden["x"]), ancho - 1))
+                        estado["y"] = max(0, min(int(orden["y"]), alto - 1))
+                        estado["botones"] = int(orden.get("b", 0)) & 0x07
+                        await p.dispositivo.raton(estado["x"], estado["y"], estado["botones"])
+                    elif tipo == "rueda":
+                        pasos = max(-10, min(int(orden["pasos"]), 10))
+                        if pasos:
+                            invertir = p.ajustes["perfil"].get("invertir_rueda")
+                            await p.dispositivo.rueda(-pasos if invertir else pasos)
+                    elif tipo == "tecla":
+                        codigo = int(orden["codigo"])
+                        if not TECLA_MIN <= codigo <= TECLA_MAX:
+                            continue
+                        abajo = bool(orden.get("abajo"))
+                        if codigo >= 0xE0:  # Ctrl, Mayús, ⌥ y ⌘: bits, no teclas
+                            bit = 1 << (codigo - 0xE0)
+                            estado["mods"] = estado["mods"] | bit if abajo else estado["mods"] & ~bit
+                        elif abajo and codigo not in teclas:
+                            teclas.append(codigo)
+                            del teclas[:-6]  # el informe lleva como mucho seis
+                        elif not abajo and codigo in teclas:
+                            teclas.remove(codigo)
+                        await p.dispositivo.informe_teclado(estado["mods"], list(teclas))
+                    elif tipo == "soltar":
+                        await soltar()
+                    elif tipo == "combinacion" and orden.get("atajo") in COMBINACIONES_MANDO:
+                        await soltar()
+                        await pulsar(hid.combinacion(orden["atajo"]))
+                    elif tipo == "pegar":
+                        texto = str(orden.get("texto", ""))[:5000]
+                        await soltar()
+                        for pulsacion in hid.secuencia(texto, p.ajustes["perfil"].get("distribucion", "mac-us")):
+                            await pulsar(pulsacion)
+                        await ws.send_json({"hecho": "pegar"})
+                except hid.TextoIntraducible as e:
+                    await ws.send_json({"no": f"No pegué nada: {e}"})
+                except (KeyError, TypeError, ValueError):
+                    continue
+                except AparatoNoDisponible as e:
+                    await ws.send_json({"no": str(e)})
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await soltar()
+            if estado["desde"]:
+                minutos = max(1, round((time.time() - estado["desde"]) / 60))
+                p.bitacora.apuntar("mando", f"la persona usó el Mac desde la pantalla (~{minutos} min)",
+                                   quien="persona")
 
     @app.websocket("/ws/terminal")
     async def ws_terminal(ws: WebSocket):

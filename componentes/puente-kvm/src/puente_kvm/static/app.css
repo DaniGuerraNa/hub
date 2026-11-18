@@ -122,6 +122,8 @@ label { display: block; color: var(--texto-2); font-size: 13px; margin: 10px 0 4
 /* ── pantalla en directo ─────────────────────────────────────────────── */
 .pantalla { position: relative; background: #000; border-radius: var(--r-input); overflow: hidden; line-height: 0; }
 .pantalla img { width: 100%; height: auto; display: block; }
+.pantalla.usando { outline: 3px solid var(--acento); outline-offset: -3px; cursor: crosshair; }
+.mando { margin-top: 10px; flex-wrap: wrap; }
 .pantalla .region { position: absolute; border: 2px dashed var(--acento); pointer-events: none; }
 .pantalla .seleccion { position: absolute; border: 2px solid var(--espera); background: rgba(224,169,92,.12); pointer-events: none; }
 

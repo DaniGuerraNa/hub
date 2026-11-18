@@ -204,7 +204,7 @@ class Motor:
         if x is not None and y is not None:
             await self.mover(x, y)
             await asyncio.sleep(0.06)
-        await self.dispositivo.rueda(pasos)
+        await self.dispositivo.rueda(-pasos if self.perfil.get("invertir_rueda") else pasos)
         self.bitacora.apuntar("rueda", f"{pasos:+d}" + (f" en ({x}, {y})" if x is not None and y is not None else ""))
 
     async def aparcar_raton(self) -> None:

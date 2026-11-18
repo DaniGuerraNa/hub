@@ -103,6 +103,9 @@ PERFIL_POR_OMISION = {
     "distribucion": "mac-us",
     "retardo_tecla_ms": 12,
     "aparcar_raton": [1900, 1066],  # donde el puntero no tapa el texto
+    # Con el desplazamiento natural de macOS la rueda va al revés: lo marca la
+    # persona en Ajustes y el puente la invierte, para que «baja» siga bajando.
+    "invertir_rueda": False,
 }
 
 # El modelo de Claude Code, por su id EXACTO: un alias («opus», «fable»)

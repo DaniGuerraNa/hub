@@ -1,0 +1,440 @@
+{% extends "@clasica/base.html" %}
+{% import "_ui.html" as ui %}
+{#
+  El marco de la interfaz nueva (C-0169), fase 1: los tokens y el cascarón.
+
+  Hereda de la base de siempre y pisa sólo bloques. Todo lo demás —los
+  componentes, la cabecera, la paleta de órdenes, el chat— es lo de siempre, y
+  las pantallas no se tocan: hacen `extends "base.html"` y, con la cookie de
+  este aparato (`hub.interfaz`), el cargador les da ESTA base.
+
+  Qué cambia:
+  - el juego de colores, con los mismos nombres de token (`tokens`);
+  - la navegación: nueve secciones en vez de veintiún destinos (`navegacion`),
+    que en el teléfono es una barra fija abajo con «Más»;
+  - en la cabecera, una tira con las pantallas de la sección (`en_cabecera`);
+  - el raíl se pliega a una franja, por aparato y desde 861 px (C-0450): el
+    estado va en `<html data-barra>` y lo lleva `marco.js`;
+  - el panel del secretario es el flotante de siempre, con su atajo `Ctrl .`
+    (`pestana_atajo`; su hoja es `chat-secretario.css`).
+
+  El contrato de DOM es el de siempre —`.rail-global`, `.principal-col`,
+  `.envoltura > header`, `body.completo`, `#secretario-panel`,
+  `data-region="rail"`—: de él dependen `trabajo.html`, `secretario.html`, el
+  modo monitor y `sin-recarga.js`. Lo nuevo de aquí lleva el prefijo `marco-`.
+
+  🔴 Este marco no declara `display` sobre `.rail-global`: las pantallas que lo
+  esconden (`/secretario` en el teléfono, el modo monitor, la terminal a solas)
+  lo hacen con `display:none`, y con él se va también la barra del teléfono,
+  que es el mismo elemento. Así no hay doble barra ni hueco que quitar a mano.
+#}
+
+{% set _colores = interfaz.colores if interfaz is defined and interfaz.colores is defined else 'pizarra' %}
+{% block html_attrs %} data-interfaz="nueva" data-colores="{{ _colores }}"{% endblock %}
+{% block color_tema %}{{ interfaz.juegos[_colores].lienzo if interfaz is defined and interfaz.juegos is defined else '#11161d' }}{% endblock %}
+
+{% block tokens %}{{ super() }}
+
+{# ── Pizarra (C-0169) ──────────────────────────────────────────────────────
+   El juego que eligió el dueño: «la que menos cambia el juego actual». Es el
+   de siempre afinado: el lienzo un punto menos negro (menos contraste duro en
+   muchas horas), los tonos de atención menos saturados y el texto un pelo más
+   bajo. Mismos nombres de token, así que ningún componente se entera; lo que
+   aquí no se nombra (`--borde-acero`, `--t-*`, `--serie-*`, radios, letra) es
+   lo de arriba.
+
+   `--borde` no venía en la maqueta, que casi no tiene rayas. El candidato era
+   el tono de `--superficie2`, y medido no vale: sobre `--superficie2` da 1,00
+   (las pastillas y los menús se quedaban sin contorno) y sobre `--superficie`
+   1,13 contra el 1,27 de hoy. Éste conserva las dos proporciones de hoy: 1,38
+   sobre el lienzo y 1,27 sobre la superficie.
+
+   Es el de fábrica del catálogo (`interfaz.COLORES`, fase 1b): va también
+   bajo su `[data-colores]` para que una muestra de la guía se pinte con él
+   aunque la página lleve otro. #}
+:root, [data-colores="pizarra"] {
+  --lienzo:      #11161d;
+  --lienzo-hondo:#0c1016;   /* lo que queda por debajo del lienzo: la barra del teléfono */
+  --superficie:  #171e27;
+  --superficie2: #1f2832;
+  --elevado:     #2a3441;
+  --velo:        rgba(6,9,13,.62);
+  --borde:       #27313d;
+
+  --texto:       #e1e7ef;
+  --texto-2:     #b4c0d0;
+  --texto-3:     #8997ab;
+  /* El de la maqueta (#66748a) perdía contraste frente al de hoy: 3,83 sobre el
+     lienzo contra 4,34. Éste lo iguala o lo mejora en las tres superficies:
+     4,47 sobre el lienzo, 4,13 sobre la superficie y 3,67 sobre `--superficie2`
+     (hoy 4,34, 4,02 y 3,64). */
+  --texto-4:     #717f95;
+
+  --acento:      #4fbcd4;
+  --acento-tinta:#05222a;
+  --acento-hover:#6fcde2;
+  --acento-suave:rgba(79,188,212,.10);   /* dónde estás, sin gastar el acento sólido */
+  --alerta:      #f09a9a;
+
+  --ok:     #7fcf9c;
+  --espera: #f0b062;
+  --riesgo: #f09a9a;
+  --neutro: #8592a5;
+
+  /* Las medidas del marco. */
+  --marco-rail:  88px;
+  --marco-barra: 64px;   /* lo que mide la barra del teléfono, sin el margen seguro */
+  --marco-rail-plegado: 52px;   /* plegado: el botón de abrir (36) con 8 a cada lado */
+}
+
+{# ── Brasa (C-0169, fase 1b) ───────────────────────────────────────────────
+   La opción A de la maqueta: superficies cálidas con un punto de ciruela y
+   el acento albaricoque. Sólo colores, con los nombres de siempre; las
+   medidas del marco, los radios y la letra son los de arriba. Sin `:root`
+   delante: así vale igual en `<html>` que en una muestra de la guía, y gana
+   al de fábrica por ir después.
+
+   Tres valores no son los de la maqueta, medidos con la vara de Pizarra:
+   - `--borde` no venía: éste da 1,38 sobre el lienzo y 1,27 sobre la
+     superficie, las proporciones de hoy.
+   - `--texto-4` era #6e6973, 3,46 sobre el lienzo: éste da 4,43, 4,10 y 3,68
+     en las tres superficies (Pizarra: 4,47, 4,13 y 3,67).
+   - `--espera` era el mismo albaricoque del acento, y con él cada botón
+     principal parecía una alerta y «te pregunta» un enlace. Va a un mostaza:
+     es lo más lejos del acento que queda dentro de «ámbar = te espera». Se
+     separan menos que en Pizarra (un acento cálido no da para más) y lo
+     decide el dueño al verla. #}
+[data-colores="brasa"] {
+  --lienzo:      #141318;
+  --lienzo-hondo:#0f0e12;
+  --superficie:  #1c1b21;
+  --superficie2: #25242b;
+  --elevado:     #302e37;
+  --velo:        rgba(9,8,12,.62);
+  --borde:       #2f2e36;
+
+  --texto:       #f0ebe5;
+  --texto-2:     #c6c0b9;
+  --texto-3:     #9a939c;
+  --texto-4:     #807a83;
+
+  --acento:      #f2b880;
+  --acento-tinta:#2b1907;
+  --acento-hover:#f7c999;
+  --acento-suave:rgba(242,184,128,.10);
+  --alerta:      #ee9d9d;
+
+  --ok:     #93cfa5;
+  --espera: #e6c84f;
+  --riesgo: #ee9d9d;
+  --neutro: #8e8994;
+}{% endblock %}
+
+{% block estilo_marco %}
+/* ═══ El marco de la interfaz nueva (C-0169) ════════════════════════════════
+   Va al final de la hoja de la base: a igual peso, gana por orden. */
+
+/* El contenido ocupa lo que haya entre el raíl y el panel: con el tope de
+   siempre, en una pantalla ancha quedaba una franja vacía a cada lado. */
+.envoltura { max-width: 1960px; }
+
+/* ── El raíl: nueve secciones ──────────────────────────────────────────── */
+.rail-global { width: var(--marco-rail); padding: 12px 0 14px; gap: 2px; align-items: center;
+               background: var(--lienzo); border-right: 0; scrollbar-width: none; }
+.rail-global::-webkit-scrollbar { display: none; }
+/* En /trabajo el raíl es el mismo: nueve iconos con su nombre ya caben en lo
+   que antes ocupaban veintiuno en fila. */
+body.completo .rail-global { width: var(--marco-rail); padding: 12px 0 14px; }
+
+.marco-marca { display: grid; place-items: center; flex: none; width: 44px; height: 40px;
+               margin-bottom: 6px; border-radius: var(--r-nav); color: var(--acento); }
+.marco-marca:focus-visible, .marco-destino:focus-visible, .marco-previa:focus-visible,
+.marco-tira > a:focus-visible, .marco-hoja a:focus-visible {
+  outline: 2px solid var(--acento); outline-offset: 2px; }
+
+.marco-destino { position: relative; flex: none; display: flex; flex-direction: column;
+                 align-items: center; gap: 3px; width: 80px; padding: 5px 0 6px;
+                 border-radius: var(--r-nav); color: var(--texto-3); cursor: pointer;
+                 font-size: 11.5px; font-weight: 500; line-height: 1.2; text-align: center; }
+.marco-destino:hover { color: var(--texto); text-decoration: none; }
+.marco-caja { display: grid; place-items: center; width: 52px; height: 30px; border-radius: var(--r-pildora);
+              transition: background .15s, color .15s; }
+.marco-destino:hover .marco-caja { background: var(--superficie); }
+/* Dónde estás: el tinte del acento en la caja del icono, no un bloque sólido. */
+.marco-destino.aqui { color: var(--texto); }
+.marco-destino.aqui .marco-caja { background: var(--acento-suave); color: var(--acento); }
+
+/* Las cifras de siempre, en su sección: un número si algo pide atención
+   (`urge`) o si sólo cuenta (las sesiones abiertas). Ninguna es nueva. */
+.marco-cifra { position: absolute; top: 0; left: calc(50% + 9px); min-width: 17px; height: 17px;
+               padding: 0 5px; display: grid; place-items: center; border-radius: var(--r-pildora);
+               background: var(--superficie2); color: var(--texto-2);
+               font-size: 10.5px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.marco-cifra.urge { background: var(--riesgo); color: var(--lienzo); }
+/* «Más» no suma lo de dentro: un punto dice que hay algo, y dentro está cuál. */
+.marco-punto { position: absolute; top: 3px; left: calc(50% + 14px); width: 8px; height: 8px;
+               border-radius: 50%; background: var(--riesgo); }
+
+/* El nombre del secretario lo pone el dueño: uno largo parte en dos líneas
+   aquí, y en la barra del teléfono se corta con puntos (su `title` lo dice entero). */
+.marco-nombre { max-width: 100%; overflow-wrap: anywhere; }
+/* Los cuatro de la barra del teléfono van aparte, en su orden: así el
+   tabulador recorre lo que se ve, sin `order` que lo desordene. */
+.marco-destino.de-barra { display: none; }
+.marco-hueco { flex: 1; min-height: 10px; }
+.marco-previa { flex: none; display: grid; place-items: center; min-height: 24px; margin-top: 4px;
+                padding: 0 8px; border-radius: var(--r-pildora);
+                font-size: 10.5px; line-height: 1.3; color: var(--texto-3); text-align: center; }
+.marco-previa:hover { background: var(--superficie); color: var(--texto); text-decoration: none; }
+
+/* «Más» es del teléfono: en el PC las nueve secciones ya están a la vista. */
+.marco-mas { display: none; }
+.marco-mas > summary { list-style: none; }
+.marco-mas > summary::-webkit-details-marker { display: none; }
+
+/* ── Plegar la barra (C-0450) ──────────────────────────────────────────── */
+/* El raíl y, en /trabajo, la lista de proyectos se pliegan juntos, por
+   aparato. El estado efectivo va en `<html data-barra>` (`marco.js`, y antes
+   de pintar el guion de `navegacion`), nunca en la región `rail`, que
+   `sin-recarga.js` sustituye entera: por eso son dos botones fijos y aquí se
+   enseña uno. La lista de /trabajo la esconde su propia clase, `sin-rail`.
+   Plegada queda en flujo una franja con el botón de abrir. Sin `transition`
+   en el ancho: cada paso reajustaría la terminal, y con ella la ventana de
+   tmux. Sin JavaScript no hay nada que plegar, y no se ofrece. */
+.rail-global > .marco-plegar, .rail-global > .marco-desplegar {
+  display: none; flex: none; width: 36px; height: 36px; padding: 0; justify-content: center; }
+.rail-global > .marco-plegar { margin-bottom: 4px; }
+/* La misma flecha, hacia dentro: plegar es irse, abrir es volver. */
+.marco-desplegar > svg { transform: scaleX(-1); }
+@media (min-width: 861px) {
+  .con-js:not([data-barra="plegada"]) .rail-global > .marco-plegar,
+  [data-barra="plegada"] .rail-global > .marco-desplegar { display: inline-flex; }
+  [data-barra="plegada"] .rail-global,
+  [data-barra="plegada"] body.completo .rail-global { width: var(--marco-rail-plegado); }
+  [data-barra="plegada"] .rail-global > :not(.marco-desplegar) { display: none; }
+}
+
+/* ── La tira: las pantallas de la sección en la que estás ──────────────── */
+/* Va DENTRO de la cabecera, en su propia línea: donde una pantalla esconde la
+   cabecera (el secretario en el teléfono, el modo monitor), se va con ella. */
+.marco-tira { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 0 100%; min-width: 0; }
+.marco-tira > a { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 12px;
+                  border-radius: var(--r-nav); color: var(--texto-3);
+                  font-size: var(--letra-3); font-weight: 500; white-space: nowrap; }
+.marco-tira > a:hover { background: var(--superficie); color: var(--texto); text-decoration: none; }
+.marco-tira > a.aqui { background: var(--superficie2); color: var(--texto); }
+.marco-tira > a.aqui > svg { color: var(--acento); }
+.marco-tira .marco-cifra { position: static; }
+
+/* ── El teléfono: la barra fija abajo ──────────────────────────────────── */
+@media (max-width: 860px) {
+  /* El raíl pasa al final de la página y se pega al borde de abajo. En columna
+     y no fijo: así ocupa su sitio al final —lo último de la página no queda
+     debajo— y, donde una pantalla lo esconde, no deja hueco. */
+  body { display: flex; flex-direction: column; }
+  /* Como en bloque: su `height` manda (la terminal a solas y el chat del
+     secretario se lo ponen), y no se estira a repartir lo que sobre. */
+  .principal-col { flex: none; }
+  /* El alto, escrito: `--marco-barra` es de donde salen el velo de «Más», el
+     sitio del asistente y lo que se deja libre al enfocar un campo. */
+  .rail-global, body.completo .rail-global {
+    order: 2; margin-top: auto; position: sticky; top: auto; bottom: 0; z-index: 30;
+    width: auto; height: calc(var(--marco-barra) + env(safe-area-inset-bottom)); overflow: visible;
+    flex-direction: row; flex-wrap: nowrap; align-items: stretch; gap: 0;
+    padding: 5px 6px calc(5px + env(safe-area-inset-bottom));
+    background: var(--lienzo-hondo); border-right: 0; border-bottom: 0;
+    border-top: 1px solid var(--borde);
+  }
+  /* Un campo enfocado no se queda debajo de la barra: el navegador lo trae
+     por encima de ella. Con `scroll-margin` en lo que se enfoca DEL CONTENIDO
+     y no con `scroll-padding` en la página: la barra vive pegada dentro de
+     ese margen, y con el relleno cada toque en ella («Más») desplazaba la
+     página intentando «traerla a la vista». */
+  .principal-col :is(input, select, textarea, button, a, summary, [tabindex], [contenteditable]) {
+    scroll-margin-bottom: calc(var(--marco-barra) + env(safe-area-inset-bottom) + 8px); }
+  .marco-marca, .marco-hueco, .marco-previa, .marco-destino.del-rail { display: none; }
+  .marco-destino.de-barra { display: flex; }
+  .marco-destino, .marco-mas { flex: 1 1 0; width: auto; min-width: 0; }
+  .marco-destino { min-height: 50px; justify-content: center; padding: 3px 0; }
+  .marco-nombre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .marco-mas { display: block; }
+  .marco-mas > summary { width: 100%; height: 100%; }
+  .marco-mas[open] > summary .marco-caja { background: var(--superficie2); color: var(--texto); }
+  /* Tocar fuera la cierra también sin JavaScript: el velo es del propio
+     `summary`. Deja libre la barra, para cambiar de sección de un toque. */
+  .marco-mas[open] > summary::before { content: ''; position: fixed; inset: 0;
+    bottom: calc(var(--marco-barra) + env(safe-area-inset-bottom)); background: var(--velo); }
+  .marco-hoja { position: absolute; left: 0; right: 0; bottom: 100%;
+                max-height: min(74vh, 620px); overflow-y: auto; overscroll-behavior: contain;
+                padding: 16px 16px 12px; background: var(--superficie);
+                border-top: 1px solid var(--borde);
+                border-radius: var(--r-tarjeta) var(--r-tarjeta) 0 0; }
+  .marco-hoja-grupo + .marco-hoja-grupo { margin-top: 14px; }
+  .marco-hoja-titulo { display: flex; align-items: center; gap: 8px; margin: 0 0 6px 4px;
+                       font-size: 12px; font-weight: 600; text-transform: uppercase;
+                       letter-spacing: .09em; color: var(--texto-3); }
+  .marco-hoja-pantallas { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .marco-hoja-pantallas > a { display: flex; align-items: center; gap: 10px; min-height: 46px;
+                              padding: 0 12px; border-radius: var(--r-nav); background: var(--superficie2);
+                              color: var(--texto); font-size: 14.5px; font-weight: 500; }
+  .marco-hoja-pantallas > a:hover { text-decoration: none; background: var(--elevado); }
+  .marco-hoja-pantallas > a.aqui { background: var(--acento-suave); color: var(--texto); }
+  .marco-hoja-pantallas > a > svg { flex: none; color: var(--texto-3); }
+  .marco-hoja-pantallas > a.aqui > svg { color: var(--acento); }
+  .marco-hoja-pantallas .marco-cifra { position: static; margin-left: auto; }
+  .marco-hoja-pie { display: flex; align-items: center; min-height: 44px; margin-top: 14px; padding: 0 4px;
+                    border-top: 1px solid var(--borde); font-size: 13px; color: var(--texto-3); }
+  .marco-hoja-pie:hover { color: var(--texto); text-decoration: none; }
+
+  /* La tira, a dedo y en UNA línea que se desliza: con las siete pantallas de
+     Ajustes, partida en filas se comía 200 px antes de llegar a nada (medido
+     a 390 px). `marco.js` la deja con la pantalla en la que estás a la vista. */
+  .marco-tira { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+  .marco-tira::-webkit-scrollbar { display: none; }
+  .marco-tira > a { flex: none; min-height: 44px; }
+
+  /* El asistente de antes sigue flotando abajo: por encima de la barra. */
+  #asistente { bottom: calc(var(--marco-barra) + env(safe-area-inset-bottom)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .marco-caja { transition: none; }
+}
+/* El catálogo de colores, al pie de la guía (fase 1b). Cada muestra lleva su
+   `data-colores`: los tokens de dentro son los de SU juego, así que aquí no
+   hay un color escrito y la muestra no puede mentir sobre lo que enseña. */
+.colores-catalogo { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 14px; }
+.colores-juego { display: flex; flex-direction: column; gap: 10px; padding: 12px;
+  background: var(--lienzo); color: var(--texto); border: 1px solid var(--borde); border-radius: var(--r-input); }
+.colores-muestra { display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  background: var(--superficie); border-radius: var(--r-boton); }
+.colores-linea { height: 8px; width: 70%; border-radius: 4px; background: var(--texto-2); }
+.colores-linea.corta { width: 45%; background: var(--texto-4); }
+.colores-fila { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.colores-boton { width: 54px; height: 18px; border-radius: var(--r-boton); background: var(--acento); }
+.colores-punto { width: 10px; height: 10px; border-radius: 50%; }
+.colores-punto.espera { background: var(--espera); }
+.colores-punto.ok { background: var(--ok); }
+.colores-punto.riesgo { background: var(--riesgo); }
+{% endblock %}
+
+{% block navegacion %}
+{% set rail = rail | default({}, true) %}
+{% set ruta_actual = (request.url.path ~ ('?' ~ request.url.query if request.url.query else '')) if request is defined else '' %}
+{% set actual = seccion_de(seccion | default(''), ruta_actual) %}
+{% set pantalla = pantalla_actual(seccion | default(''), ruta_actual) %}
+{% set secciones = rail.secciones or [] %}
+{# Sólo recoloca lo que el raíl de siempre ya enseñaba (decisión 297): la
+   cifra de cada sección es la suma de lo que urge dentro. #}
+{% macro cifra(s) %}
+  {%- if s.urge %}<span class="marco-cifra urge" title="Pide atención">{{ s.urge }}</span>
+  {%- elif s.cuenta %}<span class="marco-cifra">{{ s.cuenta }}</span>{% endif -%}
+{% endmacro %}
+{# Plegada (C-0450), antes de pintar y delante del raíl: si la plegara
+   `marco.js`, al final de la página, se vería el menú entero y luego
+   encogerse, y la terminal de /trabajo se ajustaría dos veces. En `<html>`
+   y no en la región, que `sin-recarga.js` sustituye. Por debajo de 861 px
+   no aplica: allí el menú es la barra de abajo. #}
+<script data-antes-de-pintar>
+try {
+  if (localStorage.getItem('hub.sinBarra') === 'true' && matchMedia('(min-width: 861px)').matches) {
+    document.documentElement.dataset.barra = 'plegada';
+  }
+} catch (e) { /* sin almacenamiento: abierta */ }
+</script>
+<nav class="rail-global" data-region="rail" aria-label="Secciones del hub">
+  {# Los dos, fijos, y el CSS enseña uno: un `aria-expanded` cambiado aquí
+     dentro lo desharía `sin-recarga.js` al repintar la región. #}
+  <button type="button" class="icono-solo marco-plegar" data-marco-barra="plegar" aria-expanded="true"
+          aria-label="Plegar el menú y los proyectos" title="Plegar el menú y los proyectos">{{ ui.icono('atras', 18) }}</button>
+  <button type="button" class="icono-solo marco-desplegar" data-marco-barra="abrir" aria-expanded="false"
+          aria-label="Abrir el menú y los proyectos" title="Abrir el menú y los proyectos">{{ ui.icono('atras', 18) }}</button>
+  <a href="/" class="marco-marca" title="Hub" aria-label="Hub, inicio">
+    <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linejoin="round" aria-hidden="true">
+      <rect x="2.5" y="2.5" width="6" height="6" rx="2"/>
+      <rect x="11.5" y="2.5" width="6" height="6" rx="2" opacity=".5"/>
+      <rect x="2.5" y="11.5" width="6" height="6" rx="2" opacity=".5"/>
+      <rect x="11.5" y="11.5" width="6" height="6" rx="2" opacity=".25"/>
+    </svg>
+  </a>
+  {% for s in secciones %}
+  {# Ajustes, abajo del todo: es a donde se va menos. #}
+  {% if s.clave == 'ajustes' %}<span class="marco-hueco" aria-hidden="true"></span>{% endif %}
+  <a href="{{ s.ruta }}" class="marco-destino del-rail {{ 'aqui' if actual == s.clave }}"
+     title="{{ s.nombre }}" {% if actual == s.clave %}aria-current="page"{% endif %}>
+    <span class="marco-caja">{{ ui.icono(s.icono, 20) }}</span>
+    <span class="marco-nombre">{{ s.nombre }}</span>
+    {{ cifra(s) }}
+  </a>
+  {% endfor %}
+  {# Mientras sea una vista previa, se dice y se puede salir desde cualquier
+     pantalla: el interruptor está al pie de la guía. #}
+  <a href="/guia#interfaz" class="marco-previa" title="Interfaz nueva (vista previa): aquí se apaga">vista previa</a>
+
+  {# La barra del teléfono: las cuatro de cada momento, en SU orden y aparte
+     de las del raíl (allí no se ven; aquí no se ven las otras). Dos juegos de
+     enlaces y no uno recolocado con `order`: el tabulador sigue el DOM. El
+     nombre, el corto: «Ideas y tareas» no cabe. #}
+  {% for s in secciones | selectattr('en_barra') | sort(attribute='en_barra') %}
+  <a href="{{ s.ruta }}" class="marco-destino de-barra {{ 'aqui' if actual == s.clave }}"
+     title="{{ s.nombre }}" {% if actual == s.clave %}aria-current="page"{% endif %}>
+    <span class="marco-caja">{{ ui.icono(s.icono, 20) }}</span>
+    <span class="marco-nombre">{{ s.corto }}</span>
+    {{ cifra(s) }}
+  </a>
+  {% endfor %}
+
+  {# «Más» (teléfono): las cinco secciones que no caben en la barra, con sus
+     pantallas. `<details>`: se abre sin JavaScript. Lleva el punto si algo de
+     dentro urge (decisión 297): un aviso no queda escondido tras un pliegue. #}
+  {% set resto = secciones | rejectattr('en_barra') | list %}
+  <details class="marco-mas" id="marco-mas">
+    <summary class="marco-destino {{ 'aqui' if actual in (resto | map(attribute='clave') | list) }}"
+             aria-label="Más secciones{{ ': algo pide atención' if resto | sum(attribute='urge') }}">
+      <span class="marco-caja">{{ ui.icono('puntos', 20) }}</span>
+      <span class="marco-nombre">Más</span>
+      {% if resto | sum(attribute='urge') %}<span class="marco-punto" aria-hidden="true"></span>{% endif %}
+    </summary>
+    <div class="marco-hoja">
+      {% for s in resto %}
+      <section class="marco-hoja-grupo">
+        <h2 class="marco-hoja-titulo">{{ s.nombre }}</h2>
+        <div class="marco-hoja-pantallas">
+          {% for p in s.pantallas %}
+          <a href="{{ p.ruta }}" class="{{ 'aqui' if pantalla == p.clave }}"
+             {% if pantalla == p.clave %}aria-current="page"{% endif %}>
+            {{ ui.icono(p.icono, 18) }}<span>{{ p.nombre }}</span>{{ cifra(p) }}</a>
+          {% endfor %}
+        </div>
+      </section>
+      {% endfor %}
+      <a class="marco-hoja-pie" href="/guia#interfaz">Interfaz nueva (vista previa) · aquí se apaga</a>
+    </div>
+  </details>
+</nav>
+{% endblock %}
+
+{% block en_cabecera %}{% set rail = rail | default({}, true) %}
+{% set ruta_actual = (request.url.path ~ ('?' ~ request.url.query if request.url.query else '')) if request is defined else '' %}
+{% set actual = seccion_de(seccion | default(''), ruta_actual) %}
+{% set pantalla = pantalla_actual(seccion | default(''), ruta_actual) %}
+{% set de_aqui = (rail.secciones or []) | selectattr('clave', 'equalto', actual) | first %}
+{# Con nueve destinos en el raíl, a las demás pantallas se llega por aquí. #}
+{% if de_aqui and de_aqui.tira %}<nav class="marco-tira" aria-label="Pantallas de {{ de_aqui.nombre }}">
+  {% for p in de_aqui.pantallas %}
+  <a href="{{ p.ruta }}" class="{{ 'aqui' if pantalla == p.clave }}"
+     {% if pantalla == p.clave %}aria-current="page"{% endif %}>
+    {{ ui.icono(p.icono, 16) }}{{ p.nombre }}
+    {%- if p.urge %}<span class="marco-cifra urge" title="Pide atención">{{ p.urge }}</span>
+    {%- elif p.cuenta %}<span class="marco-cifra">{{ p.cuenta }}</span>{% endif %}</a>
+  {% endfor %}
+</nav>
+  {% endif %}{% endblock %}
+
+{# El panel del secretario es el de siempre (C-0450): mismo marcado y misma
+   clave. Lo único de aquí es su atajo, `Ctrl .`, que atiende
+   `chat-secretario.js` con la interfaz nueva. #}
+{% block pestana_atajo %}<span class="tecla marco-atajo solo-teclado" aria-hidden="true">Ctrl .</span>{% endblock %}
+
+{% block guiones_marco %}<script src="/static/marco.js"></script>
+{% endblock %}

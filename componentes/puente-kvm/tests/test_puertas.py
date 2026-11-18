@@ -165,6 +165,13 @@ def test_sin_pedir_permisos_solo_si_la_persona_lo_marca(entorno):
     assert c.post("/api/ajustes", json={"claude": {"saltar_permisos": True}}, headers=PERSONA).status_code == 200
     orden = terminal.orden_claude()
     assert "--dangerously-skip-permissions" in orden and "--permission-mode" not in orden
+    # Una regla «ask» del proyecto gana al modo sin permisos (seguía preguntando
+    # antes de cada clic): sin la fuente «project», con sus ajustes menos «ask».
+    assert "--setting-sources user,local" in orden and "--mcp-config" in orden
+    import json
+    ajustes = json.loads(terminal.ajustes_sin_preguntar().read_text())
+    assert "ask" not in ajustes["permissions"]
+    assert "Bash(curl:*)" in ajustes["permissions"]["deny"] and ajustes["hooks"]
     # Y tocar el Mac sigue pidiendo el control: lo comprueba el puente, no Claude Code.
     assert c.post("/api/teclear", json={"texto": "x"}).status_code == 423
 
