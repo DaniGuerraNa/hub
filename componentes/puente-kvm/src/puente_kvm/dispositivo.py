@@ -10,6 +10,7 @@ ejecutándola, y para enseñar la demo sin el aparato delante.
 from __future__ import annotations
 
 import abc
+import asyncio
 
 from PIL import Image
 
@@ -30,6 +31,18 @@ class Dispositivo(abc.ABC):
     @abc.abstractmethod
     async def captura(self) -> Image.Image:
         """La pantalla entera, en RGB, a la resolución que entrega el aparato."""
+
+    async def miniatura(self, ancho: int) -> Image.Image:
+        """La pantalla reducida a `ancho` para mirarla (el directo), no para leerla.
+
+        Por omisión, la captura reducida en otro hilo: así el bucle que atiende
+        el ratón y el teclado no se para mientras se reduce. Un aparato que
+        sepa reducir más barato (el JetKVM, desde el vídeo) la sustituye."""
+        img = await self.captura()
+        if img.width <= ancho:
+            return img
+        alto = round(img.height * ancho / img.width)
+        return await asyncio.to_thread(img.resize, (ancho, alto), Image.BILINEAR)
 
     @abc.abstractmethod
     async def informe_teclado(self, modificadores: int, teclas: list[int]) -> None:

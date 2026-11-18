@@ -261,6 +261,19 @@ class JetKVM(Dispositivo):
             raise AparatoNoDisponible(f"sin vídeo del JetKVM: {self.motivo}")
         return self._trama.to_image().convert("RGB")
 
+    async def miniatura(self, ancho: int) -> Image.Image:
+        # Reducida desde el vídeo, en otro hilo: 2 ms frente a ~37 de convertir
+        # la imagen entera y reducirla después (medido a 1920×1080 → 1280). Con
+        # el trabajo en el bucle, el directo dejaba sin atender el ratón y el
+        # teclado de la persona («va muy lento», primera prueba con el aparato).
+        trama = self._trama
+        if trama is None:
+            raise AparatoNoDisponible(f"sin vídeo del JetKVM: {self.motivo}")
+        if trama.width <= ancho:
+            return await asyncio.to_thread(lambda: trama.to_image().convert("RGB"))
+        alto = max(2, round(trama.height * ancho / trama.width) // 2 * 2)
+        return await asyncio.to_thread(lambda: trama.reformat(width=ancho, height=alto, format="rgb24").to_image())
+
     async def informe_teclado(self, modificadores: int, teclas: list[int]) -> None:
         self._listo()
         k = (list(teclas) + [0] * 6)[:6]

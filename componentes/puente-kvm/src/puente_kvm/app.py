@@ -105,9 +105,9 @@ def crear_dispositivo(ajustes: dict) -> Dispositivo:
     return Simulador(distribucion=ajustes.get("perfil", {}).get("distribucion", "mac-us"))
 
 
-# El directo: 2 imágenes por segundo mirando, ~8 mientras la persona usa el Mac.
+# El directo: 2 imágenes por segundo mirando, ~12 mientras la persona usa el Mac.
 INTERVALO_DIRECTO = 0.5
-INTERVALO_MANDO = 0.12
+INTERVALO_MANDO = 0.08
 # Lo que la persona puede pulsar con un botón y no con su teclado (Windows se
 # queda la tecla ⌘ y algunas combinaciones).
 COMBINACIONES_MANDO = ("cmd+tab", "cmd+space")
@@ -128,6 +128,7 @@ class Puente:
         # Hasta cuándo la persona está usando el Mac desde la pantalla: mientras,
         # el directo va más fluido.
         self.mando_hasta = 0.0
+        self.ultima_imagen: tuple[bytes, float, int] = (b"", 0.0, 0)
 
     async def conectar(self) -> None:
         try:
@@ -301,15 +302,31 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
     async def api_bitacora(req: Request, desde: int = 0):
         return puente(req).bitacora.ultimas(desde)
 
-    async def jpeg(p: Puente, region: str, ancho: int) -> bytes:
-        img = await p.motor.captura()
-        if region == "editor":
-            img = p.motor.recortar(img)
+    def _codificar(img: Image.Image, ancho: int) -> bytes:
         if ancho and img.width > ancho:
-            img = img.resize((ancho, round(img.height * ancho / img.width)), Image.LANCZOS)
+            img = img.resize((ancho, round(img.height * ancho / img.width)), Image.BILINEAR)
         buf = io.BytesIO()
-        img.convert("RGB").save(buf, "JPEG", quality=80)
+        img.convert("RGB").save(buf, "JPEG", quality=75)
         return buf.getvalue()
+
+    async def jpeg(p: Puente, region: str, ancho: int) -> bytes:
+        """Para mirar, no para leer (las lecturas van por la captura entera).
+
+        🔴 Nada de esto corre en el bucle: reducir y comprimir 1080p ahí lo
+        paraba ~40 ms por imagen, y a 8 por segundo el ratón y el teclado de la
+        persona esperaban en cola. Y una imagen recién hecha se reparte entre
+        quienes miran a la vez (la pestaña del puente, la de Ajustes…)."""
+        if region == "editor":
+            img = p.motor.recortar(await p.motor.captura())
+            return await asyncio.to_thread(_codificar, img, ancho)
+        ahora = time.monotonic()
+        hecha, cuando, de_ancho = p.ultima_imagen
+        if hecha and de_ancho == ancho and ahora - cuando < INTERVALO_MANDO / 2:
+            return hecha
+        img = await p.dispositivo.miniatura(ancho) if ancho else await p.motor.captura()
+        datos = await asyncio.to_thread(_codificar, img, ancho)
+        p.ultima_imagen = (datos, time.monotonic(), ancho)
+        return datos
 
     @app.get("/api/pantalla.jpg")
     async def api_pantalla(req: Request, region: str = "completa", ancho: int = 1280):

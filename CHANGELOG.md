@@ -13,6 +13,28 @@ bash scripts/actualizar.sh
 Al terminar te enseña esta misma lista, sólo con las versiones que acabas de
 cruzar.
 
+## 0.7.1 — 2026-11-17
+
+Un parche del Puente KVM: usar el Mac desde su pantalla va más fluido.
+
+### Qué tienes que hacer
+
+- **Actualiza** con el botón de **Actualizaciones** (o con
+  `bash scripts/actualizar.sh` en la carpeta del hub).
+- **Si usas el Puente KVM, reinícialo** (`systemctl --user restart
+  puente-kvm`, desde cualquier carpeta; o vuelve a lanzar
+  `scripts/arrancar.sh` en su carpeta con la misma `PUENTE_TRABAJO` delante).
+  Sin reiniciarlo, sus pantallas se ven nuevas pero lo que hacen sigue siendo
+  lo de antes.
+
+### Qué cambia en lo que ya usabas
+
+- **Puente KVM: el ratón y el teclado ya no esperan a la imagen.** Preparar
+  cada imagen del directo dejaba al puente sin atender lo que hacías durante
+  unos 40 ms, varias veces por segundo; ahora se prepara aparte y desde el
+  vídeo, y mientras usas el Mac la imagen se refresca unas 12 veces por
+  segundo.
+
 ## 0.7.0 — 2026-11-17
 
 La interfaz nueva, apagada, para quien quiera probarla y dar su opinión; y en

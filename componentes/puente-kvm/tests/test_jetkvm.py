@@ -31,6 +31,9 @@ def test_entra_ve_la_pantalla_teclea_y_hace_clic_como_la_web_del_aparato():
             img = await kvm.captura()
             assert img.size == (1920, 1080)
             assert diferencia_local(img, await sim.captura()) < 0.5
+            # Para el directo, reducida desde el vídeo y fuera del bucle.
+            mini = await kvm.miniatura(1280)
+            assert mini.size == (1280, 720) and mini.mode == "RGB"
 
             # Teclea por el canal binario: informe completo y luego soltar.
             await kvm.informe_teclado(0, [])

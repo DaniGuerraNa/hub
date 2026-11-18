@@ -121,3 +121,23 @@ def test_invertir_la_rueda_vale_para_claude_y_para_la_persona(entorno):
         ws.send_text(json.dumps({"t": "rueda", "pasos": 2}))
         ws.send_text(json.dumps({"t": "soltar"}))
     assert sim.editor.arriba < 30
+
+
+def test_dos_que_miran_a_la_vez_comparten_la_imagen_recien_hecha(entorno, monkeypatch):
+    # Cada imagen del directo cuesta; dos pestañas no la hacen dos veces.
+    from puente_kvm import app as modulo
+
+    monkeypatch.setattr(modulo, "INTERVALO_MANDO", 60)  # «a la vez», aunque la máquina vaya lenta
+    c, sim = entorno
+    llamadas = []
+    original = sim.miniatura
+
+    async def contar(ancho):
+        llamadas.append(ancho)
+        return await original(ancho)
+
+    sim.miniatura = contar
+    a = c.get("/api/pantalla.jpg?ancho=1280")
+    b = c.get("/api/pantalla.jpg?ancho=1280")
+    assert a.status_code == b.status_code == 200
+    assert a.content == b.content and len(llamadas) == 1
