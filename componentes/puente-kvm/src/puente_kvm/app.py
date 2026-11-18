@@ -101,7 +101,8 @@ def crear_dispositivo(ajustes: dict) -> Dispositivo:
         return JetKVM(d["url"], os.environ.get(d.get("clave_env") or "JETKVM_CLAVE", ""))
     from .simulador import Simulador
 
-    return Simulador()
+    # El Mac simulado escribe con la fuente de entrada que se eligió para el de verdad.
+    return Simulador(distribucion=ajustes.get("perfil", {}).get("distribucion", "mac-us"))
 
 
 class Puente:
@@ -253,7 +254,8 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         clave_env = p.ajustes["dispositivo"].get("clave_env") or "JETKVM_CLAVE"
         return pagina(req, "ajustes.html", titulo="Ajustes", ajustes=p.ajustes,
                       clave_puesta=bool(os.environ.get(clave_env)),
-                      distribuciones=hid.DISTRIBUCIONES, modelos=config.MODELOS)
+                      distribuciones=hid.DISTRIBUCIONES, modelos=config.MODELOS,
+                      nombres_distribucion=hid.NOMBRES_DISTRIBUCION)
 
     # ── estado y pantalla ───────────────────────────────────────────────────
     def estado(p: Puente) -> dict:
@@ -407,7 +409,9 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         p, datos = puente(req), await cuerpo(req)
         try:
             async with p.motor.ocupar("rueda"):
-                await p.motor.rueda(int(datos.get("pasos", 1)))
+                x, y = datos.get("x"), datos.get("y")
+                await p.motor.rueda(int(datos.get("pasos", 1)),
+                                    None if x is None else int(x), None if y is None else int(y))
             return {"ok": True}
         except Exception as e:
             raise fallo(e) from e
@@ -641,6 +645,9 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             for seccion in ("dispositivo", "perfil", "claude"):
                 nuevos[seccion].update(datos.get(seccion, {}))
             config.validar_modelo(nuevos["claude"]["modelo"])
+            nuevos["claude"]["saltar_permisos"] = nuevos["claude"].get("saltar_permisos") is True
+            if nuevos["perfil"].get("distribucion", "mac-us") not in hid.DISTRIBUCIONES:
+                raise ValueError("distribución de teclado desconocida")
             for clave in ("inicio_documento", "fin_documento", "pagina_abajo", "ir_a_linea", "fin_de_linea"):
                 hid.combinacion(nuevos["perfil"][clave])
             r = [int(v) for v in nuevos["perfil"]["region_editor"]]
@@ -655,6 +662,9 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         cambia_aparato = nuevos["dispositivo"] != p.ajustes["dispositivo"]
         p.ajustes = nuevos
         p.motor.perfil = nuevos["perfil"]
+        editor = getattr(p.dispositivo, "editor", None)
+        if editor is not None:  # el simulador: su Mac cambia de fuente con el ajuste
+            editor.distribucion = nuevos["perfil"].get("distribucion", "mac-us")
         if cambia_aparato:
             p.devolver_control("cambió el aparato: el control vuelve a la persona")
             with contextlib.suppress(Exception):

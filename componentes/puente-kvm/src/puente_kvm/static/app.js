@@ -361,7 +361,7 @@
       const datos = {};
       for (const campo of $$('[name]', form)) {
         const [seccion, clave] = campo.name.split('.');
-        let v = campo.value;
+        let v = campo.type === 'checkbox' ? campo.checked : campo.value;
         if (clave === 'region_editor' || clave === 'aparcar_raton') v = v.split(',').map((x) => Number(x.trim()));
         if (clave === 'retardo_tecla_ms') v = Number(v);
         (datos[seccion] = datos[seccion] || {})[clave] = v;

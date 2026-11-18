@@ -84,8 +84,10 @@ orden y lo que hay que vigilar.
 3. **El teclado del Mac** (antes de dejar teclear a Claude). Al ver un teclado
    USB nuevo, macOS puede abrir el **asistente de configuración del teclado**
    («pulsa la tecla a la derecha de Mayús izquierda»): si aparece, ciérralo o
-   elige **ANSI**. Con ISO, `` ` `` y `~` salen en otra tecla. Comprueba que la
-   fuente de entrada activa es **«U.S.»** y que **Bloq Mayús está apagado**.
+   elige **ANSI**. Con ISO, `` ` `` y `~` (en «U.S.») o `< >` (en «Español -
+   ISO») salen en otra tecla. Comprueba que la fuente de entrada activa es la
+   que elegiste en Ajustes → Teclado (**«U.S.»** o **«Español - ISO»**) y que
+   **Bloq Mayús está apagado**.
    Apunta: qué apareció y qué elegiste.
 4. **Tecleo de prueba** en una pestaña de script nueva y vacía (skill, paso 4).
    Apunta: la pausa entre teclas con la que no se pierde ningún carácter.
@@ -117,8 +119,10 @@ orden y lo que hay que vigilar.
 
 ## Riesgos conocidos
 
-- **Fuente de entrada del Mac.** El puente teclea para «U.S.»; con la española,
-  `{ } [ ] | \ ~` salen distintos y nadie se entera hasta la huella.
+- **Fuente de entrada del Mac.** El puente teclea para la que dice Ajustes →
+  Teclado («U.S.» o «Español - ISO»); si el Mac tiene otra (la latinoamericana,
+  por ejemplo, que aún no está), `{ } [ ] | \ ~ @` salen distintos y nadie se
+  entera hasta la huella.
 - **El asistente de teclado de macOS** al ver un teclado USB nuevo (paso 3):
   ANSI frente a ISO cambia dónde salen `` ` `` y `~`.
 - **Bloq Mayús** encendido invierte mayúsculas: el puente no lo mira.

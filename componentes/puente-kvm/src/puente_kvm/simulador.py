@@ -77,14 +77,37 @@ def _fuente(ruta: str | None, tam: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(ruta, tam) if ruta else ImageFont.load_default(tam)
 
 
-# Del informe HID al carácter, como lo haría macOS con «U.S.».
-_CARACTER: dict[tuple[int, int], str] = {}
-for _c in [chr(i) for i in range(32, 127)] + list(hid._OPTION_MAC_US):
-    _p = hid.caracter(_c)
-    if _p and len(_p) == 1:
-        _CARACTER.setdefault((_p[0].modificadores & (hid.SHIFT | hid.ALT), _p[0].tecla), _c)
-_MUERTA = {hid.TECLAS[t]: acento for acento, t in hid._MUERTAS_MAC_US.items()}
-_COMPONER = {v: k for k, v in hid._COMPUESTAS_MAC_US.items()}
+# Del informe HID al carácter, como lo haría macOS con la fuente de entrada
+# del Mac simulado: (Shift/Option, tecla) → carácter, las teclas muertas → su
+# acento, y (acento, letra) → la letra compuesta.
+_BITS = hid.SHIFT | hid.ALT
+
+
+def _tablas(distribucion: str) -> tuple[dict, dict, dict]:
+    caracter: dict[tuple[int, int], str] = {}
+    muerta: dict[tuple[int, int], str] = {}
+    componer: dict[tuple[str, str], str] = {}
+    if distribucion == "mac-es":
+        for c, pasos in hid._MAC_ES.items():
+            if len(pasos) == 1:
+                caracter.setdefault((pasos[0][0] & _BITS, hid.TECLAS[pasos[0][1]]), c)
+        muerta = {(m, hid.TECLAS[t]): acento for (m, t), acento in hid._MUERTAS_MAC_ES.items()}
+        for c, pasos in hid._MAC_ES.items():
+            if len(pasos) == 2 and pasos[1] != (0, "space"):
+                acento = muerta[(pasos[0][0] & _BITS, hid.TECLAS[pasos[0][1]])]
+                componer[(acento, caracter[(pasos[1][0] & _BITS, hid.TECLAS[pasos[1][1]])])] = c
+        caracter[(0, hid.TECLAS["space"])] = " "
+        return caracter, muerta, componer
+    for c in [chr(i) for i in range(32, 127)] + list(hid._OPTION_MAC_US):
+        p = hid.caracter(c)
+        if p and len(p) == 1:
+            caracter.setdefault((p[0].modificadores & _BITS, p[0].tecla), c)
+    muerta = {(hid.ALT, hid.TECLAS[t]): acento for acento, t in hid._MUERTAS_MAC_US.items()}
+    componer = {v: k for k, v in hid._COMPUESTAS_MAC_US.items()}
+    return caracter, muerta, componer
+
+
+_TABLAS = {d: _tablas(d) for d in hid.DISTRIBUCIONES}
 
 
 @dataclass
@@ -100,6 +123,7 @@ class EditorSimulado:
     izquierda: int = 0
     dialogo: str | None = None  # texto del «Ir a la línea» si está abierto
     muerta: str | None = None
+    distribucion: str = "mac-us"  # la fuente de entrada del Mac simulado
     version: int = 0
     guardado: list[str] = field(default_factory=list)
 
@@ -243,17 +267,18 @@ class EditorSimulado:
             self._caracter(mods, codigo, shift, alt)
 
     def _caracter(self, mods: int, codigo: int, shift: bool, alt: bool) -> None:
-        if alt and not shift and codigo in _MUERTA:
-            self.muerta = _MUERTA[codigo]
-            return
+        caracteres, muertas, componer = _TABLAS.get(self.distribucion, _TABLAS["mac-us"])
         bits = (hid.SHIFT if shift else 0) | (hid.ALT if alt else 0)
-        car = _CARACTER.get((bits, codigo))
+        if (bits, codigo) in muertas:
+            self.muerta = muertas[(bits, codigo)]
+            return
+        car = caracteres.get((bits, codigo))
         if car is None:
             return
         if self.muerta:
-            compuesto = _COMPONER.get((self.muerta, car))
-            # macOS escribe el acento suelto seguido de la letra si no casan.
-            car = compuesto if compuesto else self.muerta + car
+            compuesto = componer.get((self.muerta, car))
+            # macOS: con espacio, el acento suelto; si no casan, el acento y la letra.
+            car = compuesto if compuesto else self.muerta if car == " " else self.muerta + car
             self.muerta = None
         self._insertar(car)
 
@@ -273,7 +298,7 @@ class EditorSimulado:
         elif codigo == T["backspace"]:
             self.dialogo = self.dialogo[:-1] if self.dialogo else ""
         else:
-            car = _CARACTER.get((0, codigo))
+            car = _TABLAS.get(self.distribucion, _TABLAS["mac-us"])[0].get((0, codigo))
             if car and car.isdigit() and len(self.dialogo or "") < 6:
                 self.dialogo = (self.dialogo or "") + car
 
@@ -295,7 +320,7 @@ def huella_sqlserver(lineas: list[str]) -> str:
 class Simulador(Dispositivo):
     tipo = "simulador"
 
-    def __init__(self, lineas: list[str] | None = None):
+    def __init__(self, lineas: list[str] | None = None, distribucion: str = "mac-us"):
         self._mono = _fuente(FUENTE_MONO, TAM_FUENTE)
         self._ui = _fuente(FUENTE_UI, 15)
         self._ui_peq = _fuente(FUENTE_UI, 13)
@@ -304,7 +329,7 @@ class Simulador(Dispositivo):
         columnas = int((ANCHO - TEXTO_X0 - 10) // self.ancho_car)
         texto = list(lineas) if lineas is not None else muestras.procedimiento()
         self.editor = EditorSimulado(lineas=list(texto), filas=filas, columnas=columnas,
-                                     guardado=list(texto))
+                                     guardado=list(texto), distribucion=distribucion)
         self._pulsadas: set[int] = set()
         self._botones = 0
         self.puntero = (1500, 600)

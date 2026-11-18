@@ -20,7 +20,7 @@ rellenándolo.
    del editor en Ajustes (con la columna de números, sin la barra de estado).
 3. **Modo captura.** Con la persona: números de línea, Menlo 16–18, tema claro
    sin colores, sin plegado ni ajuste de línea, y **autocompletado, cierre de
-   paréntesis y sangría automática apagados**. Fuente de entrada «U.S.».
+   paréntesis y sangría automática apagados**. Fuente de entrada: la que dice Ajustes → Teclado («U.S.» o «Español - ISO»).
 4. **Tecleo.** En una pestaña nueva: `teclear` una línea con todo lo difícil —
    ``ABC xyz 0O1lI {}[]()<> |\\~`^ ;:'" á é í ó ú ñ Ñ ü ¿? ¡! €``— y
    compárala en pantalla carácter a carácter. Si falta o sobra algo, sube

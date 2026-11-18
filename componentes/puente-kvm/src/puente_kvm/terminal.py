@@ -171,7 +171,9 @@ def orden_claude(conv: conversaciones.Conversacion | None = None, retomar: bool 
     # El modo de permisos va explícito: sin él, Claude hereda el que tenga la
     # persona por omisión, y si fuera automático las reglas de «pregúntame» de
     # .claude/settings.json no preguntarían (medido con Claude Code en otra terminal web).
-    base = f"{claude} --permission-mode default"
+    # Saltarlos lo enciende la persona en Ajustes; tocar el Mac sigue pidiendo
+    # que ella dé el control, que lo comprueba el puente, no Claude Code.
+    base = f"{claude} --dangerously-skip-permissions" if saltar_permisos() else f"{claude} --permission-mode default"
     if conv is None:
         lanzar = base
     else:
@@ -205,6 +207,14 @@ def _puede_desasir() -> bool:
 def existe() -> bool:
     r = subprocess.run([*tmux(), "has-session", "-t", f"={SESION}"], capture_output=True, timeout=10)
     return r.returncode == 0
+
+
+def saltar_permisos() -> bool:
+    """Ajustes → Claude Code → «Sin pedir permisos»: vale para la siguiente conversación que se abra."""
+    try:
+        return config.leer_ajustes()["claude"].get("saltar_permisos") is True
+    except (KeyError, ValueError, OSError):
+        return False
 
 
 def modelo_elegido() -> str:

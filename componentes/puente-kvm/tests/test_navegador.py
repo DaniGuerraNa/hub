@@ -211,3 +211,20 @@ def test_el_modelo_se_elige_en_ajustes(pagina):
         pagina.wait_for_timeout(800)
         assert config.leer_ajustes()["claude"]["modelo"] == "claude-opus-5-5"
     assert pagina.errores == []
+
+
+def test_sin_pedir_permisos_y_el_teclado_espanol_se_eligen_en_ajustes(pagina):
+    # La casilla viaja como verdadero/falso, no como el texto «on».
+    from puente_kvm import config
+    with en_marcha(Simulador(lineas=["x"])) as base:
+        pagina.goto(base + "/ajustes")
+        assert not pagina.locator("#saltar_permisos").is_checked()
+        assert "Español - ISO" in pagina.locator("#distribucion").inner_text()
+        pagina.check("#saltar_permisos")
+        pagina.select_option("#distribucion", "mac-es")
+        pagina.click("button[type=submit]")
+        pagina.wait_for_timeout(800)
+        ajustes = config.leer_ajustes()
+        assert ajustes["claude"]["saltar_permisos"] is True
+        assert ajustes["perfil"]["distribucion"] == "mac-es"
+    assert pagina.errores == []

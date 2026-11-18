@@ -13,6 +13,36 @@ bash scripts/actualizar.sh
 Al terminar te enseña esta misma lista, sólo con las versiones que acabas de
 cruzar.
 
+## 0.6.1 — 2026-11-17
+
+Un parche del Puente KVM tras su primera prueba con un JetKVM de verdad.
+
+### Qué tienes que hacer
+
+- **Actualiza** con el botón de **Actualizaciones** (o con
+  `bash scripts/actualizar.sh` en la carpeta del hub).
+- **Si usas el Puente KVM, reinícialo** (`systemctl --user restart
+  puente-kvm`, o vuelve a lanzar `scripts/arrancar.sh` en su carpeta con la
+  misma `PUENTE_TRABAJO` delante). Si no lo usas, no tienes que hacer nada más.
+
+### Nuevo
+
+- **Puente KVM: teclado «Español - ISO» de macOS.** En Ajustes → Teclado del
+  puente se elige la fuente de entrada que tiene el Mac mientras Claude
+  teclea: «U.S.» o «Español - ISO». La española sale de la distribución de
+  Apple y supone que el Mac tomó el teclado del JetKVM como **ANSI**. La
+  latinoamericana aún no está.
+- **Puente KVM: «Sin pedir permisos».** En Ajustes → Claude Code, una casilla
+  (apagada de fábrica) para que Claude Code use sus herramientas en tu
+  equipo sin preguntarte cada vez. Tocar el Mac sigue necesitando que le
+  des el control en la pantalla del puente.
+
+### Qué cambia en lo que ya usabas
+
+- **Puente KVM: la rueda del ratón gira donde se le dice.** Antes giraba
+  donde estuviera el puntero, que el puente deja aparcado en una esquina, y
+  no movía nada.
+
 ## 0.6.0 — 2026-11-17
 
 Herramientas opcionales (la primera, el Puente KVM para quien tiene un

@@ -74,9 +74,11 @@ En el cliente de base de datos, un **«modo captura»**:
 | **Autocompletado, cierre de paréntesis/comillas y sangría automática desactivados** | Si no, al teclear un Enter se acepta una sugerencia o se añade sangría, y lo escrito queda distinto |
 | Salida HDMI a 1920×1080; si es portátil, **duplicada** | Si no, el JetKVM ve un monitor vacío |
 
-En macOS: añade la fuente de entrada **«U.S.»** (Ajustes → Teclado → Fuentes de
-entrada) y cámbiala con Ctrl+Espacio antes de dar el control. Con la española,
-`{ } [ ] | \ ~` salen distintos. Los acentos y la ñ sí salen con «U.S.» (Option+e, Option+n).
+En macOS, la fuente de entrada activa mientras Claude teclea tiene que ser la
+que dice Ajustes → Teclado del puente: **«U.S.»** o **«Español - ISO»** (con el
+teclado del JetKVM como ANSI). Si no coinciden, `{ } [ ] | \ ~ @` salen
+distintos. La latinoamericana aún no está: con ella, cambia a una de las dos
+(Ctrl+Espacio) antes de dar el control.
 
 Después, en **Ajustes** del puente, marca la región del editor arrastrando
 sobre la captura y comprueba los atajos de tu cliente (por omisión, los de

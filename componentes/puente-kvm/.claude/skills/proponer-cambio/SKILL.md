@@ -15,7 +15,7 @@ Mac nunca es tuyo.**
 2. **Edita la copia** `trabajo/<objeto>.sql`. Cambios mínimos: cada línea que
    cambia es un tramo que se teclea, y teclear es lento y es donde se rompe.
    Nada de reformatear lo que no cambias. Todo carácter tiene que poderse
-   teclear con «U.S.» de Mac (acentos y ñ sí; emojis y símbolos raros no).
+   teclear con la fuente del Mac que dice Ajustes («U.S.» o «Español - ISO»: acentos y ñ sí; emojis y símbolos raros no).
 3. `proponer_cambio(lectura, descripcion, ruta="trabajo/<objeto>.sql")`.
    Explícale a la persona en la terminal **qué cambia y por qué**, tramo a
    tramo, y que lo tiene para revisar en el puente (le sale un aviso con

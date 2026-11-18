@@ -13,9 +13,9 @@ from puente_kvm import hid
 from puente_kvm.simulador import Simulador
 
 
-def teclear_en(sim: Simulador, texto: str) -> None:
+def teclear_en(sim: Simulador, texto: str, distribucion: str = "mac-us") -> None:
     async def correr():
-        for p in hid.secuencia(texto):
+        for p in hid.secuencia(texto, distribucion):
             await sim.informe_teclado(p.modificadores, [p.tecla])
             await sim.informe_teclado(0, [])
 
@@ -56,3 +56,35 @@ def test_los_atajos_se_leen_con_sus_modificadores():
         hid.combinacion("cmd+")
     with pytest.raises(ValueError):
         hid.combinacion("hiper+a")
+
+
+# ── «Español - ISO» de macOS (generada de la de Apple) ──────────────────────
+def test_en_espanol_iso_todo_el_ascii_y_lo_nuestro_llega_igual():
+    sim = Simulador(lineas=[""], distribucion="mac-es")
+    texto = "".join(chr(i) for i in range(32, 127)) + " ¿Año? ¡Sí! pingüino Ñandú ç Ç € º ª"
+    teclear_en(sim, texto, "mac-es")
+    assert sim.editor.lineas == [texto]
+
+
+@pytest.mark.parametrize("caracter, pulsaciones", [
+    # Lo que más se teclea en SQL y donde el Mac español difiere de U.S.:
+    # comprobado contra la distribución de Apple, no recordado.
+    ("@", ["alt+2"]), ("#", ["alt+3"]), ("|", ["alt+1"]), ("\\", ["alt+iso"]),
+    ("[", ["alt+["]), ("]", ["alt+]"]), ("{", ["alt+'"]), ("}", ["alt+\\"]),
+    ("<", ["`"]), (">", ["shift+`"]), ("=", ["shift+0"]), ("'", ["-"]),
+    ("~", ["alt+;", "space"]), ("á", ["'", "a"]), ("ñ", [";"]),
+])
+def test_en_espanol_iso_los_simbolos_van_donde_los_pone_apple(caracter, pulsaciones):
+    assert [str(p) for p in hid.caracter(caracter, "mac-es")] == pulsaciones
+
+
+def test_la_distribucion_importa_lo_tecleado_para_espanol_no_sale_igual_en_us():
+    # Por eso es un ajuste: con el Mac en «U.S.», la tabla española escribe otra cosa.
+    sim = Simulador(lineas=[""])
+    teclear_en(sim, "SELECT [id] FROM t WHERE a = 'x'", "mac-es")
+    assert sim.editor.lineas != ["SELECT [id] FROM t WHERE a = 'x'"]
+
+
+def test_una_distribucion_que_no_existe_no_se_adivina():
+    with pytest.raises(ValueError):
+        hid.secuencia("hola", "mac-latam")

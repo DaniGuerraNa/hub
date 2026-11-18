@@ -23,9 +23,10 @@
     <h2 style="margin-top:20px">Teclado</h2>
     <label for="distribucion">Distribución del Mac mientras Claude teclea</label>
     <select id="distribucion" name="perfil.distribucion">
-      {% for d in distribuciones %}<option value="{{ d }}" {{ 'selected' if ajustes.perfil.distribucion == d }}>{{ 'macOS «U.S.»' if d == 'mac-us' else d }}</option>{% endfor %}
+      {% for d in distribuciones %}<option value="{{ d }}" {{ 'selected' if ajustes.perfil.distribucion == d }}>{{ nombres_distribucion.get(d, d) }}</option>{% endfor %}
     </select>
-    <p class="sub" style="margin:6px 0 0">Añade la fuente de entrada «U.S.» en el Mac y cámbiala (Ctrl+Espacio) antes de dar el control: con la española, <code>{ } [ ] | \ ~</code> salen distintos.</p>
+    <p class="sub" style="margin:6px 0 0">La fuente de entrada que tiene el Mac mientras Claude teclea (se cambia allí con Ctrl+Espacio): si no coinciden, <code>{ } [ ] | \ ~ @</code> salen distintos.
+      Con «Español - ISO», el Mac tiene que tener el teclado como <b>ANSI</b> (si el asistente de teclado pregunta); con ISO, <code>&lt; &gt;</code> salen como <code>º ª</code>. La latinoamericana aún no está.</p>
     <label for="retardo">Pausa entre teclas (ms)</label>
     <input id="retardo" name="perfil.retardo_tecla_ms" type="number" min="2" max="200" value="{{ ajustes.perfil.retardo_tecla_ms }}">
 
@@ -36,6 +37,9 @@
     </select>
     <p class="sub" style="margin:6px 0 0">Se aplica a la siguiente conversación nueva o retomada; la abierta sigue con el suyo hasta que la reabras.
       Va por su nombre exacto, nunca por un alias. Fable 5.2 necesita Claude Code 2.1.322 o posterior. «El de mi Claude Code» no le pasa ninguno: usa el que tengas configurado.</p>
+    <label class="fila" style="margin-top:12px"><input type="checkbox" id="saltar_permisos" name="claude.saltar_permisos" {{ 'checked' if ajustes.claude.saltar_permisos }}> Sin pedir permisos</label>
+    <p class="sub" style="margin:6px 0 0">Claude Code usa sus herramientas en este equipo (leer y escribir archivos, órdenes de terminal) sin preguntarte cada vez: <code>--dangerously-skip-permissions</code>.
+      Tocar el Mac sigue necesitando que le des el control aquí. Se aplica a la siguiente conversación nueva o retomada; la primera vez Claude Code te pide confirmarlo.</p>
   </section>
 
   <section class="tarjeta">

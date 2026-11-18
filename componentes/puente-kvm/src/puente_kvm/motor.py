@@ -196,10 +196,16 @@ class Motor:
             await asyncio.sleep(0.06)
         self.bitacora.apuntar("clic", f"{boton}{' doble' if doble else ''} en ({x}, {y})")
 
-    async def rueda(self, pasos: int) -> None:
+    async def rueda(self, pasos: int, x: int | None = None, y: int | None = None) -> None:
+        """La rueda gira donde está el puntero: con (x, y) lo lleva ahí antes. Sin
+        ella, tras aparcar el ratón la rueda caía fuera de la hoja y no movía nada
+        (primera prueba con el aparato, 17-nov)."""
         self.control.comprobar()
+        if x is not None and y is not None:
+            await self.mover(x, y)
+            await asyncio.sleep(0.06)
         await self.dispositivo.rueda(pasos)
-        self.bitacora.apuntar("rueda", f"{pasos:+d}")
+        self.bitacora.apuntar("rueda", f"{pasos:+d}" + (f" en ({x}, {y})" if x is not None and y is not None else ""))
 
     async def aparcar_raton(self) -> None:
         """El puntero se pinta encima del texto y tapa letras: fuera del editor."""

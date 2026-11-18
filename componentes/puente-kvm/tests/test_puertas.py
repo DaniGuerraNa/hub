@@ -152,3 +152,43 @@ def test_la_imagen_que_sustituye_al_directo_es_un_jpeg_que_se_lee():
 @pytest.mark.parametrize("ruta", ["/api/lecturas/no-existe-123abc/texto", "/api/cambios/no-existe-123abc/tramos/1.png"])
 def test_lo_que_no_existe_es_un_404_no_un_500(entorno, ruta):
     assert entorno[0].get(ruta).status_code == 404
+
+
+def test_sin_pedir_permisos_solo_si_la_persona_lo_marca(entorno):
+    from puente_kvm import terminal
+
+    c, _ = entorno
+    assert "--dangerously-skip-permissions" not in terminal.orden_claude()
+    # Un valor que no es «sí» de verdad no lo enciende.
+    c.post("/api/ajustes", json={"claude": {"saltar_permisos": "true"}}, headers=PERSONA)
+    assert config.leer_ajustes()["claude"]["saltar_permisos"] is False
+    assert c.post("/api/ajustes", json={"claude": {"saltar_permisos": True}}, headers=PERSONA).status_code == 200
+    orden = terminal.orden_claude()
+    assert "--dangerously-skip-permissions" in orden and "--permission-mode" not in orden
+    # Y tocar el Mac sigue pidiendo el control: lo comprueba el puente, no Claude Code.
+    assert c.post("/api/teclear", json={"texto": "x"}).status_code == 423
+
+
+def test_una_distribucion_de_teclado_desconocida_no_se_guarda(entorno):
+    c, _ = entorno
+    perfil = {**config.PERFIL_POR_OMISION, "distribucion": "mac-latam"}
+    assert c.post("/api/ajustes", json={"perfil": perfil}, headers=PERSONA).status_code >= 400
+    assert config.leer_ajustes()["perfil"]["distribucion"] == "mac-us"
+
+
+def test_elegir_espanol_cambia_tambien_la_fuente_del_mac_simulado(entorno):
+    c, sim = entorno
+    perfil = {**config.PERFIL_POR_OMISION, "distribucion": "mac-es"}
+    assert c.post("/api/ajustes", json={"perfil": perfil}, headers=PERSONA).status_code == 200
+    assert sim.editor.distribucion == "mac-es"
+
+
+def test_la_rueda_lleva_antes_el_puntero_a_donde_tiene_que_girar(entorno):
+    # Aparcado, el puntero quedaba fuera de la hoja y la rueda no movía nada
+    # (primera prueba con el JetKVM, 17-nov).
+    c, sim = entorno
+    c.post("/api/control", json={"accion": "dar"}, headers=PERSONA)
+    r = c.post("/api/rueda", json={"pasos": 2, "x": 700, "y": 500})
+    assert r.status_code == 200, r.text
+    assert sim.puntero == (700, 500)
+    assert any(e["tipo"] == "rueda" and "(700, 500)" in e["detalle"] for e in bitacora(c))

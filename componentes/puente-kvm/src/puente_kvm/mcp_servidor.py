@@ -148,9 +148,11 @@ async def clic(x: int, y: int, boton: str = "izquierdo", doble: bool = False) ->
 
 
 @mcp.tool()
-async def rueda(pasos: int) -> dict:
-    """Rueda del ratón: positivo baja el contenido, negativo lo sube. Para leer, mejor leer_documento."""
-    return await _llamar("POST", "/api/rueda", {"pasos": pasos})
+async def rueda(pasos: int, x: int, y: int) -> dict:
+    """Rueda del ratón en (x, y), coordenadas REALES: positivo baja el contenido, negativo lo
+    sube. Gira donde está el puntero, así que primero lo lleva a (x, y): pon un punto DENTRO
+    de lo que quieres desplazar (aparcado, el puntero queda fuera). Para leer, mejor leer_documento."""
+    return await _llamar("POST", "/api/rueda", {"pasos": pasos, "x": x, "y": y})
 
 
 # ── leer un documento largo ─────────────────────────────────────────────────

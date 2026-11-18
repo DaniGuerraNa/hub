@@ -137,7 +137,9 @@ AJUSTES_POR_OMISION = {
         "clave_env": "JETKVM_CLAVE",
     },
     "perfil": PERFIL_POR_OMISION,
-    "claude": {"modelo": MODELO_POR_OMISION},
+    # saltar_permisos: Claude Code sin pedir permiso para sus herramientas
+    # (--dangerously-skip-permissions). Apagado de fábrica; lo enciende la persona.
+    "claude": {"modelo": MODELO_POR_OMISION, "saltar_permisos": False},
 }
 
 _cerrojo = threading.Lock()
