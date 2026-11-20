@@ -3125,6 +3125,7 @@ def reuniones() -> dict[str, Any]:
             "grabando": a.get("grabando") if o.get("grabar") else None,
             "preparacion": r.preparacion(),
             "version_agente": r.version_agente(a),
+            "sigue_ventana": r.sigue_ventana(a),
             "conexion": {"hay_llave": r.hay_llave(), "rechazo": r.rechazo_reciente(),
                          "carpeta_agente": str(r.carpeta_agente()),
                          "carpeta_existe": r.carpeta_agente().is_dir()}}

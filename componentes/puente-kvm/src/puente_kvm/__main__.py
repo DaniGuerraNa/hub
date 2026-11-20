@@ -4,6 +4,7 @@
 - `mcp`: las herramientas de Claude Code (las arranca Claude Code, por `.mcp.json`).
 - `comprobar`: qué falta en este equipo para que funcione, y cómo arreglarlo.
 - `diagnostico`: un informe sin secretos ni contenido del trabajo, para mandar.
+- `ocupado`: sale con 3 (y dice por qué) si el puente en marcha no se debe reiniciar ahora.
 - `version`: la versión del código.
 """
 
@@ -11,7 +12,7 @@ from __future__ import annotations
 
 import sys
 
-USO = "uso: puente-kvm [web|mcp|comprobar [--sin-entrar]|diagnostico|version]"
+USO = "uso: puente-kvm [web|mcp|comprobar [--sin-entrar]|diagnostico|ocupado|version]"
 
 
 def main() -> None:
@@ -37,6 +38,10 @@ def main() -> None:
         from .comprobar import diagnostico
 
         sys.exit(diagnostico(resto))
+    elif orden == "ocupado":
+        from .comprobar import orden_ocupado
+
+        sys.exit(orden_ocupado())
     elif orden in ("version", "--version"):
         from . import config
 

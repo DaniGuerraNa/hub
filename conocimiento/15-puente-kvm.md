@@ -83,10 +83,16 @@ permisos le niegan leerlo y editarlo. La dirección del aparato se elige en
 
 ## Al actualizar y al desinstalar el hub
 
-- **Tras actualizar el hub, reinicia el puente**: `systemctl --user restart
-  puente-kvm` o, sin systemd, vuelve a lanzar `scripts/arrancar.sh` **con la
+- **Al actualizar el hub, el puente se reinicia solo** si tiene su servicio
+  de systemd y no está trabajando (una lectura, una escritura o el control
+  dado a Claude): si lo está, `actualizar.sh` lo dice y no lo corta, y lo
+  reinicias tú después con `systemctl --user restart puente-kvm`. **Sin
+  systemd**, vuelve a lanzar `scripts/arrancar.sh` **con la
   misma `PUENTE_TRABAJO` delante** (sin ella, Claude volvería a trabajar
-  dentro del clon). `actualizar.sh` no lo hace.
+  dentro del clon). Si se queda con el código de antes, su pantalla lo avisa
+  arriba.
+  Después, en su terminal, el menú de la conversación → **Reabrir**, para que
+  Claude tenga las herramientas nuevas.
 - **Desinstalar el hub no quita su servicio.** Antes, en
   `componentes/puente-kvm`: `bash scripts/servicio.sh quitar`. Se quedan sus
   datos (`~/.local/share/puente-kvm`), la contraseña y la carpeta de trabajo

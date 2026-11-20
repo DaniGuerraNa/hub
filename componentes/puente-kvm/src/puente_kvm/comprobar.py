@@ -248,7 +248,43 @@ def _servicio(estado: dict | None) -> list[Punto]:
     if estado.get("version") != config.VERSION:
         puntos.append(Punto(OJO, "versión", f"corre la {estado.get('version')} y el código es la {config.VERSION}",
                             "reinicia el puente para usar el código nuevo"))
+    elif estado.get("codigo_viejo"):
+        puntos.append(Punto(OJO, "código", "el puente en marcha corre el código de antes de actualizar",
+                            "reinícialo (`bash scripts/servicio.sh reiniciar`, o sin systemd, ciérralo y "
+                            "vuelve a lanzar `scripts/arrancar.sh`)"))
     return puntos
+
+
+def ocupado(estado: dict | None) -> str:
+    """Por qué no conviene reiniciar el puente ahora; vacío si se puede.
+
+    Reiniciarlo a mitad de una lectura o de una escritura la corta, y con el
+    control dado Claude está en medio de algo: se le quitaría el Mac sin avisar.
+    Sin estado (None) no está en marcha, y reiniciarlo no corta nada.
+    """
+    if not estado:
+        return ""
+    if estado.get("tarea"):
+        return f"está con una tarea: {estado['tarea']}"
+    if (estado.get("control") or {}).get("modo") == "claude":
+        return "Claude tiene el control del Mac"
+    return ""
+
+
+def orden_ocupado() -> int:
+    """`puente-kvm ocupado`: sale con 3 y dice por qué si el puente en marcha está
+    ocupado, y con 4 si en su puerto contesta algo que no es él, o no a tiempo:
+    sin saberlo no se da por libre (decisión del repositorio que lo contiene)."""
+    estado = _preguntar_al_puente()
+    if estado and "ajeno" in estado:
+        print(f"en 127.0.0.1:{config.PUERTO} no contesta el puente como debería ({estado['ajeno']}): "
+              "no sé si está trabajando")
+        return 4
+    motivo = ocupado(estado)
+    if motivo:
+        print(motivo)
+        return 3
+    return 0
 
 
 async def _sondear_jetkvm(url: str, clave: str, entrar: bool) -> tuple[list[Punto], str]:

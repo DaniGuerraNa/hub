@@ -81,6 +81,14 @@ Para el agente, la pantalla va en orden:
 
 En unos segundos la pantalla dice «agente conectado» y ya puedes grabar.
 
+**Qué pantalla se graba.** Por omisión, «Donde esté la ventana de la
+aplicación»: el agente busca la ventana de la llamada (la de la reunión, no la
+principal de Teams), graba el monitor donde está y, si la mueves, la sigue. Si
+no la encuentra (minimizada, por ejemplo), graba el monitor de la última vez y
+lo dice, mientras graba y en la página de la reunión. También puedes elegir un
+monitor fijo. Necesita el agente 0.3.0 o posterior; con uno anterior, la opción
+sale apagada hasta que lo actualices.
+
 Si usas el secretario, lo que saca de cada reunión («te lo mando mañana») queda
 entre tus compromisos. En la página de una reunión vieja salen los que siguen
 abiertos, y se cierran de una vez: «Darlos por hechos» o «Descartarlos», con

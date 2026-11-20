@@ -1898,8 +1898,10 @@ async def reuniones_accion(request: Request):
     que = str(f.get("que") or "")
     try:
         if que == "grabar":
-            o = reuniones.grabar(str(f.get("monitor") or ""), str(f.get("app") or ""),
-                                 str(f.get("micro") or ""), str(f.get("titulo") or ""))
+            monitor = str(f.get("monitor") or "")
+            seguir = monitor == "ventana"          # «Donde esté la ventana de la app» (C-0456)
+            o = reuniones.grabar("" if seguir else monitor, str(f.get("app") or ""),
+                                 str(f.get("micro") or ""), str(f.get("titulo") or ""), seguir_app=seguir)
             return _volver("/reuniones", f"Grabando ({o['id']}). El agente empieza en un segundo.", fugaz=True)
         if que == "parar":
             o = reuniones.parar()

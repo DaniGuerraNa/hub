@@ -57,6 +57,57 @@ def _version() -> str:
 VERSION = _version()
 
 
+class Codigo:
+    """El código Python con que arrancó este proceso, para saber si el disco ya es otro.
+
+    La versión no basta: no cambia en cada arreglo. Tras actualizar sin
+    reiniciar, las pantallas (que se leen del disco en cada visita) salían
+    nuevas y lo que hacían era lo de antes, sin que nada lo dijera (18-nov).
+    Se miran tamaño y fecha de cada `.py`, que es barato; sólo si cambian se
+    compara el contenido, una vez por cambio: un checkout que vuelve a
+    escribir lo mismo no es código nuevo.
+    """
+
+    def __init__(self, carpeta: Path = Path(__file__).resolve().parent):
+        self.carpeta = carpeta
+        self._marcas = self._leer_marcas()
+        self._contenido = self._leer_contenido()
+        self._ultima: tuple[dict, bool] = (self._marcas, False)
+
+    def _leer_marcas(self) -> dict[str, tuple[int, int]]:
+        marcas = {}
+        for f in sorted(self.carpeta.rglob("*.py")):
+            try:
+                st = f.stat()
+            except OSError:
+                continue
+            marcas[str(f.relative_to(self.carpeta))] = (st.st_size, st.st_mtime_ns)
+        return marcas
+
+    def _leer_contenido(self) -> str:
+        import hashlib
+
+        h = hashlib.sha1()
+        for nombre in sorted(self._leer_marcas()):
+            h.update(nombre.encode() + b"\0")
+            try:
+                h.update((self.carpeta / nombre).read_bytes())
+            except OSError:
+                h.update(b"\0ilegible")
+        return h.hexdigest()
+
+    def viejo(self) -> bool:
+        marcas = self._leer_marcas()
+        if marcas == self._ultima[0]:
+            return self._ultima[1]
+        resultado = self._leer_contenido() != self._contenido
+        self._ultima = (marcas, resultado)
+        return resultado
+
+
+CODIGO_EN_MARCHA = Codigo()
+
+
 def hogar() -> Path:
     ruta = Path(os.environ.get("PUENTE_HOME", Path.home() / ".local/share/puente-kvm"))
     ruta.mkdir(parents=True, exist_ok=True)

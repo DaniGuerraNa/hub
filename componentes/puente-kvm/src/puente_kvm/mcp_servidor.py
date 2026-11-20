@@ -32,7 +32,10 @@ mcp = FastMCP(
         "pantalla del puente; si una herramienta dice que no tienes el control, pídeselo "
         "y espera. Para documentos largos usa leer_documento → ver_pagina → "
         "transcribir_pagina, y para escribir, proponer_cambio (la persona lo aprueba) → "
-        "escribir_cambio. Nunca guardes ni ejecutes en el Mac: eso lo hace la persona."
+        "escribir_cambio. Para recorrer de arriba abajo cualquier otra cosa (una hoja, una "
+        "web, una rejilla de resultados), recorrer_pantalla, en una sola llamada; para mirar "
+        "sólo una parte a tamaño real, ver_pantalla con x, y, ancho y alto. Nunca guardes ni "
+        "ejecutes en el Mac: eso lo hace la persona."
     ),
 )
 
@@ -72,8 +75,11 @@ async def _bajar(ruta: str) -> PILImage.Image:
 
 
 async def _imagen(ruta: str, ancho: int | None = None, recorte: str | None = None,
-                  img: PILImage.Image | None = None) -> Image:
+                  img: PILImage.Image | None = None, caja: tuple[int, int, int, int] | None = None) -> Image:
     img = img or await _bajar(ruta)
+    if caja:
+        x, y, w, h = caja
+        img = img.crop((x, y, x + w, y + h))
     if recorte in ("arriba", "abajo"):
         mitad = img.height // 2
         # Un poco de solape para que la línea partida por la mitad salga entera en una.
@@ -87,24 +93,46 @@ async def _imagen(ruta: str, ancho: int | None = None, recorte: str | None = Non
 
 
 # ── ver ─────────────────────────────────────────────────────────────────────
+# Más ancha que esto, una imagen se reduce antes de mandársela a Claude.
+ANCHO_IMAGEN = 1600
+
+
 @mcp.tool()
 async def estado() -> dict:
     """Quién tiene el control del Mac, el aparato, la tarea en curso y las últimas lecturas y cambios."""
     e = await _llamar("GET", "/api/estado")
     e.pop("perfil", None)
+    if config.CODIGO_EN_MARCHA.viejo():
+        # Este servidor nace con la conversación: tras actualizar, sigue con lo de antes.
+        e["aviso_mcp"] = ("las herramientas del puente de esta conversación son de antes de actualizar: "
+                          "pide a la persona que la reabra (menú de conversaciones, arriba de la terminal → Reabrir)")
     return e
 
 
 @mcp.tool()
-async def ver_pantalla(region: str = "completa") -> list:
+async def ver_pantalla(region: str = "completa", x: int = 0, y: int = 0, ancho: int = 0, alto: int = 0) -> list:
     """Captura la pantalla del Mac. region: "completa" o "editor" (sólo la región del editor).
 
     La imagen completa se reduce a 1280 px de ancho: para hacer clic, multiplica las
     coordenadas que veas por el factor que acompaña a la imagen (la pantalla real
     mide lo que diga ese texto; con 1920×1080, el factor es 1,5).
+
+    Con ancho y alto (y x, y: la esquina de arriba a la izquierda), en píxeles REALES
+    del Mac, devuelve sólo esa zona y a tamaño real: se lee mejor que la pantalla
+    entera reducida y cuesta menos. Para una tabla o una hoja, la zona de las celdas.
     """
     if region not in ("completa", "editor"):
         raise ErrorPuente('region tiene que ser "completa" o "editor"')
+    if ancho or alto:
+        real = await _bajar("/api/pantalla.png?region=completa")
+        if ancho < 20 or alto < 20 or x < 0 or y < 0 or x + ancho > real.width or y + alto > real.height:
+            raise ErrorPuente(f"la zona se sale de la pantalla, que mide {real.width}×{real.height} "
+                              "(x, y, ancho y alto en píxeles reales)")
+        texto = f"Zona {ancho}×{alto} en ({x}, {y}), a tamaño real: suma ({x}, {y}) a lo que veas para hacer clic."
+        if ancho > ANCHO_IMAGEN:
+            texto = (f"Zona {ancho}×{alto} en ({x}, {y}), reducida a {ANCHO_IMAGEN} px de ancho: multiplica lo "
+                     f"que veas por {ancho / ANCHO_IMAGEN:.4g} y suma ({x}, {y}) para hacer clic.")
+        return [texto, await _imagen("", ancho=ANCHO_IMAGEN, img=real, caja=(x, y, ancho, alto))]
     if region == "completa":
         real = await _bajar("/api/pantalla.png?region=completa")
         factor = real.width / 1280 if real.width > 1280 else 1
@@ -145,6 +173,50 @@ async def ir_a_linea(linea: int) -> dict:
 async def clic(x: int, y: int, boton: str = "izquierdo", doble: bool = False) -> dict:
     """Clic en coordenadas REALES de la pantalla (las de la captura sin reducir). boton: izquierdo, derecho o centro."""
     return await _llamar("POST", "/api/clic", {"x": x, "y": y, "boton": boton, "doble": doble})
+
+
+@mcp.tool()
+async def recorrer_pantalla(x: int, y: int, ancho: int, alto: int, pasos: int = 5, max_paginas: int = 10) -> list:
+    """Baja una zona de la pantalla con la rueda, de donde esté hasta su final, y la devuelve página a página.
+
+    Para una hoja de cálculo, una web, una rejilla de resultados: todo lo que no es el
+    editor de leer_documento. Una sola llamada en vez de rueda + ver_pantalla una y otra
+    vez. La zona (x, y, ancho, alto) va en píxeles REALES del Mac: la de las celdas, sin
+    barras ni menús, que se repetirían en cada página. Antes, ponte arriba del todo si
+    quieres leerla entera (⌘↑, o un clic en la primera celda).
+
+    Cada página llega quieta y a tamaño real, con cuánto subió el contenido desde la
+    anterior: lo de arriba de una página ya salía al final de la otra, no lo cuentes dos
+    veces. Los pasos de rueda se ajustan solos para que cada bajada sea unas tres cuartas
+    partes de la zona. Para cuando la zona deja de cambiar (el final) o en max_paginas
+    (20 como mucho): entonces vuelve a llamarla para seguir desde ahí. Necesita el control.
+    """
+    r = await _llamar("POST", "/api/recorrer", {"x": x, "y": y, "ancho": ancho, "alto": alto,
+                                                "pasos": pasos, "max_paginas": max_paginas}, timeout=300)
+    n = r["paginas"]
+    salida: list = []
+    for k in range(1, n + 1):
+        img = await _bajar(f"/api/recorridos/{r['id']}/{k}.png")
+        subio = r["subio"][k - 1]
+        if k == 1:
+            texto = f"Página 1 de {n}: la zona {ancho}×{alto} en ({x}, {y}), a tamaño real."
+        elif subio == 0:
+            texto = (f"Página {k} de {n}: el contenido no bajó; sólo cambió algo pequeño en la zona, así que "
+                     "es casi la misma que la anterior.")
+        elif subio is None:
+            texto = (f"Página {k} de {n}: no sé cuánto subió el contenido (no encuentro lo que tiene en "
+                     "común con la anterior): compáralas tú antes de contar filas.")
+        elif subio < img.height:
+            texto = (f"Página {k} de {n}: el contenido subió {subio} px; sus primeros {img.height - subio} px "
+                     "ya salían al final de la anterior.")
+        else:
+            texto = f"Página {k} de {n}: el contenido subió {subio} px, sin nada en común con la anterior."
+        if img.width > ANCHO_IMAGEN:
+            texto += f" Reducida a {ANCHO_IMAGEN} px de ancho."
+        salida += [texto, await _imagen("", ancho=ANCHO_IMAGEN, img=img)]
+    salida.append("Final: tras la última página la zona ya no cambia." if r["final"] else
+                  f"Paré en {n} páginas sin llegar al final: vuelve a llamarla para seguir desde aquí.")
+    return salida
 
 
 @mcp.tool()

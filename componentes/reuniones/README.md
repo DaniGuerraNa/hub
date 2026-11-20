@@ -151,7 +151,16 @@ uv run reuniones procesar 20261020-121303            # --sin-resumen, --rehacer
 uv run reuniones comprimir 20261020-121303 [otra…]   # nunca mientras graba o procesa
 ```
 En Windows: `.venv\Scripts\python.exe agente.py inventario` (qué ve) o
-`agente.py prueba --segundos 10 --app ms-teams.exe --monitor 3 --micro 49`.
+`agente.py prueba --segundos 10 --app ms-teams.exe --monitor 3 --micro 49`
+(con `--seguir`, graba el monitor donde esté la ventana de la app), o
+`agente.py ventana --app ms-teams.exe` para ver qué ventana y qué monitor elegiría.
+
+**Qué monitor se graba.** Si la orden trae `seguir_app` (el hub la pone por
+omisión), el agente busca las ventanas de la app por nombre de proceso —el pid
+del audio de Teams no es el de sus ventanas—, se queda con la de la reunión y
+graba el monitor donde está; cada 15 s vuelve a mirar y, si la movieron, la
+sigue. Si no la encuentra, graba el `monitor` de la orden y lo deja dicho en
+`meta.json` (`monitor_origen: heredado`).
 El arnés con el que se midió está en `agente/pruebas/`.
 
 ## Tests

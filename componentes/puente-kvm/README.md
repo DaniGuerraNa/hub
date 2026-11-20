@@ -59,6 +59,11 @@ Todo se hace en **una sola pantalla: http://127.0.0.1:8794**.
      en ningún sitio.
    - Si en el Mac **la rueda va al revés** (el «desplazamiento natural»),
      Ajustes → «Invertir la rueda del ratón».
+   - **«⤢ Pantalla grande»**, arriba de la imagen: el Mac ocupa toda la ventana
+     del navegador (no el monitor), sin la terminal. Con **− / +** se acerca
+     hasta el tamaño real y más (el % es del tamaño real del Mac), y con barras
+     o arrastrando te mueves por ella; «Ajustar» vuelve a encajarla. Se puede
+     usar el Mac igual. **Esc** o «Salir» vuelve (usando el Mac, Esc va al Mac).
 3. Pídele lo que necesites en la terminal. Lee el documento página a página;
    en la página de la lectura ves **cada captura junto a su transcripción** y la
    comprobación con la **huella** de la base.

@@ -88,6 +88,114 @@ def test_solo_se_puede_elegir_lo_que_el_agente_dijo_que_ve(cliente, raiz):
     assert reuniones.orden()["grabar"] is False
 
 
+# ── el monitor donde está la ventana de la app (C-0456) ──────────────────────
+
+INVENTARIO_03 = {**INVENTARIO, "agente": "0.3.0"}
+
+
+def test_donde_este_la_ventana_manda_seguir_la_app_con_el_monitor_de_reserva(cliente, raiz):
+    cliente.post("/api/reuniones/latido", json=INVENTARIO_03)
+    cliente.post("/reuniones/accion", data={"que": "grabar", "monitor": "ventana", "app": "ms-teams.exe"})
+    o = reuniones.orden()
+    assert o["grabar"] and o["seguir_app"] is True and o["monitor"] == 1
+
+
+def test_un_monitor_elegido_a_mano_no_sigue_la_ventana(cliente, raiz):
+    cliente.post("/api/reuniones/latido", json=INVENTARIO_03)
+    cliente.post("/reuniones/accion", data={"que": "grabar", "monitor": "3", "app": "ms-teams.exe"})
+    assert reuniones.orden()["seguir_app"] is False and reuniones.orden()["monitor"] == 3
+
+
+def test_seguir_la_ventana_sin_aplicacion_se_rechaza_en_vez_de_grabar_cualquier_monitor(cliente, raiz):
+    from urllib.parse import unquote
+    cliente.post("/api/reuniones/latido", json=INVENTARIO_03)
+    r = cliente.post("/reuniones/accion", data={"que": "grabar", "monitor": "ventana"}, follow_redirects=False)
+    assert "elige la aplicación" in unquote(r.headers["location"])
+    assert reuniones.orden()["grabar"] is False
+
+
+def test_la_reserva_es_donde_el_agente_vio_la_ventana_la_ultima_vez(cliente, raiz):
+    reuniones._escribir(reuniones.carpeta() / "orden.json", {"grabar": False, "monitor": 1})
+    cliente.post("/api/reuniones/latido", json=INVENTARIO_03)
+    cliente.post("/api/reuniones/latido", json={"agente": "0.3.0", "grabando": {
+        "id": "20261118-094651", "segundos": 5, "fotos": 1, "errores": [], "monitor": 3,
+        "monitor_origen": "ventana"}})
+    assert reuniones.grabar("", "ms-teams.exe", "", seguir_app=True)["monitor"] == 3
+
+
+def test_un_monitor_heredado_no_se_recuerda_como_el_de_la_ventana(cliente, raiz):
+    cliente.post("/api/reuniones/latido", json={**INVENTARIO_03, "grabando": {
+        "id": "20261118-094651", "monitor": 3, "monitor_origen": "heredado"}})
+    assert not (reuniones.carpeta() / "monitor-visto.json").exists()
+
+
+def test_la_opcion_de_seguir_la_ventana_solo_se_ofrece_con_un_agente_que_sabe(cliente, raiz):
+    cliente.post("/api/reuniones/latido", json=INVENTARIO)            # 0.1.0
+    html = cliente.get("/reuniones").text
+    assert re.search(r'value="ventana"\s+disabled', html) and "necesita el agente 0.3.0" in html
+    assert re.search(r'value="1"\s+checked', html)                   # el primero, no el de número más alto
+    cliente.post("/api/reuniones/latido", json=INVENTARIO_03)
+    html = cliente.get("/reuniones").text
+    assert re.search(r'value="ventana"\s+checked', html)
+
+
+def test_mientras_graba_el_monitor_lo_dice_el_agente_y_no_la_orden(cliente, raiz):
+    cliente.post("/api/reuniones/latido", json=INVENTARIO_03)
+    reuniones.grabar("", "ms-teams.exe", "", seguir_app=True)        # reserva: el 1
+    cliente.post("/api/reuniones/latido", json={"agente": "0.3.0", "grabando": {
+        "id": reuniones.orden()["id"], "segundos": 20, "fotos": 2, "errores": [], "monitor": 3,
+        "monitor_origen": "ventana"}})
+    html = " ".join(cliente.get("/reuniones").text.split())
+    assert "monitor 3 (donde está la ventana de ms-teams.exe)" in html
+    cliente.post("/api/reuniones/latido", json={"agente": "0.3.0", "grabando": {
+        "id": reuniones.orden()["id"], "monitor": 1, "monitor_origen": "heredado"}})
+    html = " ".join(cliente.get("/reuniones").text.split())
+    assert "No encuentro la ventana de ms-teams.exe" in html and "donde está la ventana" not in html
+
+
+def test_con_un_agente_viejo_no_afirma_que_sigue_la_ventana(cliente, raiz):
+    cliente.post("/api/reuniones/latido", json=INVENTARIO_03)
+    reuniones.grabar("", "ms-teams.exe", "", seguir_app=True)
+    cliente.post("/api/reuniones/latido", json={"agente": "0.2.0", "grabando": {
+        "id": reuniones.orden()["id"], "segundos": 20, "fotos": 2, "errores": []}})
+    html = " ".join(cliente.get("/reuniones").text.split())
+    assert "monitor 1" in html and "donde está la ventana" not in html
+
+
+def _reunion_con_meta(r, **meta):
+    d = r / "20261118-094651"
+    (d / "fotos").mkdir(parents=True)
+    (d / "meta.json").write_text(json.dumps({"id": d.name, "inicio": 0, "fin": 600,
+                                             "proceso": {"nombre": "ms-teams.exe"}, **meta}))
+    (d / "procesado.json").write_text(json.dumps({"estado": "hecho"}))
+    return d
+
+
+def test_la_reunion_avisa_si_sus_capturas_no_son_de_la_ventana_de_la_llamada(cliente, raiz):
+    r, _ = raiz
+    d = _reunion_con_meta(r, monitor=3, monitor_pedido=3, monitor_origen="heredado",
+                          cambios_monitor=[{"segundo": 0, "monitor": 3, "origen": "heredado"}])
+    html = " ".join(cliente.get(f"/reuniones/{d.name}").text.split())
+    assert "No se encontró la ventana de ms-teams.exe: las capturas son del monitor 3" in html
+
+
+def test_la_reunion_cuenta_cuando_las_capturas_cambiaron_de_monitor(cliente, raiz):
+    r, _ = raiz
+    d = _reunion_con_meta(r, monitor=1, monitor_pedido=3, monitor_origen="ventana", cambios_monitor=[
+        {"segundo": 0, "monitor": 3, "origen": "heredado"}, {"segundo": 75, "monitor": 1, "origen": "ventana"}])
+    html = " ".join(cliente.get(f"/reuniones/{d.name}").text.split())
+    assert ("Las capturas siguen la ventana de ms-teams.exe: monitor 3 (sin encontrar la ventana), "
+            "desde el 1:15 monitor 1.") in html
+
+
+def test_una_reunion_que_siguio_la_ventana_sin_moverse_o_vieja_no_lleva_aviso(cliente, raiz):
+    r, _ = raiz
+    d = _reunion_con_meta(r, monitor=1, monitor_pedido=3, monitor_origen="ventana",
+                          cambios_monitor=[{"segundo": 0, "monitor": 1, "origen": "ventana"}])
+
+    assert "Las capturas siguen" not in cliente.get(f"/reuniones/{d.name}").text
+
+
 def test_sin_agente_vivo_no_se_da_la_orden(cliente, raiz):
     from urllib.parse import unquote
     cliente.post("/api/reuniones/latido", json=INVENTARIO)

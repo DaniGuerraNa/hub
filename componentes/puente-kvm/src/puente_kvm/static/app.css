@@ -121,7 +121,29 @@ label { display: block; color: var(--texto-2); font-size: 13px; margin: 10px 0 4
 
 /* ── pantalla en directo ─────────────────────────────────────────────── */
 .pantalla { position: relative; background: #000; border-radius: var(--r-input); overflow: hidden; line-height: 0; }
+.marco-mac { position: relative; }
 .pantalla img { width: 100%; height: auto; display: block; }
+.barra-pantalla { margin-bottom: 10px; }
+.barra-pantalla h2 { margin: 0 auto 0 0; }
+.solo-grande { display: none; }
+.zoom { gap: 4px; align-items: center; }
+.zoom button { padding: 4px 10px; min-width: 34px; justify-content: center; }
+#zoom-valor { min-width: 120px; font-variant-numeric: tabular-nums; }
+/* «Pantalla grande»: la tarjeta ocupa la ventana del navegador (no el monitor),
+   sin la cabecera ni la terminal (las esconde el espacio, ver PuenteEspacio). Por
+   debajo de los diálogos (.velo, 50), que también se abren aquí. */
+.tarjeta-pantalla.ampliada { position: fixed; inset: 0; z-index: 40; margin: 0; border: 0; border-radius: 0;
+  padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 8px; }
+.ampliada .solo-grande { display: inline-flex; }
+.ampliada .barra-pantalla, .ampliada .mando, .ampliada #mando-ayuda { flex: none; margin: 0; }
+.ampliada #mando-ayuda { font-size: 12.5px; }
+.ampliada .pantalla { flex: 1; min-height: 0; overflow: auto; display: flex; }
+/* margin:auto centra y, al desbordar, deja llegar a todo con las barras (con
+   justify-content: center lo que sobresale a la izquierda no se alcanza). */
+.ampliada .marco-mac { margin: auto; flex: none; }
+html.con-pantalla-grande, html.con-pantalla-grande body { overflow: hidden; }
+.pantalla.desplazable { cursor: grab; }
+.pantalla.desplazable.arrastrando { cursor: grabbing; }
 .pantalla.usando { outline: 3px solid var(--acento); outline-offset: -3px; cursor: crosshair; }
 .mando { margin-top: 10px; flex-wrap: wrap; }
 .pantalla .region { position: absolute; border: 2px dashed var(--acento); pointer-events: none; }
@@ -200,17 +222,28 @@ pre.consulta { background: var(--lienzo); padding: 10px; border-radius: var(--r-
 
 /* ── espacio de trabajo: el puente a la izquierda, Claude Code a la derecha ── */
 .en-marco .cabecera { display: none; }
+.aviso-codigo { margin: 10px 20px 0; flex: none; }
+.en-marco .aviso-codigo { display: none; }
+/* Con la pantalla del Mac en grande, el marco ocupa la ventana entera. */
+body.pantalla-grande .cabecera, body.pantalla-grande .divisor, body.pantalla-grande .dock { display: none; }
+body.pantalla-grande .espacio-rejilla, body.pantalla-grande .espacio-rejilla.plegado {
+  grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 body[data-pagina="espacio"] { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
 main.espacio { max-width: none; padding: 0; flex: 1; min-height: 0; width: 100%; }
+/* La fila, minmax(0, 1fr): con una fila «auto», la terminal ya encajada estiraba
+   la rejilla al alto de antes cuando el alto disponible bajaba (el aviso de
+   arriba, o la ventana más baja), y quedaba cortada por abajo sin volver a
+   encajarse (medido en un navegador). */
 .espacio-rejilla {
   --ancho-dock: 46%;
-  display: grid; grid-template-columns: minmax(0, 1fr) 6px var(--ancho-dock); height: 100%;
+  display: grid; grid-template-columns: minmax(0, 1fr) 6px var(--ancho-dock);
+  grid-template-rows: minmax(0, 1fr); height: 100%;
 }
 .espacio-rejilla.plegado { grid-template-columns: minmax(0, 1fr) 6px 44px; }
 .espacio-rejilla iframe { width: 100%; height: 100%; border: 0; background: var(--lienzo); }
 .divisor { cursor: col-resize; background: var(--borde); }
 .divisor:hover, .divisor.arrastrando { background: var(--acento); }
-.dock { display: flex; flex-direction: column; min-width: 0; background: var(--superficie); }
+.dock { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--superficie); }
 .dock-barra { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--borde); }
 .dock-acciones { margin-left: auto; display: flex; gap: 6px; }
 .dock-acciones button { padding: 5px 10px; font-size: 13px; }

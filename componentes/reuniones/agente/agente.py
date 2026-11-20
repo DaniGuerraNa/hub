@@ -11,8 +11,9 @@ Por qué así:
     reunion.wav  el audio SÓLO de la aplicación elegida (WASAPI process
                  loopback vía proctap): otra música o un vídeo no entran.
     micro.wav    tu micrófono, aparte: así se sabe qué dijiste tú.
-    fotos/       el monitor elegido a 1 fps, pero guardando sólo los
-                 fotogramas que CAMBIAN (una diapositiva quieta es una foto).
+    fotos/       el monitor donde está la ventana de la app (o el elegido),
+                 a 1 fps, guardando sólo los fotogramas que CAMBIAN (una
+                 diapositiva quieta es una foto).
 """
 import argparse
 import io
@@ -30,7 +31,7 @@ import urllib.request
 import wave
 from pathlib import Path
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 HUB = os.environ.get("REUNIONES_HUB", "http://127.0.0.1:8787")
 # Las grabaciones y el log van junto a la carpeta del agente (`<base>\agente`
 # → `<base>\grabaciones`, `<base>\agente.log`): así el agente funciona donde lo
@@ -151,6 +152,133 @@ def pid_de(nombre: str) -> int | None:
     return None
 
 
+# ─────────────────── en qué monitor está la ventana de la app ───────────────────
+# El monitor se repetía de la grabación anterior y, al mover Teams a otra
+# pantalla, se grabó semanas la que no era. Ahora se mira dónde está la ventana.
+# Medido con Teams en una llamada: dos ventanas visibles del proceso, la de la
+# reunión («<asunto> | Microsoft Teams») y la principal («Chat | Microsoft
+# Teams»). Y sus ventanas son de OTRO proceso que la sesión de audio: se buscan
+# por nombre, no por el pid de la orden.
+
+# Primer tramo del título de la ventana PRINCIPAL de Teams, según la sección
+# abierta. Una ventana que no empieza así es la de la reunión.
+SECCIONES_PRINCIPAL = {
+    "chat", "actividad", "calendario", "teams", "llamadas", "archivos", "onedrive", "aplicaciones",
+    "comunidades", "personas", "copilot", "activity", "calendar", "calls", "files", "apps",
+    "communities", "people", "microsoft teams",
+}
+REVISAR_MONITOR_S = 15
+MINIMA = (200, 150)        # menos que esto es un aviso o una miniatura, no la reunión
+
+
+def elegir_ventana(ventanas: list[dict], preferida=None) -> dict | None:
+    """La ventana de la reunión entre las de la app (en orden Z, la de arriba primero).
+
+    Se queda con la que ya seguía mientras exista: así no salta de pantalla
+    porque alguien abra el chat principal en otra."""
+    utiles = [v for v in ventanas if v["ancho"] >= MINIMA[0] and v["alto"] >= MINIMA[1]]
+    if not utiles:
+        return None
+    if preferida is not None:
+        for v in utiles:
+            if v["hwnd"] == preferida:
+                return v
+    reunion = [v for v in utiles
+               if (v.get("titulo") or "").split("|")[0].strip().lower() not in SECCIONES_PRINCIPAL]
+    return (reunion or utiles)[0]
+
+
+def monitor_de(ventana: dict, monitores: list[dict]) -> int | None:
+    """El monitor que más superficie tiene de la ventana (una maximizada asoma
+    8 px a los lados, así que no vale mirar una esquina)."""
+    mejor, area_mejor = None, 0
+    for m in monitores:
+        ancho = min(ventana["izq"] + ventana["ancho"], m["izq"] + m["ancho"]) - max(ventana["izq"], m["izq"])
+        alto = min(ventana["arr"] + ventana["alto"], m["arr"] + m["alto"]) - max(ventana["arr"], m["arr"])
+        area = max(0, ancho) * max(0, alto)
+        if area > area_mejor:
+            mejor, area_mejor = m["n"], area
+    return mejor
+
+
+def ventanas_de(nombre: str) -> list[dict]:
+    """Ventanas visibles, sin minimizar ni ocultas por el sistema, de los
+    procesos que se llaman `nombre`, en orden Z. Sólo en Windows.
+
+    Las coordenadas salen en píxeles reales porque mss ya hizo el proceso
+    consciente del DPI, igual que las de sus monitores."""
+    import ctypes
+    from ctypes import wintypes
+    u32, k32, dwm = ctypes.windll.user32, ctypes.windll.kernel32, ctypes.windll.dwmapi
+    # Tipos declarados: sin ellos un HWND o un handle pasan como int de 32 bits.
+    H, P = wintypes.HWND, ctypes.POINTER
+    for f, args, res in (
+            (u32.IsWindowVisible, [H], wintypes.BOOL), (u32.IsIconic, [H], wintypes.BOOL),
+            (u32.GetWindowThreadProcessId, [H, P(wintypes.DWORD)], wintypes.DWORD),
+            (u32.GetWindowRect, [H, P(wintypes.RECT)], wintypes.BOOL),
+            (u32.GetWindowTextW, [H, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
+            (dwm.DwmGetWindowAttribute, [H, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD], ctypes.c_long),
+            (k32.OpenProcess, [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE),
+            (k32.QueryFullProcessImageNameW, [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                              P(wintypes.DWORD)], wintypes.BOOL),
+            (k32.CloseHandle, [wintypes.HANDLE], wintypes.BOOL)):
+        f.argtypes, f.restype = args, res
+    nombre = nombre.lower()
+    nombres: dict[int, str] = {}
+
+    def proceso(pid: int) -> str:
+        if pid not in nombres:
+            nombres[pid] = ""
+            h = k32.OpenProcess(0x1000, False, pid)        # PROCESS_QUERY_LIMITED_INFORMATION
+            if h:
+                try:
+                    buf = ctypes.create_unicode_buffer(1024)
+                    tam = wintypes.DWORD(1024)
+                    if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(tam)):
+                        nombres[pid] = buf.value.rsplit("\\", 1)[-1].lower()
+                finally:
+                    k32.CloseHandle(h)
+        return nombres[pid]
+
+    vistas = []
+    fallos = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def cada(hwnd, _):
+        # Una excepción aquí dentro no sale de EnumWindows: ctypes la tira a
+        # stderr, donde nadie la ve, y la lista se queda a medias. Se guarda
+        # y se relanza fuera (regla 21 del hub: un fallo no se calla).
+        try:
+            return _cada(hwnd)
+        except Exception as e:
+            fallos.append(e)
+            return False
+
+    def _cada(hwnd):
+        if not u32.IsWindowVisible(hwnd) or u32.IsIconic(hwnd):
+            return True
+        pid = wintypes.DWORD()
+        u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if proceso(pid.value) != nombre:
+            return True
+        oculta = wintypes.DWORD()
+        dwm.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(oculta), 4)     # DWMWA_CLOAKED
+        if oculta.value:
+            return True
+        r = wintypes.RECT()
+        u32.GetWindowRect(hwnd, ctypes.byref(r))
+        titulo = ctypes.create_unicode_buffer(300)
+        u32.GetWindowTextW(hwnd, titulo, 300)
+        vistas.append({"hwnd": int(hwnd), "titulo": titulo.value, "izq": r.left, "arr": r.top,
+                       "ancho": r.right - r.left, "alto": r.bottom - r.top})
+        return True
+
+    u32.EnumWindows(cada, 0)
+    if fallos:
+        raise fallos[0]
+    return vistas
+
+
 # ─────────────────────────────── la grabación ───────────────────────────────
 
 class Grabacion:
@@ -165,9 +293,19 @@ class Grabacion:
         self.fotos = 0
         self.errores = []
         self.proc_audio = None
+        # El monitor que se graba de verdad y de dónde salió: «ventana» (donde
+        # está la de la app), «heredado» (se pidió seguirla y no se encontró:
+        # el de la orden) o «elegido» (la orden dice cuál).
+        self.monitor = int(orden.get("monitor") or 1)
+        self.monitor_origen = "elegido"
+        self.cambios_monitor: list[dict] = []
+        self.ventana = None
+        self._fallo_ventanas = False
 
     def meta(self, **extra):
-        m = {"id": self.id, "inicio": self.inicio, "monitor": self.orden.get("monitor"),
+        m = {"id": self.id, "inicio": self.inicio, "monitor": self.monitor,
+             "monitor_pedido": self.orden.get("monitor"), "monitor_origen": self.monitor_origen,
+             "cambios_monitor": self.cambios_monitor,
              "proceso": {"nombre": self.orden.get("app")}, "micro": self.orden.get("micro"),
              "titulo": self.orden.get("titulo", ""), "agente": VERSION, **extra}
         (self.dir / "meta.json").write_text(json.dumps(m, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -191,12 +329,33 @@ class Grabacion:
         import mss
         import numpy as np
         from PIL import Image
-        n = int(self.orden.get("monitor") or 1)
         anterior = None
+        seguir = bool(self.orden.get("seguir_app") and self.orden.get("app"))
         with mss.MSS() as s:
-            mon = s.monitors[n]
+            monitores = [{"n": i, "izq": m["left"], "arr": m["top"], "ancho": m["width"], "alto": m["height"]}
+                         for i, m in enumerate(s.monitors) if i > 0]
+            if self.monitor >= len(s.monitors):
+                self.monitor = 1
+            if seguir:
+                self.monitor_origen = "heredado"
+                self._seguir_ventana(monitores, int(time.time() - self.inicio), al_empezar=True)
+                if self.monitor_origen == "heredado":
+                    log("no encontré la ventana de", self.orden.get("app"), "→ monitor", self.monitor,
+                        "de la orden")
+                self.cambios_monitor.append({"segundo": 0, "monitor": self.monitor, "origen": self.monitor_origen})
+                self.meta()
+            mon = s.monitors[self.monitor]
+            revisado = time.time()
             while not self.parar_.is_set():
                 t0 = time.time()
+                if seguir and t0 - revisado >= REVISAR_MONITOR_S:
+                    revisado = t0
+                    antes = len(self.cambios_monitor)
+                    if self._seguir_ventana(monitores, int(t0 - self.inicio)):
+                        mon = s.monitors[self.monitor]
+                        anterior = None          # pantalla nueva: su primera foto se guarda
+                    if len(self.cambios_monitor) != antes:
+                        self.meta()              # también si sólo dejó de ser heredado
                 img = s.grab(mon)
                 im = Image.frombytes("RGB", img.size, img.rgb)
                 huella = np.asarray(im.convert("L").resize((96, 54)), dtype=np.int16)
@@ -208,6 +367,31 @@ class Grabacion:
                     im.save(self.dir / "fotos" / f"{seg:06d}.jpg", "JPEG", quality=72)
                     self.fotos += 1
                 self.parar_.wait(max(0.0, 1.0 - (time.time() - t0)))
+
+    def _seguir_ventana(self, monitores: list[dict], seg: int, al_empezar: bool = False) -> bool:
+        """Mira dónde está ahora la ventana de la app. True si hay que cambiar
+        de monitor. Si no la encuentra, se queda donde estaba: perder la
+        reunión de vista un rato es mejor que saltar a una pantalla cualquiera."""
+        try:
+            ventanas = ventanas_de(str(self.orden["app"]))
+        except Exception as e:      # sin ventanas no se para la grabación: se graba el que había
+            if not self._fallo_ventanas:
+                self._fallo_ventanas = True
+                self.errores.append(f"ventanas: {e}")
+                log("ERROR buscando la ventana", traceback.format_exc())
+            return False
+        v = elegir_ventana(ventanas, self.ventana)
+        n = monitor_de(v, monitores) if v else None
+        if n is None:
+            return False
+        self.ventana = v["hwnd"]
+        cambia = n != self.monitor
+        if cambia or self.monitor_origen != "ventana":
+            if not al_empezar:   # la entrada del segundo 0 la pone _pantalla, con su origen
+                self.cambios_monitor.append({"segundo": seg, "monitor": n, "origen": "ventana"})
+            log(f"la ventana de {self.orden['app']} está en el monitor {n}")
+        self.monitor, self.monitor_origen = n, "ventana"
+        return cambia
 
     def _micro(self):
         import sounddevice as sd
@@ -312,7 +496,7 @@ class Grabacion:
 
     def estado(self):
         return {"id": self.id, "segundos": int(time.time() - self.inicio), "fotos": self.fotos,
-                "errores": self.errores[-3:]}
+                "errores": self.errores[-3:], "monitor": self.monitor, "monitor_origen": self.monitor_origen}
 
 
 # ─────────────────────────────── el bucle ───────────────────────────────
@@ -386,20 +570,30 @@ def bucle():
 
 def main():
     a = argparse.ArgumentParser(prog="reuniones-agente")
-    a.add_argument("que", nargs="?", default="correr", choices=["correr", "inventario", "prueba"])
+    a.add_argument("que", nargs="?", default="correr", choices=["correr", "inventario", "prueba", "ventana"])
     a.add_argument("--segundos", type=int, default=10)
     a.add_argument("--app")
     a.add_argument("--pid", type=int)
     a.add_argument("--monitor", type=int, default=1)
     a.add_argument("--micro")
+    a.add_argument("--seguir", action="store_true", help="grabar donde esté la ventana de --app")
     args = a.parse_args()
+    if args.que == "ventana":
+        # Qué ventana elegiría y en qué monitor, sin grabar nada.
+        import mss
+        with mss.MSS():
+            vs = ventanas_de(args.app or "ms-teams.exe")
+            v = elegir_ventana(vs)
+            print(json.dumps({"ventanas": vs, "elegida": v, "monitor": monitor_de(v, monitores()) if v else None},
+                             ensure_ascii=False, indent=1))
+        return
     if args.que == "inventario":
         print(json.dumps({"monitores": monitores(), "microfonos": microfonos(), "apps": apps_con_audio()},
                          ensure_ascii=False, indent=1))
         return
     if args.que == "prueba":
         g = Grabacion({"id": time.strftime("%Y%m%d-%H%M%S"), "monitor": args.monitor, "app": args.app,
-                       "pid": args.pid,
+                       "pid": args.pid, "seguir_app": args.seguir,
                        "micro": args.micro, "titulo": "prueba"})
         g.empezar()
         time.sleep(args.segundos)

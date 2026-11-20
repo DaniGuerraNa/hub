@@ -178,16 +178,19 @@ def elegir_ventana(paneles: list[dict], ventana: str | None) -> dict:
 class GrabarReunion(Accion):
     """Empezar a grabar con lo de la última vez (definición 9.1).
 
-    Sin preguntar monitor, app ni micrófono: se repite lo de la última grabación
-    y, si ahora hay una app de llamadas sonando, se graba ésa. Es lo que alguien
-    haría a mano en la pantalla de Reuniones, sin la pantalla."""
+    Sin preguntar monitor, app ni micrófono: se repite el micro de la última
+    grabación y, si ahora hay una app de llamadas sonando, se graba ésa. Con
+    app, el monitor es donde esté su ventana (C-0456): repetir el de la vez
+    anterior grabó semanas una pantalla sin la reunión. La reserva, si el
+    agente no la encuentra, la pone `reuniones.grabar`."""
 
     id = "grabar_reunion"
     gesto = "grabar"
     nombre = "Grabar una reunión"
-    resumen = "Empieza a grabar en Reuniones con el monitor, la app y el micro de la última vez."
-    descripcion = ("Empieza a grabar una reunión en Reuniones con los ajustes de la última grabación (monitor, "
-                   "app de la llamada y micrófono); si ahora hay una app de llamadas sonando, graba ésa. "
+    resumen = "Empieza a grabar en Reuniones la pantalla donde está la llamada, su audio y el micro de la última vez."
+    descripcion = ("Empieza a grabar una reunión en Reuniones con los ajustes de la última grabación (app de la "
+                   "llamada y micrófono); si ahora hay una app de llamadas sonando, graba ésa, y la pantalla "
+                   "donde esté su ventana. "
                    "`titulo` opcional. Graba voces de otras personas: úsala sólo si el dueño lo pide.")
     parametros = {"type": "object", "properties": {"titulo": {"type": "string"}}}
     riesgo = "reversible"
@@ -201,20 +204,23 @@ class GrabarReunion(Accion):
         if a.get("grabando") or reuniones.orden().get("grabar"):
             return "ya estaba grabando: no empiezo otra"
         previa = reuniones.orden()
-        if not previa.get("monitor") and previa.get("monitor") != 0:
-            raise RuntimeError("no hay una grabación anterior de la que copiar los ajustes: la primera, "
-                               "desde la pantalla Reuniones")
         apps = a.get("apps") or []
         sonando = apps_sonando(a)
         app = sonando[0] if sonando else (previa.get("app") or "")
         if app and app not in {x["nombre"] for x in apps}:
             app = ""   # la de la última vez no tiene audio ahora: sólo pantalla y micro
+        # Sin orden previa sólo se graba si el agente buscará la ventana: uno
+        # anterior a la 0.3.0 grabaría la reserva sin que nada lo dijera.
+        busca = bool(app) and reuniones.sigue_ventana(a)
+        if not busca and not previa.get("monitor") and previa.get("monitor") != 0:
+            raise RuntimeError("no hay una grabación anterior de la que copiar los ajustes: la primera, "
+                               "desde la pantalla Reuniones")
         micro = str(previa.get("micro") or "")
         if micro and micro not in {str(m["n"]) for m in a.get("microfonos") or []}:
             micro = ""   # Windows renumera los micros: mejor grabar sin él que no grabar
         try:
-            o = reuniones.grabar(str(previa["monitor"]), app, micro,
-                                 str(params.get("titulo") or ""))
+            o = reuniones.grabar("" if busca else str(previa["monitor"]), app, micro,
+                                 str(params.get("titulo") or ""), seguir_app=busca)
         except ValueError as exc:
             raise RuntimeError(str(exc)) from None
         # Regla dura 17: no está grabando hasta que el agente lo dice.

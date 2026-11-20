@@ -262,7 +262,7 @@ def test_abrir_en_la_pc_espera_a_que_el_agente_confirme(con, monkeypatch):
 # ── grabar una reunión (definición 9.1) ──────────────────────────────────────
 
 def _agente(grabando=False, apps=()):
-    return {"vivo": True, "grabando": grabando, "monitores": [{"n": 1}, {"n": 3}],
+    return {"vivo": True, "agente": "0.3.0", "grabando": grabando, "monitores": [{"n": 1}, {"n": 3}],
             "microfonos": [{"n": 49}], "apps": [dict(a) for a in apps]}
 
 
@@ -282,6 +282,7 @@ def test_grabar_repite_lo_de_la_ultima_vez_y_prefiere_la_llamada_que_suena(con, 
     r = piezas.acciones()["grabar_reunion"].ejecutar(con, {"titulo": "Daily"})
     o = reuniones.orden()
     assert o["grabar"] is True and o["monitor"] == 3 and o["app"] == "ms-teams.exe" and o["titulo"] == "Daily"
+    assert o["seguir_app"] is True          # el monitor es donde esté Teams; el 3, la reserva (C-0456)
     assert r.startswith("grabando (") and "ms-teams.exe" in r
     assert piezas.acciones()["parar_grabacion"].ejecutar(con, {}).startswith("parada la grabación")
     assert reuniones.orden()["grabar"] is False
@@ -313,6 +314,28 @@ def test_grabar_sin_una_grabacion_anterior_dice_que_la_primera_va_por_la_pantall
     monkeypatch.setattr(reuniones, "agente", lambda: _agente())
     with pytest.raises(RuntimeError, match="la primera"):
         piezas.acciones()["grabar_reunion"].ejecutar(con, {})
+
+
+def test_grabar_la_primera_vez_con_una_llamada_sonando_sigue_su_ventana(con, monkeypatch):
+    """C-0456: con app, el monitor ya no se copia de la grabación anterior, así
+    que tampoco hace falta que la haya."""
+    from hub import reuniones
+    estado = {"grabando": False}
+
+    def agente():
+        a = {**_agente(estado["grabando"], [{"nombre": "ms-teams.exe", "pid": 2, "activa": True}]),
+             "agente": estado["version"]}
+        estado["grabando"] = bool(reuniones.orden().get("grabar"))
+        return a
+
+    monkeypatch.setattr(reuniones, "agente", agente)
+    estado["version"] = "0.2.0"          # uno viejo grabaría la reserva sin decirlo: se niega
+    with pytest.raises(RuntimeError, match="la primera"):
+        piezas.acciones()["grabar_reunion"].ejecutar(con, {})
+    estado["version"] = "0.3.0"
+    assert piezas.acciones()["grabar_reunion"].ejecutar(con, {}).startswith("grabando (")
+    o = reuniones.orden()
+    assert o["seguir_app"] is True and o["app"] == "ms-teams.exe" and o["monitor"] == 1
 
 
 def test_grabar_pide_permiso_y_parar_no(con):

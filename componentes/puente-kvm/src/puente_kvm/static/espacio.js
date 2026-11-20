@@ -56,7 +56,9 @@
   }
 
   function encajar() {
-    if (rejilla.classList.contains('plegado')) return;
+    // Plegada o apartada por la pantalla grande, la terminal mide cero: encajarla
+    // ahí le quitaría columnas a la sesión de Claude, que se repinta a lo estrecho.
+    if (rejilla.classList.contains('plegado') || document.body.classList.contains('pantalla-grande')) return;
     try { ajuste.fit(); } catch (e) { return; }
     // Si aun así la pantalla de xterm no cabe en su caja, se quitan columnas:
     // una letra cortada en silencio es peor que una columna de menos.
@@ -102,6 +104,15 @@
     escribir(texto) {
       if (ws && ws.readyState === 1) ws.send(codificar.encode(texto));
       term.focus();
+    },
+  };
+
+  // «Pantalla grande» en el panel (app.js): la pantalla del Mac ocupa la ventana,
+  // sin la cabecera ni la terminal; al volver, la terminal se encaja otra vez.
+  window.PuenteEspacio = {
+    ampliar(si) {
+      document.body.classList.toggle('pantalla-grande', !!si);
+      if (!si) requestAnimationFrame(encajar);
     },
   };
 
@@ -297,6 +308,7 @@
 
   // ── la navegación del marco, reflejada arriba ───────────────────────────
   marco.addEventListener('load', () => {
+    window.PuenteEspacio.ampliar(false);  // otra página en el marco: la pantalla grande era de la anterior
     let ruta = '/panel';
     try { ruta = marco.contentWindow.location.pathname + marco.contentWindow.location.search; } catch (e) { /* otro origen */ }
     for (const a of document.querySelectorAll('[data-nav]')) a.classList.toggle('activa', ruta.startsWith(a.dataset.nav));

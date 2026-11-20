@@ -10,7 +10,7 @@
 #   4. copia las bases tal como están y aplica los pasos propios de cada
 #      versión que cruces (scripts/migraciones)
 #   5. regenera los servicios —con TU puerto y TUS datos— y reinicia los que
-#      estaban en marcha
+#      estaban en marcha (también el Puente KVM, si es de este clon y está libre)
 #   6. pone al día los archivos del asistente, si lo tienes
 #   7. comprueba que el hub contesta y que lo reiniciado funciona, apunta la
 #      versión y te dice qué cambió
@@ -112,6 +112,8 @@ trap 'rc=$?; if [ "$rc" -ne 0 ] && [ "$VOLVER" -eq 1 ]; then como_volver; fi; ex
 
 # shellcheck source=lib/unidades.sh
 . "$RAIZ/scripts/lib/unidades.sh"
+# shellcheck source=lib/puente.sh
+. "$RAIZ/scripts/lib/puente.sh"
 
 # Con servicios, lo instalado manda: el puerto y la carpeta de datos se leen de
 # los units, no se suponen. Sin ellos, de las variables de siempre.
@@ -265,6 +267,14 @@ if [ "$CON_SERVICIOS" -eq 1 ]; then
 else
   bien "sin servicios de systemd: reinicia tú el hub (bash scripts/arrancar.sh --parar y otra vez)"
 fi
+# El Puente KVM, si viaja en este clon (C-0459): por su propia puerta, nunca a
+# mitad de una tarea, y lo que falle ahí es un aviso.
+puente_encendido=no
+if [ -d "$RAIZ/componentes/puente-kvm" ] && (cd "$RAIZ" && HUB_HOME="$HUB_HOME" uv run --quiet python -c \
+     'import sys; from hub import opcionales; sys.exit(0 if opcionales.encendida("puente-kvm") else 1)') 2>/dev/null; then
+  puente_encendido=si
+fi
+reiniciar_puente "$puente_encendido"
 
 paso "6/7 · Asistente"
 asiento=$(uv run --quiet python -c "

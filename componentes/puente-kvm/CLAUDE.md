@@ -52,6 +52,13 @@ el control: lo que viste en una captura anterior puede haber cambiado. Mira la
 pantalla (`ver_pantalla`) antes de actuar sobre ella. La rueda: positivo baja
 el contenido; si el Mac la tiene invertida, el puente lo corrige solo (Ajustes).
 
+Para mirar sólo una parte, `ver_pantalla(x, y, ancho, alto)`: llega a tamaño
+real y se lee mejor que la pantalla entera reducida. Para recorrer de arriba
+abajo algo que no es el editor (una hoja, una web, una rejilla larga),
+`recorrer_pantalla`, en **una sola llamada**: no lo hagas a golpes de `rueda`
+y `ver_pantalla`. Si `estado()` trae `aviso_mcp`, tus herramientas son de
+antes de actualizar: díselo a la persona.
+
 ## Las skills: cómo se hace cada encargo
 
 | Te piden… | Skill |

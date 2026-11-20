@@ -111,3 +111,43 @@ def test_quitar_limpia_el_fallo_y_cierra_la_conversacion_de_claude(clon):
     # La sesión de tmux nace fuera del servicio a propósito: si no se cierra, su
     # servidor MCP sigue con el código viejo tras actualizar o quitar.
     assert "tmux kill-session -t =puente-claude" in ordenes
+
+
+def _uv_que_contesta(bin_: Path, registro: Path, salida: int, motivo: str = "") -> None:
+    uv = bin_ / "uv"
+    uv.write_text(f'#!/bin/sh\necho "uv $* puerto=$PUENTE_PUERTO" >> "{registro}"\necho "{motivo}"\nexit {salida}\n')
+    uv.chmod(0o755)
+    systemctl = bin_ / "systemctl"
+    systemctl.write_text(f'#!/bin/sh\necho "systemctl $*" >> "{registro}"\n'
+                         'case "$*" in *"-p Environment"*) echo "PATH=/x PUENTE_PUERTO=8999" ;; esac\nexit 0\n')
+    systemctl.chmod(0o755)
+
+
+def test_reiniciar_si_libre_no_corta_una_tarea_y_dice_por_que(clon):
+    # Lo usa quien actualiza el repositorio que lo contiene: un reinicio corta una lectura a medias.
+    destino, bin_, casa = clon
+    registro = casa / "ordenes.log"
+    _uv_que_contesta(bin_, registro, 3, "está con una tarea: capturando")
+    r = correr(destino / "scripts/servicio.sh", "reiniciar", "--si-libre", bin_=bin_, casa=casa)
+    assert r.returncode == 3 and "capturando" in r.stdout
+    ordenes = registro.read_text()
+    assert "puente-kvm ocupado puerto=8999" in ordenes  # pregunta en el puerto de SU unidad
+    assert "restart" not in ordenes
+
+
+def test_reiniciar_si_libre_reinicia_si_esta_libre(clon):
+    destino, bin_, casa = clon
+    registro = casa / "ordenes.log"
+    _uv_que_contesta(bin_, registro, 0)
+    r = correr(destino / "scripts/servicio.sh", "reiniciar", "--si-libre", bin_=bin_, casa=casa)
+    assert r.returncode == 0, r.stderr
+    assert "systemctl --user restart puente-kvm" in registro.read_text()
+
+
+def test_reiniciar_si_libre_sin_poder_preguntar_no_reinicia_a_ciegas(clon):
+    destino, bin_, casa = clon
+    registro = casa / "ordenes.log"
+    _uv_que_contesta(bin_, registro, 2, "error de uv")
+    r = correr(destino / "scripts/servicio.sh", "reiniciar", "--si-libre", bin_=bin_, casa=casa)
+    assert r.returncode == 4 and "no pude preguntarle" in r.stderr
+    assert "restart" not in registro.read_text()

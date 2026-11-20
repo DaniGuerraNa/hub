@@ -81,6 +81,9 @@ orden y lo que hay que vigilar.
 2. **La pantalla.** ¿Se ve el Mac entero y nítido? Si es un portátil, la
    pantalla tiene que estar **duplicada**. Marca la región del editor en Ajustes
    (con la columna de números, sin la barra de estado). Apunta: la región.
+   Prueba también **«⤢ Pantalla grande»** con el zoom al 100 %: ¿se lee la
+   letra pequeña del Mac? (el vídeo del aparato llega comprimido; con el
+   simulador se lee perfecta). Apunta: si se lee, y si el directo va fluido.
 3. **El teclado del Mac** (antes de dejar teclear a Claude). Al ver un teclado
    USB nuevo, macOS puede abrir el **asistente de configuración del teclado**
    («pulsa la tecla a la derecha de Mayús izquierda»): si aparece, ciérralo o
@@ -98,6 +101,10 @@ orden y lo que hay que vigilar.
 6. **Lectura de la pestaña de prueba** (skill, paso 6). Mira si alguna página
    sale marcada «la pantalla se movía». Apunta: líneas por página, y los
    segundos por página (salen en el informe de `diagnostico`).
+   Después, en una hoja o una web larga, pídele que la recorra con
+   **`recorrer_pantalla`** (la zona de las celdas, desde arriba): ¿llega al
+   final y dice cuánto subió cada página? Si dice «no sé cuánto subió», el
+   ruido del vídeo es más que su margen. Apunta: páginas, segundos y eso.
 7. **Huella** de un objeto real pequeño (skill, paso 7). Apunta: la consulta que
    funcionó y la variante que coincide.
 8. **Escritura de prueba** en la pestaña de prueba: Claude propone un cambio

@@ -20,7 +20,12 @@ ejecutar procedimientos de la aplicación.
 3. Dile a la persona: «He dejado esta consulta en una pestaña nueva: <qué trae>.
    Revísala y ejecútala tú (Cmd+Enter)». Espera a que te diga que ya está.
 4. Lee el resultado:
-   - **Pocas filas:** `ver_pantalla()` y léelo de la rejilla.
+   - **Pocas filas:** `ver_pantalla(x, y, ancho, alto)` con la zona de la
+     rejilla, que llega a tamaño real (la pantalla entera llega reducida).
+   - **Más filas de las que caben, pero cortas:** `recorrer_pantalla` sobre la
+     zona de la rejilla, desde la primera fila: la baja con la rueda y te da
+     todas las páginas en una sola llamada, con lo que se repite entre una y
+     otra.
    - **Muchas filas o texto largo** (un plan, una definición): llévalo a un
      editor y léelo con la skill `leer-documento`. Con el control: clic en la
      rejilla, Cmd+A, Cmd+C, pestaña nueva (Cmd+]), Cmd+V. El portapapeles es el

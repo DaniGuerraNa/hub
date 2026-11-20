@@ -13,6 +13,66 @@ bash scripts/actualizar.sh
 Al terminar te enseña esta misma lista, sólo con las versiones que acabas de
 cruzar.
 
+## 0.8.0 — 2026-11-20
+
+El Puente KVM con la pantalla del Mac en grande y Claude recorriendo una hoja
+en una sola llamada; Reuniones graba el monitor de la llamada; y el
+secretario ya no se rinde con la configuración de un programa.
+
+### Qué tienes que hacer
+
+- **Actualiza** con el botón de **Actualizaciones** (o con
+  `bash scripts/actualizar.sh` en la carpeta del hub).
+
+- **Si usas Reuniones, actualiza el agente de Windows** («Copiar el agente»
+  en la pantalla Reuniones, y luego `instalar.cmd`). Hasta entonces graba como
+  antes.
+
+- **Si usas el Puente KVM**, después de actualizar abre su pantalla y, en la
+  terminal de Claude, el menú de la conversación → **Reabrir**, para que Claude
+  tenga las herramientas nuevas. Si lo arrancas sin systemd, reinícialo tú
+  (`scripts/arrancar.sh`, con tu `PUENTE_TRABAJO` delante); con systemd ya lo
+  hace la actualización.
+
+### Nuevo
+
+- **Puente KVM: «⤢ Pantalla grande».** Arriba de la imagen del Mac: la
+  pantalla ocupa toda la ventana del navegador (no el monitor), sin la
+  terminal, y se pide a su resolución real para que la letra pequeña se lea.
+  Con − / + se acerca hasta el tamaño real y más; con las barras o arrastrando
+  te mueves por ella. Se puede usar el Mac igual que en la vista de siempre.
+  Esc o «Salir» vuelve.
+
+- **Puente KVM: recorrer una hoja o una web en una sola llamada.** Claude
+  tiene `recorrer_pantalla`: baja la zona que le digas con la rueda hasta el
+  final y la recibe página a página, con cuánto se repite entre una y otra.
+  Antes lo hacía a golpes de rueda y captura (unas 40 llamadas para una hoja).
+  Y `ver_pantalla` puede devolver sólo una zona a tamaño real, que se lee
+  mejor y gasta menos. Como la rueda, te pide permiso salvo con «Sin pedir
+  permisos».
+
+### Qué cambia en lo que ya usabas
+
+- **Actualizar reinicia el Puente KVM** si su servicio es el de este hub,
+  salvo que esté en medio de una lectura o una escritura o con el control
+  dado a Claude: entonces no lo corta y te dice la orden para hacerlo después.
+  Antes había que reiniciarlo a mano, y hasta entonces sus pantallas salían
+  nuevas pero hacían lo de antes. Ahora, si corre un código que ya no es el
+  del disco, también lo dice en su pantalla.
+
+- **Reuniones graba la pantalla donde está la llamada.** Antes repetía el
+  monitor de la grabación anterior (y el formulario marcaba el último de la
+  lista), así que al mover la ventana de la reunión a otro monitor se grababa
+  la pantalla equivocada sin que nada lo dijera. Ahora el agente busca la
+  ventana de la aplicación, la sigue si la mueves y, si no la encuentra, lo
+  avisa mientras graba y en la página de la reunión. Las grabaciones que
+  empieza el secretario hacen lo mismo.
+
+- **El secretario ya no dice que no puede con la configuración de un programa
+  o juego de tu PC** (dónde la guarda, pasarla a otra cuenta). Averigua dónde
+  está y te propone la orden exacta, con una copia de seguridad antes; la
+  corre sólo si la apruebas. Empieza una conversación nueva para que lo lea.
+
 ## 0.7.1 — 2026-11-17
 
 Un parche del Puente KVM: usar el Mac desde su pantalla va más fluido.

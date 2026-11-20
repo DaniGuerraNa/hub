@@ -7,7 +7,7 @@
 {# Dentro del espacio de trabajo, cada página se ve en el marco de la izquierda
    y la cabecera ya está arriba: la propia sobra. Antes de pintar, para que no parpadee. #}
 <script>if (window.top !== window.self) document.documentElement.classList.add('en-marco');</script>
-<link rel="stylesheet" href="/static/app.css?v=12">
+<link rel="stylesheet" href="/static/app.css?v=13">
 {% block cabeza %}{% endblock %}
 </head>
 <body data-pagina="{% block pagina %}{% endblock %}">
@@ -24,10 +24,14 @@
     <button class="peligro" data-control="parar" title="Corta lo que esté haciendo Claude, ya">Parar</button>
   </div>
 </header>
+{# Tras actualizar sin reiniciar, las pantallas salen nuevas y lo que hacen es lo de antes. #}
+<p class="aviso riesgo aviso-codigo" id="aviso-codigo" hidden><b>El puente se actualizó, pero sigue con el código de antes.</b>
+  Reinícialo para usar lo nuevo: <code>systemctl --user restart puente-kvm</code> (sin systemd, ciérralo y vuelve a
+  lanzar <code>scripts/arrancar.sh</code>). Después, en la terminal, el menú de la conversación → <b>Reabrir</b>.</p>
 <main class="{% block main_clase %}{% endblock %}">
 {% block contenido %}{% endblock %}
 </main>
-<script src="/static/app.js?v=7"></script>
+<script src="/static/app.js?v=8"></script>
 {% block guiones %}{% endblock %}
 </body>
 </html>

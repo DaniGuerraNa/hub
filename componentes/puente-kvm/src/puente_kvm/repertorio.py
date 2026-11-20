@@ -28,7 +28,8 @@ SKILLS = PROYECTO / ".claude" / "skills"
 AJUSTES_CLAUDE = PROYECTO / ".claude" / "settings.json"
 
 # Lo que exige algo de la persona en el puente, además del permiso de Claude Code.
-NECESITA_CONTROL = {"teclear", "atajo", "ir_a_linea", "clic", "rueda", "leer_documento", "escribir_cambio"}
+NECESITA_CONTROL = {"teclear", "atajo", "ir_a_linea", "clic", "rueda", "recorrer_pantalla", "leer_documento",
+                    "escribir_cambio"}
 NECESITA_APROBACION = {"escribir_cambio"}
 
 

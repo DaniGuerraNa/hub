@@ -7,6 +7,7 @@
 #   bash scripts/servicio.sh unidad      # enseña la unidad que instalaría, sin tocar nada
 #   bash scripts/servicio.sh instalar    # la escribe en ~/.config/systemd/user y arranca el puente
 #   bash scripts/servicio.sh reiniciar | estado | registro | quitar
+#   bash scripts/servicio.sh reiniciar --si-libre   # no lo corta a mitad de una tarea (sale con 3)
 #
 # Sin systemd (WSL sin systemd, macOS): bash scripts/arrancar.sh
 set -euo pipefail
@@ -61,6 +62,25 @@ case "${1:-}" in
     echo "Puente en http://127.0.0.1:${PUENTE_PUERTO:-8794} (unidad: $unidad)"
     ;;
   reiniciar)
+    if [ "${2:-}" = "--si-libre" ]; then
+      # Lo pide quien actualiza el repositorio que contiene al puente: un reinicio a
+      # mitad de una lectura o una escritura la corta. Si está ocupado, sale con 3 y
+      # dice por qué; si no se le puede preguntar, tampoco se reinicia a ciegas (4).
+      # Entre la pregunta y el reinicio queda un instante en que podría empezar una
+      # tarea: se acepta, porque quien actualiza no la está lanzando a la vez.
+      puerto="$(systemctl --user show -p Environment --value "$nombre" 2>/dev/null | tr ' ' '\n' \
+                | sed -n 's/^PUENTE_PUERTO=//p' | head -1 || true)"
+      rc=0
+      motivo="$(cd "$codigo" && PUENTE_PUERTO="${puerto:-${PUENTE_PUERTO:-8794}}" \
+                uv run --frozen --quiet puente-kvm ocupado 2>&1)" || rc=$?
+      if [ "$rc" -eq 3 ]; then
+        echo "$motivo"
+        exit 3
+      elif [ "$rc" -ne 0 ]; then
+        echo "no pude preguntarle al puente si está ocupado: $motivo" >&2
+        exit 4
+      fi
+    fi
     systemctl --user restart "$nombre"
     # La conversación de Claude vive en tmux, fuera del servicio, a propósito: sigue
     # abierta, y con ella su servidor MCP con el código de antes.

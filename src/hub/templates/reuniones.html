@@ -16,6 +16,9 @@
   .monitor img, .monitor .sin { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:8px;
                                 background:var(--elevado); display:grid; place-items:center;
                                 color:var(--texto-4); font-size:12px; }
+  .monitor-ventana { display:flex; gap:8px; align-items:baseline; margin:0 0 10px; font-size:var(--letra-3);
+    text-transform:none; letter-spacing:0; color:var(--texto-2); }
+  .aviso-monitor { color:var(--riesgo); margin-top:10px; }
   .monitor > span:not(.placa) { font-size:var(--letra-2); text-transform:none; letter-spacing:0; color:var(--texto-2); }
   .reu .dos label input, .reu .dos label select { display:block; width:100%; margin-top:6px;
                                                   text-transform:none; letter-spacing:0; font-size:14px; }
@@ -159,27 +162,42 @@
     <div class="rec">
       <span class="punto" aria-hidden="true"></span>
       <span class="cifra-rec">{{ '%02d:%02d' | format((g.segundos or 0) // 60, (g.segundos or 0) % 60) }}</span>
-      <span>Grabando {% if r.orden.titulo %}«{{ r.orden.titulo }}» {% endif %}· monitor {{ r.orden.monitor }}
+      {# El monitor lo dice el agente, no la orden: uno anterior a la 0.3.0
+         ignora «seguir la ventana» y la pantalla no puede afirmarlo (C-0456). #}
+      <span>Grabando {% if r.orden.titulo %}«{{ r.orden.titulo }}» {% endif %}· monitor {{ g.monitor or r.orden.monitor }}
+        {%- if g.monitor_origen == 'ventana' %} (donde está la ventana de {{ r.orden.app }}){% endif %}
         {% if r.orden.app %}· audio de <strong>{{ r.orden.app }}</strong>{% endif %}
         {% if r.orden.micro %}· con tu micro{% endif %} · {{ g.fotos or 0 }} capturas</span>
       <form data-sin-recarga method="post" action="/reuniones/accion" style="margin-left:auto">
         <button class="boton principal" name="que" value="parar">Parar</button></form>
     </div>
+    {% if g.monitor_origen == 'heredado' %}<p class="ayuda aviso-monitor">No encuentro la ventana de {{ r.orden.app }}:
+      grabo el monitor {{ g.monitor }}, el de la última vez. Si está minimizada, ábrela y en unos segundos paso a su pantalla.</p>{% endif %}
     {% if g.errores %}<p class="ayuda" style="color:var(--riesgo);margin-top:10px">{{ g.errores | join(' · ') }}</p>{% endif %}
   </div>
 {% else %}
   <form data-sin-recarga class="tarjeta" method="post" action="/reuniones/accion">
     <h2>Grabar <span class="marca ok">agente conectado · {{ a.equipo }}</span>
       {%- if v.estado == 'al-dia' %} <span class="tenue" style="font-size:12px;font-weight:400">agente {{ v.corre }} · al día</span>{% endif %}</h2>
-    <p class="ayuda">Graba el monitor elegido (1 captura por segundo, sólo se guardan las que cambian), el audio
+    <p class="ayuda">Graba la pantalla de la llamada (1 captura por segundo, sólo se guardan las que cambian), el audio
       <strong>sólo</strong> de la aplicación elegida —otra música no entra— y tu micro aparte. Al parar, se
       transcribe aquí y Claude saca el resumen y las tareas. 🔴 Avisa a los demás de que grabas.</p>
+    {# Por omisión, donde esté la ventana de la app (C-0456). Antes se marcaba
+       el último de la lista, que es el de número más alto, no el último usado. #}
+    {% set mons = a.monitores or [] %}
+    {% set previo = r.orden.monitor if r.orden.monitor in mons | map(attribute='n') | list else (mons[0].n if mons else none) %}
+    <label class="monitor-ventana">
+      <input type="radio" name="monitor" value="ventana" {{ 'checked' if r.sigue_ventana else 'disabled' }}>
+      <span><strong>Donde esté la ventana de la aplicación</strong>
+        {%- if r.sigue_ventana %} · la busca al empezar y la sigue si la mueves; si no la ve, graba el
+        monitor de la última vez{% else %} · necesita el agente 0.3.0 o posterior: cópialo con el aviso de arriba{% endif %}</span>
+    </label>
     <div class="monitores">
-      {% for m in a.monitores or [] %}
+      {% for m in mons %}
       <label class="monitor">
         {% if m.n in r.miniaturas %}<img src="/reuniones/miniatura/{{ m.n }}?t={{ a.t | int }}" alt="Monitor {{ m.n }}">
         {% else %}<span class="sin">sin vista previa</span>{% endif %}
-        <span><input type="radio" name="monitor" value="{{ m.n }}" {{ 'checked' if loop.last }}>
+        <span><input type="radio" name="monitor" value="{{ m.n }}" {{ 'checked' if not r.sigue_ventana and m.n == previo }}>
           Monitor {{ m.n }} · {{ m.ancho }}×{{ m.alto }}</span>
       </label>
       {% endfor %}

@@ -103,11 +103,14 @@
   function pintarEstado(e) {
     ultimoEstado = e;
     const modo = e.control.modo;
-    const pc = $('#placa-control');
-    if (pc) {
+    // La de la cabecera y, en «Pantalla grande» (sin cabecera), la de su barra.
+    for (const pc of $$('#placa-control, [data-placa-control]')) {
       pc.textContent = modo === 'claude' ? 'Claude tiene el control' : modo === 'parado' ? 'Parado' : 'Tú tienes el Mac';
-      pc.className = 'placa ' + (modo === 'claude' ? 'accion' : modo === 'parado' ? 'riesgo' : 'ok');
+      pc.className = pc.className.replace(/\b(ok|accion|riesgo)\b/g, '').trim() + ' '
+        + (modo === 'claude' ? 'accion' : modo === 'parado' ? 'riesgo' : 'ok');
     }
+    const ac = $('#aviso-codigo');
+    if (ac) ac.hidden = !e.codigo_viejo;
     const pa = $('#placa-aparato');
     if (pa) {
       const d = e.dispositivo || {};
@@ -421,13 +424,15 @@
     }
     botonUsar.addEventListener('click', () => (activo ? parar() : empezar()));
 
+    // Sólo lo que pasa sobre la imagen: con zoom, la caja tiene márgenes negros y
+    // barras de desplazamiento, y un clic ahí llegaría al Mac como clic en el borde.
     pantallaMando.addEventListener('mousemove', (e) => {
-      if (!activo || Date.now() - ultimoMov < 30) return;
+      if (!activo || e.target !== imagen || Date.now() - ultimoMov < 30) return;
       ultimoMov = Date.now();
       enviar({ t: 'raton', ...punto(e), b: botones });
     });
     pantallaMando.addEventListener('mousedown', (e) => {
-      if (!activo) return;
+      if (!activo || e.target !== imagen) return;
       e.preventDefault();
       botones |= bitDe(e.button);
       enviar({ t: 'raton', ...punto(e), b: botones });
@@ -449,9 +454,9 @@
         acumulado -= signo * paso;
       }
     }, { passive: false });
-    // Un clic fuera de la imagen y de la barra suelta el Mac.
+    // Un clic fuera de la imagen y de sus barras (la del mando y la del zoom) suelta el Mac.
     document.addEventListener('mousedown', (e) => {
-      if (activo && !pantallaMando.contains(e.target) && !$('#mando').contains(e.target) && !e.target.closest('.velo')) parar();
+      if (activo && !e.target.closest('#pantalla, #mando, .zoom, #ampliar, .velo')) parar();
     }, true);
     const tecla = (e) => {
       if (!activo || $('.velo')) return;  // con un diálogo del puente abierto, el teclado es suyo
@@ -471,6 +476,96 @@
       try { texto = await navigator.clipboard.readText(); } catch (e) { texto = null; }
       if (!texto) texto = await pedir('Texto para teclear en el Mac', '', { max: 5000, si: 'Teclear', nota: 'Se teclea con la distribución de Ajustes, letra a letra.' });
       if (texto) enviar({ t: 'pegar', texto });
+    });
+  }
+
+  // ── pantalla grande y zoom ──────────────────────────────────────────────
+  // «Que se vea más grande, pantalla completa pero dentro de la ventana»: la
+  // tarjeta ocupa el navegador (el monitor entero sería la Fullscreen API, y no
+  // es lo que se pidió). El zoom va en % del tamaño real del Mac, y el mando no
+  // cambia: punto() mide la imagen tal como se pinta, ampliada y desplazada.
+  const tarjeta = $('#tarjeta-pantalla');
+  if (tarjeta) {
+    const pant = $('#pantalla'), marcoMac = $('#marco-mac'), img = $('#directo');
+    const valor = $('#zoom-valor'), botonAmpliar = $('#ampliar');
+    const PASOS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+    let zoom = null;  // null: ajustada a la ventana
+    try {
+      const z = Number(localStorage.getItem('puente-zoom'));
+      if (PASOS.includes(z)) zoom = z;
+    } catch (e) { /* sin almacenamiento: se empieza ajustada */ }
+    const real = () => [Number(pant.dataset.ancho) || 1920, Number(pant.dataset.alto) || 1080];
+    const ajuste = () => { const [an, al] = real(); return Math.min(pant.clientWidth / an, pant.clientHeight / al); };
+    const ampliada = () => tarjeta.classList.contains('ampliada');
+
+    const pintar = () => {
+      const [an] = real();
+      let pedir = 1280;
+      if (ampliada()) {
+        marcoMac.style.width = Math.round(an * (zoom === null ? ajuste() : zoom)) + 'px';
+        valor.textContent = zoom === null ? 'Ajustar · ' + Math.round(ajuste() * 100) + ' %' : Math.round(zoom * 100) + ' %';
+        valor.title = zoom === null ? 'Ajustada a la ventana' : 'Volver a ajustarla a la ventana';
+        // Pintada a más de 1280 px, se pide a su tamaño real: reducida y luego
+        // estirada, la letra pequeña no se lee.
+        if (marcoMac.clientWidth * (window.devicePixelRatio || 1) > 1300) pedir = an;
+      } else {
+        marcoMac.style.width = '';
+      }
+      pant.classList.toggle('desplazable', ampliada()
+        && (pant.scrollWidth > pant.clientWidth + 1 || pant.scrollHeight > pant.clientHeight + 1));
+      const src = '/api/pantalla.mjpg?ancho=' + pedir;
+      if (img.getAttribute('src') !== src) img.setAttribute('src', src);
+      if (window.PuenteRegion) window.PuenteRegion();
+    };
+    const fijarZoom = (z) => {
+      zoom = z;
+      try { if (z === null) localStorage.removeItem('puente-zoom'); else localStorage.setItem('puente-zoom', String(z)); } catch (e) { /* idem */ }
+      pintar();
+    };
+    const ampliar = (si) => {
+      tarjeta.classList.toggle('ampliada', si);
+      document.documentElement.classList.toggle('con-pantalla-grande', si);
+      botonAmpliar.textContent = si ? '✕ Salir' : '⤢ Pantalla grande';
+      botonAmpliar.title = si ? 'Volver a la vista de siempre (o Esc, si no estás usando el Mac)'
+        : 'La pantalla del Mac ocupa toda la ventana del navegador, no el monitor';
+      // En el espacio de trabajo, la cabecera y la terminal se apartan mientras tanto.
+      try { if (window.top !== window && window.top.PuenteEspacio) window.top.PuenteEspacio.ampliar(si); } catch (e) { /* otro origen */ }
+      requestAnimationFrame(() => requestAnimationFrame(pintar));  // el marco cambia de tamaño antes
+    };
+    botonAmpliar.addEventListener('click', () => ampliar(!ampliada()));
+    $('#zoom-mas').addEventListener('click', () => {
+      const ahora = zoom === null ? ajuste() : zoom;
+      const siguiente = PASOS.find((p) => p > ahora * 1.04);
+      if (siguiente) fijarZoom(siguiente);
+    });
+    $('#zoom-menos').addEventListener('click', () => {
+      if (zoom === null) return;
+      const anterior = [...PASOS].reverse().find((p) => p < zoom * 0.97);
+      // Más pequeña que ajustada no sirve de nada: ahí se vuelve a ajustar.
+      fijarZoom(anterior && anterior > ajuste() * 1.04 ? anterior : null);
+    });
+    valor.addEventListener('click', () => fijarZoom(null));
+    // Usando el Mac, Esc es del Mac (el mando se lo queda antes de que llegue aquí).
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && ampliada() && !pant.classList.contains('usando') && !$('.velo')) ampliar(false);
+    });
+    window.addEventListener('resize', pintar);
+    // Sin usar el Mac, arrastrar mueve la imagen ampliada; usándolo, el ratón es del Mac.
+    let arrastre = null;
+    pant.addEventListener('mousedown', (e) => {
+      if (!pant.classList.contains('desplazable') || pant.classList.contains('usando') || e.button !== 0) return;
+      if (!marcoMac.contains(e.target)) return;  // las barras de desplazamiento van solas
+      e.preventDefault();
+      arrastre = { x: e.clientX, y: e.clientY, l: pant.scrollLeft, t: pant.scrollTop };
+      pant.classList.add('arrastrando');
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!arrastre) return;
+      pant.scrollLeft = arrastre.l - (e.clientX - arrastre.x);
+      pant.scrollTop = arrastre.t - (e.clientY - arrastre.y);
+    });
+    window.addEventListener('mouseup', () => {
+      if (arrastre) { arrastre = null; pant.classList.remove('arrastrando'); }
     });
   }
 

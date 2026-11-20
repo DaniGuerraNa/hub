@@ -24,6 +24,7 @@ import json
 import os
 import re
 import time
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -108,6 +109,12 @@ def crear_dispositivo(ajustes: dict) -> Dispositivo:
 # El directo: 2 imágenes por segundo mirando, ~12 mientras la persona usa el Mac.
 INTERVALO_DIRECTO = 0.5
 INTERVALO_MANDO = 0.08
+# Lo que se puede pedir de ancho a una imagen para mirar. Por arriba lo acota
+# el propio aparato (no da más que su resolución); por abajo, que un 0 o un
+# negativo no lleguen a reducir la imagen a nada.
+ANCHO_MIN, ANCHO_MAX = 160, 7680
+# Un recorrido: páginas como mucho y pasos de rueda por bajada.
+RECORRIDO_PAGINAS, RECORRIDO_PASOS = 20, 60
 # Lo que la persona puede pulsar con un botón y no con su teclado (Windows se
 # queda la tecla ⌘ y algunas combinaciones).
 COMBINACIONES_MANDO = ("cmd+tab", "cmd+space")
@@ -129,6 +136,10 @@ class Puente:
         # el directo va más fluido.
         self.mando_hasta = 0.0
         self.ultima_imagen: tuple[bytes, float, int] = (b"", 0.0, 0)
+        # Las páginas del último recorrido (`/api/recorrer`), sólo en memoria: son
+        # contenido del trabajo, y el siguiente las sustituye. Con su id, para que
+        # quien las baja no mezcle las de otro que llegó en medio.
+        self.recorrido: tuple[str, list[bytes]] = ("", [])
 
     async def conectar(self) -> None:
         try:
@@ -279,6 +290,8 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             disp = {"tipo": p.dispositivo.tipo, "conectado": False, "error": str(e)}
         conv = conversaciones.actual()
         return {"version": config.VERSION, "control": p.control.estado(), "dispositivo": disp,
+                # El disco ya no es lo que corre: se actualizó sin reiniciar el puente.
+                "codigo_viejo": config.CODIGO_EN_MARCHA.viejo(),
                 "claude": p.actividad.publico(), "error_conexion": p.error_conexion, "tarea": p.motor.tarea,
                 "progreso": p.motor.progreso, "perfil": p.ajustes["perfil"], "t": time.time(),
                 # Dónde trabaja Claude y con qué conversación: rutas y el nombre que le puso la persona.
@@ -315,7 +328,9 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         🔴 Nada de esto corre en el bucle: reducir y comprimir 1080p ahí lo
         paraba ~40 ms por imagen, y a 8 por segundo el ratón y el teclado de la
         persona esperaban en cola. Y una imagen recién hecha se reparte entre
-        quienes miran a la vez (la pestaña del puente, la de Ajustes…)."""
+        quienes miran a la vez (la pestaña del puente, la de Ajustes…). Con dos
+        que miran a anchos distintos, la imagen se rehace para cada uno."""
+        ancho = max(ANCHO_MIN, min(int(ancho), ANCHO_MAX))
         if region == "editor":
             img = p.motor.recortar(await p.motor.captura())
             return await asyncio.to_thread(_codificar, img, ancho)
@@ -323,7 +338,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         hecha, cuando, de_ancho = p.ultima_imagen
         if hecha and de_ancho == ancho and ahora - cuando < INTERVALO_MANDO / 2:
             return hecha
-        img = await p.dispositivo.miniatura(ancho) if ancho else await p.motor.captura()
+        img = await p.dispositivo.miniatura(ancho)
         datos = await asyncio.to_thread(_codificar, img, ancho)
         p.ultima_imagen = (datos, time.monotonic(), ancho)
         return datos
@@ -350,13 +365,15 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         return Response(buf.getvalue(), media_type="image/png", headers={"Cache-Control": "no-store"})
 
     @app.get("/api/pantalla.mjpg")
-    async def api_directo(req: Request):
+    async def api_directo(req: Request, ancho: int = 1280):
+        """En la tarjeta del panel, 1280 px; en «Pantalla grande», hasta el ancho real
+        del Mac: reducida y estirada después, la letra pequeña no se lee."""
         p = puente(req)
 
         async def fotogramas():
             while not await req.is_disconnected():
                 try:
-                    datos = await jpeg(p, "completa", 1280)
+                    datos = await jpeg(p, "completa", ancho)
                 except Exception as e:  # sin vídeo, un fotograma que dice por qué
                     datos = imagen_sin_video(str(e) or type(e).__name__)
                 yield (b"--fotograma\r\nContent-Type: image/jpeg\r\nContent-Length: "
@@ -445,6 +462,49 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             return {"ok": True}
         except Exception as e:
             raise fallo(e) from e
+
+    def _zona(p: Puente, datos: dict) -> tuple[int, int, int, int]:
+        try:
+            x, y, w, h = (int(datos[k]) for k in ("x", "y", "ancho", "alto"))
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError("la zona va en píxeles reales del Mac: x, y, ancho y alto") from e
+        ancho = getattr(p.dispositivo, "ancho", 1920) or 1920
+        alto = getattr(p.dispositivo, "alto", 1080) or 1080
+        if w < 50 or h < 50:
+            raise ValueError("la zona es demasiado pequeña para recorrerla (50×50 como poco)")
+        if x < 0 or y < 0 or x + w > ancho or y + h > alto:
+            raise ValueError(f"la zona se sale de la pantalla, que mide {ancho}×{alto}")
+        return x, y, w, h
+
+    @app.post("/api/recorrer")
+    async def api_recorrer(req: Request):
+        de_claude(req)
+        p, datos = puente(req), await cuerpo(req)
+        try:
+            zona = _zona(p, datos)
+            pasos = max(1, min(int(datos.get("pasos", 5)), RECORRIDO_PASOS))
+            tope = max(1, min(int(datos.get("max_paginas", 10)), RECORRIDO_PAGINAS))
+            async with p.motor.ocupar("recorrer la pantalla"):
+                r = await p.motor.recorrer(zona, pasos=pasos, tope=tope)
+        except Exception as e:
+            raise fallo(e) from e
+
+        def png(img: Image.Image) -> bytes:
+            buf = io.BytesIO()
+            img.save(buf, "PNG")
+            return buf.getvalue()
+        ident = uuid.uuid4().hex[:12]
+        p.recorrido = (ident, [await asyncio.to_thread(png, img) for img in r.paginas])
+        return {"id": ident, "paginas": len(r.paginas), "subio": r.subio, "final": r.final, "pasos": r.pasos}
+
+    @app.get("/api/recorridos/{ident}/{n}.png")
+    async def api_recorrido(req: Request, ident: str, n: int):
+        actual, paginas = puente(req).recorrido
+        if ident != actual:
+            raise HTTPException(404, "ese recorrido ya no está: lo sustituyó otro más nuevo")
+        if not 1 <= n <= len(paginas):
+            raise HTTPException(404, f"el recorrido tiene {len(paginas)} páginas")
+        return Response(paginas[n - 1], media_type="image/png", headers={"Cache-Control": "no-store"})
 
     # ── lecturas ────────────────────────────────────────────────────────────
     @app.post("/api/lecturas")

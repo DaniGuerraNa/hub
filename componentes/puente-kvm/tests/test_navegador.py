@@ -121,7 +121,7 @@ def test_sin_aparato_el_directo_carga_y_los_ajustes_dicen_por_que_no_hay_imagen(
     from puente_kvm.jetkvm import JetKVM
     with en_marcha(JetKVM("http://127.0.0.1:1", "")) as base:
         pagina.goto(base + "/panel", wait_until="load", timeout=8000)  # antes no terminaba nunca
-        assert "no responde" in pagina.locator(".aviso.riesgo").inner_text()
+        assert "no responde" in pagina.locator("main .aviso.riesgo").inner_text()
         pagina.goto(base + "/ajustes")
         pagina.wait_for_timeout(800)
         assert pagina.locator("#sin-imagen").is_visible()
@@ -248,4 +248,56 @@ def test_la_persona_usa_el_mac_desde_la_pantalla_con_su_teclado(pagina):
         pagina.keyboard.type("zz")
         pagina.wait_for_timeout(300)
         assert "zz" not in "".join(sim.editor.lineas)
+    assert pagina.errores == []
+
+
+def test_la_pantalla_grande_ocupa_la_ventana_y_esc_la_devuelve(pagina):
+    # «Pantalla completa pero dentro de la ventana»: el Mac ocupa el navegador
+    # entero (sin la cabecera ni la terminal), no el monitor.
+    with en_marcha(Simulador(lineas=["x"])) as base:
+        pagina.goto(base + "/")
+        pagina.wait_for_timeout(800)
+        marco = pagina.frame(name="marco")
+        marco.click("#ampliar")
+        pagina.wait_for_timeout(400)
+        assert not pagina.locator("#dock").is_visible()
+        caja = pagina.locator("#marco").bounding_box()
+        assert caja["x"] == 0 and caja["y"] == 0 and caja["width"] == 1280 and caja["height"] == 860
+        img = marco.locator("#directo").bounding_box()
+        assert img["width"] > 1200  # en la tarjeta de siempre, unos 520 px
+        assert "ancho=1280" in marco.locator("#directo").get_attribute("src")
+        marco.locator("body").press("Escape")
+        pagina.wait_for_timeout(300)
+        assert pagina.locator("#dock").is_visible()
+        assert "ampliada" not in (marco.locator("#tarjeta-pantalla").get_attribute("class") or "")
+    assert pagina.errores == []
+
+
+def test_el_zoom_llega_al_tamano_real_y_el_clic_cae_donde_se_ve(pagina):
+    sim = Simulador(lineas=["x"])
+    with en_marcha(sim) as base:
+        pagina.goto(base + "/panel")
+        pagina.click("#ampliar")
+        for _ in range(12):
+            if pagina.locator("#zoom-valor").inner_text().strip() == "100 %":
+                break
+            pagina.click("#zoom-mas")
+        assert pagina.locator("#zoom-valor").inner_text().strip() == "100 %"
+        assert pagina.evaluate("document.querySelector('#directo').clientWidth") == 1920
+        # A más de 1280 px en pantalla, la imagen se pide a su tamaño real: si no, se lee peor.
+        pagina.wait_for_timeout(300)
+        assert "ancho=1920" in pagina.locator("#directo").get_attribute("src")
+        caja = pagina.locator("#pantalla")
+        assert pagina.evaluate("(p) => p.scrollWidth > p.clientWidth", caja.element_handle())
+        # Usando el Mac, con la imagen desplazada: el clic va al píxel que se ve.
+        pagina.click("#mando-usar")
+        pagina.evaluate("document.querySelector('#pantalla').scrollLeft = 500")
+        pagina.click("#zoom-menos")  # el zoom no suelta el Mac
+        pagina.click("#zoom-mas")
+        assert "usando" in caja.get_attribute("class")
+        pagina.evaluate("document.querySelector('#pantalla').scrollLeft = 500")
+        r = pagina.locator("#directo").bounding_box()
+        pagina.mouse.click(400, 300)
+        pagina.wait_for_timeout(300)
+        assert sim.puntero == (round(400 - r["x"]), round(300 - r["y"]))
     assert pagina.errores == []

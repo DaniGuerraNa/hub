@@ -3,6 +3,7 @@
 {% block contenido %}
 <style>
   .reu { display:grid; gap:14px; grid-template-columns:minmax(0,1fr); }
+  .aviso-monitor { margin:0; color:var(--texto-2); }
   .reu .tarjeta h2 { margin:0 0 10px; font-size:var(--letra-4); }
   .reu ul { margin:0; padding-left:18px; display:grid; gap:4px; }
   .linea { display:grid; gap:6px; }
@@ -38,6 +39,16 @@
 {# Una región (C-0167): las acciones y el refresco solo cambian esto, sin
    recargar la página. #}
 <div data-region="reunion" class="reu" {% if d.procesado.estado == 'procesando' or d.comprimiendo %}data-refrescar="5"{% endif %}>
+  {# De qué pantalla son las capturas, si no fue la de la llamada todo el rato (C-0456). #}
+  {% set cm = d.meta.cambios_monitor or [] %}
+  {% if d.meta.monitor_origen == 'heredado' or cm | length > 1 %}
+  <p class="tarjeta aviso-monitor">
+    {%- if d.meta.monitor_origen == 'heredado' %}No se encontró la ventana de {{ d.meta.proceso.nombre }}: las capturas son
+    del monitor {{ d.meta.monitor }}, el de la última vez, y puede que no salga la reunión.
+    {%- else %}Las capturas siguen la ventana de {{ d.meta.proceso.nombre }}:
+    {%- for c in cm %}{{ ',' if not loop.first }} {% if c.segundo %}desde el {{ '%d:%02d' | format(c.segundo // 60, c.segundo % 60) }} {% endif %}monitor {{ c.monitor }}
+    {%- if c.origen == 'heredado' %} (sin encontrar la ventana){% endif %}{% endfor %}.{% endif %}</p>
+  {% endif %}
   {% if d.meta.fin %}
   <form data-sin-recarga class="tarjeta" method="post" action="/reuniones/accion" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <input type="hidden" name="id" value="{{ d.id }}">

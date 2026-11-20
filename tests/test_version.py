@@ -341,7 +341,7 @@ def _correr(guion: Path, entorno: dict, *args: str, cwd: Path | None = None, tim
 
 
 def test_los_guiones_nuevos_son_bash_valido():
-    for guion in ("actualizar.sh", "lib/unidades.sh", "instalar.sh", "sembrar-asistente.sh"):
+    for guion in ("actualizar.sh", "lib/unidades.sh", "lib/puente.sh", "instalar.sh", "sembrar-asistente.sh"):
         r = subprocess.run([BASH, "-n", str(RAIZ / "scripts" / guion)], capture_output=True, text=True)
         assert r.returncode == 0, f"{guion}: {r.stderr}"
     assert os.access(RAIZ / "scripts" / "actualizar.sh", os.X_OK)

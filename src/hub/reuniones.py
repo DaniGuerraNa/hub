@@ -267,6 +267,9 @@ def latido(datos: dict) -> dict:
             datos[k] = previo.get(k)
     datos["t"] = time.time()
     _escribir(carpeta() / "latido.json", datos)
+    g = datos.get("grabando") if isinstance(datos.get("grabando"), dict) else {}
+    if g.get("monitor_origen") == "ventana" and isinstance(g.get("monitor"), int):
+        _recordar_monitor(g["monitor"])
     return {"orden": orden(), "miniaturas": _consumir("pedir-miniaturas"), "abrir": _por_abrir()}
 
 
@@ -376,6 +379,36 @@ def version_agente(latido: dict | None = None) -> dict:
     return {"estado": estado, "corre": corre, "hay": hay, "copiada": copiada}
 
 
+# Desde la 0.3.0 el agente graba el monitor donde está la ventana de la app
+# (C-0456). La pantalla sólo lo ofrece y sólo lo afirma si el agente que corre
+# lo sabe hacer: a uno anterior se le manda la orden y la ignora (regla dura 13).
+AGENTE_SIGUE_VENTANA = (0, 3, 0)
+
+
+def sigue_ventana(latido: dict | None = None) -> bool:
+    corre = _tupla((latido if latido is not None else agente()).get("agente") or "")
+    return corre is not None and corre >= AGENTE_SIGUE_VENTANA
+
+
+def _recordar_monitor(n: int) -> None:
+    """Dónde vio el agente la ventana de la llamada por última vez."""
+    f = carpeta() / "monitor-visto.json"
+    if (_leer(f) or {}).get("monitor") != n:
+        _escribir(f, {"monitor": n, "t": time.time()})
+
+
+def _reserva(monitores: set[str]) -> str:
+    """El monitor que se graba si el agente no encuentra la ventana: donde la
+    vio la última vez; si no, el de la orden anterior; si no, el 1.
+
+    Lo decide `grabar` y no quien llama (C-0456): copiar la orden anterior en
+    cada sitio es lo que dejó semanas grabando una pantalla sin la reunión."""
+    for n in ((_leer(carpeta() / "monitor-visto.json") or {}).get("monitor"), orden().get("monitor")):
+        if n is not None and str(n) in monitores:
+            return str(n)
+    return min(monitores, key=lambda x: int(x) if x.isdigit() else 99)
+
+
 def pedir_miniaturas() -> None:
     (carpeta() / "pedir-miniaturas").touch()
 
@@ -393,9 +426,13 @@ def miniatura(n: int) -> Path | None:
     return p if 1 <= n <= 9 and p.exists() else None
 
 
-def grabar(monitor: str, app: str, micro: str, titulo: str = "") -> dict:
+def grabar(monitor: str, app: str, micro: str, titulo: str = "", seguir_app: bool = False) -> dict:
     """La orden de grabar, validada contra lo que el agente dijo que ve: el
-    formulario sólo puede elegir entre eso."""
+    formulario sólo puede elegir entre eso.
+
+    Con `seguir_app` el agente graba el monitor donde esté la ventana de la
+    app (C-0456); `monitor` puede ir vacío y entonces se pone la reserva, que
+    es lo que graba si no la encuentra."""
     a = agente()
     if not a["vivo"]:
         raise ValueError("el agente de Windows no está conectado")
@@ -404,6 +441,10 @@ def grabar(monitor: str, app: str, micro: str, titulo: str = "") -> dict:
     mons = {str(m["n"]) for m in a.get("monitores") or []}
     apps = {x["nombre"]: x for x in a.get("apps") or []}
     mics = {str(m["n"]) for m in a.get("microfonos") or []}
+    if seguir_app and not app:
+        raise ValueError("para grabar donde esté la ventana, elige la aplicación de la llamada")
+    if seguir_app and monitor not in mons and mons:
+        monitor = _reserva(mons)
     if monitor not in mons:
         raise ValueError("elige un monitor")
     if app and app not in apps:
@@ -412,7 +453,7 @@ def grabar(monitor: str, app: str, micro: str, titulo: str = "") -> dict:
         raise ValueError("ese micrófono no existe")
     o = {"grabar": True, "id": time.strftime("%Y%m%d-%H%M%S"), "monitor": int(monitor),
          "app": app or None, "pid": apps[app]["pid"] if app else None, "micro": micro or None,
-         "titulo": titulo.strip()[:120], "desde": time.time()}
+         "titulo": titulo.strip()[:120], "seguir_app": bool(seguir_app), "desde": time.time()}
     _escribir(carpeta() / "orden.json", o)
     return o
 

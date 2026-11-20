@@ -2,15 +2,24 @@
 {% block pagina %}panel{% endblock %}
 {% block contenido %}
 <div class="rejilla-panel">
-  <section class="tarjeta">
-    <div class="fila" style="justify-content: space-between; margin-bottom: 10px">
-      <h2 style="margin:0">Pantalla del Mac</h2>
+  <section class="tarjeta tarjeta-pantalla" id="tarjeta-pantalla">
+    <div class="fila barra-pantalla" id="barra-pantalla">
+      <h2>Pantalla del Mac</h2>
+      <span class="placa solo-grande" data-placa-control>…</span>
+      <span class="zoom solo-grande" role="group" aria-label="Zoom">
+        <button id="zoom-menos" title="Alejar" aria-label="Alejar">−</button>
+        <button id="zoom-valor" title="Ajustar a la ventana">Ajustar</button>
+        <button id="zoom-mas" title="Acercar (hasta el tamaño real y más)" aria-label="Acercar">+</button>
+      </span>
       <label class="casilla"><input type="checkbox" id="ver-region" checked> marcar la región del editor</label>
+      <button id="ampliar" title="La pantalla del Mac ocupa toda la ventana del navegador, no el monitor">⤢ Pantalla grande</button>
     </div>
     <div class="pantalla" id="pantalla" data-ancho="{{ estado.dispositivo.ancho or 1920 }}" data-alto="{{ estado.dispositivo.alto or 1080 }}"
          data-conectado="{{ 'si' if estado.dispositivo.conectado else 'no' }}">
-      <img id="directo" src="/api/pantalla.mjpg" alt="Pantalla del Mac en directo" draggable="false">
-      <div class="region" id="region"></div>
+      <div class="marco-mac" id="marco-mac">
+        <img id="directo" src="/api/pantalla.mjpg?ancho=1280" alt="Pantalla del Mac en directo" draggable="false">
+        <div class="region" id="region"></div>
+      </div>
     </div>
     <div class="fila mando" id="mando">
       <button id="mando-usar" class="cta">Usar el Mac desde aquí</button>

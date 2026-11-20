@@ -2,7 +2,10 @@
 (que la llena mientras graba) y el procesado (que la lee al acabar).
 
     <raiz>/<id>/
-      meta.json          lo escribe el agente: inicio, fin, monitor, proceso, micro
+      meta.json          lo escribe el agente: inicio, fin, monitor, proceso, micro;
+                         desde el agente 0.3.0 también monitor_pedido, monitor_origen
+                         («ventana», «heredado» o «elegido») y cambios_monitor
+                         ([{segundo, monitor, origen}], desde el 0, si sigue la ventana)
       reunion.wav        audio SÓLO de la aplicación (Teams…), por proceso
       micro.wav          tu micrófono, aparte
                          (reunion.opus / micro.opus si se comprimió: comprimir.py)

@@ -26,6 +26,7 @@
       "mcp__puente-kvm__ir_a_linea",
       "mcp__puente-kvm__clic",
       "mcp__puente-kvm__rueda",
+      "mcp__puente-kvm__recorrer_pantalla",
       "Edit(/src/**)",
       "Edit(/.claude/**)",
       "WebFetch",

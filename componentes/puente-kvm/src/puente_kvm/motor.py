@@ -10,8 +10,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from dataclasses import dataclass, field
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageStat
 
 from . import hid
 from .control import Bitacora, Control
@@ -78,6 +79,45 @@ class Ocupado(RuntimeError):
     """Ya hay una tarea en marcha sobre el Mac."""
 
 
+# Dos capturas tan parecidas son la misma página: avanzar ya no mueve nada.
+IGUAL = 0.002
+
+
+def desplazamiento(antes: Image.Image, despues: Image.Image) -> int | None:
+    """Cuántos píxeles subió el contenido de una zona entre dos capturas; None si no se reconoce.
+
+    Busca el corrimiento con el que lo de abajo de `antes` coincide con lo de
+    arriba de `despues`, en una copia reducida (96 px de ancho y la mitad de
+    alto, de 2 en 2 px): ~30 ms en una zona de 1600×930. Sólo se da si encaja
+    mucho mejor que sin moverse: una cifra que no se puede defender no se da.
+    """
+    if antes.size != despues.size or antes.height < 16:
+        return None
+    a, b = (i.convert("L").resize((96, i.height // 2)) for i in (antes, despues))
+    h = a.height
+    quieto = ImageStat.Stat(ImageChops.difference(a, b)).mean[0]
+    if quieto < 0.5:
+        return 0
+    mejor, cual = None, 0
+    for s in range(1, h - h // 8):  # con al menos un octavo de la zona en común
+        d = ImageStat.Stat(ImageChops.difference(a.crop((0, s, 96, h)), b.crop((0, 0, 96, h - s)))).mean[0]
+        if mejor is None or d < mejor:
+            mejor, cual = d, s
+    if mejor is None or mejor > 12 or mejor > quieto * 0.35:
+        return None
+    return cual * 2
+
+
+@dataclass
+class Recorrido:
+    """Una zona de la pantalla, página a página (`Motor.recorrer`)."""
+    paginas: list[Image.Image] = field(default_factory=list)
+    # Cuánto subió el contenido desde la página anterior; la primera, None.
+    subio: list[int | None] = field(default_factory=list)
+    final: bool = False
+    pasos: int = 5
+
+
 class PantallaInesperada(RuntimeError):
     """La pantalla no está como hace falta para teclear sin riesgo: no se teclea."""
 
@@ -117,19 +157,25 @@ class Motor:
         return img.crop((x, y, x + w, y + h))
 
     async def esperar_estable(self, recortar: bool = True, tope: float | None = None,
-                              intervalo: float = 0.15) -> tuple[Image.Image, bool]:
+                              intervalo: float = 0.15,
+                              zona: tuple[int, int, int, int] | None = None) -> tuple[Image.Image, bool]:
         """Espera a que la pantalla deje de cambiar: devuelve la captura y si lo logró.
 
         Leer una pantalla a medio pintar da una transcripción a medias que
         parece buena: se pide que dos capturas seguidas coincidan. Si al
         agotar `tope` aún se mueve, devuelve la última con `False`: quien llama
-        decide qué hacer, pero ya no puede no saberlo.
+        decide qué hacer, pero ya no puede no saberlo. Con `zona` (x, y, ancho,
+        alto) se mira y se devuelve sólo esa parte; sin ella, la región del
+        editor (o la pantalla entera, con `recortar=False`).
         """
         limite = time.monotonic() + (self.tope_estable if tope is None else tope)
         previa = None
         while True:
             img = await self.captura()
-            if recortar:
+            if zona:
+                x, y, w, h = zona
+                img = img.crop((x, y, x + w, y + h))
+            elif recortar:
                 img = self.recortar(img)
             if previa is not None and diferencia_local(img, previa) < CUADRO_CAMBIADO:
                 return img, True
@@ -137,6 +183,55 @@ class Motor:
                 return img, False
             previa = img
             await asyncio.sleep(intervalo)
+
+    async def paginas(self, avanzar, zona: tuple[int, int, int, int] | None = None, tope: int = 400):
+        """La pantalla página a página: la de ahora y otra tras cada `avanzar()`,
+        cada una ya quieta, hasta que avanzar no cambia nada (el final) o van `tope`.
+
+        Lo comparten la lectura de un documento (Av Pág, en la región del
+        editor) y el recorrido de una zona cualquiera (la rueda). Quien recibe
+        menos de `tope` sabe que llegó al final.
+        """
+        previa, quieta = await self.esperar_estable(zona=zona)
+        yield previa, quieta
+        for _ in range(tope - 1):
+            await avanzar()
+            img, quieta = await self.esperar_estable(zona=zona)
+            if diferencia(img, previa) < IGUAL:
+                return
+            yield img, quieta
+            previa = img
+
+    async def recorrer(self, zona: tuple[int, int, int, int], pasos: int = 5, tope: int = 10) -> Recorrido:
+        """Baja una zona con la rueda hasta su final (o `tope` páginas) y la captura en cada parada.
+
+        En la primera prueba con el aparato, recorrer una hoja así costó unas 40
+        llamadas de Claude: rueda, mirar, «me pasé, vuelvo». Aquí cada bajada
+        se mide y los pasos se ajustan para que suba unas tres cuartas partes de
+        la zona: se solapa lo justo para no perder una fila entre dos páginas.
+        """
+        x, y, w, h = zona
+        r = Recorrido(pasos=pasos)
+
+        async def avanzar():
+            self.progreso = f"página {len(r.paginas) + 1} de {tope} como mucho"
+            await self.rueda(r.pasos, x + w // 2, y + h // 2, apuntar=False)
+            await self.aparcar_raton()  # el puntero taparía lo que hay debajo
+
+        await self.aparcar_raton()
+        async for img, _ in self.paginas(avanzar, zona=zona, tope=tope):
+            if r.paginas:
+                s = await asyncio.to_thread(desplazamiento, r.paginas[-1], img)
+                r.subio.append(s)
+                if s:  # sin pasar de 4 veces arriba o abajo: una medida rara no lo dispara
+                    r.pasos = max(1, min(60, round(r.pasos * max(0.25, min(4.0, 0.75 * h / s)))))
+            else:
+                r.subio.append(None)
+            r.paginas.append(img)
+        r.final = len(r.paginas) < tope
+        self.bitacora.apuntar("recorrido", f"{len(r.paginas)} páginas de la zona {w}×{h} en ({x}, {y})"
+                              + ("" if r.final else ", sin llegar al final"))
+        return r
 
     async def esperar_cambio(self, antes: Image.Image, cuadros: int, tope: float = 2.0,
                              intervalo: float = 0.1) -> Image.Image | None:
@@ -196,7 +291,7 @@ class Motor:
             await asyncio.sleep(0.06)
         self.bitacora.apuntar("clic", f"{boton}{' doble' if doble else ''} en ({x}, {y})")
 
-    async def rueda(self, pasos: int, x: int | None = None, y: int | None = None) -> None:
+    async def rueda(self, pasos: int, x: int | None = None, y: int | None = None, apuntar: bool = True) -> None:
         """La rueda gira donde está el puntero: con (x, y) lo lleva ahí antes. Sin
         ella, tras aparcar el ratón la rueda caía fuera de la hoja y no movía nada
         (primera prueba con el aparato, 17-nov)."""
@@ -205,7 +300,8 @@ class Motor:
             await self.mover(x, y)
             await asyncio.sleep(0.06)
         await self.dispositivo.rueda(-pasos if self.perfil.get("invertir_rueda") else pasos)
-        self.bitacora.apuntar("rueda", f"{pasos:+d}" + (f" en ({x}, {y})" if x is not None and y is not None else ""))
+        if apuntar:
+            self.bitacora.apuntar("rueda", f"{pasos:+d}" + (f" en ({x}, {y})" if x is not None and y is not None else ""))
 
     async def aparcar_raton(self) -> None:
         """El puntero se pinta encima del texto y tapa letras: fuera del editor."""

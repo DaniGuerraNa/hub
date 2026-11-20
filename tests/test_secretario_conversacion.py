@@ -612,3 +612,15 @@ def test_si_la_red_no_puede_apuntar_la_respuesta_queda_igual(con, monkeypatch):
     conversacion.atender(con)
     assert [tuple(f) for f in con.execute("SELECT rol, estado, texto FROM turno ORDER BY id")][-1] == (
         "secretario", "listo", "No puedo hacer eso.")
+
+
+def test_la_configuracion_de_un_juego_del_pc_se_propone_con_cambiar_en_pc():
+    """Ante «revisa las configs de Fortnite, quiero las mismas en otra cuenta»
+    contestó en 4 s que no tenía forma, teniendo `cambiar_en_pc` (C-0455)."""
+    from hub.secretario import piezas
+
+    texto = conversacion.SISTEMA
+    assert "configuración de un programa o un juego de su PC" in texto
+    assert "no digas que no puedes" in texto and "`accion_cambiar_en_pc`" in texto
+    assert "cambiar_en_pc" in piezas.acciones()
+    assert "primero una copia" in texto

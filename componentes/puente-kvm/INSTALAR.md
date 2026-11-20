@@ -153,12 +153,16 @@ lecturas: sus permisos sólo dejan leer sin preguntar `~/.local/share/puente-kvm
   `git pull && uv sync --frozen && bash scripts/servicio.sh reiniciar`.
 - **Dentro de otro repositorio:** el puente se actualiza con ese repositorio y
   su propio actualizador. **Aquí no se hace `git pull`**: actualizaría el
-  repositorio de fuera saltándose su actualizador. Cuando ya esté actualizado,
-  sólo se reinicia el puente: `bash scripts/servicio.sh reiniciar` (sin
-  systemd, parar y volver a lanzar `bash scripts/arrancar.sh`).
+  repositorio de fuera saltándose su actualizador. Ese actualizador puede
+  reiniciarlo por ti con `bash scripts/servicio.sh reiniciar --si-libre`, que
+  no lo corta a mitad de una lectura o una escritura ni con el control dado a
+  Claude (sale con 3 y dice por qué). Si no, reinícialo tú:
+  `bash scripts/servicio.sh reiniciar` (sin systemd, parar y volver a lanzar
+  `bash scripts/arrancar.sh`).
 
-`/api/estado` dice la versión que corre: si no cambia tras actualizar, falta
-reiniciar.
+Si el puente corre un código que ya no es el del disco, lo dice: un aviso
+arriba de su pantalla («sigue con el código de antes») y `comprobar`. Es lo
+que pasa al actualizar sin reiniciar.
 
 **La conversación de Claude sobrevive al reinicio** (vive en tmux, fuera del
 servicio, a propósito), y con ella su servidor MCP con el código de antes. Tras

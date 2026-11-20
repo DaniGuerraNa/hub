@@ -30,11 +30,9 @@ from pathlib import Path
 from . import huellas
 from .config import hogar
 from .control import SinControl
-from .motor import Motor, diferencia
+from .motor import Motor
 
 MAX_PAGINAS = 400
-# Dos capturas de página tan parecidas son la misma: Av Pág ya no avanza.
-IGUAL = 0.002
 
 _LINEA = re.compile(r"^\s*(\d+)\|(.*)$")
 
@@ -133,26 +131,21 @@ async def capturar(motor: Motor, lectura: Lectura) -> Lectura:
         motor.bitacora.apuntar("lectura", f"empiezo a capturar «{lectura.nombre}»", lectura=lectura.id)
         await motor.aparcar_raton()
         await motor.atajo(p["inicio_documento"])
-        img, quieta = await motor.esperar_estable()
-        img.save(lectura.png(1))
-        lectura.paginas = [Pagina(n=1, inestable=not quieta)]
-        _avisar_si_inestable(motor, lectura, 1, quieta)
-        lectura.guardar()
-        previa = img
-        while len(lectura.paginas) < MAX_PAGINAS:
+        lectura.paginas = []
+
+        async def avanzar():
             motor.progreso = f"página {len(lectura.paginas)}"
             await motor.atajo(p["pagina_abajo"], apuntar=False)
-            img, quieta = await motor.esperar_estable()
-            if diferencia(img, previa) < IGUAL:
-                break
+
+        # Una de más: con MAX_PAGINAS justas, la siguiente dice si era el final.
+        async for img, quieta in motor.paginas(avanzar, tope=MAX_PAGINAS + 1):
             n = len(lectura.paginas) + 1
+            if n > MAX_PAGINAS:
+                raise RuntimeError(f"más de {MAX_PAGINAS} páginas: ¿Av Pág no avanza en este programa?")
             img.save(lectura.png(n))
             lectura.paginas.append(Pagina(n=n, inestable=not quieta))
             _avisar_si_inestable(motor, lectura, n, quieta)
             lectura.guardar()
-            previa = img
-        else:
-            raise RuntimeError(f"más de {MAX_PAGINAS} páginas: ¿Av Pág no avanza en este programa?")
         lectura.estado = "capturada"
         motor.bitacora.apuntar("lectura", f"«{lectura.nombre}»: {len(lectura.paginas)} páginas",
                                lectura=lectura.id)

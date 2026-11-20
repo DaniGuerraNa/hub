@@ -822,11 +822,13 @@ def test_lo_viejo_o_lo_suyo_no_avisa_ni_mueve_nada(con, monkeypatch):
 def agente_falso(monkeypatch):
     from hub import reuniones
     from hub.secretario import avisos, piezas
-    estado = {"vivo": True, "grabando": None, "monitores": [{"n": 1}], "microfonos": [{"n": 7}],
+    estado = {"vivo": True, "agente": "0.3.0", "grabando": None, "monitores": [{"n": 1}], "microfonos": [{"n": 7}],
               "apps": [{"nombre": "ms-teams.exe", "pid": 9, "activa": True}]}
     orden = {"grabar": False, "id": "previa", "monitor": 1, "app": "ms-teams.exe", "micro": 49}
-    def grabar(monitor, app, micro, titulo=""):
-        orden.update(grabar=True, id="auto-1", monitor=int(monitor), app=app, micro=micro)
+    def grabar(monitor, app, micro, titulo="", seguir_app=False):
+        # Con app, el monitor va vacío y la reserva la pone `grabar` (C-0456).
+        orden.update(grabar=True, id="auto-1", monitor=int(monitor or 1), app=app, micro=micro,
+                     seguir_app=seguir_app)
         estado["grabando"] = "auto-1"
         return dict(orden)
     def parar():
@@ -849,7 +851,7 @@ def test_al_entrar_a_una_llamada_graba_sola_y_al_acabar_para_sola(con, agente_fa
     disparadores.por_estado(con, reunion=True)
     assert not orden["grabar"], "un instante de audio no basta"
     disparadores.por_estado(con, reunion=True)
-    assert orden["grabar"] and orden["id"] == "auto-1"
+    assert orden["grabar"] and orden["id"] == "auto-1" and orden["seguir_app"] is True
     assert orden["micro"] == "", "el micro de la última vez ya no existe: graba sin él"
     assert "⏺ Grabando" in enviados
     miradas = []
