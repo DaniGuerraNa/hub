@@ -25,7 +25,12 @@ def main() -> None:
         from .app import crear_app
 
         # Sólo 127.0.0.1: el puente teclea en un Mac ajeno y no se abre a la red.
-        uvicorn.run(crear_app(), host=config.HOST, port=config.PUERTO, log_level="warning")
+        # Al pararlo, 5 s como mucho esperando a las peticiones abiertas: el
+        # directo no termina mientras una pestaña lo mira, y el 17-nov un stop
+        # tardó 93 s, hasta que systemd lo mató. Con el botón «Reiniciar el
+        # puente», eso son 93 s con la página esperando.
+        uvicorn.run(crear_app(), host=config.HOST, port=config.PUERTO, log_level="warning",
+                    timeout_graceful_shutdown=5)
     elif orden == "mcp":
         from .mcp_servidor import main as mcp
 

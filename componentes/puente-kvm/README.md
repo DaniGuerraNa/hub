@@ -34,6 +34,20 @@ Todo se hace en **una sola pantalla: http://127.0.0.1:8794**.
    herramientas del puente. La conversación vive en tmux (`puente-claude`):
    recargar la página o reiniciar el servicio no la corta. La primera vez,
    Claude pregunta si confías en la carpeta: contéstale tú.
+   - **Sólo carga lo del puente**: sus skills, sus permisos y su servidor, no
+     tus conectores, skills, agentes ni plugins personales (gasta bastante
+     menos en cada llamada, y lo que lee del Mac no tiene otro camino para
+     salir). De tus ajustes de Claude Code se lleva el modelo, el esfuerzo, la
+     interfaz, la barra de estado, los avisos al teléfono, lo que tengas
+     prohibido y lo que te pregunta. **No sale en el control remoto de
+     Claude** aunque lo tengas encendido: es otra forma de manejar una sesión
+     que ve el Mac de otro. **Una excepción:** si tus ajustes de Claude Code
+     dicen cómo autenticarse (`apiKeyHelper`, `env` u otra), el puente los
+     carga enteros para poder arrancar y sólo deja fuera tus servidores MCP y
+     lo sincronizado de claude.ai (skills y plugins).
+   - **Si Claude Code se cierra**, la terminal se queda en una shell: para
+     volver, el menú de la conversación → **Reabrir** (retoma la misma). Un
+     `claude` escrito ahí también abre con lo del puente, en el mismo modo.
    - **El modelo** va explícito, por su nombre exacto: por omisión **Fable 5.2**
      (`claude-fable-5-2`, pide Claude Code 2.1.322 o posterior). Se cambia en
      **Ajustes → Modelo de Claude** (Opus 5.5, Sonnet 5, o el que tenga tu Claude
@@ -54,9 +68,19 @@ Todo se hace en **una sola pantalla: http://127.0.0.1:8794**.
      imagen. Desde ahí, tu teclado y tu ratón van al Mac; un clic fuera de la
      imagen o «Dejar de usar» lo suelta. **Ctrl = ⌘** (marcado de fábrica)
      cambia Ctrl y ⌘ de sitio, porque Windows se queda la tecla ⌘; ⌘Tab y
-     ⌘Espacio tienen botón, y «Pegar texto» teclea lo del portapapeles. Sólo
-     funciona mientras Claude no tiene el control. Lo que teclees no se guarda
-     en ningún sitio.
+     ⌘Espacio tienen botón, y «Pegar texto» teclea lo del portapapeles con el
+     **teclado del Mac** que eliges a su lado («U.S.» o «Español - ISO»): si no
+     es el que tiene el Mac, los acentos salen cambiados. Sólo funciona
+     mientras Claude no tiene el control. Lo que teclees no se guarda en ningún
+     sitio.
+   - **«Despertar el Mac»**, bajo la imagen: lo saca del reposo, como
+     «Intentar despertar» de la web del JetKVM, y dice si volvió la imagen.
+     **«Jiggler»** lo enciende y lo apaga: el JetKVM mueve un poco el ratón
+     cuando nadie lo toca, para que el Mac no se bloquee ni te ponga
+     «ausente» (lo mueve 1 a 3 píxeles). El botón lo enciende con «Frecuente,
+     cada 30 s» (el JetKVM trae «Estándar»); Claude puede ponerle horario («de 9
+     a 18 entre semana», con tu zona horaria) si se lo pides. Lo hace el
+     aparato, así que **sigue aunque cierres el puente**.
    - Si en el Mac **la rueda va al revés** (el «desplazamiento natural»),
      Ajustes → «Invertir la rueda del ratón».
    - **«⤢ Pantalla grande»**, arriba de la imagen: el Mac ocupa toda la ventana
@@ -64,6 +88,19 @@ Todo se hace en **una sola pantalla: http://127.0.0.1:8794**.
      hasta el tamaño real y más (el % es del tamaño real del Mac), y con barras
      o arrastrando te mueves por ella; «Ajustar» vuelve a encajarla. Se puede
      usar el Mac igual. **Esc** o «Salir» vuelve (usando el Mac, Esc va al Mac).
+   - **«● Estoy en reunión»**, arriba de la imagen: graba lo que suena en el
+     Mac y su pantalla cuando cambia, hasta que pulses **«■ Salí de la
+     reunión»**. Tu voz no se graba (entra al Mac por su micrófono y no pasa
+     por el JetKVM). Al pararla, Reuniones del hub la transcribe y la resume
+     sola. Lo pulsas tú: Claude no tiene herramienta para empezarla ni
+     pararla, y sus permisos le niegan leer esa carpeta (una barrera contra
+     descuidos, como con la contraseña, no contra quien la salte). En
+     el Mac, una vez: Ajustes del Sistema → Sonido → Salida → el dispositivo
+     USB del JetKVM (no «JetKVM v1», que es la pantalla); para oírla a la vez,
+     un «dispositivo de salida múltiple» en Configuración de Audio MIDI (viene
+     con macOS). Hace falta el firmware 0.5.9 o posterior; el puente enciende
+     el audio del JetKVM al empezar cada reunión (la imagen se corta unos
+     segundos) y lo apaga al terminar.
 3. Pídele lo que necesites en la terminal. Lee el documento página a página;
    en la página de la lectura ves **cada captura junto a su transcripción** y la
    comprobación con la **huella** de la base.
@@ -126,6 +163,11 @@ Por omisión arranca con un **Mac simulado** (un cliente de BD con un SP de
 3. Ojo: el JetKVM admite **una sola sesión**. Si abres su web en un navegador,
    el puente queda fuera (y al revés). La pantalla lo dice.
 
+**Al actualizar**, si el puente sigue con el código de antes, su pantalla lo
+avisa arriba con dos botones: «Reiniciar el puente» y, después, «Reabrir la
+conversación de Claude» (sin systemd, el aviso dice el comando). Lo cuenta
+`INSTALAR.md`, «Actualizar».
+
 La primera vez con el aparato: **`docs/pruebas-con-el-aparato.md`**. Si algo
 falla, `uv run --frozen puente-kvm diagnostico` deja un informe sin secretos
 ni contenido del trabajo para mandar. Desde un espacio de trabajo fuera del
@@ -164,6 +206,13 @@ por WebRTC de verdad.
   más bajo y comparar cada página con la lectura) cuesta unos 0,21 s por página
   con el simulador: 0,2 s para un tramo en la primera página, 6,0 s en la
   línea 1.000 y 12,3 s en la última de 2.017 (13-nov).
+- **Reiniciar con el botón** (con systemd, en una unidad de prueba): la página
+  vuelve a los 0,7 s sin nadie mirando el directo, y a los 5,7 s con otra
+  pestaña mirándolo, porque el directo no termina mientras se mira y el puente
+  lo corta a los 5 s al parar; sin ese tope, esperaba al `TimeoutStopSec` de
+  systemd (90 s por omisión: el stop de 93 s del 17-nov). Recorrido en un
+  navegador de verdad, de pulsar a la página recargada con el código nuevo:
+  1,2 s (20-nov).
 
 ## Lo que aún no se ha medido con el aparato
 

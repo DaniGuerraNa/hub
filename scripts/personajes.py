@@ -66,8 +66,12 @@ MARGEN = 0.04
 # 48 limpia el contorno de los que tienen trazo. El de luz tiene un resplandor
 # que se funde con su fondo oscuro: con 160 queda como luz semitransparente;
 # con 48 dejaba un aro azul. Medido a ojo sobre el tema, en sus hojas.
+# Dos pingüinos, al revés: el hielo no tiene trazo y su cara de arriba está a
+# 42 de su fondo rosa, y la nube blanca del de la taza a 40 de su crema; con
+# 48 salían medio transparentes y con grano sobre el tema oscuro. Con 28 salen
+# enteros y el contorno sigue limpio (el ruido de esos fondos no pasa de 3).
 TOLERANCIA_POR_OMISION = 48
-TOLERANCIA = {"hongo-luz": 160}
+TOLERANCIA = {"hongo-luz": 160, "pinguino-hielo": 28, "pinguino-taza": 28}
 
 # Los que no se recortan: van en una baldosa redondeada con su propio fondo.
 # El amanita no tiene trazo y su pie es del color del fondo, que además tiene

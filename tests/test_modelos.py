@@ -100,6 +100,11 @@ def test_nadie_en_src_arranca_claude_sin_modelo() -> None:
             # tiene ningún campo con el que se pueda lanzar nada.
             if "Agente(" in linea:
                 continue
+            # Buscar dónde está (`maquina.encontrar`) no lo arranca: lo que se
+            # lanza luego es `claude --version`, para el texto de una incidencia
+            # (C-0468), y ahí no hay modelo que decir.
+            if "maquina.encontrar(" in linea:
+                continue
             # El modo «claude» del Puente KVM —quién tiene el teclado del Mac—
             # es una clave de `puente.CONTROLES` (decisión 438): nombra un
             # estado que lee, no arranca nada. Sólo ese archivo y esa forma.

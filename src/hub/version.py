@@ -147,11 +147,17 @@ def buscar_remota(raiz: Path | None = None, *, ahora: datetime | None = None,
     return _apuntar(datos)
 
 
+def _origin(raiz: Path | None = None) -> subprocess.CompletedProcess:
+    """`git remote get-url origin`, la única forma de preguntarlo aquí: lo
+    usan `sin_remoto` y `repo_github`, que antes lo repetían cada uno."""
+    return subprocess.run(["git", "-C", str(raiz or config.RAIZ_REPO), "remote", "get-url", "origin"],
+                          capture_output=True, text=True, timeout=5)
+
+
 def sin_remoto(raiz: Path | None = None) -> bool:
     """Si este clon no tiene `origin`, o sea de dónde mirar. Lanza si git no se
     puede ejecutar: eso sí es un fallo, y quien llama decide cómo decirlo."""
-    return subprocess.run(["git", "-C", str(raiz or config.RAIZ_REPO), "remote", "get-url", "origin"],
-                          capture_output=True, text=True, timeout=5).returncode != 0
+    return _origin(raiz).returncode != 0
 
 
 def _lo_que_explica(stderr: str | None) -> str:
@@ -241,20 +247,52 @@ def novedades(changelog: str, desde: str | None, hasta: str) -> str:
     return "\n".join(fuera).strip()
 
 
-def url_novedades(raiz: Path | None = None) -> str | None:
-    """El CHANGELOG de la rama `main` publicada, si el remoto es de GitHub.
+# Un `origin` de GitHub, en sus formas: https (con usuario y token delante si
+# el clon se hizo así), ssh corto y ssh largo. Sólo se saca `dueño/repo`.
+_DE_GITHUB = re.compile(
+    r"^(?:https://(?:[^@/\s]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)"
+    r"([\w.-]+/[\w.-]+?)(?:\.git)?/?$")
 
-    Para enseñar qué trae una versión que aún no está en este clon. Con otro
-    alojamiento no se adivina la URL: mejor ningún enlace que uno roto.
-    """
+
+def repo_github(raiz: Path | None = None) -> str | None:
+    """`dueño/repo` del `origin` de este clon, si es de GitHub; si no, None.
+
+    La puerta para saber a qué repositorio de GitHub enlazar: el CHANGELOG
+    publicado (`url_novedades`) y las incidencias (`incidencias.destino`,
+    C-0468). 🔴 Nunca devuelve la URL tal cual: un clon hecho con
+    `https://usuario:token@github.com/…` lleva la llave dentro (regla dura 5),
+    y lo que sale de aquí acaba en una página. Con otro alojamiento no se
+    adivina nada: mejor ningún enlace que uno roto."""
     try:
-        r = subprocess.run(["git", "-C", str(raiz or config.RAIZ_REPO), "remote", "get-url", "origin"],
+        r = _origin(raiz)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    m = _DE_GITHUB.match(r.stdout.strip())
+    return m.group(1) if m else None
+
+
+def commit(raiz: Path | None = None) -> str | None:
+    """El commit corto en el que está este clon, o None si no se puede saber
+    (sin git, o una copia que no es un clon). Para quien cuenta un fallo
+    (C-0468): dos personas con la misma versión pueden no tener el mismo
+    código. Sólo pasa algo con forma de commit."""
+    try:
+        r = subprocess.run(["git", "-C", str(raiz or config.RAIZ_REPO), "rev-parse", "--short", "HEAD"],
                            capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return None
-    m = re.match(r"^(?:https://github\.com/|git@github\.com:)([\w.-]+/[\w.-]+?)(?:\.git)?$",
-                 r.stdout.strip())
-    return f"https://github.com/{m.group(1)}/blob/main/CHANGELOG.md" if m else None
+    hecho = r.stdout.strip()
+    return hecho if r.returncode == 0 and re.fullmatch(r"[0-9a-f]{7,40}", hecho) else None
+
+
+def url_novedades(raiz: Path | None = None) -> str | None:
+    """El CHANGELOG de la rama `main` publicada, si el remoto es de GitHub.
+
+    Para enseñar qué trae una versión que aún no está en este clon."""
+    repo = repo_github(raiz)
+    return f"https://github.com/{repo}/blob/main/CHANGELOG.md" if repo else None
 
 
 def para_la_guia(raiz: Path | None = None) -> dict:

@@ -1,0 +1,4 @@
+# Quien entra directo en GitHub elige entre las dos plantillas, o abre una en
+# blanco. Sin `contact_links` con un correo: lo que se publica no nombra a
+# nadie (C-0468).
+blank_issues_enabled: true

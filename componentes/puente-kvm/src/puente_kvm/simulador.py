@@ -26,10 +26,13 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from . import hid, muestras
+from . import hid, jiggler, muestras
 from .dispositivo import Dispositivo
 
 ANCHO, ALTO = 1920, 1080
+# Las zonas del Mac simulado (el JetKVM da las de su tzdata, unas 600).
+ZONAS = ("UTC", "America/Mexico_City", "America/Bogota", "America/Lima", "America/Santiago",
+         "America/Argentina/Buenos_Aires", "Europe/Madrid")
 
 # Dónde suele estar cada fuente según el sistema (Debian/Ubuntu, Fedora, Arch, macOS).
 _MONO = ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
@@ -84,26 +87,20 @@ _BITS = hid.SHIFT | hid.ALT
 
 
 def _tablas(distribucion: str) -> tuple[dict, dict, dict]:
+    tabla, muertas = ((hid._MAC_ES, hid._MUERTAS_MAC_ES) if distribucion == "mac-es"
+                      else (hid._MAC_US, hid._MUERTAS_MAC_US))
+    pasos = {c: hid.caracter(c, distribucion) for c in [chr(i) for i in range(32, 127)] + list(tabla)}
     caracter: dict[tuple[int, int], str] = {}
-    muerta: dict[tuple[int, int], str] = {}
-    componer: dict[tuple[str, str], str] = {}
-    if distribucion == "mac-es":
-        for c, pasos in hid._MAC_ES.items():
-            if len(pasos) == 1:
-                caracter.setdefault((pasos[0][0] & _BITS, hid.TECLAS[pasos[0][1]]), c)
-        muerta = {(m, hid.TECLAS[t]): acento for (m, t), acento in hid._MUERTAS_MAC_ES.items()}
-        for c, pasos in hid._MAC_ES.items():
-            if len(pasos) == 2 and pasos[1] != (0, "space"):
-                acento = muerta[(pasos[0][0] & _BITS, hid.TECLAS[pasos[0][1]])]
-                componer[(acento, caracter[(pasos[1][0] & _BITS, hid.TECLAS[pasos[1][1]])])] = c
-        caracter[(0, hid.TECLAS["space"])] = " "
-        return caracter, muerta, componer
-    for c in [chr(i) for i in range(32, 127)] + list(hid._OPTION_MAC_US):
-        p = hid.caracter(c)
+    for c, p in pasos.items():
         if p and len(p) == 1:
             caracter.setdefault((p[0].modificadores & _BITS, p[0].tecla), c)
-    muerta = {(hid.ALT, hid.TECLAS[t]): acento for acento, t in hid._MUERTAS_MAC_US.items()}
-    componer = {v: k for k, v in hid._COMPUESTAS_MAC_US.items()}
+    caracter[(0, hid.TECLAS["space"])] = " "
+    muerta = {(m, hid.TECLAS[t]): acento for (m, t), acento in muertas.items()}
+    componer: dict[tuple[str, str], str] = {}
+    for c, p in pasos.items():
+        if p and len(p) == 2 and p[1].tecla != hid.TECLAS["space"]:
+            acento = muerta[(p[0].modificadores & _BITS, p[0].tecla)]
+            componer[(acento, caracter[(p[1].modificadores & _BITS, p[1].tecla)])] = c
     return caracter, muerta, componer
 
 
@@ -337,6 +334,16 @@ class Simulador(Dispositivo):
         self.conectado = False
         self.informes = 0
         self.pulsaciones = 0  # teclas que bajaron: soltarlo todo no cuenta
+        # El Mac simulado no suena: con el sonido encendido, lo que llega es lo que
+        # las pruebas le hagan sonar (`sonar`), como el JetKVM, que en silencio no manda nada.
+        self.sonido = False
+        # El jiggler del Mac simulado, como viene el JetKVM: apagado y con «Estándar».
+        self._jiggler = {"encendido": False, "config": dict(jiggler.PREAJUSTES["estandar"][1])}
+        self.jiggler = dict(self._jiggler)
+        # Dormido no cambia la pantalla (las pruebas leen igual); sólo lo que
+        # dice el USB, que es lo que mira `despertar`.
+        self.dormido = False
+        self.despertado = 0
 
     # ── Dispositivo ─────────────────────────────────────────────────────────
     async def conectar(self) -> None:
@@ -344,6 +351,42 @@ class Simulador(Dispositivo):
 
     async def cerrar(self) -> None:
         self.conectado = False
+
+    @property
+    def da_sonido(self) -> bool:
+        return self.sonido
+
+    async def encender_sonido(self) -> bool:
+        self.sonido = True
+        return False
+
+    async def apagar_sonido(self) -> None:
+        self.sonido = False
+
+    async def leer_jiggler(self) -> dict:
+        self.jiggler = {"encendido": self._jiggler["encendido"], "config": dict(self._jiggler["config"])}
+        return self.jiggler
+
+    async def poner_jiggler(self, encendido: bool, config: dict | None = None) -> dict:
+        if config is not None:
+            self._jiggler["config"] = dict(config)
+        self._jiggler["encendido"] = bool(encendido)
+        return await self.leer_jiggler()
+
+    async def zonas(self) -> list[str]:
+        return list(ZONAS)
+
+    async def despertar(self, tope: float = 8.0) -> dict:
+        if not self.dormido:
+            return {"antes": "configured", "despues": "configured", "imagen": True, "ya_despierto": True}
+        self.dormido = False
+        self.despertado += 1
+        return {"antes": "suspended", "despues": "configured", "imagen": True}
+
+    def sonar(self, pcm: bytes, t: float) -> None:
+        """Lo que suena en el Mac simulado: llega a quien lo oiga, si el sonido está encendido."""
+        if self.sonido and self.oido is not None:
+            self.oido(pcm, t)
 
     async def informe_teclado(self, modificadores: int, teclas: list[int]) -> None:
         self.informes += 1
@@ -380,7 +423,7 @@ class Simulador(Dispositivo):
             "tipo": self.tipo, "conectado": self.conectado,
             "resolucion": f"{ANCHO}×{ALTO}", "ancho": ANCHO, "alto": ALTO,
             "lineas": len(e.lineas), "modificado": e.modificado,
-            "huella_base": huella_sqlserver(e.guardado),
+            "huella_base": huella_sqlserver(e.guardado), "jiggler": self.jiggler,
             "nota": "Mac simulado: cliente de BD con un procedimiento de muestra"
                     + ("" if FUENTE_MONO else f". Falta la fuente monoespaciada ({ARREGLO_FUENTES})"),
         }

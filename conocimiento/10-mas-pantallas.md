@@ -274,7 +274,8 @@ aparatos no cambian. «Volver a la de siempre», en el mismo sitio, la apaga.
 
 Viene apagada porque aún se está puliendo: si la pruebas y algo no se ve bien o
 echas algo en falta, cuéntaselo a quien te instaló el hub o abre una incidencia
-en el repositorio de donde lo instalaste.
+en el repositorio de donde lo instalaste (desde la Guía, el enlace te lleva a
+«Contar un fallo o una idea», `06-problemas.md`).
 
 ## Buscar y moverse con el teclado
 

@@ -74,7 +74,7 @@ def test_lo_tecleado_no_queda_en_la_bitacora_solo_cuanto_rato(entorno):
     with c.websocket_connect("/ws/mando", headers=PERSONA) as ws:
         pulsar(ws, H, O, L, A)
         ws.send_text(json.dumps({"t": "pegar", "texto": "contrasena-secreta"}))
-        assert ws.receive_json() == {"hecho": "pegar"}
+        assert ws.receive_json()["hecho"] == "pegar"
     bitacora = json.dumps(c.get("/api/bitacora").json(), ensure_ascii=False)
     assert "usó el Mac desde la pantalla" in bitacora
     assert "hola" not in bitacora and "secreta" not in bitacora
@@ -85,7 +85,8 @@ def test_pegar_teclea_con_la_distribucion_de_ajustes(entorno):
     sim.editor.lineas, sim.editor.cursor = [""], (0, 0)
     with c.websocket_connect("/ws/mando", headers=PERSONA) as ws:
         ws.send_text(json.dumps({"t": "pegar", "texto": "SELECT [id] FROM t;"}))
-        assert ws.receive_json() == {"hecho": "pegar"}
+        # Dice con qué teclado tecleó: el aviso de la pantalla no se fía de su selector.
+        assert ws.receive_json() == {"hecho": "pegar", "teclado": "U.S."}
     assert sim.editor.lineas == ["SELECT [id] FROM t;"]
 
 

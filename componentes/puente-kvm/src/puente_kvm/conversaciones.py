@@ -41,6 +41,14 @@ class Conversacion:
     modelo: str  # el id exacto con que se abrió por última vez; "" = el de Claude Code
     espacio: str  # la carpeta donde nació: Claude Code guarda ahí sus conversaciones
     claude_code: str = ""  # la versión de Claude Code con que se abrió por última vez
+    # La huella del código del puente con que se abrió por última vez (`Codigo.huella_disco`):
+    # su servidor MCP nace con la conversación y se queda con ese código. "" = de antes de apuntarla.
+    codigo: str = ""
+
+    def herramientas_viejas(self) -> bool:
+        """Sus herramientas son de otro código que el del disco: hay que reabrirla
+        para que las cargue. Sin huella apuntada no se sabe, y cuenta como viejas."""
+        return self.codigo != config.CODIGO_EN_MARCHA.huella_disco()
 
     def publica(self) -> dict:
         d = asdict(self)
@@ -122,7 +130,8 @@ def nueva(nombre: str, modelo: str) -> Conversacion:
     return c
 
 
-def marcar_abierta(id_: str | None, modelo: str | None = None, claude_code: str | None = None) -> None:
+def marcar_abierta(id_: str | None, modelo: str | None = None, claude_code: str | None = None,
+                   codigo: str | None = None) -> None:
     """La que corre ahora en la terminal (None: ninguna del registro)."""
     with _cerrojo:
         datos = _leer()
@@ -134,6 +143,8 @@ def marcar_abierta(id_: str | None, modelo: str | None = None, claude_code: str 
                     c.modelo = modelo
                 if claude_code is not None:
                     c.claude_code = claude_code
+                if codigo is not None:
+                    c.codigo = codigo
         _escribir(datos)
 
 

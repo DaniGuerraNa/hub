@@ -12,7 +12,9 @@ no puede darse el control ni aprobar cambios.
 from __future__ import annotations
 
 import asyncio
+import functools
 import io
+import json
 import os
 from pathlib import Path
 
@@ -24,20 +26,40 @@ from . import config
 
 URL = os.environ.get("PUENTE_URL", f"http://127.0.0.1:{os.environ.get('PUENTE_PUERTO', '8794')}")
 
+# Van en cada llamada de la conversación, y el cómo ya lo dicen CLAUDE.md, las
+# skills y la descripción de cada herramienta: aquí, sólo lo que no se negocia.
 mcp = FastMCP(
     "puente-kvm",
-    instructions=(
-        "Manejas un Mac remoto a través de un JetKVM: ves su pantalla y tecleas como un "
-        "teclado USB. Sólo puedes actuar cuando la persona te ha dado el control en la "
-        "pantalla del puente; si una herramienta dice que no tienes el control, pídeselo "
-        "y espera. Para documentos largos usa leer_documento → ver_pagina → "
-        "transcribir_pagina, y para escribir, proponer_cambio (la persona lo aprueba) → "
-        "escribir_cambio. Para recorrer de arriba abajo cualquier otra cosa (una hoja, una "
-        "web, una rejilla de resultados), recorrer_pantalla, en una sola llamada; para mirar "
-        "sólo una parte a tamaño real, ver_pantalla con x, y, ancho y alto. Nunca guardes ni "
-        "ejecutes en el Mac: eso lo hace la persona."
-    ),
+    instructions=("Manejas un Mac ajeno por un JetKVM: sólo con el control que te da la persona en el "
+                  "puente (si no lo tienes, pídeselo y espera), y nunca guardes ni ejecutes en el Mac."),
 )
+
+
+def herramienta(f):
+    """Registra `f` como herramienta del puente y la devuelve tal cual.
+
+    Lo que devuelve un `dict` llega a Claude como JSON compacto: FastMCP lo
+    sangra, un ~22 % más de caracteres en cada resultado. Con
+    `ensure_ascii=False`, porque si no `json` escapa lo que no es ASCII (una
+    «ñ» sale `\\u00f1`, seis caracteres).
+
+    `structured_output=False` no es para que llegue una sola vez: con mcp
+    1.30.0 y un `-> dict` sin parámetros ya llegaba un solo texto, sin
+    `outputSchema`. Hace falta porque el envoltorio devuelve `str` y `wraps`
+    le copia la anotación de `f`: si una dijera `-> dict[str, …]` (o un
+    TypedDict), FastMCP anunciaría un esquema de objeto y rechazaría el texto
+    («Input should be a valid dictionary», visto con 1.30.0). Así no mira la
+    anotación.
+    """
+    @functools.wraps(f)
+    async def envuelta(*args, **kwargs):
+        r = await f(*args, **kwargs)
+        if isinstance(r, dict):
+            return json.dumps(r, ensure_ascii=False, separators=(",", ":"), default=str)
+        return r
+
+    mcp.tool(structured_output=False)(envuelta)
+    return f
 
 
 class ErrorPuente(RuntimeError):
@@ -74,17 +96,12 @@ async def _bajar(ruta: str) -> PILImage.Image:
     return PILImage.open(io.BytesIO(r.content)).convert("RGB")
 
 
-async def _imagen(ruta: str, ancho: int | None = None, recorte: str | None = None,
-                  img: PILImage.Image | None = None, caja: tuple[int, int, int, int] | None = None) -> Image:
+async def _imagen(ruta: str, ancho: int | None = None, img: PILImage.Image | None = None,
+                  caja: tuple[int, int, int, int] | None = None) -> Image:
     img = img or await _bajar(ruta)
     if caja:
         x, y, w, h = caja
         img = img.crop((x, y, x + w, y + h))
-    if recorte in ("arriba", "abajo"):
-        mitad = img.height // 2
-        # Un poco de solape para que la línea partida por la mitad salga entera en una.
-        img = img.crop((0, 0, img.width, mitad + 40)) if recorte == "arriba" else img.crop(
-            (0, mitad - 40, img.width, img.height))
     if ancho and img.width > ancho:
         img = img.resize((ancho, round(img.height * ancho / img.width)), PILImage.LANCZOS)
     buf = io.BytesIO()
@@ -97,19 +114,63 @@ async def _imagen(ruta: str, ancho: int | None = None, recorte: str | None = Non
 ANCHO_IMAGEN = 1600
 
 
-@mcp.tool()
+# Lo que Claude usa de `/api/estado` (la pantalla del puente lo sigue leyendo
+# entero): una lista blanca, para que un campo nuevo para la pantalla no le
+# llegue sin decidirlo. None: el valor entero; una tupla: sólo esas claves (de
+# un dict, o de cada dict de una lista). Nunca `huella_base` (en el simulador
+# le daría la respuesta de comprobar_huella) ni la `url` del aparato.
+PARA_CLAUDE = {
+    "control": ("modo", "motivo"),
+    "dispositivo": ("tipo", "conectado", "motivo", "error", "resolucion", "firmware", "firmware_contrastado",
+                    "aviso", "ultimo_fotograma_s", "nota"),
+    "tarea": None, "progreso": None, "error_conexion": None, "jiggler_texto": None, "mando": None,
+    "lecturas": ("id", "nombre", "estado", "error", "paginas", "transcritas", "lineas", "conflictos", "huecos",
+                 "pendientes", "completo", "verificada", "errores_por_pagina", "inestables"),
+    "cambios": None,
+}
+
+
+def _vacio(v) -> bool:
+    return v is None or isinstance(v, (str, list, dict)) and not v
+
+
+def _sin_vacios(valor):
+    """Fuera "", None, [] y {}; un `False` o un 0 dicen algo y se quedan."""
+    if isinstance(valor, dict):
+        limpio = {k: _sin_vacios(v) for k, v in valor.items()}
+        return {k: v for k, v in limpio.items() if not _vacio(v)}
+    if isinstance(valor, list):
+        return [_sin_vacios(v) for v in valor]
+    return valor
+
+
+def para_claude(e: dict) -> dict:
+    salida = {}
+    for clave, claves in PARA_CLAUDE.items():
+        if clave not in e:
+            continue
+        valor = e[clave]
+        if claves is not None and isinstance(valor, dict):
+            valor = {k: valor[k] for k in claves if k in valor}
+        elif claves is not None and isinstance(valor, list):
+            valor = [{k: v[k] for k in claves if k in v} if isinstance(v, dict) else v for v in valor]
+        salida[clave] = valor
+    return _sin_vacios(salida)
+
+
+@herramienta
 async def estado() -> dict:
     """Quién tiene el control del Mac, el aparato, la tarea en curso y las últimas lecturas y cambios."""
-    e = await _llamar("GET", "/api/estado")
-    e.pop("perfil", None)
+    e = para_claude(await _llamar("GET", "/api/estado"))
     if config.CODIGO_EN_MARCHA.viejo():
         # Este servidor nace con la conversación: tras actualizar, sigue con lo de antes.
         e["aviso_mcp"] = ("las herramientas del puente de esta conversación son de antes de actualizar: "
-                          "pide a la persona que la reabra (menú de conversaciones, arriba de la terminal → Reabrir)")
+                          "pide a la persona que la reabra (el botón «Reabrir la conversación de Claude», en el "
+                          "aviso de arriba de su pantalla, o el menú de conversaciones → Reabrir)")
     return e
 
 
-@mcp.tool()
+@herramienta
 async def ver_pantalla(region: str = "completa", x: int = 0, y: int = 0, ancho: int = 0, alto: int = 0) -> list:
     """Captura la pantalla del Mac. region: "completa" o "editor" (sólo la región del editor).
 
@@ -143,7 +204,7 @@ async def ver_pantalla(region: str = "completa", x: int = 0, y: int = 0, ancho: 
 
 
 # ── actuar ──────────────────────────────────────────────────────────────────
-@mcp.tool()
+@herramienta
 async def teclear(texto: str) -> dict:
     """Teclea texto en la ventana que tenga el foco del Mac. Los saltos de línea son Enter.
 
@@ -153,7 +214,7 @@ async def teclear(texto: str) -> dict:
     return await _llamar("POST", "/api/teclear", {"texto": texto}, timeout=600)
 
 
-@mcp.tool()
+@herramienta
 async def atajo(atajo: str, veces: int = 1) -> dict:
     """Pulsa un atajo, p. ej. "cmd+up", "pagedown", "shift+down", "enter", "escape", "cmd+tab".
 
@@ -163,19 +224,19 @@ async def atajo(atajo: str, veces: int = 1) -> dict:
     return await _llamar("POST", "/api/atajo", {"atajo": atajo, "veces": veces})
 
 
-@mcp.tool()
+@herramienta
 async def ir_a_linea(linea: int) -> dict:
     """Lleva el cursor del editor a esa línea con el atajo del perfil (Cmd+L en DBeaver)."""
     return await _llamar("POST", "/api/ir_a_linea", {"linea": linea})
 
 
-@mcp.tool()
+@herramienta
 async def clic(x: int, y: int, boton: str = "izquierdo", doble: bool = False) -> dict:
     """Clic en coordenadas REALES de la pantalla (las de la captura sin reducir). boton: izquierdo, derecho o centro."""
     return await _llamar("POST", "/api/clic", {"x": x, "y": y, "boton": boton, "doble": doble})
 
 
-@mcp.tool()
+@herramienta
 async def recorrer_pantalla(x: int, y: int, ancho: int, alto: int, pasos: int = 5, max_paginas: int = 10) -> list:
     """Baja una zona de la pantalla con la rueda, de donde esté hasta su final, y la devuelve página a página.
 
@@ -219,12 +280,46 @@ async def recorrer_pantalla(x: int, y: int, ancho: int, alto: int, pasos: int = 
     return salida
 
 
-@mcp.tool()
+@herramienta
 async def rueda(pasos: int, x: int, y: int) -> dict:
     """Rueda del ratón en (x, y), coordenadas REALES: positivo baja el contenido, negativo lo
     sube. Gira donde está el puntero, así que primero lo lleva a (x, y): pon un punto DENTRO
     de lo que quieres desplazar (aparcado, el puntero queda fuera). Para leer, mejor leer_documento."""
     return await _llamar("POST", "/api/rueda", {"pasos": pasos, "x": x, "y": y})
+
+
+# ── el aparato: despertar el Mac y el jiggler (C-0463) ──────────────────────
+@herramienta
+async def despertar_mac() -> dict:
+    """Saca al Mac del reposo (la señal de «despertar» por USB del JetKVM, como su botón
+    «Intentar despertar»). Una tecla normal no lo despierta. Necesita el control.
+
+    Espera hasta 8 s a que vuelva la imagen: `despierto` sólo es true si llegó. Si no,
+    `texto` dice qué se notó; un Mac apagado (no en reposo) no se enciende así.
+    """
+    return await _llamar("POST", "/api/despertar", {}, timeout=30)
+
+
+@herramienta
+async def jiggler(encendido: bool, horario: str = "", zona: str = "", inactividad_s: int = 30) -> dict:
+    """Enciende o apaga el jiggler del JetKVM: mueve un poco el ratón cuando nadie lo toca,
+    para que el Mac no se bloquee ni salga «ausente». Queda guardado en el aparato y sigue
+    aunque se cierre el puente. No hace falta el control: no teclea ni hace clic.
+
+    Sin `horario`, al encenderlo pone «Frecuente, cada 30 s» todo el día (si ya había un
+    horario propio guardado, lo deja). Con `horario`, un cron de SEIS campos, con
+    segundos: «segundos minutos horas día-del-mes mes día-de-la-semana» (0 = domingo),
+    sólo números, *, a-b, /n y comas; en segundos, un número o «*/n» con n ≥ 10. Ejemplos:
+    «*/30 * 9-17 * * 1-5» = cada 30 s entre semana de 9:00 a 18:00; «0 * 8-13 * * 1-6» =
+    cada minuto de lunes a sábado de 8 a 14. Con horario, `zona` es obligatoria: la zona
+    IANA de esas horas (p. ej. «America/Mexico_City»); pregúntasela a la persona si no la
+    sabes. `inactividad_s` (30–3600): cuánto tiempo sin que nadie toque el ratón antes de
+    moverlo; sólo cuenta con horario.
+    """
+    cuerpo: dict = {"encendido": encendido}
+    if horario:
+        cuerpo.update({"horario": horario, "zona": zona, "inactividad_s": inactividad_s})
+    return await _llamar("POST", "/api/jiggler", cuerpo)
 
 
 # ── leer un documento largo ─────────────────────────────────────────────────
@@ -238,7 +333,7 @@ async def _esperar_tarea(tope: float) -> None:
     raise ErrorPuente("la tarea sigue en marcha; consulta estado() más tarde")
 
 
-@mcp.tool()
+@herramienta
 async def leer_documento(nombre: str) -> dict:
     """Recorre el documento abierto en el editor del Mac, de principio a fin, página a página.
 
@@ -259,19 +354,18 @@ async def leer_documento(nombre: str) -> dict:
     return res
 
 
-@mcp.tool()
-async def ver_pagina(lectura: str, n: int, zoom: str = "no") -> list:
-    """La captura de la página n de una lectura, tal cual se vio.
+# Sin zoom (C-0471): la página ya llega a tamaño real, y media página ampliada
+# hasta el lado que el modelo ve entero (×1,59) no distinguió 0/O ni 1/l/I en
+# el Mac simulado: la mitad de las líneas siguieron mal. Lo que dice si una
+# copia es exacta es la huella, no mirar más de cerca.
+@herramienta
+async def ver_pagina(lectura: str, n: int) -> list:
+    """La captura de la página n de una lectura, tal cual se vio, a tamaño real."""
+    img = await _imagen(f"/api/lecturas/{lectura}/paginas/{n}.png")
+    return [f"Página {n} de la lectura {lectura}", img]
 
-    zoom: "no" (entera), "arriba" o "abajo" (media página con más resolución, para
-    caracteres dudosos). Las dos mitades se solapan unas líneas.
-    """
-    img = await _imagen(f"/api/lecturas/{lectura}/paginas/{n}.png",
-                        recorte=zoom if zoom in ("arriba", "abajo") else None)
-    return [f"Página {n} de la lectura {lectura}" + (f" (mitad {zoom})" if zoom != "no" else ""), img]
 
-
-@mcp.tool()
+@herramienta
 async def transcribir_pagina(lectura: str, n: int, texto: str) -> dict:
     """Guarda la transcripción de la página n, en formato «número|contenido» por renglón.
 
@@ -288,7 +382,7 @@ async def transcribir_pagina(lectura: str, n: int, texto: str) -> dict:
     return await _llamar("POST", f"/api/lecturas/{lectura}/paginas/{n}", {"texto": texto})
 
 
-@mcp.tool()
+@herramienta
 async def estado_lectura(lectura: str) -> dict:
     """Cómo va una lectura: páginas transcritas, huecos, conflictos, si está verificada y
     la ruta del archivo ensamblado (el texto completo, para leerlo o copiarlo y editarlo)."""
@@ -297,13 +391,13 @@ async def estado_lectura(lectura: str) -> dict:
     return r
 
 
-@mcp.tool()
+@herramienta
 async def resolver_linea(lectura: str, linea: int, texto: str) -> dict:
     """Fija el texto correcto de una línea en conflicto (tras mirar las capturas)."""
     return await _llamar("POST", f"/api/lecturas/{lectura}/resolver", {"linea": linea, "texto": texto})
 
 
-@mcp.tool()
+@herramienta
 async def comprobar_huella(lectura: str, huella: str) -> dict:
     """Compara la copia con la huella que da la base (hex). Si coincide, la copia es exacta."""
     return await _llamar("POST", f"/api/lecturas/{lectura}/huella", {"referencia": huella})
@@ -327,7 +421,7 @@ def _leer_propuesta(ruta: str) -> str:
         raise ErrorPuente(f"no puedo leer {ruta}: {e.strerror}") from e
 
 
-@mcp.tool()
+@herramienta
 async def proponer_cambio(lectura: str, descripcion: str, ruta: str = "", texto: str = "") -> dict:
     """Propone el texto nuevo COMPLETO del documento (desde un archivo `ruta` o en `texto`).
 
@@ -344,13 +438,13 @@ async def proponer_cambio(lectura: str, descripcion: str, ruta: str = "", texto:
     return r
 
 
-@mcp.tool()
+@herramienta
 async def estado_cambio(cambio: str) -> dict:
     """Estado de un cambio (propuesto, aprobado, escribiendo, escrito, fallido, verificado) y sus tramos."""
     return await _llamar("GET", f"/api/cambios/{cambio}")
 
 
-@mcp.tool()
+@herramienta
 async def escribir_cambio(cambio: str) -> dict:
     """Escribe en el editor del Mac un cambio YA APROBADO por la persona, tramo a tramo.
 
@@ -366,7 +460,7 @@ async def escribir_cambio(cambio: str) -> dict:
     return r
 
 
-@mcp.tool()
+@herramienta
 async def ver_tramo(cambio: str, i: int) -> list:
     """La captura del editor tras escribir el tramo i, para comprobar que quedó como debía."""
     return [f"Tramo {i} del cambio {cambio}, tras escribirlo",

@@ -23,6 +23,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -33,8 +34,10 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageDraw, ImageFont
+from starlette.background import BackgroundTask
 
-from . import cambios, config, conversaciones, hid, huellas, lecturas, repertorio, terminal
+from . import (cambios, comprobar, config, conversaciones, hid, huellas, jiggler, lecturas, reinicio, repertorio,
+               reunion, terminal)
 from .control import Bitacora, Control, SinControl
 from .dispositivo import AparatoNoDisponible, Dispositivo
 from .motor import Motor, Ocupado, PantallaInesperada
@@ -120,6 +123,10 @@ RECORRIDO_PAGINAS, RECORRIDO_PASOS = 20, 60
 COMBINACIONES_MANDO = ("cmd+tab", "cmd+space")
 # Códigos de tecla HID que acepta el mando: de la «a» al Ctrl/Mayús/⌥/⌘ derechos.
 TECLA_MIN, TECLA_MAX = 0x04, 0xE7
+# Tras pedir el reinicio, cuánto se contesta «ya se está reiniciando» a otro
+# clic. Si systemd no lo aceptó, nada: se puede volver a pulsar en el acto. Y
+# pasado esto, tampoco: la página dice a los 15 s que no se reinició.
+REINICIO_EN_CURSO = 15.0
 
 
 class Puente:
@@ -131,28 +138,51 @@ class Puente:
         self.motor = Motor(self.dispositivo, self.control, self.bitacora, self.ajustes["perfil"])
         self.error_conexion = ""
         self.tareas: set[asyncio.Task] = set()
-        self.actividad = repertorio.Actividad()
+        self.actividad = repertorio.Actividad(config.hogar() / "actividad.json")
+        # Tras reiniciar el puente, la conversación de Claude sigue viva en tmux:
+        # lo último que contaron sus hooks, para que cambiarla pregunte si Claude
+        # estaba a medias (C-0470). Sin conversación viva, lo guardado es de otra.
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            if self.actividad.ruta.exists() and terminal.existe():
+                self.actividad.recuperar()
         # Hasta cuándo la persona está usando el Mac desde la pantalla: mientras,
-        # el directo va más fluido.
+        # el directo va más fluido, y el puente no se reinicia (`comprobar.ocupado`).
         self.mando_hasta = 0.0
+        # Cuántas pestañas tienen abierto el mando: al cerrarse la última, el Mac
+        # ya no está en uso, aunque no hayan pasado los segundos de `mando_hasta`.
+        self.mandos = 0
+        # Hasta cuándo un reinicio pedido está en curso (`REINICIO_EN_CURSO`).
+        self.reinicio_hasta = 0.0
+        self._mirando_reinicio = False
         self.ultima_imagen: tuple[bytes, float, int] = (b"", 0.0, 0)
         # Las páginas del último recorrido (`/api/recorrer`), sólo en memoria: son
         # contenido del trabajo, y el siguiente las sustituye. Con su id, para que
         # quien las baja no mezcle las de otro que llegó en medio.
         self.recorrido: tuple[str, list[bytes]] = ("", [])
+        self.grabadora = reunion.Grabadora(self.dispositivo)
 
     async def conectar(self) -> None:
         try:
             await self.dispositivo.conectar()
-            self.error_conexion = ""
-            e = self.dispositivo.estado()
-            self.bitacora.apuntar("conexion", f"conectado a {self.dispositivo.tipo}"
-                                  + (f", firmware {e['firmware']}" if e.get("firmware") else ""), quien="puente")
-            if e.get("aviso"):
-                self.bitacora.apuntar("aviso", e["aviso"], quien="puente")
+            await self.tras_conectar()
         except Exception as e:  # se enseña en la pantalla, no se traga
             self.error_conexion = explicar_error(e, self.dispositivo)
             self.bitacora.apuntar("error", f"no conecta: {self.error_conexion}", quien="puente")
+
+    async def tras_conectar(self) -> None:
+        """Lo de después de conectar. También cuando la conexión vuelve sola: con el
+        Mac dormido al conectar no llega vídeo, y al despertar llega (C-0463)."""
+        self.error_conexion = ""
+        e = self.dispositivo.estado()
+        self.bitacora.apuntar("conexion", f"conectado a {self.dispositivo.tipo}"
+                              + (f", firmware {e['firmware']}" if e.get("firmware") else ""), quien="puente")
+        if e.get("aviso"):
+            self.bitacora.apuntar("aviso", e["aviso"], quien="puente")
+        if self.dispositivo.da_sonido and self.grabadora.actual is None and not self.grabadora.empezando:
+            # Encendido de una reunión que no se cerró bien: se queda guardado
+            # en el aparato, y sin esto capturaría en cada conexión.
+            with contextlib.suppress(Exception):
+                await self.dispositivo.apagar_sonido()
 
     def devolver_control(self, motivo: str) -> None:
         """El control dado vale para el aparato al que se dio, no para otro."""
@@ -165,6 +195,25 @@ class Puente:
         self.tareas.add(t)
         t.add_done_callback(self.tareas.discard)
 
+    def mirar_reinicio(self) -> None:
+        """Vuelve a preguntarle a systemd si es el de su unidad, en un hilo y una
+        vez a la vez: el estado se contesta desde el bucle cada segundo, y
+        `systemctl show` puede tardar (C-0470)."""
+        if self._mirando_reinicio:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:  # fuera del bucle: lo mirará el siguiente estado
+            return
+        self._mirando_reinicio = True
+
+        async def mirar() -> None:
+            try:
+                await asyncio.to_thread(reinicio.como)
+            finally:
+                self._mirando_reinicio = False
+        self.en_segundo_plano(mirar())
+
 
 def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = None) -> FastAPI:
     admitidos = hosts if hosts is not None else config.HOSTS
@@ -172,8 +221,16 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
     @contextlib.asynccontextmanager
     async def vida(app: FastAPI):
         app.state.puente = Puente(dispositivo)
+        # Una vez, fuera del bucle: si es el de su unidad de systemd, ya no cambia.
+        await asyncio.to_thread(reinicio.como)
+        for id_ in reunion.cerrar_cortadas():
+            app.state.puente.bitacora.apuntar("reunion", f"cerrada la reunión {id_}, que se cortó a medias",
+                                              quien="puente")
         await app.state.puente.conectar()
         yield
+        if app.state.puente.grabadora.actual is not None:
+            with contextlib.suppress(Exception):
+                await app.state.puente.grabadora.parar(cortada="el puente se paró mientras grababa")
         with contextlib.suppress(Exception):
             await app.state.puente.dispositivo.cerrar()
 
@@ -243,7 +300,8 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
     async def inicio(req: Request):
         return pagina(req, "panel.html", titulo="Panel",
                       lecturas=[lecturas.resumen(l) for l in lecturas.todas()[:20]],
-                      cambios=[c for c in cambios.todos()[:20]])
+                      cambios=[c for c in cambios.todos()[:20]],
+                      distribuciones=hid.DISTRIBUCIONES, nombres_distribucion=hid.NOMBRES_DISTRIBUCION)
 
     @app.get("/lecturas/{id_}", response_class=HTMLResponse)
     async def ver_lectura(req: Request, id_: str):
@@ -288,16 +346,34 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             disp = p.dispositivo.estado()
         except Exception as e:
             disp = {"tipo": p.dispositivo.tipo, "conectado": False, "error": str(e)}
+        if p.error_conexion and disp.get("conectado"):
+            p.error_conexion = ""  # antes de lanzarlo: que el sondeo siguiente no lo lance otra vez
+            p.en_segundo_plano(p.tras_conectar())
         conv = conversaciones.actual()
+        como, mirar = reinicio.sabido()
+        if mirar:
+            p.mirar_reinicio()
         return {"version": config.VERSION, "control": p.control.estado(), "dispositivo": disp,
                 # El disco ya no es lo que corre: se actualizó sin reiniciar el puente.
                 "codigo_viejo": config.CODIGO_EN_MARCHA.viejo(),
+                # Con qué se reinicia (decisión 446 del hub): «boton» si es el de su
+                # unidad de systemd; «a_mano», el comando de siempre. Y desde cuándo
+                # corre, para que la pantalla sepa que ya contesta el nuevo.
+                "reinicio": "boton" if como == "systemd" else "a_mano",
+                "arrancado": reinicio.ARRANQUE,
+                # Con «Usar el Mac» abierto, aunque no se mueva nada: leyendo lo que
+                # hay, la persona también lo está usando.
+                "mando": p.mandos > 0 or time.time() < p.mando_hasta,
                 "claude": p.actividad.publico(), "error_conexion": p.error_conexion, "tarea": p.motor.tarea,
+                "reunion": p.grabadora.estado(),
+                "jiggler_texto": jiggler.describir(disp.get("jiggler")),
                 "progreso": p.motor.progreso, "perfil": p.ajustes["perfil"], "t": time.time(),
                 # Dónde trabaja Claude y con qué conversación: rutas y el nombre que le puso la persona.
                 "espacio": str(config.espacio()), "codigo": str(config.CODIGO),
                 "conversacion": {"nombre": conv.nombre, "modelo": conv.modelo, "claude_code": conv.claude_code,
-                                 "modelo_texto": config.texto_modelo(conv.modelo)} if conv else None,
+                                 "modelo_texto": config.texto_modelo(conv.modelo),
+                                 # Su servidor MCP es de otro código que el del disco: hay que reabrirla.
+                                 "herramientas_viejas": conv.herramientas_viejas()} if conv else None,
                 # Sin registro: ¿hay una de antes abierta, o aún no se ha abierto ninguna?
                 "conversacion_anterior": False if conv else terminal.existe(),
                 # El `claude` que abriría el puente con SU PATH (no el de una shell).
@@ -730,6 +806,9 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         # cambiarían los atajos o el aparato a mitad de escribir.
         if p.motor.tarea:
             raise HTTPException(409, f"hay una tarea en marcha ({p.motor.tarea}): espera a que acabe o pulsa Parar")
+        if (p.grabadora.actual is not None
+                and {**p.ajustes["dispositivo"], **datos.get("dispositivo", {})} != p.ajustes["dispositivo"]):
+            raise HTTPException(409, "se está grabando una reunión: pulsa «Salí de la reunión» antes de cambiar el aparato")
         try:
             nuevos = config.leer_ajustes()
             for seccion in ("dispositivo", "perfil", "claude"):
@@ -762,10 +841,16 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                 await p.dispositivo.cerrar()
             p.dispositivo = crear_dispositivo(nuevos)
             p.motor.dispositivo = p.dispositivo
+            p.grabadora.dispositivo = p.dispositivo
             await p.conectar()
         p.bitacora.apuntar("ajustes", "ajustes guardados" + (" y aparato cambiado" if cambia_aparato else ""),
                            quien="persona")
         return {"ok": True, "error_conexion": p.error_conexion}
+
+    @app.get("/api/diagnostico")
+    async def api_diagnostico():
+        # En otro hilo: el informe le pregunta su estado a este mismo puente por HTTP.
+        return {"texto": await asyncio.to_thread(comprobar.informe, True)}
 
     @app.post("/api/reconectar")
     async def api_reconectar(req: Request):
@@ -779,6 +864,128 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             await p.dispositivo.cerrar()
         await p.conectar()
         return {"error_conexion": p.error_conexion}
+
+    # ── reiniciar el puente (C-0470, decisión 446 del hub): sólo la persona, con su botón ──
+    @app.post("/api/reiniciar")
+    async def api_reiniciar(req: Request):
+        """El botón del aviso de código viejo. No corta nada a medias: lo mismo que
+        mira `servicio.sh reiniciar --si-libre`. Sólo con systemd: sin él, el
+        puente no puede volver a arrancarse igual que arrancó."""
+        de_la_persona(req)
+        p = puente(req)
+        if time.monotonic() < p.reinicio_hasta:
+            raise HTTPException(409, "Ya se está reiniciando: la página vuelve sola en unos segundos.")
+        motivo = comprobar.ocupado(estado(p))
+        if motivo:
+            raise HTTPException(409, f"No lo reinicio ahora: {motivo}. Cuando acabe, vuelve a pulsar «Reiniciar "
+                                     "el puente».")
+        if await asyncio.to_thread(reinicio.como) != "systemd":
+            raise HTTPException(409, "Este puente no corre como su servicio de systemd, así que no puede "
+                                     "reiniciarse solo: ciérralo y vuelve a lanzar scripts/arrancar.sh.")
+        p.reinicio_hasta = time.monotonic() + REINICIO_EN_CURSO
+        p.bitacora.apuntar("reinicio", "la persona reinicia el puente", quien="persona")
+
+        def pedir() -> None:
+            if not reinicio.pedir():
+                p.reinicio_hasta = 0.0  # systemd no lo aceptó: que se pueda volver a pulsar
+        # Después de contestar: el reinicio para este proceso, y la respuesta tiene que llegar antes.
+        return JSONResponse({"arrancado": reinicio.ARRANQUE}, background=BackgroundTask(pedir))
+
+    # ── el jiggler y despertar el Mac (C-0463): la persona y Claude, por la misma ruta ──
+    # El origen dice quién: con el de esta web es la persona; sin él, el MCP.
+    @app.post("/api/jiggler")
+    async def api_jiggler(req: Request):
+        de_claude(req)
+        p, datos = puente(req), await cuerpo(req)
+        try:
+            encendido = datos.get("encendido")
+            if not isinstance(encendido, bool):
+                raise ValueError("falta «encendido»: true o false")  # nunca «alternar»: dos pestañas lo deshacen
+            config_ = None
+            if encendido:
+                horario = str(datos.get("horario") or "").strip()
+                zona = str(datos.get("zona") or "").strip()
+                inactividad = datos.get("inactividad_s")
+                # La zona contra las del aparato: una que no tenga, la cambia por UTC sin decirlo.
+                if zona and zona != "UTC" and zona not in await p.dispositivo.zonas():
+                    raise ValueError(f"el JetKVM no conoce la zona «{zona}»: va como «America/Mexico_City»")
+                actual = (await p.dispositivo.leer_jiggler()).get("config")
+                config_ = jiggler.config_nueva(actual, horario, zona,
+                                               None if inactividad in (None, "") else int(inactividad))
+            elif datos.get("horario") or datos.get("zona"):
+                raise ValueError("para apagarlo no hace falta horario")
+            leido = await p.dispositivo.poner_jiggler(encendido, config_)
+        except Exception as e:
+            raise fallo(e) from e
+        texto = jiggler.describir(leido)
+        p.bitacora.apuntar("jiggler", f"jiggler: {texto}", quien="persona" if mismo_origen(req) else "claude")
+        return {"ok": True, "jiggler": leido, "texto": texto}
+
+    @app.post("/api/despertar")
+    async def api_despertar(req: Request):
+        de_claude(req)
+        p = puente(req)
+        persona = mismo_origen(req)
+        try:
+            if not persona:
+                p.control.comprobar()  # despertar es actuar sobre el Mac: Claude, sólo con el control
+            if p.motor.tarea:
+                raise Ocupado(f"hay una tarea en marcha ({p.motor.tarea}): espera o pulsa Parar")
+            # Sin `motor.ocupar`: la espera dura segundos, y con el cerrojo el mando
+            # echaría a la persona del Mac al primer movimiento del ratón.
+            r = await p.dispositivo.despertar()
+        except Exception as e:
+            raise fallo(e) from e
+        if r.get("ya_despierto"):
+            texto = "El Mac ya estaba despierto."
+        elif r.get("imagen"):
+            texto = "El Mac despertó: ya hay imagen."
+        elif r.get("antes") == "suspended" and r.get("despues") not in ("suspended", None):
+            texto = "El Mac despertó, pero aún no llega su imagen: puede tardar unos segundos."
+        else:
+            texto = ("Mandé la señal de despertar, pero el Mac no respondió. "
+                     "Si está apagado (no en reposo), desde aquí no se enciende.")
+        p.bitacora.apuntar("despertar", texto, quien="persona" if persona else "claude")
+        return {"ok": True, "despierto": bool(r.get("imagen")), "texto": texto, **r}
+
+    # ── una reunión (C-0461): sólo la persona, con su botón; ni Claude ni el hub ──
+    @app.post("/api/reunion/empezar")
+    async def api_reunion_empezar(req: Request):
+        de_la_persona(req)
+        p, datos = puente(req), await cuerpo(req)
+        if p.motor.tarea:
+            # Empezar puede reconectar el aparato, y eso cortaría lo que hace Claude.
+            raise HTTPException(409, f"Claude está con una tarea ({p.motor.tarea}): espera a que acabe o pulsa "
+                                     "Parar, y vuelve a pulsar «Estoy en reunión»")
+
+        async def reconectar():
+            # Como «Reintentar»: con lo que haya al otro lado recién conectado, el
+            # control vuelve a la persona; y dentro de `ocupar`, Claude no empieza
+            # nada mientras tanto (y si tenía algo suelto en marcha, no se corta).
+            async with p.motor.ocupar("conectar el sonido de la reunión"):
+                p.devolver_control("empieza una reunión: el puente reconecta el aparato y el control vuelve a la persona")
+                await p.conectar()
+            if p.error_conexion:
+                raise AparatoNoDisponible(p.error_conexion)
+
+        try:
+            g = await p.grabadora.empezar(str(datos.get("titulo") or ""), reconectar)
+        except Exception as e:
+            raise fallo(e) from e
+        p.bitacora.apuntar("reunion", f"empieza a grabar una reunión ({g.id})", quien="persona")
+        return p.grabadora.estado()
+
+    @app.post("/api/reunion/parar")
+    async def api_reunion_parar(req: Request):
+        de_la_persona(req)
+        p = puente(req)
+        try:
+            r = await p.grabadora.parar()
+        except Exception as e:
+            raise fallo(e) from e
+        p.bitacora.apuntar("reunion", f"termina la reunión {r['id']}: {r['segundos'] // 60} min, {r['fotos']} "
+                           "fotos" + ("" if r["con_sonido"] else ", sin que llegara sonido"), quien="persona")
+        return r
 
     @app.post("/api/simulador/guardar")
     async def api_sim_guardar(req: Request):
@@ -822,18 +1029,39 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                 "modelo_siguiente": config.texto_modelo(terminal.modelo_elegido()),
                 "espacio": str(config.espacio())}
 
-    async def cambiar(req: Request, abrir) -> None:
+    async def cambiar(req: Request, abrir, aunque_trabaje: bool = False) -> None:
         """Cerrar la abierta y abrir otra: nunca con una tarea en marcha sobre el Mac,
-        y el control vuelve a la persona (la otra conversación no sabe qué se le dio)."""
+        y el control vuelve a la persona (la otra conversación no sabe qué se le dio).
+
+        Con Claude trabajando (lo dicen sus hooks), cerrarla lo corta a medias:
+        409 salvo que la persona lo confirme (`aunque_trabaje`). No es una puerta
+        cerrada como la tarea: si Claude Code se cerró sin su último hook, el
+        estado se queda en «trabajando» y no habría forma de cambiar. Vale para
+        cualquier cambio: reabrir, otra de la lista o una nueva.
+
+        Recién reiniciado el puente sin nada guardado de los hooks («sin
+        noticias») y con la conversación viva, no se sabe: se pregunta igual
+        (C-0470). «No sé» no es «está libre»."""
         p = puente(req)
         if p.motor.tarea:
             raise HTTPException(409, f"hay una tarea en marcha ({p.motor.tarea}): espera a que acabe o pulsa "
                                      "Parar antes de cambiar de conversación")
+        if not aunque_trabaje:
+            # La cabecera dice a la pantalla que puede preguntar y repetir.
+            if p.actividad.estado == "trabajando":
+                raise HTTPException(409, "Claude está trabajando: si cierras la conversación ahora, lo cortas a "
+                                         "medias.", headers={"X-Puente-Motivo": "trabajando"})
+            if p.actividad.estado == "sin noticias" and await asyncio.to_thread(terminal.existe):
+                raise HTTPException(409, "No sé si Claude está a medias: el puente se acaba de reiniciar y aún no "
+                                         "ha sabido nada de él. Si estaba trabajando, cerrar la conversación lo "
+                                         "corta.", headers={"X-Puente-Motivo": "trabajando"})
         p.devolver_control("se cambió de conversación con Claude: el control vuelve a la persona")
         try:
             await asyncio.to_thread(abrir)
         except Exception as e:
             raise fallo(e) from e
+        # Recién abierta, Claude espera: el que se cerró no manda su `Stop`.
+        p.actividad.recien_abierta()
 
     @app.get("/api/conversaciones")
     async def api_conversaciones():
@@ -842,12 +1070,13 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
     @app.post("/api/conversaciones")
     async def api_nueva_conversacion(req: Request):
         de_la_persona(req)
-        nombre = str((await cuerpo(req)).get("nombre") or "")
+        datos = await cuerpo(req)
+        nombre = str(datos.get("nombre") or "")
         hecha: dict = {}
 
         def abrir():
             hecha["c"] = terminal.reiniciar(nombre)
-        await cambiar(req, abrir)
+        await cambiar(req, abrir, aunque_trabaje=datos.get("aunque_trabaje") is True)
         # Los nombres pueden ser del trabajo: a la bitácora, sin él.
         puente(req).bitacora.apuntar("terminal", "conversación nueva con Claude", quien="persona")
         return conversaciones.buscar(hecha["c"].id).publica()
@@ -866,7 +1095,8 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
     async def api_abrir_conversacion(req: Request, id_: str):
         de_la_persona(req)
         c = de_la_lista(id_)
-        await cambiar(req, lambda: terminal.abrir(c, retomar=True))
+        await cambiar(req, lambda: terminal.abrir(c, retomar=True),
+                      aunque_trabaje=(await cuerpo(req)).get("aunque_trabaje") is True)
         puente(req).bitacora.apuntar("terminal", "se retomó otra conversación con Claude", quien="persona")
         return conversaciones.buscar(id_).publica()
 
@@ -892,7 +1122,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
     async def api_terminal_reiniciar(req: Request):
         """La de antes de las conversaciones: una nueva, con su nombre por omisión."""
         de_la_persona(req)
-        await cambiar(req, terminal.reiniciar)
+        await cambiar(req, terminal.reiniciar, aunque_trabaje=(await cuerpo(req)).get("aunque_trabaje") is True)
         puente(req).bitacora.apuntar("terminal", "conversación nueva con Claude", quien="persona")
         return {"ok": True}
 
@@ -913,6 +1143,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             return
         await ws.accept()
         p: Puente = ws.app.state.puente
+        p.mandos += 1
         teclas: list[int] = []
         estado = {"mods": 0, "botones": 0, "x": 0, "y": 0, "desde": 0.0}
 
@@ -964,10 +1195,10 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                         estado["botones"] = int(orden.get("b", 0)) & 0x07
                         await p.dispositivo.raton(estado["x"], estado["y"], estado["botones"])
                     elif tipo == "rueda":
-                        pasos = max(-10, min(int(orden["pasos"]), 10))
+                        pasos = max(-127, min(int(orden["pasos"]), 127))  # lo que cabe en un informe
                         if pasos:
                             invertir = p.ajustes["perfil"].get("invertir_rueda")
-                            await p.dispositivo.rueda(-pasos if invertir else pasos)
+                            await p.dispositivo.girar(-pasos if invertir else pasos)
                     elif tipo == "tecla":
                         codigo = int(orden["codigo"])
                         if not TECLA_MIN <= codigo <= TECLA_MAX:
@@ -992,7 +1223,9 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                         await soltar()
                         for pulsacion in hid.secuencia(texto, p.ajustes["perfil"].get("distribucion", "mac-us")):
                             await pulsar(pulsacion)
-                        await ws.send_json({"hecho": "pegar"})
+                        # Con qué teclado se tecleó, el de verdad: otra pestaña pudo cambiarlo.
+                        await ws.send_json({"hecho": "pegar", "teclado": hid.NOMBRES_DISTRIBUCION.get(
+                            p.ajustes["perfil"].get("distribucion", "mac-us"), "").replace("macOS ", "").strip("«»")})
                 except hid.TextoIntraducible as e:
                     await ws.send_json({"no": f"No pegué nada: {e}"})
                 except (KeyError, TypeError, ValueError):
@@ -1002,6 +1235,9 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         except WebSocketDisconnect:
             pass
         finally:
+            p.mandos -= 1
+            if not p.mandos:
+                p.mando_hasta = 0.0  # nadie lo tiene abierto: el Mac ya no está en uso
             await soltar()
             if estado["desde"]:
                 minutos = max(1, round((time.time() - estado["desde"]) / 60))
@@ -1018,7 +1254,9 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             return
         await ws.accept()
         try:
-            await asyncio.to_thread(terminal.asegurar_sesion)
+            if await asyncio.to_thread(terminal.asegurar_sesion):
+                # La abrió ahora el puente: Claude acaba de arrancar y espera su primer mensaje.
+                ws.app.state.puente.actividad.recien_abierta()
         except Exception as e:
             await ws.send_text(f"\r\n[no se pudo abrir Claude Code: {e}]\r\n")
             await ws.close()

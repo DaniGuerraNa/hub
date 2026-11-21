@@ -12,8 +12,7 @@ pantalla y, a la izquierda, ve el Mac, lo que lees y lo que propones.
 Desde aquí manejas un **Mac ajeno** a través de un JetKVM: ves su pantalla y
 tecleas como un teclado USB. En ese Mac no se puede instalar nada; todo se hace
 por la interfaz gráfica. Las herramientas son las del servidor MCP
-`puente-kvm` (`.mcp.json`), y la persona lo ve todo en
-**http://127.0.0.1:8794** (u otro puerto si `PUENTE_PUERTO` lo dice).
+`puente-kvm`, y la persona lo ve todo en la web del puente.
 
 ## Las reglas que no se negocian
 
@@ -41,6 +40,9 @@ Claude). No las cambies tú: cambiar cierra esta sesión y le devuelve el
 control del Mac.
 
 1. `estado()`: quién tiene el control, qué aparato, qué lecturas y cambios hay.
+   Carga las herramientas de un encargo en **una sola búsqueda**, no una a una;
+   para empezar: `select:mcp__puente-kvm__estado,mcp__puente-kvm__ver_pantalla,mcp__puente-kvm__clic,mcp__puente-kvm__atajo,mcp__puente-kvm__teclear`
+   (cada skill que usa herramientas trae su grupo).
 2. Lee `trabajo/entorno.md` (el Mac y el cliente, **medidos**). Si no existe,
    el entorno está sin medir: propón la skill `primera-conexion` antes de
    fiarte de nada con el aparato real.
@@ -49,15 +51,16 @@ control del Mac.
 
 La persona puede usar el Mac desde la pantalla del puente cuando tú no tienes
 el control: lo que viste en una captura anterior puede haber cambiado. Mira la
-pantalla (`ver_pantalla`) antes de actuar sobre ella. La rueda: positivo baja
-el contenido; si el Mac la tiene invertida, el puente lo corrige solo (Ajustes).
+pantalla (`ver_pantalla`) antes de actuar sobre ella.
 
-Para mirar sólo una parte, `ver_pantalla(x, y, ancho, alto)`: llega a tamaño
-real y se lee mejor que la pantalla entera reducida. Para recorrer de arriba
-abajo algo que no es el editor (una hoja, una web, una rejilla larga),
-`recorrer_pantalla`, en **una sola llamada**: no lo hagas a golpes de `rueda`
-y `ver_pantalla`. Si `estado()` trae `aviso_mcp`, tus herramientas son de
-antes de actualizar: díselo a la persona.
+- Algo largo que no es el editor (una hoja, una web, una rejilla): `recorrer_pantalla`, en una sola llamada.
+- Pantalla negra o sin imagen: el Mac puede estar en reposo, `despertar_mac()`.
+- Encender, apagar o poner horario al jiggler (que el Mac no se bloquee): `jiggler`, cuando te lo pida la persona.
+
+Si `estado()` trae `aviso_mcp`, tus herramientas son de antes de actualizar:
+díselo a la persona, que lo arregla con los botones del aviso de arriba de su
+pantalla («Reiniciar el puente» y «Reabrir la conversación de Claude»). No lo
+hagas tú: reabrir cierra esta sesión.
 
 ## Las skills: cómo se hace cada encargo
 
@@ -71,9 +74,8 @@ antes de actualizar: díselo a la persona.
 | aparato o cliente nuevo, algo raro al leer | `primera-conexion` |
 
 Al empezar cada encargo, di qué skill vas a seguir y qué vas a necesitar de la
-persona (control, ejecutar una consulta, aprobar). Ella lo ve también en el
-puente: la pestaña **Claude** enseña tus skills, tus permisos y lo que estás
-haciendo (lo cuentan tus hooks).
+persona (control, ejecutar una consulta, aprobar). Ella ve tus skills, tus
+permisos y lo que haces en la pestaña **Claude** del puente.
 
 ## Dónde va cada cosa
 
@@ -87,38 +89,23 @@ haciendo (lo cuentan tus hooks).
   está en `$PUENTE_CODIGO`.
 - La contraseña del JetKVM está en `~/.config/puente-kvm/entorno`: **no la
   leas** (tus permisos lo prohíben) ni la pidas. La pone la persona.
-- Si algo falla: `comprobar --sin-entrar` dice qué falta, y `diagnostico`
-  deja un informe sin secretos para mandar (ver abajo cómo lanzarlas).
+- Las **reuniones** que graba la persona («● Estoy en reunión») están en
+  `~/.local/share/puente-kvm/reuniones`: son de otras personas y **no son para
+  ti** (tus permisos lo prohíben). No tienes herramienta para empezar ni parar
+  una grabación, y no la busques: lo decide ella con su botón. Si pregunta por
+  una, su transcripción y su resumen están en Reuniones del hub.
 
 ## Órdenes del puente
 
-Esta carpeta puede no ser la del código, y entonces `uv run puente-kvm …` a
-secas falla («Failed to spawn»). Lánzalas siempre contra la carpeta del código,
-que tu sesión tiene en `PUENTE_CODIGO`, y siempre con `--frozen` (sin él, uv
-puede reescribir `uv.lock`, un archivo versionado):
+Si algo falla, `comprobar --sin-entrar` dice qué falta y `diagnostico` deja un
+informe sin secretos para mandar. Siempre contra la carpeta del código y con
+`--frozen` (sin él, uv puede reescribir `uv.lock`):
 
 ```bash
 uv run --directory "${PUENTE_CODIGO:-.}" --frozen puente-kvm comprobar --sin-entrar
 uv run --directory "${PUENTE_CODIGO:-.}" --frozen puente-kvm diagnostico
 ```
 
-**`comprobar` sin `--sin-entrar` entra en el JetKVM** (si el puente no está en
-marcha) y le cierra su web a quien la tenga abierta en un navegador. Para saber
-si el puente está bien, `--sin-entrar`; sin él, sólo si la persona lo pide.
+**`comprobar` sin `--sin-entrar` entra en el JetKVM** y le cierra su web a quien la tenga abierta: sólo si la persona lo pide.
 
-## Para cambiar el código del puente
-
-- `uv run --directory "${PUENTE_CODIGO:-.}" --frozen pytest` en verde antes de
-  cerrar nada, mirando el código de salida.
-  El flujo completo se prueba contra el Mac simulado (`simulador.py`) y el
-  cliente del JetKVM contra un JetKVM falso por WebRTC real
-  (`tests/jetkvm_falso.py`). Las pruebas usan su propia carpeta de datos, su
-  propio archivo de contraseña y un puerto libre: nunca los de verdad.
-- Lo que se ve se comprueba en un navegador (Playwright), no se razona.
-- El protocolo del JetKVM, sacado de su firmware, está en
-  `docs/protocolo-jetkvm.md`. Lo que no se ha visto con el aparato delante
-  está marcado como no verificado: no lo des por bueno. Si el cliente no
-  conecta, la última sección de ese documento dice cómo buscarlo.
-- Lo versionado no nombra a nadie: ni nombres, ni correos, ni rutas de la
-  carpeta personal de nadie.
-- Español en el código, comentarios que explican el porqué.
+Antes de tocar `src/`, `tests/` o `.claude/`, lee `docs/cambiar-el-codigo.md`.

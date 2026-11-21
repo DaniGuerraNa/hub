@@ -218,3 +218,230 @@ def test_lo_tecleado_nada_mas_abrir_no_se_pierde(sin_setsid, cliente):
     with c.websocket_connect("/ws/terminal", headers=PERSONA) as ws:
         ws.send_bytes(b"echo pronto-$((20+3))\r")
         leer_hasta(ws, "pronto-23")
+
+
+def test_ninguna_prueba_ve_el_tmux_de_quien_las_corre():
+    """Las páginas de prueba se enganchan a la conversación de Claude al cargar:
+    con el servidor de tmux de siempre, era la de verdad del puente de quien
+    corre las pruebas (y si no había, abrían un `claude` real). Cada prueba va
+    a un servidor suyo con una bash dentro, salvo las que ponen el suyo."""
+    import os
+
+    from puente_kvm import terminal
+    socket = os.environ.get("PUENTE_TMUX_SOCKET", "")
+    assert socket.startswith("puente-pruebas-")
+    assert terminal.tmux()[-2:] == ["-L", socket]
+    assert os.environ.get("PUENTE_TERMINAL_ORDEN") == "exec bash --norc --noprofile"
+    assert not terminal.existe()  # en uno nuevo no hay ninguna `puente-claude`
+
+
+# ── la sesión, aislada de la configuración de quien la abre (C-0471) ────────
+def _ajustes_de_usuario(tmp_path, datos: dict) -> None:
+    import os
+    carpeta = tmp_path / "claude-de-la-persona"
+    carpeta.mkdir(exist_ok=True)
+    (carpeta / "settings.json").write_text(json.dumps(datos))
+    assert os.environ["CLAUDE_CONFIG_DIR"] == str(carpeta)  # la de conftest, nunca la de verdad
+
+
+@pytest.mark.parametrize("saltar", [False, True])
+def test_los_dos_modos_cargan_el_proyecto_y_solo_el_servidor_del_puente(monkeypatch, saltar):
+    # Sin la fuente «project», «Sin pedir permisos» arrancaba sin las skills del
+    # puente; sin --strict-mcp-config, cada sesión cargaba los conectores de quien la abre.
+    from puente_kvm import config, terminal
+    monkeypatch.delenv("PUENTE_TERMINAL_ORDEN", raising=False)
+    monkeypatch.setattr(terminal, "saltar_permisos", lambda: saltar)
+    orden = terminal.orden_claude()
+    assert "--setting-sources project,local" in orden
+    assert "--strict-mcp-config" in orden
+    assert f"--mcp-config {shlex.quote(str(config.espacio() / '.mcp.json'))}" in orden
+    assert f"--settings {shlex.quote(str(config.hogar() / 'claude-sesion.json'))}" in orden
+
+
+def test_el_json_de_la_sesion_lleva_lo_de_la_persona_y_nunca_llaves_hooks_plugins_ni_control_remoto(tmp_path):
+    from puente_kvm import terminal
+    _ajustes_de_usuario(tmp_path, {
+        "model": "opus", "effortLevel": "high", "modelSettings": {"claude-sonnet-5": {"effortLevel": "high"}},
+        "tui": "fullscreen", "statusLine": {"type": "command", "command": "mi-barra.sh"},
+        "agentPushNotifEnabled": True, "inputNeededNotifEnabled": True, "taskCompleteNotifEnabled": False,
+        "remoteControlAtStartup": True, "enabledPlugins": {"algo@ajeno": True}, "syncClaudeAiSkills": True,
+        "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "otro.sh"}]}]},
+        "mcpServers": {"ajeno": {"command": "x"}}, "autoMode": {"environment": ["x"]},
+        "permissions": {"allow": ["Bash"], "deny": ["Read(~/secretos/**)"], "defaultMode": "bypassPermissions"},
+    })
+    for saltar in (False, True):
+        fuentes, ruta = terminal.ajustes_de_sesion(saltar)
+        datos = json.loads(ruta.read_text())
+        assert fuentes == "project,local"
+        assert set(datos) - {"permissions"} == {*terminal.DE_LA_PERSONA, *terminal.SIEMPRE}
+        assert datos["statusLine"]["command"] == "mi-barra.sh" and datos["model"] == "opus"
+        assert datos["taskCompleteNotifEnabled"] is False and datos["inputNeededNotifEnabled"] is True
+        # Su «true» no pasa: el control remoto es otro camino para manejar la
+        # sesión, y las skills sincronizadas de claude.ai cuestan en cada llamada.
+        assert datos["remoteControlAtStartup"] is False
+        assert datos["syncClaudeAiSkills"] is False and datos["syncClaudeAiPlugins"] is False
+        assert set(datos["permissions"]) <= {"ask", "deny"}
+        assert datos["permissions"]["deny"] == ["Read(~/secretos/**)"]
+
+
+def test_con_autenticacion_en_los_ajustes_de_usuario_se_carga_tambien_su_fuente_sin_copiar_la_llave(tmp_path):
+    # Sin la fuente «user», Claude Code no sabría autenticarse; y la llave no se
+    # copia a PUENTE_HOME.
+    from puente_kvm import terminal
+    for llave in terminal.AUTENTICACION:
+        _ajustes_de_usuario(tmp_path, {llave: {"ANTHROPIC_API_KEY": "sk-falsa"} if llave == "env" else "dame-la.sh"})
+        fuentes, ruta = terminal.ajustes_de_sesion(saltar=False)
+        assert fuentes == "user,project,local", llave
+        texto = ruta.read_text()
+        assert llave not in json.loads(texto) and "sk-falsa" not in texto and "dame-la" not in texto
+        # Con la fuente «user» cargada llegaría el suyo: `--settings` le gana.
+        assert json.loads(texto)["remoteControlAtStartup"] is False
+
+
+def test_las_reglas_ask_van_solo_en_el_modo_normal():
+    from puente_kvm import repertorio, terminal
+    _, ruta = terminal.ajustes_de_sesion(saltar=False)
+    preguntas = json.loads(ruta.read_text())["permissions"]["ask"]
+    assert len(preguntas) == len(repertorio.reglas()["ask"]) and "mcp__puente-kvm__clic" in preguntas
+    _, ruta = terminal.ajustes_de_sesion(saltar=True)
+    assert "permissions" not in json.loads(ruta.read_text())
+
+
+def test_las_rutas_de_las_reglas_siguen_apuntando_a_su_carpeta_desde_puente_home(tmp_path, monkeypatch):
+    # Medido con la 2.1.322: en un archivo de --settings, «/x» es relativo a la
+    # carpeta de ESE archivo; «Edit(/src/**)» habría pasado a ser PUENTE_HOME/src.
+    from puente_kvm import config, terminal
+    espacio = tmp_path / "espacio"
+    monkeypatch.setenv("PUENTE_TRABAJO", str(espacio))
+    _ajustes_de_usuario(tmp_path, {"permissions": {"deny": ["Read(/secretos/**)", "Bash(curl:*)", "Read(~/x/**)"]}})
+    _, ruta = terminal.ajustes_de_sesion(saltar=False)
+    permisos = json.loads(ruta.read_text())["permissions"]
+    assert f"Edit(/{config.espacio().as_posix()}/src/**)" in permisos["ask"]
+    assert "WebFetch" in permisos["ask"] and "mcp__puente-kvm__teclear" in permisos["ask"]
+    usuario = tmp_path / "claude-de-la-persona"
+    assert permisos["deny"] == [f"Read(/{usuario.as_posix()}/secretos/**)", "Bash(curl:*)", "Read(~/x/**)"]
+
+
+def test_el_aviso_del_modo_sin_permisos_solo_se_salta_si_la_persona_ya_lo_acepto(tmp_path):
+    from puente_kvm import terminal
+    _, ruta = terminal.ajustes_de_sesion(saltar=True)
+    assert "skipDangerousModePermissionPrompt" not in json.loads(ruta.read_text())
+    _ajustes_de_usuario(tmp_path, {"skipDangerousModePermissionPrompt": True})
+    _, ruta = terminal.ajustes_de_sesion(saltar=True)
+    assert json.loads(ruta.read_text())["skipDangerousModePermissionPrompt"] is True
+    _, ruta = terminal.ajustes_de_sesion(saltar=False)  # en el modo normal no hay aviso que saltar
+    assert "skipDangerousModePermissionPrompt" not in json.loads(ruta.read_text())
+
+
+def test_unos_ajustes_de_usuario_ilegibles_no_impiden_abrir_la_sesion(tmp_path):
+    from puente_kvm import terminal
+    carpeta = tmp_path / "claude-de-la-persona"
+    carpeta.mkdir()
+    (carpeta / "settings.json").write_text("{ esto no es json")
+    fuentes, ruta = terminal.ajustes_de_sesion(saltar=False)
+    assert fuentes == "project,local" and set(json.loads(ruta.read_text())) == {"permissions", *terminal.SIEMPRE}
+
+
+def test_un_env_vacio_no_cuenta_como_autenticacion_y_uno_con_algo_si(tmp_path):
+    # No se sabe si un `env` lleva una llave, un proxy o la dirección de la API:
+    # con algo dentro, la fuente «user» vuelve; vacío no dice nada de autenticarse.
+    from puente_kvm import terminal
+    _ajustes_de_usuario(tmp_path, {"env": {}, "apiKeyHelper": ""})
+    fuentes, ruta = terminal.ajustes_de_sesion(saltar=False)
+    assert fuentes == "project,local"
+    _ajustes_de_usuario(tmp_path, {"env": {"HTTPS_PROXY": "http://proxy.ejemplo:3128"}})
+    fuentes, ruta = terminal.ajustes_de_sesion(saltar=False)
+    assert fuentes == "user,project,local"
+    datos = json.loads(ruta.read_text())
+    assert datos["remoteControlAtStartup"] is False and "env" not in datos and "proxy" not in ruta.read_text()
+
+
+def test_las_ask_de_la_persona_tambien_preguntan_en_el_modo_normal_ancladas_a_su_carpeta(tmp_path):
+    # Sin la fuente «user», sus «pregúntame» se perdían sin decirlo; en el modo
+    # sin permisos no van, como las del puente (una «ask» gana a ese modo).
+    from puente_kvm import repertorio, terminal
+    _ajustes_de_usuario(tmp_path, {"permissions": {"ask": ["Bash(git push:*)", "Edit(/notas/**)"],
+                                                   "deny": ["Read(~/x/**)"]}})
+    usuario = tmp_path / "claude-de-la-persona"
+    _, ruta = terminal.ajustes_de_sesion(saltar=False)
+    preguntas = json.loads(ruta.read_text())["permissions"]["ask"]
+    assert preguntas[-2:] == ["Bash(git push:*)", f"Edit(/{usuario.as_posix()}/notas/**)"]
+    assert len(preguntas) == len(repertorio.reglas()["ask"]) + 2
+    _, ruta = terminal.ajustes_de_sesion(saltar=True)
+    assert json.loads(ruta.read_text())["permissions"] == {"deny": ["Read(~/x/**)"]}
+
+
+def test_los_archivos_de_la_sesion_solo_los_lee_quien_corre_el_puente(monkeypatch):
+    # Llevan lo que la persona tiene prohibido (sus rutas) y la orden de su barra
+    # de estado; uno que ya existiera con otros permisos no los conserva.
+    import os
+    import stat
+
+    from puente_kvm import config, terminal
+    monkeypatch.delenv("PUENTE_TERMINAL_ORDEN")
+    for nombre in ("claude-sesion.json", "claude-despues.bashrc"):
+        (config.hogar() / nombre).write_text("{}")
+        os.chmod(config.hogar() / nombre, 0o644)
+    terminal.orden_claude()
+    for nombre in ("claude-sesion.json", "claude-despues.bashrc"):
+        assert stat.S_IMODE((config.hogar() / nombre).stat().st_mode) == 0o600, nombre
+    assert not [p.name for p in config.hogar().iterdir() if p.name.endswith(".tmp")]
+
+
+@pytest.mark.parametrize("saltar", [False, True])
+def test_al_cerrarse_claude_la_shell_de_despues_lo_vuelve_a_abrir_aislado_y_en_el_mismo_modo(monkeypatch, tmp_path,
+                                                                                             saltar):
+    # 🔴 Con un `exec bash` a secas, un `claude` escrito ahí cargaba los ajustes
+    # de usuario (con sus `allow`) y el .mcp.json del espacio sin ninguna «ask»:
+    # las herramientas del puente sin preguntar nada. Se ejecuta de verdad: su
+    # ~/.bashrc carga, y un alias suyo no le gana a la función.
+    import os
+
+    from puente_kvm import conversaciones, terminal
+    casa = tmp_path / "casa"
+    (casa / ".local" / "bin").mkdir(parents=True)
+    falso = casa / ".local" / "bin" / "claude"
+    falso.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$SALIDA"\n')
+    falso.chmod(0o755)
+    (casa / ".bashrc").write_text("export DE_SU_BASHRC=si\nalias claude='echo el-alias-de-la-persona'\n")
+    monkeypatch.setenv("HOME", str(casa))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.delenv("PUENTE_TERMINAL_ORDEN")
+    monkeypatch.setattr(terminal, "saltar_permisos", lambda: saltar)
+    conv = conversaciones.nueva("la del puente", terminal.modelo_elegido())
+
+    orden = terminal.orden_claude(conv)
+    lanzada = shlex.split(orden.split(" ; ")[1])  # «<claude> <banderas> --session-id U -n nombre»
+    banderas = lanzada[1:lanzada.index("--session-id")]
+    despues = shlex.split(orden.rsplit(" ; ", 1)[1])
+    assert despues[:3] == ["exec", "bash", "--rcfile"]
+    salida = tmp_path / "argumentos.txt"
+    r = subprocess.run(["bash", "--rcfile", despues[3], "-i"], input="echo bashrc-$DE_SU_BASHRC\nclaude --continue\n",
+                       capture_output=True, text=True, timeout=20, env={**os.environ, "SALIDA": str(salida)})
+    assert "bashrc-si" in r.stdout and "el-alias-de-la-persona" not in r.stdout
+    assert salida.read_text().splitlines() == [*banderas, "--continue"]
+    assert ("--dangerously-skip-permissions" in banderas) is saltar
+    for bandera in ("--setting-sources", "--settings", "--strict-mcp-config", "--mcp-config", "--model"):
+        assert bandera in banderas, bandera
+    # Lo primero que se le dice es el botón: retoma ESTA conversación, la de la lista.
+    assert "el menú de la conversación, arriba de la terminal → Reabrir" in orden
+
+
+def test_si_no_se_puede_preparar_la_orden_abrir_falla_y_la_conversacion_de_antes_sigue(monkeypatch, tmp_path):
+    # `abrir` cerraba antes de preparar la orden, que lee los permisos del puente
+    # y escribe en PUENTE_HOME: un preguntar.json roto dejaba a la persona sin ninguna.
+    from puente_kvm import conversaciones, repertorio, terminal
+    primera = conversaciones.nueva("primera", terminal.modelo_elegido())
+    terminal.abrir(primera, retomar=False)  # con la bash de conftest
+    assert terminal.existe()
+    roto = tmp_path / "preguntar.json"
+    roto.write_text("{ esto no es json")
+    monkeypatch.setattr(repertorio, "PREGUNTAR", roto)
+    monkeypatch.delenv("PUENTE_TERMINAL_ORDEN")
+    monkeypatch.setattr(terminal, "saltar_permisos", lambda: False)
+    monkeypatch.setattr(terminal, "comprobar_claude", lambda modelo: {"ruta": None, "version": None})
+    segunda = conversaciones.nueva("segunda", terminal.modelo_elegido())
+    with pytest.raises(ValueError, match="permisos de Claude del puente"):
+        terminal.abrir(segunda, retomar=False)
+    assert terminal.existe()
+    assert conversaciones.actual().id == primera.id

@@ -127,6 +127,10 @@ PERSONAJES: dict[str, tuple[str, str]] = {
     "hongo-familia": ("Hongo y sus ayudantes", "Hongos"),
     "rana-sombrero-hongo": ("Rana con sombrero de hongo", "Las dos"),
     "rana-bajo-hongo": ("Rana bajo su hongo", "Las dos"),
+    "pinguino-bufanda": ("Pingüinito con bufanda", "Pingüinos"),
+    "pinguino-taza": ("Pingüino con taza caliente", "Pingüinos"),
+    "pinguino-pajarita": ("Pingüino de pajarita", "Pingüinos"),
+    "pinguino-hielo": ("Pingüino en su hielo", "Pingüinos"),
 }
 POR_OMISION = "cubo"
 #: La clave en la memoria del secretario, como el modo inglés (C-0159): vale

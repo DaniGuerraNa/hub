@@ -49,6 +49,11 @@ Las dos formas hacen lo mismo, todo lo que una versión necesita:
   muestreo late;
 - al final te enseña qué cambió.
 
+Si usas el **Puente KVM**, también lo reinicia, salvo que esté ocupado: en la
+pantalla de la actualización se cuenta cómo quedó, y lo que falte (reiniciarlo
+o reabrir la conversación de Claude) son botones de la pantalla del puente,
+sin comandos ([Puente KVM](/puente)).
+
 Tus datos (`~/.local/share/hub/`) no se borran ni se editan. Lo único que
 cambia ahí es lo que la versión necesita: se apunta la versión instalada
 (`version.json`), y la base recibe las tablas o columnas nuevas, sin perder
@@ -171,3 +176,6 @@ después de actualizar, ahí está el porqué.
   `.antes`, en `~/.config/systemd/user/`.
 - **La base:** hay una copia por día en `~/.local/share/hub/respaldos/`. Cómo
   restaurarla está en [`06-problemas.md`](06-problemas.md).
+- **Nada de eso:** en Actualizaciones, «Contar un fallo o una idea» lo deja
+  escrito para quien mantiene el hub, con tu versión ya puesta
+  ([`06-problemas.md`](06-problemas.md), «Contárselo a quien mantiene el hub»).

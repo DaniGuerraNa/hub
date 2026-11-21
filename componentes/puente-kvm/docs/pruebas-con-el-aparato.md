@@ -89,8 +89,10 @@ orden y lo que hay que vigilar.
    («pulsa la tecla a la derecha de Mayús izquierda»): si aparece, ciérralo o
    elige **ANSI**. Con ISO, `` ` `` y `~` (en «U.S.») o `< >` (en «Español -
    ISO») salen en otra tecla. Comprueba que la fuente de entrada activa es la
-   que elegiste en Ajustes → Teclado (**«U.S.»** o **«Español - ISO»**) y que
-   **Bloq Mayús está apagado**.
+   que elegiste en Ajustes → Teclado (**«U.S.»** o **«Español - ISO»**; también
+   se cambia junto a «Pegar texto») y que **Bloq Mayús está apagado**. Pega un
+   texto con acentos («¿Qué tal? Ñandú, “canción” —ya»): si sale con símbolos
+   raros, el Mac tiene otro teclado que el elegido.
    Apunta: qué apareció y qué elegiste.
 4. **Tecleo de prueba** en una pestaña de script nueva y vacía (skill, paso 4).
    Apunta: la pausa entre teclas con la que no se pierde ningún carácter.
@@ -113,6 +115,24 @@ orden y lo que hay que vigilar.
    comprobación previa (bitácora: «las páginas 1–N son las leídas (x s)»).
 9. Cierra la pestaña de prueba **sin guardar**. Sólo entonces, un documento
    real.
+10. **Una reunión de prueba**, cuando haya una (o un vídeo con voz en el Mac).
+   En el Mac: Ajustes del Sistema → Sonido → Salida → el dispositivo USB del
+   JetKVM (no «JetKVM v1»). Pulsa **«● Estoy en reunión»**: la imagen se corta
+   unos segundos (reconecta con el sonido) y aparece «Grabando». Si sale «No ha
+   llegado sonido» mientras alguien habla, la salida del Mac no es la del
+   JetKVM. Para oírla tú a la vez, en Configuración de Audio MIDI, «+» →
+   «Crear dispositivo de salida múltiple» con el JetKVM y tus auriculares, y
+   elígelo como salida (con él no van las teclas de volumen). Pulsa **«■ Salí
+   de la reunión»** y mira en Reuniones del hub, a los pocos minutos, la
+   transcripción. Apunta: si llegó sonido, si se oye bien en la transcripción,
+   y si el Mac volvió a sonar por sus altavoces tras la prueba.
+11. **Jiggler y despertar.** Pulsa «Jiggler: apagado»: debe pasar a «Frecuente,
+   cada 30 s». Deja el Mac sin tocar un minuto: ¿se mueve el puntero (de 1 a 3
+   píxeles) y no se bloquea? Después pon el Mac en reposo (menú Apple → Reposo, usando el Mac
+   desde el puente) y pulsa **«Despertar el Mac»**. Apunta: si despertó, cuántos
+   segundos tardó la imagen y qué dijo el aviso. Si el Mac tiene la pantalla
+   bloqueada con contraseña al volver, el jiggler no la evita: sólo evita que
+   se bloquee mientras está encendido.
 
 ## Qué mandar de vuelta
 

@@ -88,3 +88,54 @@ def test_la_distribucion_importa_lo_tecleado_para_espanol_no_sale_igual_en_us():
 def test_una_distribucion_que_no_existe_no_se_adivina():
     with pytest.raises(ValueError):
         hid.secuencia("hola", "mac-latam")
+
+
+# ── lo que se pega desde fuera (C-0466) ─────────────────────────────────────
+# Lo copiado de una respuesta de Claude o de un correo trae comillas tipográficas,
+# rayas y acentos de todo tipo: antes, con «U.S.», «—» o «“» impedían pegar nada.
+COPIADO = "“Listo” — it’s ‘así’… • ç Ç © ® ™ ± ≠ ≤ ≥ ÷ ° · ¿Qué tal? ¡Sí! ñandú, pingüino, À è ô ã õ ë ÿ"
+
+
+@pytest.mark.parametrize("distribucion", hid.DISTRIBUCIONES)
+def test_lo_copiado_de_una_respuesta_se_pega_igual_con_las_dos_distribuciones(distribucion):
+    sim = Simulador(lineas=[""], distribucion=distribucion)
+    teclear_en(sim, COPIADO, distribucion)
+    assert sim.editor.lineas == [COPIADO]
+
+
+def test_un_acento_suelto_tras_la_letra_se_recompone_antes_de_teclear():
+    import unicodedata
+    descompuesto = unicodedata.normalize("NFD", "Canción del pingüino")
+    assert "́" in descompuesto  # «o» más el acento, como lo da a veces el portapapeles
+    sim = Simulador(lineas=[""])
+    teclear_en(sim, descompuesto)
+    assert sim.editor.lineas == ["Canción del pingüino"]
+
+
+@pytest.mark.parametrize("caracter, pulsaciones", [
+    # Los que ya estaban a mano siguen en sus teclas, y los nuevos más comunes,
+    # contrastados con las copias de la distribución de Apple.
+    ("á", ["alt+e", "a"]), ("Á", ["alt+shift+y"]), ("ñ", ["alt+n", "n"]), ("Ñ", ["alt+n", "shift+n"]),
+    ("ü", ["alt+u", "u"]), ("à", ["alt+`", "a"]), ("ê", ["alt+i", "e"]),
+    ("¡", ["alt+1"]), ("¿", ["alt+shift+/"]), ("º", ["alt+0"]), ("ª", ["alt+9"]),
+    ("€", ["alt+shift+2"]), ("°", ["alt+shift+8"]), ("…", ["alt+;"]), ("«", ["alt+\\"]), ("»", ["alt+shift+\\"]),
+    ("ç", ["alt+c"]), ("Ç", ["alt+shift+c"]), ("—", ["alt+shift+-"]), ("–", ["alt+-"]),
+    ("“", ["alt+["]), ("”", ["alt+shift+["]), ("‘", ["alt+]"]), ("’", ["alt+shift+]"]),
+])
+def test_en_us_los_caracteres_van_donde_los_pone_apple(caracter, pulsaciones):
+    assert [str(p) for p in hid.caracter(caracter, "mac-us")] == pulsaciones
+
+
+def test_en_us_nada_usa_la_tecla_iso_que_un_teclado_ansi_no_tiene():
+    assert all(t != "iso" for pasos in hid._MAC_US.values() for _, t in pasos)
+
+
+@pytest.mark.parametrize("distribucion, tabla", [("mac-us", hid._MAC_US), ("mac-es", hid._MAC_ES)])
+def test_la_tabla_entera_va_y_vuelve_por_el_mac_simulado_sin_choques(distribucion, tabla):
+    # El simulador sale de las mismas tablas: esto prueba que son coherentes (ninguna
+    # tecla da dos caracteres, cada acento compone su letra), no lo que da el Mac de
+    # verdad; eso lo contrastan los casos de arriba y el paso 3 con el aparato.
+    texto = "".join(c for c in tabla if not c.isspace())
+    sim = Simulador(lineas=[""], distribucion=distribucion)
+    teclear_en(sim, texto, distribucion)
+    assert sim.editor.lineas == [texto]

@@ -1,9 +1,10 @@
 """Qué sabe hacer Claude aquí, qué puede tocar y qué está haciendo ahora.
 
 Todo se lee de los archivos que de verdad usa Claude Code —las skills de
-`.claude/skills/`, los permisos de `.claude/settings.json`, las herramientas
-del servidor MCP—, no de una lista aparte: una lista aparte se queda vieja y
-entonces la pantalla miente sobre lo que Claude puede hacer.
+`.claude/skills/`, los permisos de `.claude/settings.json` y
+`.claude/preguntar.json`, las herramientas del servidor MCP—, no de una lista
+aparte: una lista aparte se queda vieja y entonces la pantalla miente sobre lo
+que Claude puede hacer.
 
 La actividad llega de los *hooks* de Claude Code (ver `.claude/settings.json`):
 cada mensaje, cada herramienta y cada final de turno. Se guarda **sólo el
@@ -26,10 +27,13 @@ from . import config
 PROYECTO = config.CODIGO
 SKILLS = PROYECTO / ".claude" / "skills"
 AJUSTES_CLAUDE = PROYECTO / ".claude" / "settings.json"
+# Las reglas «ask», aparte: `terminal.ajustes_de_sesion` las suma sólo en el
+# modo normal, porque en el modo sin permisos una «ask» seguiría preguntando.
+PREGUNTAR = PROYECTO / ".claude" / "preguntar.json"
 
 # Lo que exige algo de la persona en el puente, además del permiso de Claude Code.
 NECESITA_CONTROL = {"teclear", "atajo", "ir_a_linea", "clic", "rueda", "recorrer_pantalla", "leer_documento",
-                    "escribir_cambio"}
+                    "escribir_cambio", "despertar_mac"}
 NECESITA_APROBACION = {"escribir_cambio"}
 
 
@@ -104,13 +108,21 @@ def _humano(regla: str) -> str:
             "Bash": f"ejecutar «{patron.rstrip(':*')}»"}.get(herramienta, regla)
 
 
+def reglas() -> dict[str, list[str]]:
+    """Los permisos de Claude en el puente, de los dos archivos: lo único que los
+    lee, para que la pantalla y la sesión no puedan decir cosas distintas."""
+    base = json.loads(AJUSTES_CLAUDE.read_text()).get("permissions", {})
+    preguntar = json.loads(PREGUNTAR.read_text()).get("permissions", {})
+    return {"allow": list(base.get("allow", [])), "ask": [*base.get("ask", []), *preguntar.get("ask", [])],
+            "deny": list(base.get("deny", []))}
+
+
 def permisos() -> dict:
     try:
-        datos = json.loads(AJUSTES_CLAUDE.read_text()).get("permissions", {})
+        datos = reglas()
     except (OSError, json.JSONDecodeError) as e:
-        return {"error": f"no se pudo leer .claude/settings.json: {e}", "allow": [], "ask": [], "deny": []}
-    return {clave: [{"regla": r, "texto": _humano(r)} for r in datos.get(clave, [])]
-            for clave in ("allow", "ask", "deny")}
+        return {"error": f"no se pudieron leer los permisos de .claude/: {e}", "allow": [], "ask": [], "deny": []}
+    return {clave: [{"regla": r, "texto": _humano(r)} for r in datos[clave]] for clave in ("allow", "ask", "deny")}
 
 
 def _clase_permiso(nombre: str, p: dict) -> str:
@@ -155,13 +167,22 @@ def conocimiento() -> dict:
 
 
 # ── actividad ───────────────────────────────────────────────────────────────
+# Lo único de la actividad que sobrevive a reiniciar el puente (C-0470).
+ESTADOS_GUARDADOS = ("trabajando", "esperando")
+
+
 class Actividad:
-    def __init__(self):
+    def __init__(self, ruta: Path | None = None):
         self.eventos: deque[dict] = deque(maxlen=60)
         self.estado = "sin noticias"
         self.skill: str | None = None
         self.herramienta: str | None = None
         self.t = 0.0
+        # Dónde se dejan el estado y su hora (C-0470): la conversación de Claude
+        # vive en tmux y sobrevive al reinicio del puente, y el puente nuevo, sin
+        # esto, no sabría si Claude está a medias. Sólo eso: la skill y la
+        # herramienta llevan rutas y nombres del trabajo. None: en memoria y ya.
+        self.ruta = ruta
 
     def registrar(self, hook: dict) -> dict:
         evento = hook.get("hook_event_name", "")
@@ -199,7 +220,42 @@ class Actividad:
             self.herramienta = resumen
         if resumen:
             self.eventos.append({"t": self.t, "evento": evento, "resumen": resumen[:160]})
+        self._guardar()
         return self.publico()
+
+    def recien_abierta(self) -> None:
+        """Claude Code acaba de abrirse (lo abrió el puente): espera su primer
+        mensaje. El que se cerró para abrirlo no manda su `Stop`, y sin esto la
+        placa se quedaba en «trabajando»."""
+        self.estado, self.skill, self.herramienta = "esperando", None, None
+        self.t = time.time()
+        self._guardar()
+
+    def recuperar(self) -> bool:
+        """Lo que dejó guardado el puente de antes de reiniciarlo, si se entiende.
+        Quien llama sabe si la conversación sigue viva: si no, es de otra."""
+        if self.ruta is None:
+            return False
+        try:
+            datos = json.loads(self.ruta.read_text())
+            estado, t = datos["estado"], float(datos["t"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+        if estado not in ESTADOS_GUARDADOS:
+            return False
+        self.estado, self.t = estado, t
+        return True
+
+    def _guardar(self) -> None:
+        if self.ruta is None:
+            return
+        # Por un temporal: el puente que arranca puede leerlo a la vez.
+        tmp = self.ruta.with_suffix(".tmp")
+        try:
+            tmp.write_text(json.dumps({"estado": self.estado, "t": self.t}))
+            tmp.replace(self.ruta)
+        except OSError as e:  # no es motivo para perder el hook: se dice y se sigue
+            print(f"[actividad] no pude guardar el estado de Claude en {self.ruta}: {e}", flush=True)
 
     def publico(self) -> dict:
         return {"estado": self.estado, "skill": self.skill, "herramienta": self.herramienta, "t": self.t}

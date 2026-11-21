@@ -577,10 +577,10 @@ GUION_PANTALLA = Path(__file__).resolve().parents[3] / "scripts" / "pantalla-reu
 
 def _ultima_foto(id_grabacion: str):
     from .. import reuniones
-    d = reuniones.raiz() / id_grabacion / "fotos"
     try:
+        d = reuniones.carpeta_de(id_grabacion) / "fotos"
         fotos = sorted(p for p in d.iterdir() if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
-    except OSError:
+    except (OSError, ValueError):
         return None
     return fotos[-1] if fotos else None
 

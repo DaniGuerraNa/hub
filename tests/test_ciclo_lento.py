@@ -242,8 +242,8 @@ def test_sin_hilo_la_vuelta_mide_dentro_como_siempre(con, latido_quieto, monkeyp
 
 @pytest.fixture
 def pasos_de_mentira(monkeypatch):
-    """Los nueve pasos del ciclo lento, sin git, docker ni PowerShell."""
-    from hub import copia_base, intercambio, transcribir
+    """Los diez pasos del ciclo lento, sin git, docker ni PowerShell."""
+    from hub import copia_base, intercambio, reuniones, transcribir
     from hub import version as _version
     snapshotter._RACHAS_LENTO.clear()
     monkeypatch.setattr(snapshotter.registry, "cargar", lambda: [])
@@ -253,6 +253,7 @@ def pasos_de_mentira(monkeypatch):
     monkeypatch.setattr(_version, "buscar_remota", lambda: None)
     monkeypatch.setattr(intercambio, "podar_de_paso", lambda: [])
     monkeypatch.setattr(transcribir, "podar_dictados", lambda: 0)
+    monkeypatch.setattr(reuniones, "procesar_pendientes", lambda: None)
 
 
 def test_el_ciclo_lento_dice_que_paso_empieza_y_cuanto_duro(con, pasos_de_mentira):

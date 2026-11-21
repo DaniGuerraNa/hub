@@ -91,6 +91,11 @@
   </section>
   {% endif %}
 
+  {# El puente no sabe dónde está el hub, así que el aviso se compone aquí
+     (C-0468, decisión 445): `/incidencia` ya sabe que viene del puente. #}
+  <p class="tenue" id="avisar-puente">¿El puente no hace lo que debería?
+    <a href="/incidencia?tipo=fallo&amp;de=puente-kvm">Avisar de un fallo del puente</a> a quien lo mantiene.</p>
+
 </div>
 <script src="/static/guia.js"></script>
 {% endif %}

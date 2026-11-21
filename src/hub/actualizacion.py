@@ -49,6 +49,15 @@ def _inicio() -> Path:
     return carpeta() / "inicio.json"
 
 
+def _puente() -> Path:
+    return carpeta() / "puente.json"
+
+
+# Cómo quedó el Puente KVM al actualizar, lo que escribe `scripts/lib/puente.sh`
+# (decisión 446). Sin el motivo de «ocupado»: lleva nombres del trabajo.
+PUENTE = ("reiniciado", "ocupado", "no_pudo", "sin_servicio")
+
+
 def cambios_locales(raiz: Path | None = None) -> list[str]:
     """Lo que `actualizar.sh` encontraría en su paso 1 y le haría parar.
 
@@ -140,7 +149,24 @@ def estado() -> dict:
         "lanzada": inicio.get("t") if inicio else None,
         "rc": resultado.get("rc") if resultado else None,
         "registro": _limpio(texto)[-12000:],
+        "puente": _como_quedo_el_puente(inicio, resultado),
     }
+
+
+def _como_quedo_el_puente(inicio: dict | None, resultado: dict | None) -> str | None:
+    """Lo apuntado del Puente KVM, sólo si es de ESTA actualización: escrito
+    después de lanzarla y, si ya terminó, antes de su resultado. Uno de una
+    vuelta anterior, o de `actualizar.sh` corrido a mano después, contaría de
+    otra actualización que la que enseña la pantalla."""
+    datos = _leer(_puente())
+    if not inicio or not datos or datos.get("puente") not in PUENTE:
+        return None
+    t = datos.get("t", 0)
+    if not isinstance(t, (int, float)) or t < inicio.get("t", 0):
+        return None
+    if resultado and t > resultado.get("t", 0):
+        return None
+    return datos["puente"]
 
 
 def _limpio(texto: str) -> str:

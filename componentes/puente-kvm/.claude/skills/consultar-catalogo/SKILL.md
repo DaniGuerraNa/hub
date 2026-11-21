@@ -12,6 +12,9 @@ catálogo, procedimientos de sistema que sólo leen (`sp_helpindex`,
 `sp_spaceused`) y `SHOWPLAN`. Nada de `INSERT/UPDATE/DELETE/MERGE`, DDL ni
 ejecutar procedimientos de la aplicación.
 
+Herramientas, en una sola búsqueda:
+`select:mcp__puente-kvm__ver_pantalla,mcp__puente-kvm__clic,mcp__puente-kvm__atajo,mcp__puente-kvm__teclear,mcp__puente-kvm__recorrer_pantalla,mcp__puente-kvm__rueda`.
+
 ## Cómo
 
 1. `ver_pantalla()`: localiza el cliente. Atajos en `trabajo/entorno.md`
@@ -23,9 +26,9 @@ ejecutar procedimientos de la aplicación.
    - **Pocas filas:** `ver_pantalla(x, y, ancho, alto)` con la zona de la
      rejilla, que llega a tamaño real (la pantalla entera llega reducida).
    - **Más filas de las que caben, pero cortas:** `recorrer_pantalla` sobre la
-     zona de la rejilla, desde la primera fila: la baja con la rueda y te da
-     todas las páginas en una sola llamada, con lo que se repite entre una y
-     otra.
+     zona de la rejilla, desde la primera fila (si no está arriba, súbela
+     antes con `rueda` en negativo): la baja con la rueda y te da todas las
+     páginas en una sola llamada, con lo que se repite entre una y otra.
    - **Muchas filas o texto largo** (un plan, una definición): llévalo a un
      editor y léelo con la skill `leer-documento`. Con el control: clic en la
      rejilla, Cmd+A, Cmd+C, pestaña nueva (Cmd+]), Cmd+V. El portapapeles es el

@@ -1,0 +1,30 @@
+# Lo abre /incidencia del hub con los campos ya rellenos por su `id`
+# (C-0468). 🔴 Ni este archivo ni los `id` se renombran: un hub viejo sigue
+# enlazando a ellos. Las etiquetas van aquí y no en la URL.
+name: Una idea o mejora
+description: Algo que el hub podría hacer, o hacer mejor.
+labels: ["mejora"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Gracias por la idea. **Lo que escribas aquí es público**: no pongas contraseñas, rutas de tus carpetas ni nombres de tus proyectos o de otras personas.
+
+        Desde el hub (Ajustes → «Contar un fallo o una idea») este formulario llega relleno con la versión y lo justo del equipo.
+  - type: textarea
+    id: que_paso
+    attributes:
+      label: Qué te gustaría
+      description: Qué querrías poder hacer y para qué. Si hoy lo resuelves de otra forma, cuál.
+    validations:
+      required: true
+  - type: textarea
+    id: equipo
+    attributes:
+      label: Datos del equipo
+      description: >-
+        Los pone el hub, sin rutas, usuario ni nombres. Si no vienes del hub, al menos su versión
+        (en la carpeta del hub, `uv run python -m hub.version codigo`).
+      render: text
+    validations:
+      required: false

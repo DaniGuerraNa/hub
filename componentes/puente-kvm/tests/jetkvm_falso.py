@@ -12,26 +12,63 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import fractions
 import json
+import math
 import struct
+import time
 import uuid
 
 import av
 from aiohttp import web
-from aiortc import RTCPeerConnection, RTCRtpSender, RTCSessionDescription, VideoStreamTrack
+from aiortc import MediaStreamTrack, RTCPeerConnection, RTCRtpSender, RTCSessionDescription, VideoStreamTrack
 
 from puente_kvm.simulador import Simulador
 
 
 class PantallaFalsa(VideoStreamTrack):
-    def __init__(self, sim: Simulador):
+    def __init__(self, sim: Simulador, falso: "JetKVMFalso | None" = None):
         super().__init__()
         self.sim = sim
+        self.falso = falso
 
     async def recv(self):
+        # Con el Mac en reposo (o la pantalla apagada) no hay HDMI y no sale vídeo.
+        while self.falso is not None and (self.falso.usb == "suspended" or not self.falso.video):
+            await asyncio.sleep(0.05)
         pts, base = await self.next_timestamp()
         trama = av.VideoFrame.from_image(await self.sim.captura())
         trama.pts, trama.time_base = pts, base
+        return trama
+
+
+class SonidoFalso(MediaStreamTrack):
+    """Un tono, como manda el aparato lo que suena en el Mac: 20 ms por paquete. En
+    una pausa no manda nada y su reloj no avanza (así hasta 0.5.11)."""
+
+    kind = "audio"
+
+    def __init__(self, pausas: dict[int, float]):
+        super().__init__()
+        self.pausas = dict(pausas)  # paquete → segundos callado antes de mandarlo
+        self.n = 0
+        self.base: float | None = None
+
+    async def recv(self):
+        if self.base is None:
+            self.base = time.monotonic()
+        if self.n in self.pausas:
+            pausa = self.pausas.pop(self.n)
+            await asyncio.sleep(pausa)
+            self.base += pausa
+        await asyncio.sleep(max(0.0, self.base + self.n * 0.02 - time.monotonic()))
+        datos = struct.pack("<320h", *(round(8000 * math.sin(2 * math.pi * 440 * (self.n * 320 + i) / 16000))
+                                       for i in range(320)))
+        trama = av.AudioFrame(format="s16", layout="mono", samples=320)
+        trama.planes[0].update(datos)
+        trama.sample_rate = 16000
+        trama.pts, trama.time_base = self.n * 320, fractions.Fraction(1, 16000)
+        self.n += 1
         return trama
 
 
@@ -46,6 +83,19 @@ class JetKVMFalso:
         self.rpc: list[dict] = []
         self.runner: web.AppRunner | None = None
         self.puerto = 0
+        # El audio, como el firmware 0.5.9-0.5.11: apagado de fábrica, sólo con el
+        # dispositivo de audio USB, y sólo en las conexiones que empiezan encendido.
+        self.audio = False
+        self.audio_usb = True
+        self.sabe_audio = True  # False: un firmware anterior a 0.5.9
+        self.pausas: dict[int, float] = {}
+        # El jiggler como viene (apagado, «Estándar») y el USB hacia el Mac (su usb.go).
+        self.jiggler = False
+        self.jiggler_config = {"inactivity_limit_seconds": 60, "jitter_percentage": 25, "schedule_cron_tab": "0 * * * * *"}
+        self.rechazar_horario = False  # como un cron que su gocron no entiende
+        self.usb = "configured"  # «suspended» con el Mac dormido, «not attached» sin el cable
+        self.video = True  # False: el Mac despierto pero sin imagen (la pantalla aún apagada)
+        self.despertares = 0
 
     def _dentro(self, req: web.Request) -> bool:
         return bool(self.token) and req.cookies.get("authToken") == self.token
@@ -96,11 +146,16 @@ class JetKVMFalso:
                     asyncio.ensure_future(self._rpc(c, m))
 
         await pc.setRemoteDescription(RTCSessionDescription(oferta["sdp"], oferta["type"]))
-        pc.addTrack(PantallaFalsa(self.sim))
+        pc.addTrack(PantallaFalsa(self.sim, self))
+        if self.audio and "G722/8000" in oferta["sdp"].upper():
+            pc.addTrack(SonidoFalso(self.pausas))
         for t in pc.getTransceivers():
             if t.kind == "video":
                 t.setCodecPreferences([c for c in RTCRtpSender.getCapabilities("video").codecs
                                        if c.mimeType == "video/H264"])
+            elif t.kind == "audio":
+                t.setCodecPreferences([c for c in RTCRtpSender.getCapabilities("audio").codecs
+                                       if c.mimeType == "audio/G722"])
         await pc.setLocalDescription(await pc.createAnswer())
         sdp = pc.localDescription.sdp
         candidatos = [l[2:] for l in sdp.splitlines() if l.startswith("a=candidate:")]
@@ -139,7 +194,40 @@ class JetKVMFalso:
             resultado = {"ready": True, "streaming": 1, "width": 1920, "height": 1080, "fps": 30}
         elif j["method"] == "wheelReport":
             await self.sim.rueda(-int(j["params"]["wheelY"]))  # en el aparato, positivo sube
-        canal.send(json.dumps({"jsonrpc": "2.0", "id": j["id"], **({"result": resultado} if resultado else {})}))
+        elif j["method"] in ("getAudioConfig", "setAudioConfig") and not self.sabe_audio:
+            canal.send(json.dumps({"jsonrpc": "2.0", "id": j["id"],
+                                   "error": {"code": -32601, "message": "Method not found"}}))
+            return
+        elif j["method"] == "getAudioConfig":
+            resultado = {"enabled": self.audio}
+        elif j["method"] == "getJigglerState":
+            resultado = self.jiggler
+        elif j["method"] == "setJigglerState":
+            self.jiggler = bool(j["params"]["enabled"])
+        elif j["method"] == "getJigglerConfig":
+            resultado = self.jiggler_config
+        elif j["method"] == "setJigglerConfig":
+            # Como `rpcSetJigglerConfig`: lo toma en memoria antes de programarlo, y si
+            # falla se queda con el malo y sin jiggler hasta reiniciar.
+            self.jiggler_config = j["params"]["jigglerConfig"]
+            if self.rechazar_horario:
+                canal.send(json.dumps({"jsonrpc": "2.0", "id": j["id"],
+                                       "error": {"code": -32603, "message": "error scheduling jiggler crontab"}}))
+                return
+        elif j["method"] == "getTimezones":
+            resultado = ["UTC", "America/Mexico_City", "Europe/Madrid"]
+        elif j["method"] == "getUSBState":
+            resultado = self.usb
+        elif j["method"] == "wakeHost":
+            # Sin el USB conectado contesta bien sin hacer nada (`rpcWakeHost`).
+            if self.usb not in ("not attached", "unknown", ""):
+                self.despertares += 1
+                self.usb = "configured"
+        elif j["method"] == "setAudioConfig":
+            # Sin el audio USB lo deja apagado, sin error (`rpcSetAudioConfig`).
+            self.audio = bool(j["params"]["params"]["enabled"]) and self.audio_usb
+        canal.send(json.dumps({"jsonrpc": "2.0", "id": j["id"],
+                               **({"result": resultado} if resultado is not None else {})}))
 
     async def arrancar(self) -> str:
         app = web.Application()

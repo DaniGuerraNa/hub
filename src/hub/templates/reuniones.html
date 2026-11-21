@@ -249,7 +249,7 @@
       </a>
       {% endfor %}
     </div>
-    {% else %}<p class="tenue" style="margin:0">Ninguna todavía. Se guardan en <code>{{ r.raiz }}</code>.</p>{% endif %}
+    {% else %}<p class="tenue" style="margin:0">Ninguna todavía. Se guardan en {% for x in r.raices %}<code>{{ x }}</code>{{ ' y ' if not loop.last }}{% endfor %}.</p>{% endif %}
   </div>
 
   {% if cx.hay_llave %}

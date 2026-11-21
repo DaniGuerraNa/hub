@@ -16,7 +16,13 @@
     });
     let datos = null;
     try { datos = await r.json(); } catch (e) { datos = null; }
-    if (!r.ok) throw new Error((datos && datos.detail) || ('HTTP ' + r.status));
+    if (!r.ok) {
+      const error = new Error((datos && datos.detail) || ('HTTP ' + r.status));
+      // Para quien tiene que distinguir un «no» de otro (un 409 que se puede confirmar).
+      error.status = r.status;
+      error.motivo = r.headers.get('X-Puente-Motivo') || '';
+      throw error;
+    }
     return datos;
   }
 
@@ -92,6 +98,52 @@
     }
   }
 
+  // Cambiar de conversación (abrir, reabrir, una nueva). Con Claude trabajando
+  // el puente dice que no (409), porque cerrarla lo corta a medias: se le
+  // pregunta a la persona y, si quiere, se repite. null si no quiso.
+  async function cambiarConversacion(url, cuerpo) {
+    try {
+      return await api(url, cuerpo);
+    } catch (e) {
+      if (e.status !== 409 || e.motivo !== 'trabajando') throw e;
+      if (!await confirmar(e.message + ' ¿La cierras igualmente?', { si: 'Cerrarla igualmente', peligro: true })) return null;
+      return api(url, Object.assign({}, cuerpo, { aunque_trabaje: true }));
+    }
+  }
+
+  // ── lo que esta página tiene abierto contra el puente ───────────────────
+  // El directo, el mando y la terminal. Antes de reiniciarlo se cierran: el
+  // directo no termina mientras se mira, y el puente esperaría por él al parar;
+  // el mando de esta página haría creer que se está usando el Mac; y la terminal
+  // se reengancharía al puente viejo mientras para. Cada parte apunta aquí cómo
+  // se corta y cómo se reanuda, también la de un marco (el panel, en el espacio).
+  let cortado = false;
+  const alCortar = [];
+  function cortar() {
+    cortado = true;
+    for (const img of $$('img')) {
+      const src = img.getAttribute('src') || '';
+      if (src.startsWith('/api/pantalla.mjpg')) { img.dataset.directo = src; img.removeAttribute('src'); }
+    }
+    for (const [c] of alCortar) c();
+    for (const f of $$('iframe')) { try { f.contentWindow.PuenteUI.cortar(); } catch (e) { /* aún cargando */ } }
+    if (window.PuenteTerminal && window.PuenteTerminal.cortar) window.PuenteTerminal.cortar();
+  }
+  function reanudar() {
+    cortado = false;
+    for (const img of $$('img[data-directo]')) { img.setAttribute('src', img.dataset.directo); delete img.dataset.directo; }
+    for (const [, r] of alCortar) r();
+    for (const f of $$('iframe')) { try { f.contentWindow.PuenteUI.reanudar(); } catch (e) { /* aún cargando */ } }
+    if (window.PuenteTerminal && window.PuenteTerminal.reanudar) window.PuenteTerminal.reanudar();
+  }
+
+  function pintarJiggler(encendido, texto, forzar) {
+    const b = $('#jiggler');
+    if (!b || (b.disabled && !forzar)) return;  // el sondeo no pisa lo que se está cambiando
+    b.textContent = 'Jiggler: ' + texto;
+    b.setAttribute('aria-pressed', encendido ? 'true' : 'false');
+  }
+
   // ── estado en la cabecera (todas las páginas) ────────────────────────────
   const TEXTO_CONTROL = {
     libre: ['Tú tienes el Mac', 'Claude no puede tocar nada. Dale el control cuando no lo estés usando.'],
@@ -109,8 +161,7 @@
       pc.className = pc.className.replace(/\b(ok|accion|riesgo)\b/g, '').trim() + ' '
         + (modo === 'claude' ? 'accion' : modo === 'parado' ? 'riesgo' : 'ok');
     }
-    const ac = $('#aviso-codigo');
-    if (ac) ac.hidden = !e.codigo_viejo;
+    pintarAvisoCodigo(e);
     const pa = $('#placa-aparato');
     if (pa) {
       const d = e.dispositivo || {};
@@ -141,6 +192,8 @@
     if (t) t.textContent = e.tarea ? '⏵ ' + e.tarea + (e.progreso ? ' · ' + e.progreso : '') : '';
     pintarClaude(e.claude || {});
     pintarConversacion(e);
+    if (window.PuenteReunion && e.reunion) window.PuenteReunion(e.reunion);
+    if (e.jiggler_texto) pintarJiggler(((e.dispositivo || {}).jiggler || {}).encendido, e.jiggler_texto);
   }
 
   // La conversación abierta, su modelo y la versión de Claude Code con que corre.
@@ -201,6 +254,143 @@
     try { pintarEstado(await api('/api/estado')); } catch (e) { /* el servicio se reinicia: se reintenta */ }
   }
 
+  // ── tras actualizar: reiniciar el puente y reabrir la conversación ──────
+  // Dos pasos con botón, sin comandos (C-0470, decisión 446 del hub). El
+  // comando sólo donde el botón no vale: sin systemd (`reinicio` «a_mano»), o
+  // con el programa de antes, cuyo /api/estado no trae `reinicio` (y su ruta
+  // da 404: ahí se enseña también, esa vez).
+  const avisoCodigo = $('#aviso-codigo');
+  let reiniciando = false;   // mientras, el sondeo no repinta el aviso
+  let reabriendo = false;    // ídem mientras pregunta y reabre: no vuelve a habilitar el botón
+  let sinBoton = false;      // la ruta no existía: el comando, hasta que corra el nuevo
+  let eraViejo = false;
+  function decirCodigo(texto) {
+    const p = $('#codigo-estado');
+    p.hidden = !texto;
+    p.textContent = texto || '';
+  }
+  function pintarAvisoCodigo(e) {
+    if (!avisoCodigo || reiniciando || reabriendo) return;
+    const nuevas = 'reinicio' in e;
+    const conv = e.conversacion;
+    const reabrir = nuevas && !!(conv && conv.herramientas_viejas);
+    if (eraViejo && !e.codigo_viejo) { sinBoton = false; decirCodigo(''); }
+    eraViejo = !!e.codigo_viejo;
+    avisoCodigo.hidden = !e.codigo_viejo && !reabrir;
+    if (avisoCodigo.hidden) return;
+    const comando = e.codigo_viejo && (!nuevas || e.reinicio !== 'boton' || sinBoton);
+    $('[data-codigo="comando"]', avisoCodigo).hidden = !comando;
+    // Sin systemd, tras reiniciarlo a mano, Reabrir sí tiene botón.
+    $('[data-codigo="pasos"]', avisoCodigo).hidden = comando;
+    $('#codigo-titulo').textContent = e.codigo_viejo ? 'El puente se actualizó, pero sigue con el código de antes.'
+      : 'Claude sigue con las herramientas de antes de actualizar.';
+    $('[data-paso="reiniciar"]', avisoCodigo).hidden = !e.codigo_viejo;
+    $('[data-paso="reabrir"]', avisoCodigo).hidden = !reabrir;
+    // Primero el puente: unas herramientas nuevas contra el puente viejo no se entenderían.
+    const b1 = $('#boton-reiniciar'), b2 = $('#boton-reabrir');
+    b1.className = 'cta';
+    b2.className = e.codigo_viejo ? '' : 'cta';
+    b2.disabled = !!e.codigo_viejo;
+    b2.title = e.codigo_viejo ? 'Después de reiniciar el puente' : '';
+  }
+
+  // Pregunta el estado cada segundo hasta que `cumple` o pasa el tope. Mientras
+  // el puente para y arranca no contesta: eso no es un fallo, se sigue.
+  async function esperarEstado(cumple, tope) {
+    const fin = Date.now() + tope;
+    while (Date.now() < fin) {
+      try { if (cumple(await api('/api/estado'))) return true; } catch (e) { /* reiniciándose */ }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    return false;
+  }
+
+  // Tras pedir el reinicio: «nuevo» en cuanto contesta otro `arrancado`;
+  // «igual» si pasados 15 s sigue contestando el mismo (systemd no lo
+  // reinició: no hay por qué tener la página cortada los dos minutos); null si
+  // en dos minutos no vuelve. Parar dura 5 s como mucho, y mientras para y
+  // arranca no contesta: el mismo `arrancado` a los 15 s es que no se paró.
+  async function esperarReinicio(antes) {
+    const desde = Date.now();
+    while (Date.now() - desde < 120000) {
+      try {
+        const e = await api('/api/estado');
+        if (e.arrancado && e.arrancado !== antes) return 'nuevo';
+        if (Date.now() - desde > 15000) return 'igual';
+      } catch (e) { /* reiniciándose */ }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    return null;
+  }
+
+  async function reiniciarPuente() {
+    if (reiniciando) return;
+    reiniciando = true;
+    const boton = $('#boton-reiniciar');
+    boton.disabled = true;
+    decirCodigo('Preparando el reinicio…');
+    cortar();
+    // El mando de esta página se acaba de cerrar: hasta que el puente lo vea,
+    // diría que se está usando el Mac desde la pantalla.
+    await esperarEstado((e) => !e.mando, 5000);
+    let r = null, datos = null;
+    try {
+      r = await fetch('/api/reiniciar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      try { datos = await r.json(); } catch (e) { datos = null; }
+    } catch (e) { r = null; }
+    if (r && r.ok) {
+      decirCodigo('Reiniciando el puente… La página vuelve sola en unos segundos.');
+      const quedo = await esperarReinicio(datos && datos.arrancado);
+      if (quedo === 'nuevo') {
+        location.reload();
+        return;
+      }
+      decirCodigo(quedo === 'igual'
+        ? 'No se reinició (mira el registro del servicio: «bash scripts/servicio.sh registro», en la carpeta del '
+          + 'puente). Sigue en marcha con el código de antes.'
+        : 'El puente no ha vuelto en dos minutos. Recarga la página; si sigue sin contestar, '
+          + '«bash scripts/servicio.sh estado», en la carpeta del puente, dice qué le pasa.');
+    } else if (r && (r.status === 404 || r.status === 405)) {
+      sinBoton = true;
+      decirCodigo('Este puente aún corre el programa de antes de este botón: reinícialo esta vez con el comando de '
+        + 'arriba. Desde la próxima, ya es un botón.');
+    } else {
+      decirCodigo((datos && datos.detail) || (r ? 'No se pudo reiniciar (HTTP ' + r.status + ').' : 'El puente no contesta.'));
+    }
+    reiniciando = false;
+    boton.disabled = false;
+    reanudar();
+    sondear();
+  }
+
+  async function reabrirConversacion() {
+    if (reabriendo) return;
+    reabriendo = true;
+    const boton = $('#boton-reabrir');
+    boton.disabled = true;
+    try {
+      const d = await api('/api/conversaciones');
+      if (!d.actual) {
+        fugaz('No hay una conversación abierta en la lista del puente: abre una con «Nueva».', true);
+      } else {
+        const c = await cambiarConversacion('/api/conversaciones/' + d.actual.id + '/abrir', {});
+        if (c) {
+          fugaz('Reabierta: ' + c.nombre + '. Claude ya tiene las herramientas nuevas.');
+          if (window.PuenteTerminal && window.PuenteTerminal.reenganchar) window.PuenteTerminal.reenganchar();
+        }
+      }
+    } catch (e) {
+      fugaz(e.message, true);
+    }
+    reabriendo = false;
+    boton.disabled = false;
+    sondear();
+  }
+  if (avisoCodigo) {
+    $('#boton-reiniciar').addEventListener('click', reiniciarPuente);
+    $('#boton-reabrir').addEventListener('click', reabrirConversacion);
+  }
+
   // ── bitácora (panel) ─────────────────────────────────────────────────────
   let ultimaN = 0;
   function hora(t) {
@@ -254,6 +444,46 @@
       await accion(() => api('/api/control', { accion: d.control }),
         d.control === 'parar' ? 'Parado' : d.control === 'dar' ? 'Claude tiene el control' : 'Vuelves a tener el Mac');
       sondear();
+      return;
+    }
+    // Despertar y el jiggler son del aparato (C-0463): no piden el control,
+    // porque los pulsa la persona; para Claude, despertar sí lo pide.
+    if ('despertar' in d) {
+      const texto = b.textContent;
+      b.disabled = true;
+      b.textContent = 'Despertando…';
+      try {
+        const r = await accion(() => api('/api/despertar', {}));
+        fugaz(r.texto, !r.despierto);
+        if (r.despierto && $('[data-reconectar]')) setTimeout(() => location.reload(), 900);
+      } catch (e) { /* ya lo dijo accion */ } finally { b.disabled = false; b.textContent = texto; }
+      return;
+    }
+    if (b.id === 'jiggler') {
+      const encender = b.getAttribute('aria-pressed') !== 'true';  // lo que se ve, y se manda explícito
+      b.disabled = true;
+      try {
+        const r = await accion(() => api('/api/jiggler', { encendido: encender }));
+        pintarJiggler(r.jiggler && r.jiggler.encendido, r.texto, true);
+        fugaz(encender ? 'Jiggler encendido (' + r.texto + '). Lo hace el JetKVM: sigue aunque cierres el puente.' : 'Jiggler apagado.');
+      } catch (e) { /* ya lo dijo accion */ } finally { b.disabled = false; }
+      return;
+    }
+    if ('copiarDiagnostico' in d) {
+      b.disabled = true;
+      // Con la promesa dentro de ClipboardItem, el portapapeles se pide en el
+      // mismo clic: tras esperar a la red, Safari y Firefox ya no lo dan.
+      const pedido = api('/api/diagnostico').then((r) => r.texto);
+      try {
+        if (window.ClipboardItem && navigator.clipboard.write) {
+          await navigator.clipboard.write([new ClipboardItem({ 'text/plain': pedido.then((t) => new Blob([t], { type: 'text/plain' })) })]);
+        } else {
+          await navigator.clipboard.writeText(await pedido);
+        }
+        fugaz('Diagnóstico copiado: pégalo al final de lo que cuentes en el hub. Léelo antes: será público.');
+      } catch (e) {
+        fugaz('No pude copiarlo: en una terminal, «puente-kvm diagnostico» lo escribe entero.', true);
+      } finally { b.disabled = false; }
       return;
     }
     if ('reconectar' in d) {
@@ -382,7 +612,9 @@
     const casillaCtrl = $('#mando-ctrl');
     const ayuda = $('#mando-ayuda');
     const ayudaQuieto = ayuda.textContent;
-    const extras = $$('[data-mando-atajo], #mando-pegar');
+    const extras = $$('[data-mando-atajo], #mando-pegar, #mando-teclado-caja');
+    const teclado = $('#mando-teclado');
+    let pegadoConAcentos = false;
     let ws = null, activo = false, botones = 0, ultimoMov = 0, acumulado = 0;
     try { casillaCtrl.checked = localStorage.getItem('puente-mando-ctrl') !== 'no'; } catch (e) { /* sin almacenamiento */ }
     casillaCtrl.addEventListener('change', () => {
@@ -414,7 +646,15 @@
     function empezar() {
       const v = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/mando');
       ws = v;
-      v.onmessage = (m) => { let d = {}; try { d = JSON.parse(m.data); } catch (e) { return; } if (d.no) parar(d.no); };
+      v.onmessage = (m) => {
+        let d = {}; try { d = JSON.parse(m.data); } catch (e) { return; }
+        if (d.no) parar(d.no);
+        // Lo que no es ASCII depende de la fuente de entrada del Mac: si no es
+        // la elegida, sale otro carácter y sólo ella lo ve (C-0466).
+        if (d.hecho === 'pegar' && pegadoConAcentos) {
+          fugaz('Tecleado con el teclado «' + (d.teclado || teclado.selectedOptions[0].textContent) + '». Si los acentos salieron cambiados, el Mac usa otro: cámbialo en «Teclado del Mac».');
+        }
+      };
       v.onclose = () => { if (ws === v) parar('Se cortó la conexión con el puente.'); };
       activo = true;
       pantallaMando.classList.add('usando');
@@ -422,7 +662,8 @@
       extras.forEach((b) => { b.hidden = false; });
       ayuda.textContent = 'Usando el Mac: lo que teclees y hagas sobre la imagen va al Mac. Para parar, «Dejar de usar» o un clic fuera de la imagen.';
     }
-    botonUsar.addEventListener('click', () => (activo ? parar() : empezar()));
+    botonUsar.addEventListener('click', () => (activo ? parar() : cortado ? null : empezar()));
+    alCortar.push([() => parar(), () => {}]);  // al reanudar, la persona lo vuelve a pedir si quiere
 
     // Sólo lo que pasa sobre la imagen: con zoom, la caja tiene márgenes negros y
     // barras de desplazamiento, y un clic ahí llegaría al Mac como clic en el borde.
@@ -434,6 +675,10 @@
     pantallaMando.addEventListener('mousedown', (e) => {
       if (!activo || e.target !== imagen) return;
       e.preventDefault();
+      // Cancelarlo (para no arrastrar la imagen) también deja el foco donde
+      // estaba: en la terminal de Claude, que es de la página de fuera, lo
+      // tecleado seguía yendo a ella (20-nov). Se trae aquí a mano.
+      if (document.activeElement !== pantallaMando || !document.hasFocus()) pantallaMando.focus({ preventScroll: true });
       botones |= bitDe(e.button);
       enviar({ t: 'raton', ...punto(e), b: botones });
     });
@@ -443,20 +688,23 @@
       enviar({ t: 'raton', ...punto(e), b: botones });
     });
     pantallaMando.addEventListener('contextmenu', (e) => { if (activo) e.preventDefault(); });
+    // Como la web del JetKVM (useMouse.ts): cada evento de la rueda cuenta uno, y
+    // de 100 en adelante, uno por cada 100. Un touchpad o una rueda suave mandan
+    // muchos y pequeños: contar sólo cada 100 píxeles la dejaba lentísima (20-nov).
     pantallaMando.addEventListener('wheel', (e) => {
       if (!activo) return;
       e.preventDefault();
-      acumulado += e.deltaY;
-      const paso = e.deltaMode === 1 ? 3 : 100;  // líneas o píxeles por «clic» de rueda
-      while (Math.abs(acumulado) >= paso) {
-        const signo = Math.sign(acumulado);
-        enviar({ t: 'rueda', pasos: signo });  // positivo: el contenido baja
-        acumulado -= signo * paso;
+      if (!e.deltaY) return;
+      acumulado += Math.abs(e.deltaY) >= 100 ? e.deltaY / 100 : Math.sign(e.deltaY);
+      const pasos = Math.trunc(acumulado);
+      if (pasos) {
+        enviar({ t: 'rueda', pasos });  // positivo: el contenido baja
+        acumulado -= pasos;
       }
     }, { passive: false });
     // Un clic fuera de la imagen y de sus barras (la del mando y la del zoom) suelta el Mac.
     document.addEventListener('mousedown', (e) => {
-      if (activo && !e.target.closest('#pantalla, #mando, .zoom, #ampliar, .velo')) parar();
+      if (activo && !e.target.closest('#pantalla, #mando, .zoom, #ampliar, #reunion, .velo')) parar();
     }, true);
     const tecla = (e) => {
       if (!activo || $('.velo')) return;  // con un diálogo del puente abierto, el teclado es suyo
@@ -474,8 +722,21 @@
     $('#mando-pegar').addEventListener('click', async () => {
       let texto = null;
       try { texto = await navigator.clipboard.readText(); } catch (e) { texto = null; }
-      if (!texto) texto = await pedir('Texto para teclear en el Mac', '', { max: 5000, si: 'Teclear', nota: 'Se teclea con la distribución de Ajustes, letra a letra.' });
-      if (texto) enviar({ t: 'pegar', texto });
+      if (!texto) texto = await pedir('Texto para teclear en el Mac', '', { max: 5000, si: 'Teclear', nota: 'Se teclea letra a letra con el teclado del Mac que eliges junto a «Pegar texto».' });
+      if (!texto) return;
+      pegadoConAcentos = /[^\x00-\x7f]/.test(texto);
+      enviar({ t: 'pegar', texto });
+    });
+    teclado.addEventListener('change', async () => {
+      const antes = teclado.dataset.antes || teclado.querySelector('[selected]')?.value || teclado.value;
+      try {
+        await api('/api/ajustes', { perfil: { distribucion: teclado.value } });
+        teclado.dataset.antes = teclado.value;
+        fugaz('Teclado del Mac: ' + teclado.selectedOptions[0].textContent);
+      } catch (e) {
+        teclado.value = antes;
+        fugaz('No se cambió el teclado: ' + e.message, true);
+      }
     });
   }
 
@@ -514,7 +775,8 @@
       pant.classList.toggle('desplazable', ampliada()
         && (pant.scrollWidth > pant.clientWidth + 1 || pant.scrollHeight > pant.clientHeight + 1));
       const src = '/api/pantalla.mjpg?ancho=' + pedir;
-      if (img.getAttribute('src') !== src) img.setAttribute('src', src);
+      if (cortado) img.dataset.directo = src;  // al reanudar, el de ahora
+      else if (img.getAttribute('src') !== src) img.setAttribute('src', src);
       if (window.PuenteRegion) window.PuenteRegion();
     };
     const fijarZoom = (z) => {
@@ -676,5 +938,65 @@
     }
   }, 1000);
 
-  window.PuenteUI = { api, confirmar, pedir, fugaz };
+  // ── una reunión (C-0461): lo que suena en el Mac y su pantalla ──────────
+  // La empieza y la para la persona con este botón, y nadie más.
+  const botonReunion = $('#reunion');
+  if (botonReunion) {
+    const placa = $('#reunion-placa');
+    const aviso = $('#reunion-aviso');
+    let reunion = { grabando: false }, recibida = Date.now(), esperando = false;
+    const reloj = (s) => {
+      const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, dd = (n) => String(n).padStart(2, '0');
+      return (h ? h + ':' + dd(m) : m) + ':' + dd(s % 60);
+    };
+    const avisar = (texto, clase) => {
+      aviso.hidden = !texto;
+      aviso.textContent = texto || '';
+      aviso.className = 'aviso aviso-reunion' + (clase ? ' ' + clase : '');
+    };
+    function pintar() {
+      const g = reunion.grabando;
+      botonReunion.disabled = esperando;
+      botonReunion.textContent = esperando ? (g ? 'Guardando…' : 'Conectando el sonido…')
+        : g ? '■ Salí de la reunión' : '● Estoy en reunión';
+      placa.hidden = !g;
+      if (!g) {
+        const u = reunion.ultima;
+        if (!u) return avisar('');
+        return avisar('Reunión guardada (' + reloj(u.segundos) + ', ' + u.fotos + (u.fotos === 1 ? ' foto' : ' fotos') + ' de la pantalla). En el hub, con el Puente KVM '
+          + 'encendido en Ajustes, Reuniones la transcribe y la resume sola.'
+          + (u.con_sonido ? '' : ' Ojo: no llegó nada de sonido del Mac.'), u.con_sonido ? 'ok' : 'riesgo');
+      }
+      // Entre una consulta y la siguiente, el reloj sigue en la pantalla.
+      const pasado = Math.floor((Date.now() - recibida) / 1000);
+      const mudo = reunion.sin_sonido_s + pasado;
+      placa.textContent = 'Grabando ' + reloj(reunion.segundos + pasado);
+      if (reunion.error) return avisar(reunion.error, 'riesgo');
+      // En silencio el JetKVM no manda nada: no se distingue de la salida mal
+      // elegida, así que se dice lo que hay y qué mirar, no que algo esté mal.
+      if (mudo >= 30) {
+        return avisar('No ha llegado sonido del Mac en ' + reloj(mudo) + '. Si alguien está hablando: en el Mac, '
+          + 'Ajustes del Sistema → Sonido → Salida → el dispositivo USB del JetKVM (no «JetKVM v1», que es la pantalla).', 'riesgo');
+      }
+      avisar('Se graba lo que suena en el Mac y su pantalla cuando cambia. Tu voz no se graba: entra al Mac por su micrófono.');
+    }
+    window.PuenteReunion = (r) => { if (!esperando) { reunion = r; recibida = Date.now(); pintar(); } };
+    setInterval(pintar, 1000);
+    botonReunion.addEventListener('click', async () => {
+      if (esperando) return;
+      esperando = true;
+      pintar();
+      try {
+        reunion = reunion.grabando ? { grabando: false, ultima: await api('/api/reunion/parar', {}) }
+          : await api('/api/reunion/empezar', {});
+        recibida = Date.now();
+      } catch (e) {
+        fugaz(e.message, true);
+      }
+      esperando = false;
+      pintar();
+    });
+  }
+
+  window.PuenteUI = { api, confirmar, pedir, fugaz, cambiarConversacion, cortar, reanudar };
 })();

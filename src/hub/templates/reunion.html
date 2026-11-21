@@ -38,7 +38,9 @@
 {% macro peso(b) %}{{ tamano(b) }}{% endmacro %}
 {# Una región (C-0167): las acciones y el refresco solo cambian esto, sin
    recargar la página. #}
-<div data-region="reunion" class="reu" {% if d.procesado.estado == 'procesando' or d.comprimiendo %}data-refrescar="5"{% endif %}>
+{# Una del Puente KVM sin procesar la lanza el ciclo lento del muestreo, que
+   pasa cada diez minutos (decisión 443): se mira cada medio minuto, no cada 5 s. #}
+<div data-region="reunion" class="reu" {% if d.procesado.estado == 'procesando' or d.comprimiendo %}data-refrescar="5"{% elif d.se_procesa_sola %}data-refrescar="30"{% endif %}>
   {# De qué pantalla son las capturas, si no fue la de la llamada todo el rato (C-0456). #}
   {% set cm = d.meta.cambios_monitor or [] %}
   {% if d.meta.monitor_origen == 'heredado' or cm | length > 1 %}
@@ -70,7 +72,8 @@
        ahí está en sus etapas, y procesar de nuevo empieza desde el principio. #}
     {% elif d.procesado.estado == 'se cortó' %}<p><span class="marca fallo">se cortó</span>
       el proceso se detuvo a medias{% for k, v in (d.procesado.etapas or {}).items() %}{{ ' ·' if loop.first else ',' }} {{ k }}: {{ v }}{% endfor %}.</p>
-    {% else %}<p class="tenue" style="margin-top:0">Sin procesar todavía.</p>{% endif %}
+    {% else %}<p class="tenue" style="margin-top:0">Sin procesar todavía.
+      {%- if d.se_procesa_sola %} La grabó el Puente KVM y se procesa sola en unos minutos; si no quieres esperar, «Procesar».{% endif %}</p>{% endif %}
     <input type="hidden" name="id" value="{{ d.id }}">
     <button class="boton principal" name="que" value="procesar">{{ 'Reintentar' if d.procesado.estado == 'se cortó' else 'Procesar' }}</button>
   </form>

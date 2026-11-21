@@ -36,12 +36,49 @@
   term.loadAddon(ajuste);
   term.open($('#terminal'));
 
+  // Copiar. Con el ratón selecciona tmux (así la rueda recorre su historial), y al
+  // soltar avisa de lo copiado con OSC 52: sin atenderlo, lo seleccionado no
+  // llegaba nunca al portapapeles de la PC, y el Ctrl+C de después le mandaba ^C
+  // a Claude (20-nov). Sólo justo después de soltar el ratón en la terminal: si
+  // no, lo que se pinta en ella podría escribir en el portapapeles por su cuenta.
+  let soltadoEn = 0, copiadoEn = 0;
+  $('#terminal').addEventListener('mouseup', () => { soltadoEn = Date.now(); });
+  function copiar(texto) {
+    const fugaz = (m, r) => window.PuenteUI && window.PuenteUI.fugaz(m, r);
+    navigator.clipboard.writeText(texto).then(() => { copiadoEn = Date.now(); fugaz('Copiado'); },
+      () => fugaz('El navegador no dejó copiar: selecciona con Mayús y pulsa Ctrl+C', true));
+  }
+  term.parser.registerOscHandler(52, (datos) => {
+    const b64 = datos.slice(datos.indexOf(';') + 1);
+    if (!b64 || b64 === '?' || Date.now() - soltadoEn > 2000) return true;  // leer el portapapeles, nunca
+    try {
+      copiar(new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))));
+    } catch (e) { /* no era base64: nada que copiar */ }
+    return true;
+  });
+
   // Ctrl+V (y Cmd+V) es pegar, no mandar ^V a la terminal: se le deja al navegador.
+  // Ctrl+C con algo seleccionado (con Mayús, la selección es del navegador) o
+  // recién copiado es copiar, no interrumpir a Claude: para eso está Esc.
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
-    const v = (e.key || '').toLowerCase() === 'v';
-    if ((e.ctrlKey || e.metaKey) && v && !e.altKey) return false;
+    const tecla = (e.key || '').toLowerCase();
+    const atajo = (e.ctrlKey || e.metaKey) && !e.altKey;
+    if (atajo && tecla === 'v') return false;
     if (e.shiftKey && e.key === 'Insert') return false;
+    if (atajo && tecla === 'c') {
+      if (term.hasSelection()) {
+        copiar(term.getSelection());
+        term.clearSelection();
+        return false;
+      }
+      if (Date.now() - copiadoEn < 15000) {
+        copiadoEn = 0;
+        if (window.PuenteUI) window.PuenteUI.fugaz('Ya estaba copiado. Para interrumpir a Claude, Esc');
+        return false;
+      }
+    }
+    if (!['control', 'meta', 'shift', 'alt'].includes(tecla)) copiadoEn = 0;
     return true;
   });
 
@@ -71,21 +108,28 @@
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ filas: term.rows, columnas: term.cols }));
   }
 
+  // Cortada mientras el puente se reinicia (app.js, «Reiniciar el puente»): no
+  // se reengancha al viejo mientras para; al reanudar, al nuevo.
+  let cortada = false;
+
   function conectar() {
     const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
-    ws = new WebSocket(proto + location.host + '/ws/terminal');
-    ws.binaryType = 'arraybuffer';
+    const este = new WebSocket(proto + location.host + '/ws/terminal');
+    ws = este;
+    este.binaryType = 'arraybuffer';
     estadoTerminal('conectando…', 'espera');
-    ws.onopen = () => {
+    este.onopen = () => {
       espera = 500;
       estadoTerminal('conectada', 'ok');
       encajar();
       term.focus();
     };
-    ws.onmessage = (ev) => {
+    este.onmessage = (ev) => {
       term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
     };
-    ws.onclose = () => {
+    este.onclose = () => {
+      if (ws !== este) return;  // ya hay otra: la de reanudar
+      if (cortada) { estadoTerminal('en pausa', 'espera'); return; }
       estadoTerminal('reconectando…', 'riesgo');
       setTimeout(conectar, espera);
       espera = Math.min(espera * 2, 8000);
@@ -100,11 +144,24 @@
   });
 
   // Para el botón «Usar» de una skill (en el marco): escribe en la terminal, sin Enter.
+  // Y para el aviso de código viejo (app.js): cortarla y reanudarla alrededor del
+  // reinicio del puente, y reengancharla tras reabrir la conversación.
   window.PuenteTerminal = {
     escribir(texto) {
       if (ws && ws.readyState === 1) ws.send(codificar.encode(texto));
       term.focus();
     },
+    cortar() {
+      cortada = true;
+      if (ws) ws.close();
+    },
+    reanudar() {
+      if (!cortada) return;
+      cortada = false;
+      espera = 500;
+      conectar();
+    },
+    reenganchar() { reenganchar(); },
   };
 
   // «Pantalla grande» en el panel (app.js): la pantalla del Mac ocupa la ventana,
@@ -202,7 +259,8 @@
       { si: 'Abrir', nota: AVISO_CAMBIO + ' El nombre no sale del puente ni va a la bitácora.' });
     if (nombre === null) return;
     try {
-      const c = await UI.api('/api/conversaciones', { nombre });
+      const c = await UI.cambiarConversacion('/api/conversaciones', { nombre });
+      if (!c) return;
       UI.fugaz('Conversación nueva: ' + c.nombre + ' (' + c.modelo_texto + ')');
       reenganchar();
     } catch (e) { UI.fugaz(e.message, true); }
@@ -248,7 +306,7 @@
           : '¿Cambiar a «' + c.nombre + '»? ' + AVISO_CAMBIO) + (c.otra_carpeta ? ' Ojo: nació en otra carpeta; se retoma en la de ahora.' : '');
         if (!await UI.confirmar(texto, { si: abierta ? 'Reabrir' : 'Cambiar' })) return;
         try {
-          await UI.api('/api/conversaciones/' + c.id + '/abrir', {});
+          if (!await UI.cambiarConversacion('/api/conversaciones/' + c.id + '/abrir', {})) return;
           cerrarMenu(false); UI.fugaz('Abierta: ' + c.nombre); reenganchar();
         } catch (e) { UI.fugaz(e.message, true); }
       };

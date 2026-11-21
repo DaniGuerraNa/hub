@@ -18,7 +18,7 @@ from collections.abc import Callable
 
 from . import version as _version
 from . import (busqueda, conexiones, config, consumo, copia_base, db, intercambio, maquina, modelos, orquestador,
-               programados, registry, repos, salud, servicios, terminal, tmux, transcribir, tui)
+               programados, registry, repos, reuniones, salud, servicios, terminal, tmux, transcribir, tui)
 from .registry import Atribuidor
 from .reloj import ahora
 
@@ -407,6 +407,11 @@ def ciclo_lento(con: sqlite3.Connection, al_paso: Callable | None = None,
         ("intercambio", lambda: len(intercambio.podar_de_paso())),
         # El audio de un dictado que falló, a los diez días (decisión 362).
         ("dictados", lambda: transcribir.podar_dictados()),
+        # Las reuniones del Mac que grabó el Puente KVM (decisión 443): el hub
+        # no le pregunta (438), mira su carpeta y lanza el procesado de una
+        # terminada. Aquí y no en el latido: el procesado es caro, y aunque
+        # mirar no lo sea, a la vuelta de unos minutos no le corre prisa.
+        ("reuniones", lambda: reuniones.procesar_pendientes()),
     ):
         _decir_paso(al_paso, clave)
         empieza = time.monotonic()

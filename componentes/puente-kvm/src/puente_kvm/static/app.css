@@ -125,6 +125,9 @@ label { display: block; color: var(--texto-2); font-size: 13px; margin: 10px 0 4
 .pantalla img { width: 100%; height: auto; display: block; }
 .barra-pantalla { margin-bottom: 10px; }
 .barra-pantalla h2 { margin: 0 auto 0 0; }
+/* La reunión que se graba: el tiempo en su placa, y lo que hay que saber debajo de la barra. */
+#reunion-placa { font-variant-numeric: tabular-nums; }
+.aviso-reunion { margin: 0 0 10px; }
 .solo-grande { display: none; }
 .zoom { gap: 4px; align-items: center; }
 .zoom button { padding: 4px 10px; min-width: 34px; justify-content: center; }
@@ -135,7 +138,7 @@ label { display: block; color: var(--texto-2); font-size: 13px; margin: 10px 0 4
 .tarjeta-pantalla.ampliada { position: fixed; inset: 0; z-index: 40; margin: 0; border: 0; border-radius: 0;
   padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 8px; }
 .ampliada .solo-grande { display: inline-flex; }
-.ampliada .barra-pantalla, .ampliada .mando, .ampliada #mando-ayuda { flex: none; margin: 0; }
+.ampliada .barra-pantalla, .ampliada .mando, .ampliada #mando-ayuda, .ampliada .aviso-reunion { flex: none; margin: 0; }
 .ampliada #mando-ayuda { font-size: 12.5px; }
 .ampliada .pantalla { flex: 1; min-height: 0; overflow: auto; display: flex; }
 /* margin:auto centra y, al desbordar, deja llegar a todo con las barras (con
@@ -146,6 +149,10 @@ html.con-pantalla-grande, html.con-pantalla-grande body { overflow: hidden; }
 .pantalla.desplazable.arrastrando { cursor: grabbing; }
 .pantalla.usando { outline: 3px solid var(--acento); outline-offset: -3px; cursor: crosshair; }
 .mando { margin-top: 10px; flex-wrap: wrap; }
+.mando-aparato { margin-left: auto; }
+#mando-teclado-caja { white-space: nowrap; }
+#mando-teclado { width: auto; margin-left: 6px; padding: 6px 8px; }
+#jiggler[aria-pressed="true"] { color: var(--ok); }
 .pantalla .region { position: absolute; border: 2px dashed var(--acento); pointer-events: none; }
 .pantalla .seleccion { position: absolute; border: 2px solid var(--espera); background: rgba(224,169,92,.12); pointer-events: none; }
 
@@ -224,6 +231,11 @@ pre.consulta { background: var(--lienzo); padding: 10px; border-radius: var(--r-
 .en-marco .cabecera { display: none; }
 .aviso-codigo { margin: 10px 20px 0; flex: none; }
 .en-marco .aviso-codigo { display: none; }
+.aviso-codigo p { margin: 0; }
+.aviso-codigo p + p, .aviso-codigo .pasos-codigo { margin-top: 6px; }
+.pasos-codigo { margin-bottom: 0; padding-left: 22px; display: grid; gap: 6px; }
+.pasos-codigo button { margin-left: 6px; padding: 5px 12px; font-size: 13px; vertical-align: baseline; }
+#codigo-estado { color: var(--texto); }
 /* Con la pantalla del Mac en grande, el marco ocupa la ventana entera. */
 body.pantalla-grande .cabecera, body.pantalla-grande .divisor, body.pantalla-grande .dock { display: none; }
 body.pantalla-grande .espacio-rejilla, body.pantalla-grande .espacio-rejilla.plegado {

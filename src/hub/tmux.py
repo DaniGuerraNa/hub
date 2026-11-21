@@ -179,6 +179,25 @@ def _correr(args: list[str], entrada: str | None = None) -> str:
     return salida.stdout
 
 
+def version() -> str | None:
+    """La versión de tmux de esta máquina (`tmux -V`): None si no está, y ""
+    si está pero no se pudo leer (no es lo mismo, y decir «no está» mentiría).
+
+    Para el texto de una incidencia (C-0468). No necesita servidor, y va por
+    el adaptador como toda orden de tmux. Sólo pasa algo con forma de versión
+    («3.4», «3.3a», «next-3.6»): lo demás que dijera no sale de aquí."""
+    try:
+        salida = _correr(["-V"])
+    except TmuxNoDisponible:
+        return None
+    except (RuntimeError, subprocess.SubprocessError) as exc:
+        # Regla dura 21: lo que falla de tmux se dice, no se traga.
+        print(f"[tmux] no se pudo leer su versión: {exc}", flush=True)
+        return ""
+    m = re.fullmatch(r"tmux\s+([\w.+-]{1,20})", salida.strip())
+    return m.group(1) if m else ""
+
+
 def servidor_pid() -> int | None:
     """Identifica el 'epoch' del servidor de tmux.
 

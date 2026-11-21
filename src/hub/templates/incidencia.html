@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+{# Contar un fallo o una idea (C-0468, decisión 445). Sin formulario que
+   vaya al hub: el texto lo arma `incidencia.js` en el navegador, y lo manda
+   la persona desde GitHub con su cuenta, o lo copia. Sin JavaScript el
+   enlace abre el formulario en blanco y los datos del equipo siguen a la
+   vista para copiarlos. #}
+{% set elegido = inc.tipos | selectattr('clave', 'equalto', tipo) | first %}
+{% set titulo_inicial = titulo_pedido or (inc.de.nombre ~ ': ' if inc.de else '') %}
+<style>
+  /* Una columna: lo público, lo que cuentas y cómo sale. */
+  .inc { display:grid; gap:14px; max-width:860px; grid-template-columns:minmax(0, 1fr); }
+  .inc > .tarjeta, .inc > .aviso { margin:0; }
+  .inc > .aviso > div { flex:1; min-width:0; }
+  .inc > .aviso p { margin:0 0 6px; }
+  .inc .tarjeta > h2 { margin:0 0 10px; font-size:var(--letra-4); }
+  .inc .tarjeta p { margin:0 0 8px; color:var(--texto-2); max-width:72ch; }
+  .inc .tipos { display:flex; gap:6px 22px; flex-wrap:wrap; border:0; padding:0; margin:0; }
+  .inc .tipos > label { margin:4px 0; }
+  .inc .equipo { background:var(--lienzo); border:1px solid var(--borde); border-radius:var(--r-input);
+                 padding:10px 12px; margin:8px 0 0; font-size:var(--letra-2); line-height:1.55;
+                 white-space:pre-wrap; overflow-wrap:anywhere; }
+  .inc #inc-vista { min-height:260px; line-height:1.55; font-size:var(--letra-2);
+                    font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .inc .acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:12px; }
+  .inc .tarjeta p.recortado { color:var(--espera); }
+  .inc .acciones + p { margin-top:12px; }
+</style>
+
+{{ ui.cabecera_vista('Contar un fallo o una idea',
+    'Para quien mantiene el hub. Lo escribes aquí, ves entero lo que va a salir y lo mandas tú desde GitHub con
+     tu cuenta, o lo copias para mandarlo por donde quieras.') }}
+
+<div class="inc" id="incidencia" data-destino="{{ inc.destino or '' }}" data-limite="{{ inc.limite }}"
+     data-tipos="{{ inc.tipos | map(attribute='clave') | join(' ') }}">
+
+  <div class="aviso espera">
+    {{ ui.placa('aviso', 'espera', 'lg') }}
+    <div>
+      <h2>Lo que mandes a GitHub es público</h2>
+      <p class="tenue">Cualquiera puede leerlo. No pongas contraseñas, rutas de tus carpetas ni nombres de tus
+        proyectos o de otras personas. Los datos del equipo de abajo ya vienen sin nada de eso: míralos antes de
+        mandar. El hub no envía nada por su cuenta.</p>
+    </div>
+  </div>
+
+  {% if inc.de %}
+  <div class="tarjeta" id="inc-desde">
+    <h2>Vienes del {{ inc.de.nombre }}</h2>
+    <p>Si el puente te dio su diagnóstico («Copiar diagnóstico», en su pantalla), pégalo al final de lo que
+      cuentes. Léelo antes: también será público.</p>
+  </div>
+  {% endif %}
+
+  <section class="tarjeta" aria-labelledby="inc-que">
+    <h2 id="inc-que">Qué quieres contar</h2>
+    <fieldset class="tipos">
+      <legend class="solo-lector">Tipo</legend>
+      {% for t in inc.tipos %}
+      <label><input type="radio" name="tipo" id="tipo-{{ t.clave }}" value="{{ t.clave }}"
+                    data-plantilla="{{ t.plantilla }}" data-campo="{{ t.campo }}" data-ejemplo="{{ t.ejemplo }}"
+                    {% if t.clave == elegido.clave %}checked{% endif %}> {{ t.nombre }}</label>
+      {% endfor %}
+    </fieldset>
+    <label for="inc-titulo">Título</label>
+    <input type="text" id="inc-titulo" maxlength="{{ inc.limite_titulo }}" value="{{ titulo_inicial }}"
+           placeholder="p. ej. «Lanzar» no abre la ventana del slot">
+    <label for="inc-que-paso" id="inc-campo">{{ elegido.campo }}</label>
+    <textarea id="inc-que-paso" rows="7" placeholder="{{ elegido.ejemplo }}"></textarea>
+    <label><input type="checkbox" id="inc-con-equipo" checked> Añadir los datos del equipo</label>
+    <pre class="equipo" id="inc-equipo">{{ inc.equipo }}</pre>
+  </section>
+
+  <section class="tarjeta" aria-labelledby="inc-sale">
+    <h2 id="inc-sale">Así sale</h2>
+    <p>Tal cual lo verá quien mantiene el hub.{% if inc.destino %} «Abrir en GitHub» te lleva a su formulario con
+      todo esto ya escrito; allí lo repasas y lo envías con tu cuenta.{% endif %}</p>
+    <textarea id="inc-vista" readonly spellcheck="false" aria-label="Así sale">Título: {{ titulo_inicial or '(sin título)' }}
+
+### {{ elegido.campo }}
+
+(sin escribir)
+
+### Datos del equipo
+
+{{ inc.equipo }}</textarea>
+    <p class="recortado" id="inc-recortado" hidden>Lo que escribiste es demasiado largo para ir dentro del enlace.
+      Al pulsar «Abrir en GitHub» se copia: allí, pégalo en «<span id="inc-campo-recortado">{{ elegido.campo }}</span>».</p>
+    <div class="acciones">
+      {% if inc.destino %}
+      <a class="boton cta" id="inc-abrir" target="_blank" rel="noopener noreferrer"
+         href="{{ inc.destino }}?template={{ elegido.plantilla | urlencode }}{% if titulo_inicial %}&amp;title={{ titulo_inicial | urlencode }}{% endif %}">Abrir en GitHub</a>
+      <button type="button" id="inc-copiar">Copiar el texto</button>
+      {% else %}
+      <button type="button" class="cta" id="inc-copiar">Copiar el texto</button>
+      {% endif %}
+    </div>
+    {% if not inc.destino %}
+    <p class="tenue" id="inc-sin-github">No hay a dónde abrirlo: este hub no se instaló desde GitHub, o su carpeta no
+      tiene apuntado de dónde salió (<code>git remote get-url origin</code>). Cópialo y mándaselo a quien te lo
+      instaló.</p>
+    {% endif %}
+  </section>
+</div>
+<script src="/static/incidencia.js"></script>
+{% endblock %}

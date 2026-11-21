@@ -123,6 +123,12 @@ PANTALLAS: list[dict[str, Any]] = [
      "que_haces": ["Comprobar si hay versión nueva (se mira sola cada hora y al entrar)",
                    "Actualizar con un botón y ver lo que va pasando",
                    "Leer qué trajo tu versión"]},
+    {"grupo": "Ajustes", "ruta": "/incidencia", "nombre": "Contar un fallo o una idea",
+     "para_que": "Avisar a quien mantiene el hub de algo que falla o proponerle una idea, con la versión y lo justo "
+                 "del equipo. Ves entero lo que sale; lo mandas tú desde GitHub con tu cuenta, o lo copias.",
+     "que_haces": ["Elegir si es un fallo o una idea, y contarlo",
+                   "Repasar los datos del equipo que se añaden, o quitarlos",
+                   "Abrirlo en GitHub ya escrito («Abrir en GitHub»), o copiarlo («Copiar el texto»)"]},
     {"grupo": "Ajustes", "ruta": "/canal", "nombre": "Canal",
      "para_que": "El canal de Telegram: quién puede escribir a qué proyecto, y el registro de lo que entra y sale.",
      "que_haces": ["Conceder o quitar permisos del canal"]},

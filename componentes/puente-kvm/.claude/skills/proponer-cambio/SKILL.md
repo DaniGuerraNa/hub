@@ -9,6 +9,9 @@ description: Lleva un cambio hecho aquí de vuelta al editor del Mac — propues
 apruebe el cambio en el puente y que te dé el control. **Guardar o ejecutar en el
 Mac nunca es tuyo.**
 
+Herramientas, en una sola búsqueda:
+`select:mcp__puente-kvm__proponer_cambio,mcp__puente-kvm__estado_cambio,mcp__puente-kvm__escribir_cambio,mcp__puente-kvm__ver_tramo`.
+
 1. **Parte de una lectura verificada** (`leer-documento`). Sin huella que
    coincida, el diff se calcula contra una copia que puede no ser la real: dilo
    y pide verificarla antes.

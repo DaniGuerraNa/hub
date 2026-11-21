@@ -2975,6 +2975,40 @@ def actualizaciones() -> dict[str, Any]:
     }
 
 
+def incidencia(con: sqlite3.Connection, *, interfaz: str, navegador: str | None,
+               de: str | None = None) -> dict[str, Any]:
+    """Lo que pinta /incidencia (C-0468, decisión 445): los tipos con su
+    plantilla, los campos, el tope de la URL, a dónde se abre y el texto de
+    los datos del equipo, ya hecho para que la persona lo vea antes de salir.
+
+    `destino` es None si el `origin` no es de GitHub: entonces sólo se copia.
+    De la salud pasan sólo `clave` y `estado`; del agente de Reuniones, su
+    versión si late. `interfaz` y `navegador` son de la petición (la cookie y
+    el User-Agent), así que los pasa la ruta. Nada de aquí sale de la
+    máquina: lo arma el navegador y lo manda la persona."""
+    from . import actualizacion as _actualizacion
+    from . import incidencias as _incidencias
+    from . import reuniones as _reuniones
+    latido = _reuniones.agente()
+    datos = _incidencias.datos_del_equipo(
+        version=_version.estado(), commit=_version.commit(),
+        con_cambios=bool(_actualizacion.cambios_locales()),
+        salud=[{"clave": r.get("clave"), "estado": r.get("estado")} for r in salud(con)],
+        encendidas=_opcionales.encendidas(), interfaz=interfaz, navegador=navegador,
+        agente_reuniones=latido.get("agente") if latido.get("vivo") else None, de=de)
+    origen = _incidencias.origen(de)
+    return {
+        "tipos": [{"clave": clave, "plantilla": plantilla, **_incidencias.ROTULOS[clave]}
+                  for clave, plantilla in _incidencias.TIPOS.items()],
+        "campos": list(_incidencias.CAMPOS),
+        "limite": _incidencias.LIMITE_URL,
+        "limite_titulo": _incidencias.LIMITE_TITULO,
+        "destino": _incidencias.destino(_version.repo_github()),
+        "equipo": _incidencias.como_texto(datos),
+        "de": {"clave": origen, "nombre": _incidencias.ORIGENES[origen]} if origen else None,
+    }
+
+
 def acceso(codigo: str | None = None) -> dict[str, Any]:
     """Lo que pinta /acceso: por qué nombres se entra, qué aparatos están dados
     de alta y si la terminal remota está encendida (decisiones 158-163).
@@ -3118,7 +3152,7 @@ def reuniones() -> dict[str, Any]:
     o = r.orden()
     lista = r.lista()
     pendientes = [x for x in lista if x["terminada"] and not x["comprimida"] and x["estado"] != "procesando"]
-    return {"agente": a, "orden": o, "lista": lista, "raiz": str(r.raiz()),
+    return {"agente": a, "orden": o, "lista": lista, "raices": [str(x) for x in r.raices()],
             "sin_comprimir": {"n": len(pendientes), "bytes": sum(x["tamano"] for x in pendientes),
                               "comprimiendo": any(x["comprimiendo"] for x in lista)},
             "miniaturas": [m["n"] for m in a.get("monitores") or [] if r.miniatura(m["n"])],

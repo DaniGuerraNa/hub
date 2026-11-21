@@ -17,6 +17,9 @@ aparato.** Lo que hace, en orden:
    ignora.
 4. El vídeo llega en H.264 y se decodifica continuamente; `captura()` devuelve
    el último fotograma. No hay ninguna URL de captura en el aparato.
+5. El sonido del Mac (para grabar una reunión) llega en G722 si el audio del
+   aparato está encendido; sale de la tarjeta de sonido USB que el JetKVM le
+   presenta al Mac, no del HDMI (`docs/protocolo-jetkvm.md`).
 
 Una sesión a la vez: si alguien abre la web del JetKVM, el aparato nos echa
 (`otherSessionConnected`) y aquí se dice, no se reconecta solo.
@@ -70,6 +73,8 @@ class JetKVM(Dispositivo):
         self._n = 0
         self._trama = None
         self._trama_t = 0.0
+        self._sin_video = False
+        self._pista_audio = None
         self._botones = 0
         self.ancho, self.alto = 1920, 1080
         self.version = ""
@@ -105,10 +110,17 @@ class JetKVM(Dispositivo):
         pc = self._pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
         from aiortc import RTCRtpReceiver
 
-        video = pc.addTransceiver("video", direction="recvonly")  # sin audio: el aparato lo capturaría para nada
+        video = pc.addTransceiver("video", direction="recvonly")
         # Sólo H.264: es lo que manda el aparato, y así un JetKVM falso tampoco puede elegir otro.
         video.setCodecPreferences([c for c in RTCRtpReceiver.getCapabilities("video").codecs
                                    if c.mimeType in ("video/H264", "video/rtx")])
+        # El sonido, para grabar una reunión (C-0461). Sólo G722: 16 kHz, lo que
+        # pide la transcripción (su PCMU es de 8). Ofrecerlo no le cuesta nada al
+        # aparato con su audio apagado, que es como viene: contesta con la línea
+        # inactiva y no captura (`attachAudioTrack`, firmware 0.5.9-0.5.11).
+        sonido = pc.addTransceiver("audio", direction="recvonly")
+        sonido.setCodecPreferences([c for c in RTCRtpReceiver.getCapabilities("audio").codecs
+                                    if c.mimeType == "audio/G722"])
         self._rpc = pc.createDataChannel("rpc")
         self._hid = pc.createDataChannel("hidrpc")
         self._hid_suelto = pc.createDataChannel("hidrpc-unreliable-ordered", ordered=True, maxRetransmits=0)
@@ -118,11 +130,14 @@ class JetKVM(Dispositivo):
         def _pista(t):
             if t.kind == "video" and not pista.done():
                 pista.set_result(t)
+            elif t.kind == "audio":  # sólo si el aparato la añadió: con su audio apagado no llega
+                self._pista_audio = t
+                self._tareas.append(asyncio.create_task(self._recibir_audio(t)))
 
         @pc.on("connectionstatechange")
         async def _estado():
             if pc.connectionState in ("failed", "closed"):
-                self.conectado = False
+                self.conectado, self._sin_video = False, False
                 self.motivo = f"conexión {pc.connectionState}"
 
         @self._rpc.on("message")
@@ -134,7 +149,7 @@ class JetKVM(Dispositivo):
             if "id" in j and j["id"] in self._pendientes:
                 self._pendientes.pop(j["id"]).set_result(j)
             elif j.get("method") == "otherSessionConnected":
-                self.conectado = False
+                self.conectado, self._sin_video = False, False
                 self.motivo = "otra sesión abrió el JetKVM (¿su web en un navegador?): el puente quedó fuera"
             elif j.get("method") == "videoInputState":
                 self._leer_video(j.get("params") or {})
@@ -197,6 +212,10 @@ class JetKVM(Dispositivo):
 
         with contextlib.suppress(Exception):
             self._leer_video((await self._llamar("getVideoState")).get("result") or {})
+        # Antes del vídeo: con el Mac dormido no llega imagen y la conexión se da
+        # por fallida, pero el jiggler y despertarlo sólo necesitan este canal.
+        with contextlib.suppress(Exception):
+            await self.leer_jiggler()
 
         track = await asyncio.wait_for(pista, 10)
         self._tareas.append(asyncio.create_task(self._recibir_video(track)))
@@ -204,7 +223,8 @@ class JetKVM(Dispositivo):
         while self._trama is None and time.monotonic() < fin:
             await asyncio.sleep(0.1)
         if self._trama is None:
-            raise AparatoNoDisponible("conectado, pero no llega vídeo (¿el Mac está apagado o sin HDMI?)")
+            self._sin_video = True
+            raise AparatoNoDisponible("conectado, pero no llega vídeo (¿el Mac está dormido, apagado o sin HDMI?)")
         self.conectado, self.motivo = True, ""
 
     async def _esperar_abiertos(self, tope: float) -> None:
@@ -228,6 +248,23 @@ class JetKVM(Dispositivo):
                 return
             self._trama, self._trama_t = trama, time.time()
             self.ancho, self.alto = trama.width, trama.height
+            if self._sin_video:  # estaba dormido al conectar y ya despertó: lo demás estaba listo
+                self._sin_video = False
+                self.conectado, self.motivo = True, ""
+
+    async def _recibir_audio(self, track) -> None:
+        # Se lee siempre, grabe alguien o no: lo que no se lee se acumula en la
+        # cola de aiortc. En silencio el aparato no manda nada y esto espera.
+        while True:
+            try:
+                trama = await track.recv()
+            except Exception:
+                if self._pista_audio is track:
+                    self._pista_audio = None
+                return
+            oido = self.oido
+            if oido is not None:
+                oido(bytes(trama.planes[0])[: trama.samples * 2], time.time())
 
     async def _llamar(self, metodo: str, **params) -> dict:
         self._n += 1
@@ -249,6 +286,9 @@ class JetKVM(Dispositivo):
                     await r
         self._pc = self._ws = self._http = None
         self._trama = None
+        self._pista_audio = None
+        self.jiggler = None  # se vuelve a leer al conectar: lo de antes puede no ser de este aparato
+        self._sin_video = False
         self.conectado = False
 
     # ── Dispositivo ─────────────────────────────────────────────────────────
@@ -298,6 +338,115 @@ class JetKVM(Dispositivo):
         for _ in range(abs(pasos)):
             await self._llamar("wheelReport", wheelY=paso, wheelX=0)
 
+    async def girar(self, pasos: int) -> None:
+        self._listo()
+        # Un informe de hasta ±127 y sin esperar respuesta, como su web: esperar
+        # cada paso (lo que hace `rueda`, que Claude necesita medido) dejaba la
+        # rueda de la persona lentísima (20-nov). La respuesta se ignora.
+        self._n += 1
+        self._rpc.send(json.dumps({"jsonrpc": "2.0", "method": "wheelReport", "id": self._n,
+                                   "params": {"wheelY": -max(-127, min(pasos, 127)), "wheelX": 0}}))
+
+    # ── sonido ──────────────────────────────────────────────────────────────
+    @property
+    def da_sonido(self) -> bool:
+        return self._pista_audio is not None
+
+    async def encender_sonido(self) -> bool:
+        self._listo()
+        r = await self._llamar("getAudioConfig")
+        if "error" in r:  # método desconocido: el audio llegó en 0.5.9
+            raise AparatoNoDisponible("este JetKVM no da sonido: su firmware tiene que ser 0.5.9 o posterior "
+                                      "(se actualiza desde su web, en Ajustes)")
+        if not (r.get("result") or {}).get("enabled"):
+            # Con el «params» anidado, como su web. Queda guardado en el aparato.
+            await self._llamar("setAudioConfig", params={"enabled": True})
+            r = await self._llamar("getAudioConfig")
+            if not (r.get("result") or {}).get("enabled"):
+                # Sin el dispositivo de audio USB, el aparato lo deja apagado sin dar error.
+                raise AparatoNoDisponible("el JetKVM no enciende el sonido: en su web, Ajustes → Hardware, "
+                                          "«Activar audio USB» (el Mac verá ese dispositivo nuevo)")
+        # Encenderlo no lo añade a esta conexión: lo añade el aparato al empezar una.
+        return self._pista_audio is None
+
+    async def apagar_sonido(self) -> None:
+        if self._rpc is None or self._rpc.readyState != "open":
+            return
+        await self._llamar("setAudioConfig", params={"enabled": False})
+        # Apagado, deja de capturar para esta conexión y no vuelve sin reconectar.
+        self._pista_audio = None
+
+    # ── el jiggler y despertar el Mac (C-0463): sólo el canal rpc ───────────
+    def _rpc_listo(self) -> None:
+        if self._rpc is None or self._rpc.readyState != "open":
+            raise AparatoNoDisponible(f"sin conexión con el JetKVM: {self.motivo or 'no conectado'}")
+
+    async def _resultado(self, metodo: str, **params):
+        r = await self._llamar(metodo, **params)
+        if "error" in r:
+            e = r["error"]
+            raise AparatoNoDisponible(f"el JetKVM no hizo «{metodo}»: "
+                                      + str((e.get("data") or e.get("message")) if isinstance(e, dict) else e))
+        return r.get("result")
+
+    async def leer_jiggler(self) -> dict:
+        self._rpc_listo()
+        self.jiggler = {"encendido": bool(await self._resultado("getJigglerState")),
+                        "config": await self._resultado("getJigglerConfig") or {}}
+        return self.jiggler
+
+    async def poner_jiggler(self, encendido: bool, config: dict | None = None) -> dict:
+        self._rpc_listo()
+        try:
+            if config is not None:
+                antes = await self._resultado("getJigglerConfig")
+                r = await self._llamar("setJigglerConfig", jigglerConfig=config)
+                if "error" in r:
+                    # El aparato ya lo tomó en memoria y paró el jiggler: se repone el de antes.
+                    e = r["error"]
+                    motivo = "el JetKVM no aceptó el horario: " + str(
+                        (e.get("data") or e.get("message")) if isinstance(e, dict) else e)
+                    repuesto = await self._llamar("setJigglerConfig", jigglerConfig=antes)
+                    if "error" in repuesto:
+                        motivo += "; y no pude reponer el de antes: se queda sin jiggler hasta reiniciarlo"
+                    raise ValueError(motivo)
+            await self._resultado("setJigglerState", enabled=bool(encendido))
+        finally:
+            # Lo que enseña la pantalla, lo que tenga de verdad, también si algo falló.
+            with contextlib.suppress(Exception):
+                await self.leer_jiggler()
+        return self.jiggler
+
+    async def zonas(self) -> list[str]:
+        self._rpc_listo()
+        return list(await self._resultado("getTimezones") or [])
+
+    async def despertar(self, tope: float = 8.0) -> dict:
+        self._rpc_listo()
+        antes = await self._usb()
+        # Sin el USB conectado, `wakeHost` contesta bien sin hacer nada (su usb.go,
+        # `IsUSBStateAttached`: ni «not attached» ni «unknown»).
+        if antes in ("not attached", "unknown", ""):
+            raise AparatoNoDisponible("el JetKVM no está conectado al Mac por USB: no le llega la señal de despertar")
+        t0 = time.time()
+        # Despierto y con imagen: mandar la señal no cambiaría nada, y decir
+        # «despertó» sería mentir.
+        if antes != "suspended" and self._trama_t > t0 - 2:
+            return {"antes": antes, "despues": antes, "imagen": True, "ya_despierto": True}
+        await self._resultado("wakeHost")
+        despues, fin = antes, time.monotonic() + tope
+        while time.monotonic() < fin:
+            await asyncio.sleep(0.5)
+            despues = await self._usb()
+            if self._trama_t > t0 + 0.2 and despues != "suspended":
+                return {"antes": antes, "despues": despues, "imagen": True}
+        return {"antes": antes, "despues": despues, "imagen": self._trama_t > t0 + 0.2}
+
+    async def _usb(self) -> str | None:
+        """El estado del USB del aparato hacia el Mac: «suspended» mientras duerme."""
+        r = await self._llamar("getUSBState")
+        return r.get("result") if "error" not in r else None
+
     def estado(self) -> dict:
         edad = time.time() - self._trama_t if self._trama_t else None
         e = {"tipo": self.tipo, "conectado": self.conectado, "motivo": self.motivo,
@@ -305,7 +454,8 @@ class JetKVM(Dispositivo):
              "ancho": self.ancho, "alto": self.alto,
              "firmware": self.version, "url": self.url,
              "firmware_contrastado": self.version in FIRMWARE_CONTRASTADO,
-             "ultimo_fotograma_s": round(edad, 1) if edad is not None else None}
+             "ultimo_fotograma_s": round(edad, 1) if edad is not None else None,
+             "sonido": self.da_sonido, "jiggler": self.jiggler}
         if self.version or self.conectado:
             aviso = aviso_firmware(self.version)
             if aviso:

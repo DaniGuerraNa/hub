@@ -260,3 +260,41 @@ def test_con_el_puente_en_marcha_cuenta_el_claude_que_abre_el_servicio(monkeypat
     assert "en marcha" in por_que(puntos, "claude")[0].detalle
     modelo = por_que(puntos, "modelo de Claude")[0]
     assert modelo.estado == comprobar.OJO and "2.1.112" in modelo.detalle
+
+
+def test_el_diagnostico_para_una_incidencia_no_lleva_la_direccion_del_jetkvm():
+    # Lo que se pega en una incidencia de GitHub lo lee cualquiera (C-0468).
+    from puente_kvm import config as cfg
+    from puente_kvm.comprobar import informe
+
+    ajustes = cfg.leer_ajustes()
+    ajustes["dispositivo"].update({"tipo": "jetkvm", "url": "http://192.168.1.77"})
+    cfg.guardar_ajustes(ajustes)
+    assert "192.168.1.77" in informe()  # el de siempre, para quien mantiene el puente
+    assert "192.168.1.77" not in informe(publico=True)
+    assert "Aparato: jetkvm" in informe(publico=True)
+
+
+def test_el_diagnostico_publico_tapa_tambien_las_direcciones_viejas_de_la_bitacora():
+    from puente_kvm.comprobar import _sin_direcciones
+
+    texto = ("no conecta: el JetKVM no responde en http://10.0.0.9 (antes)\n"
+             "acceso: https://mi-pc.cola-rara.ts.net y 192.168.0.4; el puente, http://127.0.0.1:8794")
+    limpio = _sin_direcciones(texto, "http://192.168.1.77")
+    for fuera in ("10.0.0.9", "cola-rara", "192.168.0.4"):
+        assert fuera not in limpio
+    assert "http://127.0.0.1:8794" in limpio  # la del propio puente no es de su red
+
+
+def test_la_pantalla_copia_el_diagnostico_publico():
+    from puente_kvm import config as cfg
+
+    from .ayuda import puente_simulado
+
+    with puente_simulado(lineas=3) as (c, _sim):
+        ajustes = cfg.leer_ajustes()
+        ajustes["dispositivo"].update({"tipo": "jetkvm", "url": "http://192.168.1.77"})
+        cfg.guardar_ajustes(ajustes)  # sólo en disco: el aparato en marcha sigue siendo el simulado
+        r = c.get("/api/diagnostico")
+        assert r.status_code == 200 and r.json()["texto"].startswith("# Diagnóstico del puente KVM")
+        assert "192.168.1.77" not in r.json()["texto"]

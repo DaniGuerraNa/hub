@@ -250,8 +250,9 @@ def _servicio(estado: dict | None) -> list[Punto]:
                             "reinicia el puente para usar el código nuevo"))
     elif estado.get("codigo_viejo"):
         puntos.append(Punto(OJO, "código", "el puente en marcha corre el código de antes de actualizar",
-                            "reinícialo (`bash scripts/servicio.sh reiniciar`, o sin systemd, ciérralo y "
-                            "vuelve a lanzar `scripts/arrancar.sh`)"))
+                            "reinícialo: con systemd, «Reiniciar el puente» en su pantalla (o `bash "
+                            "scripts/servicio.sh reiniciar`); sin systemd, ciérralo y vuelve a lanzar "
+                            "`scripts/arrancar.sh`"))
     return puntos
 
 
@@ -260,7 +261,12 @@ def ocupado(estado: dict | None) -> str:
 
     Reiniciarlo a mitad de una lectura o de una escritura la corta, y con el
     control dado Claude está en medio de algo: se le quitaría el Mac sin avisar.
+    Una reunión que se graba también se cortaría (C-0461), y lo que la persona
+    hace en el Mac desde la pantalla del puente (`mando`: tiene abierto «Usar
+    el Mac», aunque no mueva nada, o lo usó en los últimos segundos), también
+    (C-0470).
     Sin estado (None) no está en marcha, y reiniciarlo no corta nada.
+    Lo usan el botón «Reiniciar el puente» y `servicio.sh reiniciar --si-libre`.
     """
     if not estado:
         return ""
@@ -268,6 +274,10 @@ def ocupado(estado: dict | None) -> str:
         return f"está con una tarea: {estado['tarea']}"
     if (estado.get("control") or {}).get("modo") == "claude":
         return "Claude tiene el control del Mac"
+    if (estado.get("reunion") or {}).get("grabando"):
+        return "está grabando una reunión"
+    if estado.get("mando"):
+        return "se está usando el Mac desde la pantalla del puente"
     return ""
 
 
@@ -507,7 +517,9 @@ def _sistema() -> str:
     return s
 
 
-def informe() -> str:
+def informe(publico: bool = False) -> str:
+    """`publico`: para pegarlo en una incidencia, que lee cualquiera (C-0468): sin la
+    dirección del JetKVM en la red de la persona."""
     from . import cambios, conversaciones, lecturas
 
     ajustes = config.leer_ajustes()
@@ -534,7 +546,7 @@ def informe() -> str:
         "",
         "## Ajustes",
         "",
-        f"- Aparato: {d['tipo']}" + (f", {d['url']}" if d["tipo"] == "jetkvm" else ""),
+        f"- Aparato: {d['tipo']}" + (f", {d['url']}" if d["tipo"] == "jetkvm" and not publico else ""),
         f"- Variable de la contraseña: {d.get('clave_env')}",
         f"- Perfil: {p.get('nombre')}; inicio {p.get('inicio_documento')}, fin {p.get('fin_documento')}, "
         f"página {p.get('pagina_abajo')}, ir a línea {p.get('ir_a_linea')}, fin de línea {p.get('fin_de_linea')}",
@@ -587,7 +599,28 @@ def informe() -> str:
         *[f"    {u}" for u in ultimas],
         "",
     ]
-    return "\n".join(lineas)
+    texto = "\n".join(lineas)
+    if publico:
+        texto = _sin_direcciones(texto, d.get("url") or "")
+    return texto
+
+
+_IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_URL = re.compile(r"https?://[^\s)»,]+")
+_TAILNET = re.compile(r"\b[\w-]+(?:\.[\w-]+)*\.ts\.net\b")
+
+
+def _sin_direcciones(texto: str, url: str) -> str:
+    """Para una incidencia pública: ninguna dirección de la red de la persona. La de
+    Ajustes y también las de antes, que siguen en la bitácora («no responde en …»)."""
+    from urllib.parse import urlsplit
+
+    for trozo in sorted({url.rstrip("/"), urlsplit(url).hostname or ""} - {""}, key=len, reverse=True):
+        texto = texto.replace(trozo, "(la dirección del JetKVM)")
+    texto = _URL.sub(lambda m: m.group(0) if urlsplit(m.group(0)).hostname in ("127.0.0.1", "localhost")
+                     else "(una dirección)", texto)
+    texto = _TAILNET.sub("(una dirección)", texto)
+    return _IPV4.sub(lambda m: m.group(0) if m.group(0) == "127.0.0.1" else "(una dirección)", texto)
 
 
 def diagnostico(args: list[str]) -> int:

@@ -11,6 +11,7 @@
   .act .cifra > span:not(.placa) { display:block; font-size:var(--letra-1); text-transform:uppercase; letter-spacing:.08em; color:var(--texto-4); }
   .act .cifra strong { font-size:18px; font-weight:600; font-variant-numeric:tabular-nums; }
   .act .acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px; }
+  .act #contar { margin:12px 0 0; }
   .act pre { background:var(--lienzo); border:1px solid var(--borde); border-radius:var(--r-input);
              padding:10px 12px; overflow-x:auto; font-size:var(--letra-2); white-space:pre-wrap; margin:0;
              /* Una ruta larga sin espacios (un cambio sin guardar) no se parte
@@ -68,6 +69,10 @@
     <div class="acciones">
       <form method="post" action="/actualizaciones/comprobar"><button class="boton">Comprobar ahora</button></form>
     </div>
+    {# Aquí, junto a la versión, porque es lo primero que hace falta al contar
+       un fallo (C-0468). La versión ya no vive en la Guía (296). #}
+    <p class="tenue" id="contar">¿Algo no va, o echas algo en falta? <a href="/incidencia">Contar un fallo o una
+      idea</a> a quien mantiene el hub, con tu versión ya puesta.</p>
   </div>
 
   {% if cambios %}
@@ -102,6 +107,25 @@ git restore .</pre>
         {% elif a.rc == 0 %}<span class="marca ok">terminada</span>
         {% elif a.rc is not none %}<span class="marca mal">falló</span>{% endif %}
       </span></h2>
+    {# Cómo quedó el Puente KVM (decisión 446): lo que falte se hace con los
+       botones de su pantalla, no con un comando. Sin el motivo: lleva nombres
+       del trabajo. #}
+    {% if a.puente %}
+    <p id="puente-actualizado">
+      {% if a.puente == 'reiniciado' %}<span class="marca ok">Puente KVM</span> Al actualizar, el Puente KVM se
+        reinició. En su pantalla, pulsa «Reabrir la conversación de Claude» para que Claude tenga las herramientas
+        nuevas.
+      {% elif a.puente == 'ocupado' %}<span class="marca espera">Puente KVM</span> Al actualizar, el Puente KVM no
+        se reinició: estaba ocupado. Cuando acabe, ábrelo y pulsa «Reiniciar el puente».
+      {% elif a.puente == 'no_pudo' %}<span class="marca mal">Puente KVM</span> Al actualizar, el Puente KVM no se
+        pudo reiniciar (el registro de abajo dice por qué). Ábrelo: si dice que sigue con el código de antes, pulsa
+        «Reiniciar el puente»; si no abre, mira el registro de su servicio.
+      {% else %}<span class="marca espera">Puente KVM</span> Al actualizar, el Puente KVM no se reinició: no tiene
+        servicio. Si lo tienes en marcha, ciérralo y vuelve a lanzarlo como lo arrancaste.
+      {% endif %}
+      <a href="/puente">Ir al Puente KVM</a>
+    </p>
+    {% endif %}
     <pre id="registro">{{ a.registro or 'Empezando…' }}</pre>
   </div>
   {% endif %}

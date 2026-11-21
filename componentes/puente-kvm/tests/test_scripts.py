@@ -47,6 +47,17 @@ def test_la_unidad_lleva_la_carpeta_real_del_clon_y_el_uv_que_encuentra(clon):
     assert "%h/projects" not in unidad
 
 
+def test_con_otro_nombre_de_servicio_la_unidad_lo_lleva_para_que_el_puente_se_reconozca(clon):
+    """El botón «Reiniciar el puente» mira por ese nombre si el proceso es el de
+    su unidad: instalada como otra, sin él diría que no (C-0470)."""
+    destino, bin_, casa = clon
+    otra = correr(destino / "scripts/servicio.sh", "unidad", bin_=bin_, casa=casa, PUENTE_SERVICIO="puente-otro")
+    assert otra.returncode == 0, otra.stderr
+    assert 'Environment="PUENTE_SERVICIO=puente-otro"' in otra.stdout
+    normal = correr(destino / "scripts/servicio.sh", "unidad", bin_=bin_, casa=casa)
+    assert "PUENTE_SERVICIO" not in normal.stdout
+
+
 def test_sin_uv_la_unidad_no_se_genera_y_dice_por_que(clon, tmp_path):
     destino, _, casa = clon
     vacio = tmp_path / "vacio"

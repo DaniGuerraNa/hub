@@ -124,7 +124,7 @@ esa web tiene una shell en este equipo y el teclado del Mac.
 | Variable | Para qué | Por omisión |
 |---|---|---|
 | `PUENTE_PUERTO` | otro puerto | 8794 |
-| `PUENTE_HOME` | dónde guarda lecturas, cambios y bitácora | `~/.local/share/puente-kvm` |
+| `PUENTE_HOME` | dónde guarda lecturas, cambios, bitácora y reuniones grabadas (si la cambias, ponla igual al hub, que lee ahí las reuniones) | `~/.local/share/puente-kvm` |
 | `PUENTE_TRABAJO` | dónde trabaja Claude (y `trabajo/`), fuera del código | la carpeta del código |
 | `PUENTE_ENTORNO` | el archivo de la contraseña | `~/.config/puente-kvm/entorno` |
 
@@ -155,20 +155,38 @@ lecturas: sus permisos sólo dejan leer sin preguntar `~/.local/share/puente-kvm
   su propio actualizador. **Aquí no se hace `git pull`**: actualizaría el
   repositorio de fuera saltándose su actualizador. Ese actualizador puede
   reiniciarlo por ti con `bash scripts/servicio.sh reiniciar --si-libre`, que
-  no lo corta a mitad de una lectura o una escritura ni con el control dado a
-  Claude (sale con 3 y dice por qué). Si no, reinícialo tú:
-  `bash scripts/servicio.sh reiniciar` (sin systemd, parar y volver a lanzar
-  `bash scripts/arrancar.sh`).
+  no lo corta a mitad de una lectura o una escritura, con el control dado a
+  Claude, grabando una reunión ni mientras la persona tiene abierto «Usar el
+  Mac desde aquí» en la pantalla del puente, aunque no mueva nada (sale con 3
+  y dice por qué).
 
-Si el puente corre un código que ya no es el del disco, lo dice: un aviso
-arriba de su pantalla («sigue con el código de antes») y `comprobar`. Es lo
-que pasa al actualizar sin reiniciar.
+**Lo que falte, con botones en su pantalla.** Si el puente corre un código que
+ya no es el del disco, arriba sale un aviso con dos pasos:
 
-**La conversación de Claude sobrevive al reinicio** (vive en tmux, fuera del
-servicio, a propósito), y con ella su servidor MCP con el código de antes. Tras
-actualizar, en la terminal del puente: el nombre de la conversación →
-**Reabrir**. Así Claude Code vuelve a arrancar, con el código y el modelo de
-ahora, y retoma la conversación.
+1. **«Reiniciar el puente»**: la página corta su imagen del Mac, su mando y su
+   terminal, el puente se reinicia y la página vuelve sola (en menos de un
+   segundo; unos 6 si otra pestaña está mirando el directo). Si está ocupado,
+   lo dice y no lo corta: se vuelve a pulsar cuando acabe.
+2. **«Reabrir la conversación de Claude»**: **la conversación sobrevive al
+   reinicio** (vive en tmux, fuera del servicio, a propósito), y con ella su
+   servidor MCP con el código de antes. Reabrirla hace que Claude Code vuelva a
+   arrancar, con el código y el modelo de ahora, y retome la conversación. Si
+   Claude está trabajando, o recién reiniciado el puente no sabe si lo
+   estaba, pregunta antes (también al abrir otra o una nueva). El paso sale mientras sus
+   herramientas sean de otro código que el del disco, también tras un
+   reinicio hecho por el actualizador o a mano.
+
+El botón de reiniciar sólo está si el puente corre como su servicio de systemd
+(el proceso es el de su unidad, `PUENTE_SERVICIO`, por omisión `puente-kvm`).
+Si instalaste la unidad con otro nombre, vuelve a instalarla una vez con ese
+mismo nombre (`PUENTE_SERVICIO=<nombre> bash scripts/servicio.sh instalar`):
+la de antes no lleva la variable, y sin ella el puente no se reconoce y no
+enseña el botón.
+**Sin systemd**, el aviso dice el comando: parar y volver a lanzar
+`bash scripts/arrancar.sh` (con la misma `PUENTE_TRABAJO` delante, si la usas);
+el paso 2 sí tiene botón. Con un puente que aún corre el programa de antes de
+estos botones, el aviso también dice el comando, esa vez:
+`bash scripts/servicio.sh reiniciar`. `comprobar` lo dice igual.
 
 ## Quitar
 

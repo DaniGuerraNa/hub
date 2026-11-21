@@ -8,6 +8,9 @@ description: Pone a punto el puente con un Mac y un cliente de BD nuevos — mid
 **Acceso:** varias pruebas necesitan el control y teclean en una **pestaña de
 script nueva y vacía**, nunca en un objeto real. Avisa de cada paso.
 
+Herramientas, en una sola búsqueda:
+`select:mcp__puente-kvm__estado,mcp__puente-kvm__ver_pantalla,mcp__puente-kvm__teclear,mcp__puente-kvm__atajo,mcp__puente-kvm__leer_documento,mcp__puente-kvm__ver_pagina,mcp__puente-kvm__transcribir_pagina,mcp__puente-kvm__comprobar_huella`.
+
 Nada de esto se razona: se mide en la pantalla real y se apunta. Copia
 `conocimiento/entorno.plantilla.md` a `trabajo/entorno.md` si no existe, y ve
 rellenándolo.

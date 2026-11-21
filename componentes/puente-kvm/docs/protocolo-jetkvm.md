@@ -124,9 +124,26 @@ pc.createDataChannel("hidrpc-unreliable-nonordered",{ ordered: false, maxRetrans
 
 - ▸ Vídeo: el aparato añade su pista antes de `SetRemoteDescription` y
   contesta a una línea de vídeo `recvonly`.
-- ▸ **Sin audio**: el aparato sólo añade audio si la oferta trae `G722/8000` o
-  `PCMU/8000` y el audio está activo; aiortc ofrece PCMU, así que con un
-  transceptor de audio el aparato se pondría a capturarlo para nada.
+- ▸ **Audio** (para grabar una reunión, C-0461; leído en 0.5.9-0.5.11, sin
+  probar con el aparato). El puente ofrece una línea de audio `recvonly` sólo
+  con G722. El aparato añade su pista (`attachAudioTrack`, `webrtc.go`) si la
+  oferta trae `G722/8000` (si no, `PCMU/8000`, de 8 kHz) **y** su audio está
+  encendido; si no, contesta la línea `inactive` y no captura nada.
+  - **De dónde sale:** de la tarjeta de sonido USB que el JetKVM le presenta al
+    Mac (UAC1, 48 kHz estéreo, `internal/usbgadget/audio.go`), promediada a mono
+    y a 16 kHz. **No del HDMI**, aunque su EDID diga que admite audio: el Mac
+    ofrece «JetKVM v1» como salida y por ahí no llega nada. No hay micrófono
+    hacia el Mac.
+  - **Encenderlo:** `getAudioConfig` → `{enabled}`; `setAudioConfig` con el
+    «params» anidado (`{"params": {"enabled": true}}`), que queda guardado. Viene
+    apagado. Sin el dispositivo de audio USB (`setUsbDeviceState`, que rehace
+    el USB) lo deja apagado sin dar error. Encendido sólo vale para la
+    **siguiente** conexión (la captura arranca al conectar ICE): el puente
+    reconecta. Apagado, deja de capturar en el acto. Firmware anterior a 0.5.9:
+    método desconocido.
+  - **En silencio no manda paquetes** y su reloj RTP no avanza (hasta 0.5.11;
+    la 0.5.11-dev salta los silencios): el puente pone el silencio por la hora
+    de llegada (`reunion.py`).
 - ▸ Códec: H.265 sólo si la oferta contiene `H265` y la preferencia es
   `auto`/`h265`; si no, H.264. El puente ofrece sólo H.264.
 - ▸ aiortc con `RTCConfiguration(iceServers=[])`: sin eso añade un STUN de
@@ -275,24 +292,38 @@ Por eso el puente no soporta la española.
 - **Aparato**: `ping`, `reboot{force}`, `getDeviceID`, `getLocalVersion`,
   `factoryReset`, `get/setDevModeState`, `get/setSSHKeyState`, `get/setTLSState`,
   `get/setLocalLoopbackOnly`, `get/setDefaultLogLevel`, `get/setDisplayRotation`,
-  `get/setBacklightSettings`, `getTimezones`; sólo 0.5.11: `getDeviceCapabilities`.
+  `get/setBacklightSettings`, ▸ `getTimezones`; sólo 0.5.11: `getDeviceCapabilities`.
 - **Nube / actualizaciones**: `deregisterDevice`, `getCloudState`, `setCloudUrl`,
   `getUpdateStatus`, `tryUpdate`, `get/setAutoUpdateState`, `get/setDevChannelState`…
 - **Red**: `getNetworkState`, `get/setNetworkSettings`, `renewDHCPLease`,
   `getTailscaleStatus`, `get/setMqttSettings`…
 - **Teclado y ratón**: `keyboardReport`, `keypressReport`, `absMouseReport`,
   `relMouseReport`, ▸ `wheelReport`, `getKeyboardLedState`, `getKeyDownState`,
-  `wakeHost`, `get/setKeyboardLayout`, `get/setKeyboardMacros`, `setJigglerState`…
+  ▸ `wakeHost`, `get/setKeyboardLayout`, `get/setKeyboardMacros`,
+  ▸ `get/setJigglerState`, ▸ `get/setJigglerConfig {jigglerConfig}`…
 - **Vídeo / EDID**: ▸ `getVideoState`, `get/setStreamQualityFactor`,
   `get/setVideoCodecPreference`, `getEDID`, `setEDID`; sólo 0.5.11:
   `setVideoStreamPaused`.
-- **USB / medio virtual**: `getUSBState`, `get/setUsbEmulationState`,
+- **USB / medio virtual**: ▸ `getUSBState`, `get/setUsbEmulationState`,
   `setUsbDeviceState`, `mountWithHTTP`, `unmountImage`…
 - **Alimentación, serie, Wake-on-LAN, audio**: `setATXPowerAction`,
-  `get/setSerialSettings`, `sendWOLMagicPacket`, `get/setAudioConfig`…
+  `get/setSerialSettings`, `sendWOLMagicPacket`, ▸ `get/setAudioConfig`…
 
 El puente sólo usa los marcados ▸. Nunca toca alimentación, red, actualizaciones
 ni medio virtual.
+
+**Jiggler y despertar** (`jiggler.go` y `usb.go`, 0.5.11; C-0463; leído del
+código, **NO VERIFICADO** con un aparato). El jiggler
+se guarda en el aparato: `jigglerConfig` = `inactivity_limit_seconds`,
+`jitter_percentage`, `schedule_cron_tab` (cron de 6 campos, con segundos, de
+gocron) y `timezone` (si no la conoce, usa UTC sin error). Sus preajustes
+(«Frequent - 30s» = 30 / 25 / `*/30 * * * * *`; «Standard» = 60 / 25 /
+`0 * * * * *`; «Light» = 300 / 25 / `0 */5 * * * *`) no llevan zona.
+`setJigglerConfig` toma el horario en memoria **antes** de programarlo: si falla,
+el aparato se queda con el malo y sin jiggler hasta reiniciarse, y el puente
+repone el anterior. `wakeHost` manda tres pulsos de «remote wakeup» por USB, y
+contesta bien **sin hacer nada** si `getUSBState` es «not attached»; con el Mac
+en reposo, `getUSBState` dice «suspended».
 
 ## h. Otros clientes
 

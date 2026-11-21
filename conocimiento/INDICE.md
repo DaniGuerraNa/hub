@@ -19,7 +19,7 @@ haga falta.
 | [`12-navegante-y-reuniones.md`](12-navegante-y-reuniones.md) | Qué son Navegante y Reuniones, cómo se preparan (el agente de Windows incluido) y qué hacer si no van |
 | [`13-secretario.md`](13-secretario.md) | El secretario: encenderlo, hablarle (también por voz), conectar Telegram y Google Calendar, recordatorios, confianza y disparadores |
 | [`14-maquina-aparte.md`](14-maquina-aparte.md) | Tener el hub en una máquina sin monitor y usarlo desde tu PC: el primer aparato por SSH, que vuelva sola tras un apagón y lo que no funciona entre dos máquinas |
-| [`15-puente-kvm.md`](15-puente-kvm.md) | El Puente KVM (Claude en un Mac ajeno, por un JetKVM): encenderlo, prepararlo, abrirlo, dónde va la contraseña, qué hacer al actualizar o desinstalar el hub, y que aún no se ha probado con el aparato |
+| [`15-puente-kvm.md`](15-puente-kvm.md) | El Puente KVM (Claude en un Mac ajeno, por un JetKVM): encenderlo, prepararlo, abrirlo, grabar una reunión del Mac, dónde va la contraseña, qué hacer al actualizar o desinstalar el hub, y que aún no se ha probado con el aparato |
 
 🔴 **Si la pregunta es «¿puedo abrir el puerto a la red?», la respuesta es no**, y
 no hace falta abrir ningún documento para decirlo: la pantalla `/terminal` da

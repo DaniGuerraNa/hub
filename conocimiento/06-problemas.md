@@ -143,6 +143,35 @@ semanas (`hub-AAAAMMDD.db`): copia la que quieras como `hub.db`, con los
 servicios parados. `projects.yml`, el intercambio, las tareas del orquestador
 y sus permisos viven en archivos aparte y no se tocan.
 
+## Contárselo a quien mantiene el hub
+
+Si algo falla y no lo arregla nada de lo de arriba, o echas algo en falta,
+**Contar un fallo o una idea** (desde Actualizaciones; con la interfaz nueva,
+también en Ajustes; dirección `/incidencia`):
+
+1. Eliges **Un fallo** o **Una idea o mejora**, pones un título y lo cuentas:
+   qué hacías, qué esperabas y qué pasó.
+2. Debajo están los **datos del equipo** que se añaden: la versión del hub (y
+   si falta terminar de actualizar), el commit y si tienes cambios propios en
+   el clon (sólo sí o no), el sistema, Python, tmux, Claude Code, la
+   interfaz, el navegador, las herramientas opcionales encendidas y cómo está
+   cada comprobación de Máquina (sólo su nombre y si está bien). **Nunca**
+   rutas, tu usuario, el nombre del equipo, los nombres de Acceso ni
+   direcciones. Si no quieres mandarlos, quita «Añadir los datos del equipo».
+3. En **Así sale** ves el texto entero tal cual saldrá.
+4. **Abrir en GitHub** te lleva al formulario de incidencias del repositorio
+   de donde instalaste el hub, ya relleno; allí lo repasas y lo envías con tu
+   cuenta. **Lo que envías a GitHub es público**: no pongas contraseñas ni
+   nombres de tus proyectos o de otras personas.
+
+El hub no envía nada por su cuenta: es un enlace que abres tú. Si tu hub no
+salió de GitHub (o su carpeta no tiene apuntado de dónde salió, `git remote
+get-url origin`), no hay a dónde abrirlo: **Copiar el texto** y mándaselo a
+quien te lo instaló. Si lo que escribiste es muy largo para ir en el enlace,
+la pantalla lo dice: al pulsar «Abrir en GitHub» se copia, y allí lo pegas en
+su campo. «Copiar» necesita https o estar en la propia máquina; si el
+navegador no deja, el texto queda seleccionado para copiarlo con Ctrl+C.
+
 ## Desinstalar
 
 ```bash

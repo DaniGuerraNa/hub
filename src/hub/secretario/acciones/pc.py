@@ -188,9 +188,14 @@ class GrabarReunion(Accion):
     gesto = "grabar"
     nombre = "Grabar una reunión"
     resumen = "Empieza a grabar en Reuniones la pantalla donde está la llamada, su audio y el micro de la última vez."
+    # Sólo el agente de Windows: una reunión del Mac la graba el Puente KVM con
+    # su botón, y la empieza la persona (decisiones 438 y 443): el hub no le
+    # hace POST al puente, y grabar a otros no lo decide el modelo.
     descripcion = ("Empieza a grabar una reunión en Reuniones con los ajustes de la última grabación (app de la "
                    "llamada y micrófono); si ahora hay una app de llamadas sonando, graba ésa, y la pantalla "
-                   "donde esté su ventana. "
+                   "donde esté su ventana. Graba sólo en el PC con Windows, por su agente. Una reunión del Mac "
+                   "por el JetKVM no se graba desde aquí: la empieza la persona con el botón del Puente KVM, "
+                   "y se procesa sola en Reuniones. "
                    "`titulo` opcional. Graba voces de otras personas: úsala sólo si el dueño lo pide.")
     parametros = {"type": "object", "properties": {"titulo": {"type": "string"}}}
     riesgo = "reversible"

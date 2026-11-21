@@ -7,7 +7,7 @@
 {# Dentro del espacio de trabajo, cada página se ve en el marco de la izquierda
    y la cabecera ya está arriba: la propia sobra. Antes de pintar, para que no parpadee. #}
 <script>if (window.top !== window.self) document.documentElement.classList.add('en-marco');</script>
-<link rel="stylesheet" href="/static/app.css?v=13">
+<link rel="stylesheet" href="/static/app.css?v=16">
 {% block cabeza %}{% endblock %}
 </head>
 <body data-pagina="{% block pagina %}{% endblock %}">
@@ -24,14 +24,27 @@
     <button class="peligro" data-control="parar" title="Corta lo que esté haciendo Claude, ya">Parar</button>
   </div>
 </header>
-{# Tras actualizar sin reiniciar, las pantallas salen nuevas y lo que hacen es lo de antes. #}
-<p class="aviso riesgo aviso-codigo" id="aviso-codigo" hidden><b>El puente se actualizó, pero sigue con el código de antes.</b>
-  Reinícialo para usar lo nuevo: <code>systemctl --user restart puente-kvm</code> (sin systemd, ciérralo y vuelve a
-  lanzar <code>scripts/arrancar.sh</code>). Después, en la terminal, el menú de la conversación → <b>Reabrir</b>.</p>
+{# Tras actualizar sin reiniciar, las pantallas salen nuevas y lo que hacen es lo de antes.
+   Lo que falta son pasos con botones (C-0470, decisión 446 del hub); el comando, sólo
+   donde el botón no vale: sin systemd, o con el programa de antes, que no los tiene
+   (su /api/estado no trae «reinicio»). Lo pinta app.js. #}
+<div class="aviso riesgo aviso-codigo" id="aviso-codigo" hidden>
+  <p><b id="codigo-titulo">El puente se actualizó, pero sigue con el código de antes.</b></p>
+  <p data-codigo="comando">Reinícialo para usar lo nuevo: <code>systemctl --user restart puente-kvm</code> (sin systemd,
+    ciérralo y vuelve a lanzar <code>scripts/arrancar.sh</code>). Después, en la terminal, el menú de la conversación →
+    <b>Reabrir</b>.</p>
+  <ol class="pasos-codigo" data-codigo="pasos" hidden>
+    <li data-paso="reiniciar"><span>Reinicia el puente para que use lo nuevo: la imagen del Mac y la terminal se cortan
+      unos segundos y la página vuelve sola.</span> <button id="boton-reiniciar">Reiniciar el puente</button></li>
+    <li data-paso="reabrir"><span>Reabre la conversación de Claude, para que tenga las herramientas nuevas: Claude Code
+      la retoma donde estaba.</span> <button id="boton-reabrir">Reabrir la conversación de Claude</button></li>
+  </ol>
+  <p id="codigo-estado" role="status" hidden></p>
+</div>
 <main class="{% block main_clase %}{% endblock %}">
 {% block contenido %}{% endblock %}
 </main>
-<script src="/static/app.js?v=8"></script>
+<script src="/static/app.js?v=15"></script>
 {% block guiones %}{% endblock %}
 </body>
 </html>

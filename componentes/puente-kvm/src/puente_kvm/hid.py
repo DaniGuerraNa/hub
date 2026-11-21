@@ -21,6 +21,7 @@ no escribirlo).
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 
 # Bits del byte de modificadores del informe de teclado.
@@ -79,28 +80,56 @@ _CON_SHIFT_US = {
     "|": "\\", ":": ";", '"': "'", "~": "`", "<": ",", ">": ".", "?": "/",
 }
 
-# macOS «U.S.»: Option + tecla compone un acento que se aplica a la siguiente
-# letra (tecla muerta). Es como se escriben á, ñ o ü sin cambiar de fuente.
-_MUERTAS_MAC_US = {
-    "´": "e",  # agudo
-    "˜": "n",  # tilde
-    "¨": "u",  # diéresis
-    "`": "`",  # grave
-    "ˆ": "i",  # circunflejo
+# macOS «U.S.», fuera del ASCII: la capa de Option y sus teclas muertas, que
+# es como se escriben á, ñ, ç o las comillas “ ” sin cambiar de fuente. Sale
+# de la distribución de Apple como la española: de tres copias de Ukelele, cada
+# carácter sólo si al menos dos dan las mismas teclas (dos tenían retoques
+# propios). Las copias, de repositorios públicos de GitHub: `gh search code
+# 'name="U.S."' --extension keylayout` (20-nov-2026); sin la tecla ISO. Antes había diecisiete a mano, y lo copiado de una respuesta de
+# Claude («—», «“», «’») no se podía pegar (C-0466).
+_MAC_US: dict[str, tuple[tuple[int, str], ...]] = {
+    '¡': ((ALT, '1'),), '¢': ((ALT, '4'),), '£': ((ALT, '3'),), '¥': ((ALT, 'y'),),
+    '§': ((ALT, '6'),), '¨': ((ALT | SHIFT, 'u'),), '©': ((ALT, 'g'),), 'ª': ((ALT, '9'),),
+    '«': ((ALT, '\\'),), '¬': ((ALT, 'l'),), '®': ((ALT, 'r'),), '¯': ((ALT | SHIFT, ','),),
+    '°': ((ALT | SHIFT, '8'),), '±': ((ALT | SHIFT, '='),), '´': ((ALT | SHIFT, 'e'),),
+    'µ': ((ALT, 'm'),), '¶': ((ALT, '7'),), '·': ((ALT | SHIFT, '9'),), '¸': ((ALT | SHIFT, 'z'),),
+    'º': ((ALT, '0'),), '»': ((ALT | SHIFT, '\\'),), '¿': ((ALT | SHIFT, '/'),),
+    'À': ((ALT, '`'), (SHIFT, 'a'),), 'Á': ((ALT | SHIFT, 'y'),), 'Â': ((ALT | SHIFT, 'm'),),
+    'Ã': ((ALT, 'n'), (SHIFT, 'a'),), 'Ä': ((ALT, 'u'), (SHIFT, 'a'),), 'Å': ((ALT | SHIFT, 'a'),),
+    'Æ': ((ALT | SHIFT, "'"),), 'Ç': ((ALT | SHIFT, 'c'),), 'È': ((ALT, '`'), (SHIFT, 'e'),),
+    'É': ((ALT, 'e'), (SHIFT, 'e'),), 'Ê': ((ALT, 'i'), (SHIFT, 'e'),),
+    'Ë': ((ALT, 'u'), (SHIFT, 'e'),), 'Ì': ((ALT, '`'), (SHIFT, 'i'),), 'Í': ((ALT | SHIFT, 's'),),
+    'Î': ((ALT | SHIFT, 'd'),), 'Ï': ((ALT | SHIFT, 'f'),), 'Ñ': ((ALT, 'n'), (SHIFT, 'n'),),
+    'Ò': ((ALT | SHIFT, 'l'),), 'Ó': ((ALT | SHIFT, 'h'),), 'Ô': ((ALT | SHIFT, 'j'),),
+    'Õ': ((ALT, 'n'), (SHIFT, 'o'),), 'Ö': ((ALT, 'u'), (SHIFT, 'o'),), 'Ø': ((ALT | SHIFT, 'o'),),
+    'Ù': ((ALT, '`'), (SHIFT, 'u'),), 'Ú': ((ALT | SHIFT, ';'),), 'Û': ((ALT, 'i'), (SHIFT, 'u'),),
+    'Ü': ((ALT, 'u'), (SHIFT, 'u'),), 'ß': ((ALT, 's'),), 'à': ((ALT, '`'), (0, 'a'),),
+    'á': ((ALT, 'e'), (0, 'a'),), 'â': ((ALT, 'i'), (0, 'a'),), 'ã': ((ALT, 'n'), (0, 'a'),),
+    'ä': ((ALT, 'u'), (0, 'a'),), 'å': ((ALT, 'a'),), 'æ': ((ALT, "'"),), 'ç': ((ALT, 'c'),),
+    'è': ((ALT, '`'), (0, 'e'),), 'é': ((ALT, 'e'), (0, 'e'),), 'ê': ((ALT, 'i'), (0, 'e'),),
+    'ë': ((ALT, 'u'), (0, 'e'),), 'ì': ((ALT, '`'), (0, 'i'),), 'í': ((ALT, 'e'), (0, 'i'),),
+    'î': ((ALT, 'i'), (0, 'i'),), 'ï': ((ALT, 'u'), (0, 'i'),), 'ñ': ((ALT, 'n'), (0, 'n'),),
+    'ò': ((ALT, '`'), (0, 'o'),), 'ó': ((ALT, 'e'), (0, 'o'),), 'ô': ((ALT, 'i'), (0, 'o'),),
+    'õ': ((ALT, 'n'), (0, 'o'),), 'ö': ((ALT, 'u'), (0, 'o'),), '÷': ((ALT, '/'),),
+    'ø': ((ALT, 'o'),), 'ù': ((ALT, '`'), (0, 'u'),), 'ú': ((ALT, 'e'), (0, 'u'),),
+    'û': ((ALT, 'i'), (0, 'u'),), 'ü': ((ALT, 'u'), (0, 'u'),), 'ÿ': ((ALT, 'u'), (0, 'y'),),
+    'ı': ((ALT | SHIFT, 'b'),), 'Œ': ((ALT | SHIFT, 'q'),), 'œ': ((ALT, 'q'),),
+    'Ÿ': ((ALT, 'u'), (SHIFT, 'y'),), 'ƒ': ((ALT, 'f'),), 'ˆ': ((ALT | SHIFT, 'i'),),
+    'ˇ': ((ALT | SHIFT, 't'),), '˘': ((ALT | SHIFT, '.'),), '˙': ((ALT, 'h'),), '˚': ((ALT, 'k'),),
+    '˛': ((ALT | SHIFT, 'x'),), '˜': ((ALT | SHIFT, 'n'),), '˝': ((ALT | SHIFT, 'g'),),
+    'Ω': ((ALT, 'z'),), 'π': ((ALT, 'p'),), '–': ((ALT, '-'),), '—': ((ALT | SHIFT, '-'),),
+    '‘': ((ALT, ']'),), '’': ((ALT | SHIFT, ']'),), '‚': ((ALT | SHIFT, '0'),), '“': ((ALT, '['),),
+    '”': ((ALT | SHIFT, '['),), '„': ((ALT | SHIFT, 'w'),), '†': ((ALT, 't'),),
+    '‡': ((ALT | SHIFT, '7'),), '•': ((ALT, '8'),), '…': ((ALT, ';'),), '‰': ((ALT | SHIFT, 'r'),),
+    '‹': ((ALT | SHIFT, '3'),), '›': ((ALT | SHIFT, '4'),), '⁄': ((ALT | SHIFT, '1'),),
+    '€': ((ALT | SHIFT, '2'),), '™': ((ALT, '2'),), '∂': ((ALT, 'd'),), '∆': ((ALT, 'j'),),
+    '∏': ((ALT | SHIFT, 'p'),), '∑': ((ALT, 'w'),), '√': ((ALT, 'v'),), '∞': ((ALT, '5'),),
+    '∫': ((ALT, 'b'),), '≈': ((ALT, 'x'),), '≠': ((ALT, '='),), '≤': ((ALT, ','),),
+    '≥': ((ALT, '.'),), '◊': ((ALT | SHIFT, 'v'),),
 }
-_COMPUESTAS_MAC_US = {
-    "á": ("´", "a"), "é": ("´", "e"), "í": ("´", "i"), "ó": ("´", "o"), "ú": ("´", "u"),
-    "Á": ("´", "A"), "É": ("´", "E"), "Í": ("´", "I"), "Ó": ("´", "O"), "Ú": ("´", "U"),
-    "ñ": ("˜", "n"), "Ñ": ("˜", "N"),
-    "ü": ("¨", "u"), "Ü": ("¨", "U"),
-    "à": ("`", "a"), "è": ("`", "e"), "ò": ("`", "o"),
-}
-# Option (y Shift) directos, sin tecla muerta.
-_OPTION_MAC_US = {
-    "¡": (ALT, "1"), "¿": (ALT | SHIFT, "/"), "º": (ALT, "0"), "ª": (ALT, "9"),
-    "€": (ALT | SHIFT, "2"), "°": (ALT | SHIFT, "8"), "…": (ALT, ";"),
-    "«": (ALT, "\\"), "»": (ALT | SHIFT, "\\"),
-}
+
+# Sus teclas muertas y el acento que dejan.
+_MUERTAS_MAC_US = {(ALT, "e"): "´", (ALT, "u"): "¨", (ALT, "i"): "ˆ", (ALT, "n"): "˜", (ALT, "`"): "`"}
 
 # macOS «Español - ISO», generada de la de Apple (ver arriba). Cada carácter,
 # sus pulsaciones: las teclas muertas (` ´ ^ ¨ ~) van seguidas de la letra, o
@@ -245,24 +274,15 @@ def caracter(c: str, distribucion: str = "mac-us") -> list[Pulsacion] | None:
     simple = _simple_us(c)
     if simple:
         return [simple]
-    if c in _OPTION_MAC_US:
-        mods, base = _OPTION_MAC_US[c]
-        return [Pulsacion(mods, TECLAS[base])]
-    if c in _COMPUESTAS_MAC_US:
-        acento, letra = _COMPUESTAS_MAC_US[c]
-        return [Pulsacion(ALT, TECLAS[_MUERTAS_MAC_US[acento]]), *_simple_lista(letra)]
-    return None
-
-
-def _simple_lista(c: str) -> list[Pulsacion]:
-    p = _simple_us(c)
-    assert p is not None
-    return [p]
+    pasos = _MAC_US.get(c)
+    return [Pulsacion(m, TECLAS[t]) for m, t in pasos] if pasos else None
 
 
 def secuencia(texto: str, distribucion: str = "mac-us") -> list[Pulsacion]:
     """Todo el texto como pulsaciones; si falta alguna, no devuelve ninguna."""
-    texto = texto.replace("\r\n", "\n")
+    # Lo copiado de algunos sitios trae «á» como «a» más el acento suelto
+    # (Unicode descompuesto), y ese acento no tiene tecla: se recompone antes.
+    texto = unicodedata.normalize("NFC", texto.replace("\r\n", "\n"))
     salida: list[Pulsacion] = []
     faltan: list[str] = []
     for c in texto:

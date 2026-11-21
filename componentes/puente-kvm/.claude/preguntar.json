@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "ask": [
+      "mcp__puente-kvm__teclear",
+      "mcp__puente-kvm__atajo",
+      "mcp__puente-kvm__ir_a_linea",
+      "mcp__puente-kvm__clic",
+      "mcp__puente-kvm__rueda",
+      "mcp__puente-kvm__recorrer_pantalla",
+      "mcp__puente-kvm__jiggler",
+      "Edit(/src/**)",
+      "Edit(/.claude/**)",
+      "WebFetch",
+      "WebSearch"
+    ]
+  }
+}

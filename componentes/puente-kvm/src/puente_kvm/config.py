@@ -72,7 +72,7 @@ class Codigo:
         self.carpeta = carpeta
         self._marcas = self._leer_marcas()
         self._contenido = self._leer_contenido()
-        self._ultima: tuple[dict, bool] = (self._marcas, False)
+        self._ultima: tuple[dict, str] = (self._marcas, self._contenido)
 
     def _leer_marcas(self) -> dict[str, tuple[int, int]]:
         marcas = {}
@@ -96,13 +96,17 @@ class Codigo:
                 h.update(b"\0ilegible")
         return h.hexdigest()
 
-    def viejo(self) -> bool:
+    def huella_disco(self) -> str:
+        """La huella del código que hay AHORA en el disco. La guarda cada
+        conversación al abrirse (su servidor MCP nace con ese código), para
+        saber después si sus herramientas son de antes de actualizar."""
         marcas = self._leer_marcas()
-        if marcas == self._ultima[0]:
-            return self._ultima[1]
-        resultado = self._leer_contenido() != self._contenido
-        self._ultima = (marcas, resultado)
-        return resultado
+        if marcas != self._ultima[0]:
+            self._ultima = (marcas, self._leer_contenido())
+        return self._ultima[1]
+
+    def viejo(self) -> bool:
+        return self.huella_disco() != self._contenido
 
 
 CODIGO_EN_MARCHA = Codigo()

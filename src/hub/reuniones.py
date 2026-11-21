@@ -1,6 +1,6 @@
 """Reuniones: el hub da la orden de grabar y enseña lo procesado.
 
-Tres piezas, cada una donde puede hacer su trabajo:
+Cuatro piezas, cada una donde puede hacer su trabajo:
 
 - **El agente de Windows** (`~/projects/reuniones/agente`) graba: es el único
   que ve el escritorio y el audio de las aplicaciones. No escucha en ningún
@@ -11,6 +11,10 @@ Tres piezas, cada una donde puede hacer su trabajo:
   reconstruirlo (regla dura 1: no va a la base)—.
 - **El procesado** (`reuniones procesar`, en WSL) transcribe en la GPU y
   resume. El hub lo lanza cuando el agente dice que terminó una grabación.
+- **El Puente KVM** graba una reunión del Mac por el JetKVM, con su botón y en
+  su carpeta (`<id>-kvm`, decisión 443). El hub no le pregunta (438): el ciclo
+  lento del muestreo mira esa carpeta y lanza el procesado de lo terminado
+  (`procesar_pendientes`).
 
 🔴 Lo grabado es contenido laboral y de terceros. Nada de aquí sale de la
 máquina salvo el texto de la transcripción, que va a Claude para el resumen.
@@ -28,7 +32,11 @@ from pathlib import Path
 
 from . import config
 
-ID = re.compile(r"^\d{8}-\d{6}$")
+# `AAAAMMDD-HHMMSS`, y `-kvm` detrás si la grabó el Puente KVM (decisión 443):
+# el sufijo evita choques con el agente de Windows en el mismo segundo y dice
+# en qué carpeta vive (`carpeta_de`). Va detrás para no cambiar el orden por fecha.
+ID = re.compile(r"^\d{8}-\d{6}(?:-kvm)?$")
+SUFIJO_PUENTE = "-kvm"
 VIVO_S = 6
 
 
@@ -100,6 +108,28 @@ def carpeta_agente() -> Path:
 def raiz() -> Path:
     """Donde están las grabaciones: junto al agente, salvo que se diga otra cosa."""
     return Path(os.environ.get("REUNIONES_RAIZ") or carpeta_agente().parent / "grabaciones")
+
+
+def raiz_puente() -> Path:
+    """Donde deja el Puente KVM las reuniones del Mac (decisión 443). No se
+    crea: la carpeta es del puente y el hub sólo la lee.
+
+    Misma convención que `puente.puerto()`: la variable del puente si está,
+    y si no, su sitio de siempre. Sin importar `hub.puente`, que fuera de
+    `api.py` nadie lo hace (`tests/test_puertas.py`): esto no le pregunta
+    nada al puente, mira una carpeta."""
+    return Path(os.environ.get("PUENTE_HOME") or Path.home() / ".local/share/puente-kvm") / "reuniones"
+
+
+def raices() -> list[Path]:
+    """Las carpetas donde hay reuniones: la del agente siempre; la del puente,
+    sólo con la herramienta encendida y si existe. Apagada, sus reuniones no
+    asoman en ningún sitio (438)."""
+    from . import opcionales
+    out = [raiz()]
+    if opcionales.encendida("puente-kvm") and raiz_puente().is_dir():
+        out.append(raiz_puente())
+    return out
 
 
 # Lo que el agente necesita en Windows. El `token` no está: lo escribe
@@ -318,7 +348,11 @@ def abierta(pid: str) -> bool:
 
 def terminada(id_: str) -> None:
     if ID.match(id_ or ""):
-        lanzar_procesado(id_)
+        try:
+            lanzar_procesado(id_)
+        except ValueError as e:  # su carpeta no se ve desde aquí: queda el botón «Procesar», y el latido no cae
+            with open(carpeta() / "procesado.log", "a") as log:
+                log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {id_}: no se lanza su procesado: {e}\n")
 
 
 def _consumir(nombre: str) -> bool:
@@ -470,11 +504,16 @@ def parar() -> dict:
 # ───────────────────────────── lo grabado ─────────────────────────────
 
 
-def _lanzar(*args: str, ids: tuple[str, ...] = (), estado: str | None = None) -> None:
+def _lanzar(*args: str, raiz: Path, ids: tuple[str, ...] = (), estado: str | None = None) -> None:
     """Una orden de `reuniones`, en segundo plano y con su salida al log.
 
-    Fuera del cgroup de `hub-web` (decisión 344): al reiniciarlo, el resumen de
-    una reunión murió a medias (C-0148). Y se apunta qué se lanzó y su huella,
+    `raiz` es la carpeta de las reuniones de esa orden (`REUNIONES_RAIZ`): la
+    del agente o la del puente, según el id (decisión 443). Obligatoria, para
+    que nadie lance una del puente contra la carpeta del agente.
+
+    Fuera del cgroup de quien lo lanza (decisión 344) —`hub-web`, o
+    `hub-snapshotter` las del puente—: al reiniciar la web, el resumen de una
+    reunión murió a medias (C-0148). Y se apunta qué se lanzó y su huella,
     para que un «procesando» cuyo proceso ya no existe no se quede así para
     siempre (`_cortado`). El pid es el de `uv`, no el de Python: mueren juntos.
     `estado` es el archivo de estado que escribe la orden: `voces` y `nombres`
@@ -484,7 +523,7 @@ def _lanzar(*args: str, ids: tuple[str, ...] = (), estado: str | None = None) ->
     with open(carpeta() / "procesado.log", "a") as log:
         proceso = procesos.desasir(["uv", "run", "--quiet", "--project", str(proyecto()), "reuniones", *args],
                                    cwd=proyecto(), salida=log,
-                                   env={**os.environ, "PATH": tmux.path_de_usuario(), "REUNIONES_RAIZ": str(raiz())})
+                                   env={**os.environ, "PATH": tmux.path_de_usuario(), "REUNIONES_RAIZ": str(raiz)})
     huella = procesos.huella(proceso.pid)
     if huella:
         for id_ in ids:
@@ -538,13 +577,69 @@ def _estado_procesado(id_: str, p: dict) -> str | None:
 def procesando() -> list[str]:
     """Las reuniones que se están procesando ahora: las que tienen un modelo
     de Whisper cargado en la GPU (C-0312). El banco de dictado no mide con
-    otro a la vez. Un «procesando» cuyo proceso ya murió no cuenta («se
-    cortó»); uno que lanzó otro a mano sí, porque de ése no se sabe."""
-    r = raiz()
+    otro a la vez, ni `procesar_pendientes` lanza otra. Un «procesando» cuyo
+    proceso ya murió no cuenta («se cortó»); uno que lanzó otro a mano sí,
+    porque de ése no se sabe. De todas las carpetas: la GPU es una."""
+    return [d.name for d in sorted(_todas(), key=lambda x: x.name)
+            if _estado_procesado(d.name, _leer(d / "procesado.json") or {}) == "procesando"]
+
+
+def _en_su_raiz(r: Path) -> list[Path]:
+    """Las carpetas de reunión de una raíz. Cada id vive donde dice su sufijo
+    (`carpeta_de`): una `-kvm` en la del agente, o al revés, no se enseña,
+    porque luego no se podría abrir."""
     if not r.is_dir():
         return []
-    return [d.name for d in sorted(r.iterdir()) if ID.match(d.name)
-            and _estado_procesado(d.name, _leer(d / "procesado.json") or {}) == "procesando"]
+    del_puente = r == raiz_puente()
+    return [x for x in r.iterdir() if ID.match(x.name) and x.name.endswith(SUFIJO_PUENTE) == del_puente]
+
+
+def _todas() -> list[Path]:
+    return [d for r in raices() for d in _en_su_raiz(r)]
+
+
+def _procesar_en_marcha() -> bool:
+    """Un `procesar` (o `voces`, `nombres`, que pasan por él) que el hub lanzó
+    y sigue vivo, aunque aún no haya escrito su «procesando»: `uv run` tarda
+    en arrancar, y en ese hueco `procesando()` no lo ve."""
+    from . import procesos
+    return any(procesos.vivo(_leer(f)) for f in _lanzados().glob("*-procesar.json"))
+
+
+def procesar_pendientes() -> str | None:
+    """Lanza el procesado de UNA reunión del Puente KVM terminada y sin
+    procesar —la más antigua— y devuelve su id; si no, None (decisión 443).
+
+    Lo llama el ciclo lento del muestreo: el hub no le pregunta al puente
+    (438), mira su carpeta. Las del agente de Windows no pasan por aquí: ésas
+    las lanza su latido al terminar (`terminada`). `fin` en `meta.json` es lo
+    último que escribe el puente; sin él, se está grabando y no se toca. Una
+    por vuelta y nunca con otro procesado en marcha: Whisper en la GPU, de uno
+    en uno. Lo lanzado una vez no se relanza solo (su `lanzados/<id>-procesar.json`):
+    si falló, lo dice su página y se reintenta con el botón.
+
+    Barato a propósito (regla dura 14): listar una carpeta local y leer
+    `meta.json`; lo de las demás reuniones, que está en el disco de Windows,
+    sólo se mira si hay candidata."""
+    r = raiz_puente()
+    if r not in raices():
+        return None
+    for d in sorted(_en_su_raiz(r), key=lambda x: x.name):
+        if not _espera_procesado(d):
+            continue
+        if procesando() or _procesar_en_marcha():
+            return None
+        lanzar_procesado(d.name)
+        return d.name
+    return None
+
+
+def _espera_procesado(d: Path) -> bool:
+    """Una del puente terminada que nadie ha procesado ni lanzado: la que
+    `procesar_pendientes` lanzará sola en una de sus vueltas."""
+    return (d.name.endswith(SUFIJO_PUENTE) and not (d / "procesado.json").exists()
+            and not (_lanzados() / f"{d.name}-procesar.json").exists()
+            and bool((_leer(d / "meta.json") or {}).get("fin")))
 
 
 def _comprimiendo(d: Path) -> bool:
@@ -558,24 +653,26 @@ def _comprimiendo(d: Path) -> bool:
     return not _cortado(d.name, "comprimir", desde, tope=None)
 
 
-def _libre(id_: str) -> None:
-    estado = _estado_procesado(id_, _leer(_dir(id_) / "procesado.json") or {})
+def _libre(id_: str) -> Path:
+    """La carpeta de la reunión, si no tiene un procesado a medias."""
+    d = carpeta_de(id_)
+    estado = _estado_procesado(id_, _leer(d / "procesado.json") or {})
     if estado == "procesando":
         raise ValueError("se está procesando: espera a que termine")
     if estado == "se cortó":
         raise ValueError("el procesado se cortó a medias: reinténtalo primero")
+    return d
 
 
 def lanzar_procesado(id_: str) -> None:
-    if not ID.match(id_):
-        raise ValueError("id no válido")
-    _lanzar("procesar", id_, ids=(id_,))
+    d = carpeta_de(id_)
+    _lanzar("procesar", id_, raiz=d.parent, ids=(id_,))
 
 
 def lanzar_voces(id_: str) -> None:
     """Separar las voces de una ya procesada, y rehacer su resumen con ellas."""
-    _libre(id_)
-    _lanzar("voces", id_, "--resumen", ids=(id_,), estado="procesar")
+    d = _libre(id_)
+    _lanzar("voces", id_, "--resumen", raiz=d.parent, ids=(id_,), estado="procesar")
 
 
 # Lo que se acepta como nombre: corto y de una línea. Va como argumento a un
@@ -586,14 +683,15 @@ _NOMBRE = re.compile(r"^[\w .'’-]{0,60}$")
 def lanzar_nombres(id_: str, nombres: dict[str, str], resumen: bool) -> None:
     """Pone nombre a las voces. Lo guarda `reuniones nombres`, que es quien
     conoce su carpeta: el hub no escribe en lo de otro proyecto."""
-    _libre(id_)
+    d = _libre(id_)
     pares = []
     for clave, valor in nombres.items():
         valor = " ".join(str(valor).split())
         if not re.match(r"^Persona \d{1,3}$", clave) or not _NOMBRE.match(valor):
             raise ValueError(f"nombre no válido para {clave}: usa letras, espacios o guiones")
         pares.append(f"{clave}={valor}")
-    _lanzar("nombres", id_, *pares, *(["--resumen"] if resumen else []), ids=(id_,), estado="procesar")
+    _lanzar("nombres", id_, *pares, *(["--resumen"] if resumen else []), raiz=d.parent, ids=(id_,),
+            estado="procesar")
 
 
 #: Lo que ocupa cada subcarpeta de una reunión terminada (`fotos/`), con la
@@ -655,14 +753,25 @@ def lanzar_compresion(ids: list[str]) -> None:
     """Comprimir el audio (WAV → Opus) es borrar el original: sólo cuando el
     dueño lo pide, nunca solo. Lo hace `reuniones comprimir`, que comprueba la
     duración antes de borrar nada."""
-    ids = [i for i in ids if ID.match(i)]
+    carpetas = {}
+    for i in ids:
+        try:
+            carpetas[i] = carpeta_de(i)
+        except ValueError:
+            continue
     # Una cortada tampoco: su procesado.json sigue diciendo «procesando», y
     # `reuniones comprimir` se negaría. Primero se reintenta.
-    if any(_estado_procesado(i, _leer(raiz() / i / "procesado.json") or {}) in SIN_TERMINAR for i in ids):
+    if any(_estado_procesado(i, _leer(d / "procesado.json") or {}) in SIN_TERMINAR for i, d in carpetas.items()):
         raise ValueError("se está procesando: comprime cuando termine")
-    if not ids:
+    if not carpetas:
         raise ValueError("nada que comprimir")
-    _lanzar("comprimir", *ids, ids=tuple(ids))
+    # Una orden por carpeta: `reuniones comprimir` las busca en su
+    # `REUNIONES_RAIZ`, y las del puente viven en otra (decisión 443).
+    por_raiz: dict[Path, list[str]] = {}
+    for i, d in carpetas.items():
+        por_raiz.setdefault(d.parent, []).append(i)
+    for r, grupo in por_raiz.items():
+        _lanzar("comprimir", *grupo, raiz=r, ids=tuple(grupo))
 
 
 def sin_comprimir() -> list[str]:
@@ -671,21 +780,31 @@ def sin_comprimir() -> list[str]:
             and x["estado"] not in SIN_TERMINAR]
 
 
-def _dir(id_: str) -> Path:
+def carpeta_de(id_: str) -> Path:
+    """La carpeta de una reunión: la única forma de ir de un id a sus archivos.
+
+    El id dice de quién es (decisión 443): `-kvm`, del Puente KVM, y sólo con
+    la herramienta encendida —apagada, sus reuniones no existen para el hub
+    (438)—; el resto, del agente de Windows."""
     if not ID.match(id_ or ""):
         raise ValueError("reunión no válida")
-    d = raiz() / id_
+    if id_.endswith(SUFIJO_PUENTE):
+        from . import opcionales
+        if not opcionales.encendida("puente-kvm"):
+            raise ValueError("esa reunión no existe")
+        d = raiz_puente() / id_
+    else:
+        d = raiz() / id_
     if not d.is_dir():
         raise ValueError("esa reunión no existe")
     return d
 
 
 def lista(n: int = 50) -> list[dict]:
-    r = raiz()
-    if not r.is_dir():
-        return []
+    """Las de todas las carpetas juntas, de la más nueva a la más vieja: el id
+    empieza por la fecha, y el sufijo del puente va detrás."""
     out = []
-    for d in sorted((x for x in r.iterdir() if ID.match(x.name)), key=lambda x: x.name, reverse=True)[:n]:
+    for d in sorted(_todas(), key=lambda x: x.name, reverse=True)[:n]:
         meta = _leer(d / "meta.json") or {}
         p = _leer(d / "procesado.json") or {}
         res = _leer(d / "resumen.json") or {}
@@ -701,13 +820,13 @@ def lista(n: int = 50) -> list[dict]:
 
 
 def detalle(id_: str) -> dict:
-    d = _dir(id_)
+    d = carpeta_de(id_)
     procesado = _leer(d / "procesado.json") or {}
     if procesado:
         procesado = {**procesado, "estado": _estado_procesado(id_, procesado)}
     meta = _leer(d / "meta.json") or {}
     return {"id": id_, "carpeta": str(d), "guia_voces": f"{proyecto()}/README.md",
-            "meta": meta, "procesado": procesado,
+            "meta": meta, "procesado": procesado, "se_procesa_sola": _espera_procesado(d),
             "tamano": _tamano(d, terminada=bool(meta.get("fin"))), "comprimida": _comprimida(d),
             "comprimiendo": _comprimiendo(d),
             "compresion": _leer(d / "comprimido.json"),
@@ -718,7 +837,7 @@ def detalle(id_: str) -> dict:
 
 
 def foto(id_: str, segundo: int) -> Path:
-    p = _dir(id_) / "fotos" / f"{int(segundo):06d}.jpg"
+    p = carpeta_de(id_) / "fotos" / f"{int(segundo):06d}.jpg"
     if not p.is_file():
         raise ValueError("esa foto no existe")
     return p

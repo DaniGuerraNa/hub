@@ -1205,8 +1205,9 @@ def test_en_el_telefono_un_campo_enfocado_no_se_queda_debajo_de_la_barra(chromiu
 
 @_nueva
 def test_en_el_telefono_la_tira_va_en_una_linea_con_la_pantalla_de_ahora_a_la_vista(chromium):
-    """Ajustes tiene siete pantallas: partida en filas, la tira se comía 200 px.
-    Se mira en el banco de dictado, que está casi al final de la tira."""
+    """Ajustes tenía siete pantallas (ocho desde «Contar un fallo o una idea»,
+    C-0468): partida en filas, la tira se comía 200 px. Se mira en el banco
+    de dictado, que está casi al final de la tira."""
     base, navegador = chromium
     contexto = _con_la_nueva(navegador, base, 390)
     pagina = contexto.new_page()
@@ -1224,7 +1225,7 @@ def test_en_el_telefono_la_tira_va_en_una_linea_con_la_pantalla_de_ahora_a_la_vi
                dentro: !!tira.closest('.envoltura > header'),
                seccion: document.querySelector('.marco-mas > summary').classList.contains('aqui') }; }""")
     assert m["texto"] == "Banco de dictado" and m["seccion"], m          # es de Ajustes, que va en «Más»
-    assert m["enlaces"] == 7 and m["filas"] == 1 and m["alto"] <= 48, m
+    assert m["enlaces"] == 8 and m["filas"] == 1 and m["alto"] <= 48, m
     assert min(m["altos"]) >= 44, m                                       # a dedo
     assert 0 <= m["aqui"][0] and m["aqui"][1] <= 390, m                  # a la vista sin deslizar
     assert m["documento"] <= 390 and m["dentro"], m

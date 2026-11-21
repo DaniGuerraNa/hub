@@ -185,6 +185,16 @@ CAMBIAN = {"/guia", "/puente"}
 #: su nombre puede salir apagada, pero encendida sigue sin cambiar más que el raíl.
 NOTAS = {"/actualizaciones"}
 _ENTRADA = re.compile(r'\s*<a href="/puente" class="enlace[^"]*"[^>]*>.*?</a>', re.S)
+#: Lo que una pantalla dice de lo encendido porque es su trabajo decirlo: los
+#: datos del equipo de /incidencia nombran las herramientas encendidas
+#: (C-0468). Esa línea se iguala; el resto de la pantalla, no.
+_DICE_LO_ENCENDIDO = re.compile(r"Herramientas opcionales: [^\n<]*")
+
+
+def _sin_su_entrada(html: str, ruta: str = "") -> str:
+    if ruta.startswith("/incidencia"):  # sólo ahí: en otra pantalla taparía un cambio de verdad
+        html = _DICE_LO_ENCENDIDO.sub("Herramientas opcionales: …", html)
+    return _junto(_ENTRADA.sub("", html))
 
 
 def _rutas() -> list[str]:
@@ -234,14 +244,14 @@ def test_apagada_ninguna_pantalla_lo_nombra_y_encendida_solo_suma_su_entrada_del
             continue
         vistas += 1
         assert len(_ENTRADA.findall(encendida)) == 1, f"{ruta}: la entrada del raíl no sale una vez"
-        sin_ella = _junto(_ENTRADA.sub("", encendida))
-        if sin_ella != _junto(apagadas[ruta]):
+        sin_ella = _sin_su_entrada(encendida, ruta)
+        if sin_ella != _sin_su_entrada(apagadas[ruta], ruta):
             # Lo que cuenta segundos («hace 4 s») cambia entre peticiones.
             opcionales.poner("puente-kvm", False)
             apagadas[ruta] = _pintar(ruta)
             opcionales.poner("puente-kvm", True)
-            sin_ella = _junto(_ENTRADA.sub("", _pintar(ruta)))
-        assert sin_ella == _junto(apagadas[ruta]), f"{ruta} cambia más que su entrada del raíl"
+            sin_ella = _sin_su_entrada(_pintar(ruta), ruta)
+        assert sin_ella == _sin_su_entrada(apagadas[ruta], ruta), f"{ruta} cambia más que su entrada del raíl"
     assert vistas >= 25, f"sólo {vistas} páginas: esto no ha recorrido el hub"
 
 

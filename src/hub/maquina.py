@@ -92,11 +92,19 @@ def _programa(nombre: str) -> str:
     return shutil.which(nombre) or RESPALDOS.get(nombre, nombre)
 
 
-def encontrar(nombre: str) -> str | None:
+def encontrar(nombre: str, *, de_usuario: bool = False) -> str | None:
     """Dónde está un programa aunque el PATH del servicio no lo traiga, o None.
 
     La puerta para preguntar «¿hay X?» desde un servicio de systemd: con
-    `shutil.which` a secas la respuesta depende de quién arrancó el proceso."""
+    `shutil.which` a secas la respuesta depende de quién arrancó el proceso.
+    `de_usuario` mira además donde instala la persona lo suyo (`~/.local/bin`
+    y compañía, `tmux.path_de_usuario`, decisión 81): `claude` vive ahí, y
+    bajo systemd «no está» sería falso (C-0468)."""
+    if de_usuario:
+        from . import tmux
+        propio = shutil.which(nombre, path=tmux.path_de_usuario())
+        if propio:
+            return propio
     ruta = _programa(nombre)
     try:
         return ruta if shutil.which(ruta) or Path(ruta).is_file() else None

@@ -552,7 +552,7 @@ def test_al_lanzar_se_apunta_la_huella_de_lo_lanzado(raiz, monkeypatch):
     ordenes = []
     monkeypatch.setattr(procesos, "desasir", lambda orden, **kw: ordenes.append(orden) or lanzado)
     try:
-        reuniones._lanzar("procesar", "20261020-090000", ids=("20261020-090000",))
+        reuniones._lanzar("procesar", "20261020-090000", raiz=raiz[0], ids=("20261020-090000",))
         h = reuniones._leer(reuniones._lanzados() / "20261020-090000-procesar.json")
         assert h["pid"] == lanzado.pid and procesos.vivo(h)
         assert ordenes[0][-2:] == ["procesar", "20261020-090000"]

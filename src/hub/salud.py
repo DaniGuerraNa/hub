@@ -53,6 +53,7 @@ PASOS_LENTOS = {
     "version": "la búsqueda de versión nueva",
     "intercambio": "la limpieza de lo pegado en la terminal",
     "dictados": "la limpieza de dictados",
+    "reuniones": "el procesado de las reuniones del puente",
 }
 
 

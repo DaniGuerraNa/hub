@@ -24,9 +24,8 @@ def test_cada_skill_tiene_nombre_igual_a_su_carpeta_descripcion_y_acceso():
 
 def test_toda_herramienta_del_puente_tiene_un_permiso_decidido():
     # Una herramienta nueva sin regla preguntaría siempre sin que nadie lo haya decidido.
-    reglas = json.loads(repertorio.AJUSTES_CLAUDE.read_text())["permissions"]
     decididas = {r.removeprefix("mcp__puente-kvm__") for clave in ("allow", "ask", "deny")
-                 for r in reglas[clave] if r.startswith("mcp__puente-kvm__")}
+                 for r in repertorio.reglas()[clave] if r.startswith("mcp__puente-kvm__")}
     nombres = {h["nombre"] for h in asyncio.run(repertorio.herramientas())}
     assert nombres == decididas
 
@@ -69,7 +68,7 @@ def test_los_hooks_llegan_al_puente_y_la_pantalla_claude_se_sirve():
 
 
 def reglas() -> dict[str, list[str]]:
-    return json.loads(repertorio.AJUSTES_CLAUDE.read_text())["permissions"]
+    return repertorio.reglas()
 
 
 def test_leer_sin_preguntar_esta_acotado_al_proyecto_y_a_los_datos_del_puente():
@@ -132,3 +131,65 @@ def test_los_hooks_avisan_al_puerto_que_diga_puente_puerto():
     finally:
         servidor.should_exit = True
         hilo.join(5)
+
+
+def test_settings_json_no_lleva_reglas_ask_porque_lo_cargan_los_dos_modos():
+    # En «Sin pedir permisos» una «ask» seguiría preguntando antes de cada clic:
+    # van en .claude/preguntar.json, que sólo se suma en el modo normal.
+    assert "ask" not in json.loads(repertorio.AJUSTES_CLAUDE.read_text())["permissions"]
+    assert json.loads(repertorio.PREGUNTAR.read_text())["permissions"]["ask"]
+
+
+def test_la_pestana_claude_sigue_ensenando_lo_que_pregunta():
+    with TestClient(crear_app(Simulador(lineas=["x"]), hosts={"testserver"})) as c:
+        pagina = c.get("/claude").text
+    preguntas = pagina.split("te pregunta en la terminal", 1)[1].split("nunca", 1)[0]
+    for t in ("teclear", "clic", "jiggler"):
+        assert f"puente: {t}" in preguntas
+    assert "preguntar.json" in pagina
+
+
+def test_cada_grupo_select_de_las_instrucciones_nombra_herramientas_que_existen():
+    # Un nombre mal escrito en un `select:` deja a Claude sin esa herramienta
+    # hasta que la busque otra vez: otra llamada, que es lo que el grupo ahorra.
+    import re
+    nombres = {h["nombre"] for h in asyncio.run(repertorio.herramientas())}
+    textos = [repertorio.PROYECTO / "CLAUDE.md", *repertorio.SKILLS.glob("*/SKILL.md")]
+    grupos = [g for f in textos for g in re.findall(r"select:([\w,-]+)", f.read_text())]
+    assert len(grupos) >= 5
+    for g in grupos:
+        for n in g.split(","):
+            assert n.startswith("mcp__puente-kvm__") and n.removeprefix("mcp__puente-kvm__") in nombres, n
+
+
+def _nombradas(texto: str, nombres: set[str]) -> set[str]:
+    """Las herramientas del puente que nombra un texto: con su prefijo o entre
+    comillas invertidas (`ver_pantalla`, `ver_pantalla(x, y)`). Una palabra
+    suelta no cuenta: «estado», «clic» o «rueda» también son palabras."""
+    import re
+    return (set(re.findall(r"mcp__puente-kvm__(\w+)", texto)) | set(re.findall(r"`(\w+)[`(]", texto))) & nombres
+
+
+def test_el_grupo_select_de_cada_skill_trae_toda_herramienta_que_nombra():
+    # Una que falte en el grupo es otra búsqueda a media tarea, que es lo que
+    # el grupo ahorra. El encargo de los subagentes (la cita, «>») lleva su
+    # propio grupo y se mira aparte; una skill sin grupo no puede nombrar
+    # ninguna (`explicar-funcion` y `revisar-rendimiento` no usan herramientas).
+    import re
+    nombres = {h["nombre"] for h in asyncio.run(repertorio.herramientas())}
+    con_grupo = 0
+    for skill in sorted(repertorio.SKILLS.glob("*/SKILL.md")):
+        lineas = skill.read_text().splitlines()
+        partes = {"cita": "\n".join(x for x in lineas if x.startswith(">")),
+                  "resto": "\n".join(x for x in lineas if not x.startswith(">"))}
+        grupos = {parte: re.findall(r"select:([\w,-]+)", texto) for parte, texto in partes.items()}
+        if not any(grupos.values()):
+            assert not _nombradas(skill.read_text(), nombres), skill.parent.name
+            continue
+        con_grupo += 1
+        for parte, texto in partes.items():
+            cargadas = {n.removeprefix("mcp__puente-kvm__") for g in grupos[parte] or grupos["resto"]
+                        for n in g.split(",")}
+            faltan = _nombradas(texto, nombres) - cargadas
+            assert not faltan, f"{skill.parent.name} ({parte}): faltan {sorted(faltan)} en su select:"
+    assert con_grupo >= 4

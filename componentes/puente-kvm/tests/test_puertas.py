@@ -154,9 +154,10 @@ def test_lo_que_no_existe_es_un_404_no_un_500(entorno, ruta):
     assert entorno[0].get(ruta).status_code == 404
 
 
-def test_sin_pedir_permisos_solo_si_la_persona_lo_marca(entorno):
+def test_sin_pedir_permisos_solo_si_la_persona_lo_marca(entorno, monkeypatch):
     from puente_kvm import terminal
 
+    monkeypatch.delenv("PUENTE_TERMINAL_ORDEN", raising=False)  # la orden de Claude, no la bash de las pruebas
     c, _ = entorno
     assert "--dangerously-skip-permissions" not in terminal.orden_claude()
     # Un valor que no es «sí» de verdad no lo enciende.
@@ -165,13 +166,12 @@ def test_sin_pedir_permisos_solo_si_la_persona_lo_marca(entorno):
     assert c.post("/api/ajustes", json={"claude": {"saltar_permisos": True}}, headers=PERSONA).status_code == 200
     orden = terminal.orden_claude()
     assert "--dangerously-skip-permissions" in orden and "--permission-mode" not in orden
-    # Una regla «ask» del proyecto gana al modo sin permisos (seguía preguntando
-    # antes de cada clic): sin la fuente «project», con sus ajustes menos «ask».
-    assert "--setting-sources user,local" in orden and "--mcp-config" in orden
+    # Una regla «ask» gana al modo sin permisos (seguía preguntando antes de
+    # cada clic): con la fuente «project» (sus skills), pero sin las «ask».
+    assert "--setting-sources project,local" in orden and "--strict-mcp-config" in orden
     import json
-    ajustes = json.loads(terminal.ajustes_sin_preguntar().read_text())
-    assert "ask" not in ajustes["permissions"]
-    assert "Bash(curl:*)" in ajustes["permissions"]["deny"] and ajustes["hooks"]
+    fuentes, ruta = terminal.ajustes_de_sesion(saltar=True)
+    assert "ask" not in json.loads(ruta.read_text()).get("permissions", {})
     # Y tocar el Mac sigue pidiendo el control: lo comprueba el puente, no Claude Code.
     assert c.post("/api/teclear", json={"texto": "x"}).status_code == 423
 

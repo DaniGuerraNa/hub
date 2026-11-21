@@ -12,9 +12,12 @@
         <button id="zoom-mas" title="Acercar (hasta el tamaño real y más)" aria-label="Acercar">+</button>
       </span>
       <label class="casilla"><input type="checkbox" id="ver-region" checked> marcar la región del editor</label>
+      <span class="placa riesgo" id="reunion-placa" hidden>Grabando</span>
+      <button id="reunion" title="Graba lo que suena en el Mac y su pantalla cuando cambia. Tu voz no: entra al Mac por su micrófono y no pasa por el JetKVM. Al salir, Reuniones del hub la transcribe y la resume">● Estoy en reunión</button>
       <button id="ampliar" title="La pantalla del Mac ocupa toda la ventana del navegador, no el monitor">⤢ Pantalla grande</button>
     </div>
-    <div class="pantalla" id="pantalla" data-ancho="{{ estado.dispositivo.ancho or 1920 }}" data-alto="{{ estado.dispositivo.alto or 1080 }}"
+    <p class="aviso aviso-reunion" id="reunion-aviso" role="status" hidden></p>
+    <div class="pantalla" id="pantalla" tabindex="-1" data-ancho="{{ estado.dispositivo.ancho or 1920 }}" data-alto="{{ estado.dispositivo.alto or 1080 }}"
          data-conectado="{{ 'si' if estado.dispositivo.conectado else 'no' }}">
       <div class="marco-mac" id="marco-mac">
         <img id="directo" src="/api/pantalla.mjpg?ancho=1280" alt="Pantalla del Mac en directo" draggable="false">
@@ -27,12 +30,19 @@
       <button data-mando-atajo="cmd+tab" hidden>⌘Tab</button>
       <button data-mando-atajo="cmd+space" hidden>⌘Espacio</button>
       <button id="mando-pegar" hidden>Pegar texto</button>
+      <label class="casilla" id="mando-teclado-caja" hidden title="La fuente de entrada que tiene el Mac (en su barra de menús). «Pegar texto» teclea con ésta: si no es la del Mac, los acentos salen cambiados.">Teclado del Mac
+        <select id="mando-teclado">{% for d in distribuciones %}<option value="{{ d }}" {{ 'selected' if estado.perfil.distribucion == d }}>{{ nombres_distribucion.get(d, d)|replace('macOS ', '')|replace('«', '')|replace('»', '') }}</option>{% endfor %}</select></label>
+      <span class="fila mando-aparato">
+        <button data-despertar title="Saca al Mac del reposo: lo mismo que «Intentar despertar» de la web del JetKVM.">Despertar el Mac</button>
+        <button id="jiggler" aria-pressed="{{ 'true' if (estado.dispositivo.jiggler or {}).get('encendido') else 'false' }}"
+                title="Lo hace el JetKVM: mueve un poco el ratón cuando nadie lo toca, para que el Mac no se bloquee ni te ponga «ausente». Sigue aunque cierres el puente.">Jiggler: {{ estado.jiggler_texto }}</button>
+      </span>
     </div>
     <p class="sub" id="mando-ayuda">Con tu teclado y tu ratón, sin abrir la web del JetKVM (que desconectaría el puente). Sólo mientras Claude no tiene el control.</p>
     {% if estado.error_conexion %}
     <div class="aviso riesgo" style="margin-top:12px">
       <p style="margin:0 0 8px"><b>No hay conexión con el aparato.</b> {{ estado.error_conexion }}</p>
-      <div class="fila"><button data-reconectar>Reintentar</button><a class="boton" href="/ajustes">Revisar los ajustes</a></div>
+      <div class="fila"><button data-reconectar>Reintentar</button><button data-despertar>Despertar el Mac</button><a class="boton" href="/ajustes">Revisar los ajustes</a></div>
     </div>
     {% elif estado.dispositivo.aviso %}
     <p class="aviso" style="margin-top:12px">{{ estado.dispositivo.aviso }}</p>

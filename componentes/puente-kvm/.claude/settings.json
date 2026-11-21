@@ -16,27 +16,18 @@
       "mcp__puente-kvm__estado_cambio",
       "mcp__puente-kvm__escribir_cambio",
       "mcp__puente-kvm__ver_tramo",
+      "mcp__puente-kvm__despertar_mac",
       "Read(/**)",
       "Read(~/.local/share/puente-kvm/**)",
       "Edit(/trabajo/**)"
-    ],
-    "ask": [
-      "mcp__puente-kvm__teclear",
-      "mcp__puente-kvm__atajo",
-      "mcp__puente-kvm__ir_a_linea",
-      "mcp__puente-kvm__clic",
-      "mcp__puente-kvm__rueda",
-      "mcp__puente-kvm__recorrer_pantalla",
-      "Edit(/src/**)",
-      "Edit(/.claude/**)",
-      "WebFetch",
-      "WebSearch"
     ],
     "deny": [
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Read(~/.config/puente-kvm/**)",
-      "Edit(~/.config/puente-kvm/**)"
+      "Edit(~/.config/puente-kvm/**)",
+      "Read(~/.local/share/puente-kvm/reuniones/**)",
+      "Edit(~/.local/share/puente-kvm/reuniones/**)"
     ]
   },
   "hooks": {

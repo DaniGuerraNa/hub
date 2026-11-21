@@ -36,7 +36,9 @@ EnvironmentFile=-$entorno
 # encuentran claude ni uv al abrir la terminal de Claude.
 Environment="PATH=$PATH"
 UNIDAD
-  for v in PUENTE_PUERTO PUENTE_HOME PUENTE_TRABAJO PUENTE_ENTORNO; do
+  # PUENTE_SERVICIO también: el botón «Reiniciar el puente» mira por ese nombre
+  # si el proceso es el de su unidad.
+  for v in PUENTE_PUERTO PUENTE_HOME PUENTE_TRABAJO PUENTE_ENTORNO PUENTE_SERVICIO; do
     if [ -n "${!v:-}" ]; then echo "Environment=\"$v=${!v}\""; fi
   done
   cat <<UNIDAD
@@ -84,7 +86,7 @@ case "${1:-}" in
     systemctl --user restart "$nombre"
     # La conversación de Claude vive en tmux, fuera del servicio, a propósito: sigue
     # abierta, y con ella su servidor MCP con el código de antes.
-    echo "Si has actualizado el puente: en su terminal, Conversaciones → Reabrir, para que Claude cargue el código nuevo."
+    echo "Si has actualizado el puente: en su pantalla, «Reabrir la conversación de Claude», para que Claude cargue el código nuevo."
     ;;
   estado) systemctl --user status "$nombre" --no-pager ;;
   registro) journalctl --user -u "$nombre" -n 100 --no-pager ;;

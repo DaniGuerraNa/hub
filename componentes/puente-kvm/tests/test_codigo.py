@@ -34,6 +34,18 @@ def test_un_modulo_nuevo_tambien_es_otro_codigo(tmp_path):
     assert codigo.viejo()
 
 
+def test_la_huella_del_disco_cambia_con_el_contenido_y_no_con_la_fecha(tmp_path):
+    """La que guarda cada conversación al abrirse, para saber si sus
+    herramientas son de antes de actualizar (C-0470)."""
+    (tmp_path / "a.py").write_text("x = 1\n")
+    codigo = config.Codigo(tmp_path)
+    primera = codigo.huella_disco()
+    os.utime(tmp_path / "a.py", ns=(10**9, 10**9))
+    assert codigo.huella_disco() == primera
+    (tmp_path / "a.py").write_text("x = 2\n")
+    assert codigo.huella_disco() != primera and codigo.viejo()
+
+
 def test_el_estado_lo_dice_para_que_la_pantalla_lo_avise(monkeypatch):
     with puente_simulado(lineas=3) as (c, sim):
         assert c.get("/api/estado").json()["codigo_viejo"] is False
@@ -48,6 +60,9 @@ def test_ocupado_es_una_tarea_en_marcha_o_el_control_dado_a_claude():
     assert ocupado(None) == ""  # no está en marcha: reiniciar no corta nada
     assert "capturando" in ocupado({**libre, "tarea": "capturando"})
     assert "control" in ocupado({**libre, "control": {"modo": "claude"}})
+    # Lo que la persona teclea en el Mac desde la pantalla también se cortaría (C-0470).
+    assert "pantalla" in ocupado({**libre, "mando": True})
+    assert ocupado({**libre, "mando": False}) == ""
 
 
 @pytest.mark.parametrize("estado, sale", [(None, 0), ({"tarea": None, "control": {"modo": "libre"}}, 0),

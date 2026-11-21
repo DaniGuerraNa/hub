@@ -44,7 +44,7 @@ import termios
 import time
 from pathlib import Path
 
-from . import config, conversaciones, espacio
+from . import config, conversaciones, espacio, repertorio
 
 SESION = os.environ.get("PUENTE_SESION_CLAUDE", "puente-claude")
 _ENTORNO_SERVICIO = ("INVOCATION_ID", "JOURNAL_STREAM", "NOTIFY_SOCKET", "MANAGERPID",
@@ -170,37 +170,77 @@ def orden_claude(conv: conversaciones.Conversacion | None = None, retomar: bool 
     ruta = _path_de_usuario()
     claude = shlex.quote(shutil.which("claude", path=ruta) or "claude")
     # El modo de permisos va explícito: sin él, Claude hereda el que tenga la
-    # persona por omisión, y si fuera automático las reglas de «pregúntame» de
-    # .claude/settings.json no preguntarían (medido con Claude Code en otra terminal web).
-    # Saltarlos lo enciende la persona en Ajustes; tocar el Mac sigue pidiendo
-    # que ella dé el control, que lo comprueba el puente, no Claude Code.
-    if saltar_permisos():
-        # 🔴 Una regla «ask» de los ajustes del proyecto gana al modo sin
-        # permisos (medido con la 2.1.322 y visto con la 2.1.327: seguía
-        # preguntando antes de cada clic). Así que sin la fuente «project», y sus
-        # ajustes —hooks, servidores, «deny»— van aparte sin la lista «ask».
-        base = (f"{claude} --dangerously-skip-permissions --setting-sources user,local"
-                f" --settings {shlex.quote(str(ajustes_sin_preguntar()))}"
-                f" --mcp-config {shlex.quote(str(config.espacio() / '.mcp.json'))}")
-    else:
-        base = f"{claude} --permission-mode default"
+    # persona por omisión, y si fuera automático las reglas de «pregúntame» no
+    # preguntarían (medido con Claude Code en otra terminal web). Saltarlos lo
+    # enciende la persona en Ajustes; tocar el Mac sigue pidiendo que ella dé el
+    # control, que lo comprueba el puente, no Claude Code.
+    saltar = saltar_permisos()
+    fuentes, ajustes = ajustes_de_sesion(saltar)
+    modo = "--dangerously-skip-permissions" if saltar else "--permission-mode default"
+    # Sólo el servidor del puente (`--strict-mcp-config`): ni los de la
+    # configuración de quien abre la sesión, ni los de su cuenta.
+    banderas = (f"{modo} --setting-sources {fuentes} --settings {shlex.quote(str(ajustes))}"
+                f" --strict-mcp-config --mcp-config {shlex.quote(str(config.espacio() / '.mcp.json'))}")
     if conv is None:
-        lanzar = base
+        lanzar = f"{claude} {banderas}"
     else:
         conversaciones.validar_id(conv.id)  # lo único que llega a la orden sin comillas
         modelo = config.validar_modelo(conv.modelo)
-        base += f" --model {shlex.quote(modelo)}" if modelo else ""
+        banderas += f" --model {shlex.quote(modelo)}" if modelo else ""
+        base = f"{claude} {banderas}"
         nombre = shlex.quote(conversaciones.limpiar_nombre(conv.nombre))
         nueva = f"{base} --session-id {conv.id} -n {nombre}"
         lanzar = f"{base} --resume {conv.id} -n {nombre} || {nueva}" if retomar else nueva
+    despues = _shell_de_despues(claude, banderas)
     aviso = shlex.quote(AVISO_MODELO)
-    cerrado = shlex.quote("Claude Code se cerró. Escribe claude para volver a abrirlo.")
+    cerrado = shlex.quote(CERRADO)
     # `bash -l` acaba de leer /etc/profile, que en Ubuntu reescribe el PATH: se
     # vuelve a poner el del puente, para que el `uv` de .mcp.json, el `curl` de
     # los hooks y el `claude` que se escriba a mano sean los mismos que elige el
     # puente. Y la shell de después, sin -l, para que no lo vuelva a reescribir.
     return (f"export PATH={shlex.quote(ruta)} ; {lanzar} ; rc=$? ; echo ; "
-            f"if [ $rc -ne 0 ] ; then echo {aviso} ; fi ; echo {cerrado} ; exec bash")
+            f"if [ $rc -ne 0 ] ; then echo {aviso} ; fi ; echo {cerrado} ; "
+            f"exec bash --rcfile {shlex.quote(str(despues))}")
+
+
+# Lo primero es el botón: retoma esta conversación, la de la lista del puente.
+# Un `claude` escrito a mano abre otra que el puente no lleva en su lista.
+CERRADO = ("Claude Code se cerró. Para volver a abrirlo: el menú de la conversación, arriba de la terminal "
+           "→ Reabrir. También vale escribir claude aquí.")
+
+
+def _shell_de_despues(claude: str, banderas: str) -> Path:
+    """El `--rcfile` de la shell que queda al cerrarse Claude Code: la de la
+    persona (su `~/.bashrc`), con un `claude` que vuelve a abrir con el mismo
+    aislamiento, el mismo modo y el mismo modelo que la conversación.
+
+    🔴 Con un `exec bash` a secas, un `claude` escrito ahí cargaba los ajustes
+    de usuario (con sus `allow`), los del proyecto (ya sin las `ask`, que van
+    en `--settings`) y el `.mcp.json` del espacio: las herramientas del puente
+    sin preguntar nada, y los conectores personales al lado del Mac ajeno.
+    `command`, para que la función no se llame a sí misma si `claude` no
+    estaba en el PATH y va sin ruta; y sin el alias que la persona pudiera
+    tener, que ganaría a la función.
+    """
+    texto = ("# Lo escribe el puente en cada arranque de Claude Code (terminal.orden_claude): no lo edites.\n"
+             '[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"\n'
+             "unalias claude 2>/dev/null\n"
+             f'claude() {{ command {claude} {banderas} "$@"; }}\n')
+    ruta = config.hogar() / "claude-despues.bashrc"
+    _escribir_privado(ruta, texto)
+    return ruta
+
+
+def _escribir_privado(ruta: Path, texto: str) -> None:
+    """Con 600 y por un temporal: lleva lo que la persona tiene prohibido (sus
+    rutas) y las órdenes de su barra de estado, y Claude Code no puede leer uno
+    a medias si arranca mientras se escribe."""
+    tmp = ruta.with_name(f".{ruta.name}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        os.fchmod(f.fileno(), 0o600)  # un temporal que ya existiera conservaría sus permisos
+        f.write(texto)
+    os.replace(tmp, ruta)
 
 
 def _puede_desasir() -> bool:
@@ -219,15 +259,111 @@ def existe() -> bool:
     return r.returncode == 0
 
 
-def ajustes_sin_preguntar() -> Path:
-    """Los ajustes de Claude del puente sin las reglas «ask», para «Sin pedir
-    permisos». Se escriben en cada arranque desde los del código, así que un
-    cambio en ellos llega solo; lo denegado sigue denegado."""
-    datos = json.loads((config.CODIGO / ".claude" / "settings.json").read_text())
-    datos.get("permissions", {}).pop("ask", None)
-    ruta = config.hogar() / "claude-sin-preguntar.json"
-    ruta.write_text(json.dumps(datos, indent=2, ensure_ascii=False))
-    return ruta
+# ── la sesión, aislada de la configuración de quien la abre (C-0471) ────────
+# La sesión ve el Mac de un cliente: lo que traiga de la configuración
+# personal (conectores, skills, agentes, plugins) le cuesta tokens en cada
+# llamada y, un conector, es además un camino para sacar lo leído, el mismo
+# motivo por el que se niega `curl`. Así que no carga los ajustes de usuario
+# (`--setting-sources project,local`) y, de ellos, sólo se lleva esta lista
+# cerrada, más sus «deny» y sus «ask». Los avisos al teléfono son preferencias
+# de la persona y no cuestan tokens: no se quitan («no reducir funciones»).
+DE_LA_PERSONA = ("model", "effortLevel", "modelSettings", "tui", "statusLine",
+                 "agentPushNotifEnabled", "inputNeededNotifEnabled", "taskCompleteNotifEnabled")
+# Siempre, con o sin la fuente «user» (`--settings` le gana):
+# - Sin control remoto: es otro camino para manejar una sesión que ve el Mac de
+#   un cliente. 🔴 No basta con no cargar «user»: según el binario de la
+#   2.1.322 (leído, no visto en una sesión), si ni la política, ni `--settings`, ni los ajustes de usuario lo
+#   dicen, Claude Code lo toma del `~/.claude.json` de antes («legacy»).
+# - Sin las skills ni los plugins sincronizados de claude.ai: con «false» en
+#   `--settings` dejan de bajarse y se ocultan sólo en esta sesión (no se lee
+#   de los ajustes del proyecto, y no mueve nada de la persona).
+SIEMPRE = {"remoteControlAtStartup": False, "syncClaudeAiSkills": False, "syncClaudeAiPlugins": False}
+# Si los ajustes de usuario dicen cómo autenticarse, sin ellos Claude Code no
+# arrancaría: entonces sí se cargan, y lo único que se quita son los servidores
+# ajenos. Copiarlos al archivo de la sesión pondría una llave en PUENTE_HOME.
+AUTENTICACION = ("apiKeyHelper", "env", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh")
+
+
+def _se_autentica(usuario: dict) -> bool:
+    """Si los ajustes de usuario traen cómo autenticarse. Un `env` cuenta sólo
+    con algo dentro: no se puede saber si lleva una llave, un proxy o la
+    dirección de la API, así que uno no vacío cuenta y `{}` no."""
+    for clave in AUTENTICACION:
+        valor = usuario.get(clave)
+        if clave == "env" and isinstance(valor, dict) and valor or clave != "env" and valor:
+            return True
+    return False
+
+
+def _reglas(permisos: dict, clave: str) -> list[str]:
+    reglas = permisos.get(clave)
+    return [r for r in reglas if isinstance(r, str)] if isinstance(reglas, list) else []
+
+
+def _carpeta_de_usuario() -> Path:
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude").expanduser()
+
+
+def _ajustes_de_usuario() -> dict:
+    try:
+        datos = json.loads((_carpeta_de_usuario() / "settings.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return datos if isinstance(datos, dict) else {}
+
+
+_REGLA_DE_RUTA = re.compile(r"^(Read|Edit|Write|MultiEdit|NotebookEdit|Glob|Grep)\((/[^/].*)\)$")
+
+
+def _anclada(regla: str, base: Path) -> str:
+    """La regla con su ruta absoluta («//ruta»). 🔴 Una «/x» es relativa a la
+    carpeta del archivo de ajustes que la trae (medido con la 2.1.322: en uno
+    de `--settings`, la de ese archivo), así que pasada a `--settings`, que
+    está en PUENTE_HOME, dejaría de apuntar a donde apuntaba en el suyo."""
+    m = _REGLA_DE_RUTA.match(regla)
+    return f"{m[1]}(/{base.as_posix()}{m[2]})" if m else regla
+
+
+def ajustes_de_sesion(saltar: bool) -> tuple[str, Path]:
+    """Las fuentes de ajustes y el archivo de `--settings` de la siguiente sesión.
+
+    Se escribe en cada arranque, así que un cambio en los ajustes de la persona
+    o en los del código llega solo. Nunca lleva `env`, `apiKeyHelper`, hooks
+    (llegan por el proyecto: copiarlos los correría dos veces), plugins,
+    `allow`, servidores ni el `remoteControlAtStartup` de la persona (va
+    siempre `false`, ver `SIEMPRE`).
+
+    🔴 Las reglas «ask» (`.claude/preguntar.json` y las de la persona) van sólo
+    en el modo normal: una «ask» gana al modo sin permisos (medido con la
+    2.1.322 y visto con la 2.1.327: seguía preguntando antes de cada clic). Por
+    eso no están en `settings.json`, que los dos modos cargan con sus skills y
+    sus hooks.
+    """
+    usuario = _ajustes_de_usuario()
+    datos = {k: usuario[k] for k in DE_LA_PERSONA if k in usuario} | SIEMPRE
+    permisos = usuario.get("permissions") if isinstance(usuario.get("permissions"), dict) else {}
+    deny = [_anclada(r, _carpeta_de_usuario()) for r in _reglas(permisos, "deny")]
+    if not saltar:
+        try:
+            del_puente = repertorio.reglas()["ask"]
+        except (OSError, ValueError) as e:
+            raise ValueError("no pude leer los permisos de Claude del puente (.claude/settings.json y "
+                             f".claude/preguntar.json): {e}") from e
+        # Las del proyecto son relativas a su carpeta, la del espacio de trabajo;
+        # las de la persona, a la de sus ajustes, como sus «deny».
+        datos["permissions"] = {"ask": [*[_anclada(r, config.espacio()) for r in del_puente],
+                                        *[_anclada(r, _carpeta_de_usuario()) for r in _reglas(permisos, "ask")]]}
+    if deny:
+        datos.setdefault("permissions", {})["deny"] = deny
+    # Lo apunta Claude Code en los ajustes de usuario al aceptar su aviso la
+    # primera vez; sin él aquí, sin la fuente «user», lo pediría en cada arranque.
+    if saltar and usuario.get("skipDangerousModePermissionPrompt") is True:
+        datos["skipDangerousModePermissionPrompt"] = True
+    ruta = config.hogar() / "claude-sesion.json"
+    _escribir_privado(ruta, json.dumps(datos, indent=2, ensure_ascii=False))
+    (config.hogar() / "claude-sin-preguntar.json").unlink(missing_ok=True)  # el de antes de C-0471
+    fuentes = "user,project,local" if _se_autentica(usuario) else "project,local"
+    return fuentes, ruta
 
 
 def saltar_permisos() -> bool:
@@ -246,10 +382,11 @@ def modelo_elegido() -> str:
         return config.MODELO_POR_OMISION
 
 
-def asegurar_sesion() -> None:
-    """Que haya una conversación abierta: la que estaba (retomada) o una nueva."""
+def asegurar_sesion() -> bool:
+    """Que haya una conversación abierta: la que estaba (retomada) o una nueva.
+    True si la ha abierto ahora."""
     if existe():
-        return
+        return False
     modelo = modelo_elegido()
     cc = comprobar_claude(modelo)
     conv = conversaciones.actual()
@@ -257,7 +394,8 @@ def asegurar_sesion() -> None:
     if conv is None:
         conv = conversaciones.nueva("", modelo)
     conv.modelo = modelo
-    _crear(conv, retomar, cc)
+    _crear(conv, cc, orden_claude(conv, retomar))
+    return True
 
 
 def cerrar() -> None:
@@ -270,22 +408,27 @@ def abrir(conv: conversaciones.Conversacion, retomar: bool) -> None:
     """Cierra la que hubiera y abre ésta: una sola viva a la vez.
 
     Lo que puede impedir abrirla se mira ANTES de cerrar la abierta: si no, un
-    Claude Code viejo dejaría a la persona sin ninguna.
+    Claude Code viejo dejaría a la persona sin ninguna. Lo mismo la orden, que
+    lee los permisos del puente y escribe en PUENTE_HOME: un `preguntar.json`
+    roto o una carpeta sin sitio no pueden cerrar la que había.
     """
     modelo = modelo_elegido()
     cc = comprobar_claude(modelo)
-    cerrar()
     conv.modelo = modelo
-    _crear(conv, retomar, cc)
+    orden = orden_claude(conv, retomar)
+    cerrar()
+    _crear(conv, cc, orden)
 
 
-def _crear(conv: conversaciones.Conversacion, retomar: bool, cc: dict) -> None:
+def _crear(conv: conversaciones.Conversacion, cc: dict, orden_dentro: str) -> None:
     for aviso in espacio.preparar():
         print(f"[terminal] {aviso}", flush=True)
+    # Antes de abrirla: su servidor MCP arranca con lo que haya ahora en el disco.
+    codigo = config.CODIGO_EN_MARCHA.huella_disco()
     entorno = _sin_claves(dict(os.environ))
     entorno["PATH"] = _path_de_usuario()
     orden = [*tmux(), "new-session", "-d", "-s", SESION, "-x", "160", "-y", "48", "-c", str(config.espacio()),
-             *_con_entorno(["bash", "-lc", orden_claude(conv, retomar)])]
+             *_con_entorno(["bash", "-lc", orden_dentro])]
     if _puede_desasir():
         orden = ["systemd-run", "--user", "--scope", "--quiet", "--collect", *orden]
     r = subprocess.run(orden, capture_output=True, text=True, timeout=20, env=entorno)
@@ -299,7 +442,7 @@ def _crear(conv: conversaciones.Conversacion, retomar: bool, cc: dict) -> None:
                            timeout=10)
         if r.returncode != 0:
             print(f"[terminal] tmux no aceptó {' '.join(opcion)}: {r.stderr.strip()}", flush=True)
-    conversaciones.marcar_abierta(conv.id, conv.modelo, cc.get("version") or "")
+    conversaciones.marcar_abierta(conv.id, conv.modelo, cc.get("version") or "", codigo=codigo)
 
 
 def reiniciar(nombre: str = "") -> conversaciones.Conversacion:

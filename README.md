@@ -89,6 +89,7 @@ que se despliegan: **Agentes**, **Proyectos**, **Vigilar**, **Comunicación** y
 | **Acceso** | Usar el hub desde el móvil u otro aparato: por qué nombres se entra, qué aparatos pueden, y si la terminal está abierta desde fuera. Ver [`conocimiento/10`](conocimiento/10-mas-pantallas.md) |
 | **Actualizaciones** | Qué versión tienes, si hay otra publicada y ponerla con un botón |
 | **Guía** | Por dónde empezar: los primeros pasos, que se marcan solos al hacerlos, y qué hay en cada pantalla. Con «Guíame», el asistente te acompaña |
+| **Contar un fallo o una idea** | Avisar a quien mantiene el hub, con la versión y lo justo del equipo ya puestos (sin rutas ni nombres). Lo ves entero antes y lo envías tú desde GitHub, o lo copias. Se llega desde Actualizaciones. Ver [`conocimiento/06`](conocimiento/06-problemas.md) |
 
 Y una más que no sale en el raíl porque depende de dónde estés: **la del
 proyecto** (`/proyecto/<id>`, pinchando cualquiera), donde se crean, editan,

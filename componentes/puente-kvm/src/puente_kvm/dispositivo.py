@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import abc
 import asyncio
+from collections.abc import Callable
 
 from PIL import Image
 
@@ -21,6 +22,9 @@ class AparatoNoDisponible(RuntimeError):
 
 class Dispositivo(abc.ABC):
     tipo: str = "?"
+    #: Quién oye lo que suena en el Mac: recibe PCM de 16 bits a 16 kHz, mono, y
+    #: la hora de llegada. Sólo mientras se graba una reunión (`reunion.py`).
+    oido: Callable[[bytes, float], None] | None = None
 
     @abc.abstractmethod
     async def conectar(self) -> None: ...
@@ -56,6 +60,47 @@ class Dispositivo(abc.ABC):
     async def rueda(self, pasos: int) -> None:
         """Pasos de rueda: positivo baja el contenido (como el dedo hacia ti)."""
 
+    async def girar(self, pasos: int) -> None:
+        """La rueda de la persona (el mando): un solo giro de `pasos`, sin esperar a
+        que el aparato conteste. Por omisión, la rueda de siempre."""
+        await self.rueda(pasos)
+
     @abc.abstractmethod
     def estado(self) -> dict:
         """Para la pantalla: conectado, resolución y lo que haga falta saber."""
+
+    # ── el sonido del Mac, para grabar una reunión (C-0461) ─────────────────
+    @property
+    def da_sonido(self) -> bool:
+        """Si la conexión de ahora trae lo que suena en el Mac."""
+        return False
+
+    async def encender_sonido(self) -> bool:
+        """Pide al aparato lo que suena en el Mac. True si hace falta reconectar
+        para que llegue (el JetKVM sólo lo añade al empezar una conexión)."""
+        raise AparatoNoDisponible("este aparato no da el sonido del Mac")
+
+    async def apagar_sonido(self) -> None:
+        """Que el aparato deje de capturarlo. Sin sonido que apagar, no hace nada."""
+
+    # ── el jiggler y despertar el Mac, del propio aparato (C-0463) ──────────
+    #: Lo último leído del jiggler, {"encendido", "config"}: `estado()` lo
+    #: enseña sin preguntarle al aparato en cada vuelta de la pantalla.
+    jiggler: dict | None = None
+
+    async def leer_jiggler(self) -> dict:
+        """{"encendido": bool, "config": {...}} tal como lo tiene guardado el aparato."""
+        raise AparatoNoDisponible("este aparato no tiene jiggler")
+
+    async def poner_jiggler(self, encendido: bool, config: dict | None = None) -> dict:
+        """Lo enciende o lo apaga; con `config`, cambia antes su horario. Devuelve lo leído después."""
+        raise AparatoNoDisponible("este aparato no tiene jiggler")
+
+    async def zonas(self) -> list[str]:
+        """Las zonas horarias que el aparato sabe usar para el horario del jiggler."""
+        raise AparatoNoDisponible("este aparato no tiene jiggler")
+
+    async def despertar(self, tope: float = 8.0) -> dict:
+        """Manda al Mac la señal de despertar y espera, como mucho `tope` segundos,
+        a que se note. {"antes", "despues": estado del USB, "imagen": llegó una nueva}."""
+        raise AparatoNoDisponible("este aparato no sabe despertar al Mac")

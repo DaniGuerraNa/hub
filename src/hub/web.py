@@ -465,15 +465,19 @@ def _con_rail(datos: dict) -> dict:
         con.close()
 
 
+def _interfaz_de(request: Request) -> str:
+    """Con qué interfaz se pinta esta petición: lo decide el aparato (C-0169),
+    y sin su cookie, la de siempre. Los entornos se montan al arrancar: si las
+    plantillas de la nueva llegan después, hasta el siguiente arranque se
+    sigue sirviendo la de siempre."""
+    elegida = interfaz.elegida(request.cookies)
+    return elegida if elegida in _PLANTILLAS else interfaz.CLASICA
+
+
 def _vista(request: Request, plantilla: str, datos: dict):
     datos = _con_rail(datos)
-    # Con qué interfaz se pinta lo decide el aparato (C-0169): sin su cookie,
-    # la de siempre. Va en el contexto para que la guía sepa qué botón ofrecer.
-    elegida = interfaz.elegida(request.cookies)
-    # Los entornos se montan al arrancar: si las plantillas de la nueva llegan
-    # después, hasta el siguiente arranque se sigue sirviendo la de siempre.
-    if elegida not in _PLANTILLAS:
-        elegida = interfaz.CLASICA
+    # Va en el contexto para que la guía sepa qué botón ofrecer.
+    elegida = _interfaz_de(request)
     datos = {**datos, "interfaz": {"elegida": elegida,
                                    "disponible": interfaz.NUEVA in _PLANTILLAS and interfaz.disponible(),
                                    # Con qué colores (fase 1b): sólo los usa la nueva.
@@ -2957,6 +2961,29 @@ def actualizaciones_vista(request: Request, aviso: str = ""):
     return _vista(request, "actualizaciones.html", {
         **api.actualizaciones(), "aviso": aviso,
         "titulo": "Actualizaciones", "seccion": "actualizaciones",
+    })
+
+
+@app.get("/incidencia")
+def incidencia_vista(request: Request, tipo: str = "fallo", titulo: str = "", de: str = ""):
+    """Contar un fallo o una idea a quien mantiene el hub (C-0468, decisión 445).
+
+    Sin POST, a propósito: el texto lo arma el navegador y lo manda la
+    persona desde GitHub con su cuenta, o lo copia. `tipo`, `titulo` y `de`
+    sólo rellenan la pantalla; un `tipo` o un `de` que no se conocen se
+    ignoran."""
+    from . import incidencias
+
+    con = conexion()
+    try:
+        datos = api.incidencia(con, interfaz=_interfaz_de(request),
+                               navegador=request.headers.get("user-agent"), de=de or None)
+    finally:
+        con.close()
+    return _vista(request, "incidencia.html", {
+        "inc": datos, "tipo": tipo if tipo in incidencias.TIPOS else "fallo",
+        "titulo_pedido": incidencias.titulo(titulo),
+        "titulo": "Contar un fallo o una idea", "seccion": "incidencia",
     })
 
 

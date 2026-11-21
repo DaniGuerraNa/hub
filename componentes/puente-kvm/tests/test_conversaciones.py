@@ -243,7 +243,10 @@ def test_la_sesion_que_ya_estaba_sin_registro_aparece_como_conversacion_anterior
     subprocess.run([*terminal.tmux(), "new-session", "-d", "-s", terminal.SESION, "sleep 300"], check=True)
     e = c.get("/api/conversaciones").json()
     assert e["actual"] is None and e["anterior"] is True
-    c.post("/api/conversaciones", json={"nombre": "Nueva"}, headers=PERSONA)
+    # De ella no se sabe si Claude está a medias (C-0470): se pregunta, y confirmado se cierra.
+    r = c.post("/api/conversaciones", json={"nombre": "Nueva"}, headers=PERSONA)
+    assert r.status_code == 409 and r.headers["X-Puente-Motivo"] == "trabajando"
+    c.post("/api/conversaciones", json={"nombre": "Nueva", "aunque_trabaje": True}, headers=PERSONA)
     assert c.get("/api/conversaciones").json()["anterior"] is False
 
 

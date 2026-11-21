@@ -8,6 +8,9 @@ description: Trae un documento largo (un procedimiento, una función, una vista,
 **Acceso:** necesitas el control del Mac sólo para capturar (`leer_documento`).
 Transcribir, ensamblar y verificar no tocan el Mac.
 
+Herramientas, en una sola búsqueda:
+`select:mcp__puente-kvm__estado,mcp__puente-kvm__ver_pantalla,mcp__puente-kvm__leer_documento,mcp__puente-kvm__ver_pagina,mcp__puente-kvm__estado_lectura,mcp__puente-kvm__resolver_linea,mcp__puente-kvm__comprobar_huella`.
+
 ## 0. Antes
 
 1. `estado()`. Si ya hay una lectura **verificada** de ese objeto y nadie lo ha
@@ -30,21 +33,22 @@ vez. A cada uno dale estas instrucciones (son las que se midieron: 2.017 líneas
 exactas a la primera):
 
 > Transcribe con tu vista, sin ningún otro recurso, las páginas N–M de la
-> lectura L. Para cada página: `ver_pagina(L, n)` y después
+> lectura L. Carga las dos herramientas en una sola búsqueda:
+> `select:mcp__puente-kvm__ver_pagina,mcp__puente-kvm__transcribir_pagina`.
+> Para cada página: `ver_pagina(L, n)` y después
 > `transcribir_pagina(L, n, texto)`. Formato: una línea por renglón del
 > editor, `número|contenido`, incluidas las vacías (`57|`). El número es el de
 > la columna gris. El contenido EXACTO: sangría contada por la rejilla
 > monoespaciada, mayúsculas, comillas, acentos, espacios entre columnas
 > alineadas. Cuidado con 0/O, 1/l/I, ;/:, y con contar los guiones de los
 > comentarios por posición. La barrita al principio de una línea es el
-> cursor; la flecha negra, el ratón: no son texto. Si dudas de un carácter,
-> `ver_pagina(L, n, zoom="arriba"|"abajo")`. No inventes: si algo sale cortado
-> por el borde, dilo. Devuelve sólo las líneas de las que dudes.
+> cursor; la flecha negra, el ratón: no son texto. No inventes: si algo
+> sale cortado por el borde, dilo. Devuelve sólo las líneas de las que dudes.
 
 ## 3. Ensamblar y verificar
 
 1. `estado_lectura(L)`: si hay **conflictos** (dos páginas leen distinto la
-   misma línea), mira las dos capturas y `resolver_linea`. Si hay **huecos**,
+   misma línea), mira las dos capturas (`ver_pagina`) y `resolver_linea`. Si hay **huecos**,
    vuelve a transcribir esa página.
 2. **La huella.** Pídesela a la persona (la consulta está en la página de la
    lectura, en el puente), o usa la skill `consultar-catalogo` para escribirla

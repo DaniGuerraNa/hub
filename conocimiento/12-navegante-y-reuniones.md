@@ -101,6 +101,21 @@ un token de Hugging Face una vez: los pasos están en
 🔴 Lo grabado es contenido de tu trabajo y de otras personas. Se queda en tu
 máquina; lo único que sale es el texto de la transcripción, para el resumen.
 
+### Grabar una reunión del Mac
+
+Si tienes un JetKVM y el **Puente KVM** encendido, una reunión del Mac se
+graba con el botón «Estoy en reunión» de la pantalla del puente, no desde
+aquí (ni el secretario la empieza). Graba lo que el Mac manda a la salida USB
+del JetKVM —en el Mac, Ajustes del Sistema → Sonido → Salida → el dispositivo
+USB del JetKVM, no «JetKVM v1»— y su pantalla; **tu voz no**, porque el JetKVM
+no tiene micrófono. Para oírla a la vez, un dispositivo de salida múltiple en
+«Configuración de Audio MIDI». Hace falta el firmware 0.5.9 o posterior.
+
+Al pararla sale aquí, como «Mac (JetKVM)», y **se procesa sola en unos
+minutos**, de una en una y nunca a la vez que otra; si no quieres esperar,
+«Procesar» en su página. Con el puente apagado, sus reuniones no se ven aquí.
+Más detalle: «Puente KVM», «Grabar una reunión del Mac».
+
 ## Si algo no va
 
 - **Navegante dice que falta el entorno después de prepararlo:** mira la

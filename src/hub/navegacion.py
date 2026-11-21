@@ -79,6 +79,9 @@ SECCIONES: tuple[dict, ...] = (
         _p("/acceso", "acceso", "Acceso", "llave"),
         _p("/actualizaciones", "actualizaciones", "Actualizaciones", "actualizar"),
         _p("/guia", "guia", "Guía", "ok"),
+        # Tampoco está en el raíl de siempre: allí se llega desde
+        # Actualizaciones, la Guía y el Puente KVM (C-0468).
+        _p("/incidencia", "incidencia", "Contar un fallo o una idea", "enviar"),
         _p("/orquestador/permisos", "orquestador_permisos", "Permisos del orquestador", "escudo"),
         # No está en el raíl de siempre: allí se llega por el mapa de la guía.
         _p("/voz/banco", "banco", "Banco de dictado", "microfono"),

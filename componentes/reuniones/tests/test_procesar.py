@@ -35,6 +35,14 @@ def test_un_id_que_no_es_fecha_no_llega_a_ser_ruta():
             carpeta.de(malo)
 
 
+def test_el_id_de_una_reunion_del_puente_lleva_kvm_y_ningun_otro_sufijo_vale(tmp_path, monkeypatch):
+    monkeypatch.setenv("REUNIONES_RAIZ", str(tmp_path))
+    assert carpeta.de("20261120-093000-kvm") == tmp_path / "20261120-093000-kvm"
+    for malo in ("20261120-093000-mac", "20261120-093000-kvm/..", "20261120-093000kvm"):
+        with pytest.raises(ValueError):
+            carpeta.de(malo)
+
+
 @pytest.mark.skipif(not MUESTRAS.exists() or not shutil.which("ffmpeg"), reason="hacen falta las muestras y ffmpeg")
 def test_transcribe_las_dos_pistas_de_verdad_y_sabe_quien_hablo(tmp_path):
     """Con faster-whisper real (GPU si hay): «la reunión» dice dos frases y

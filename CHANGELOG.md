@@ -13,6 +13,106 @@ bash scripts/actualizar.sh
 Al terminar te enseña esta misma lista, sólo con las versiones que acabas de
 cruzar.
 
+## 0.9.0 — 2026-11-20
+
+El Puente KVM despierta el Mac y lleva el jiggler con un botón, pega con los
+acentos del teclado español y, al actualizar, se reinicia con botones en vez de
+comandos; su Claude ya sólo carga lo del puente y gasta menos. Y desde el hub
+se puede contar un fallo o una idea a quien lo mantiene.
+
+### Qué tienes que hacer
+
+- **Actualiza** con el botón de **Actualizaciones** (o con
+  `bash scripts/actualizar.sh` en la carpeta del hub).
+
+- **Si usas el Puente KVM**, la actualización lo reinicia si está libre. Si
+  estaba ocupado, Actualizaciones lo dice: abre su pantalla y, **esta vez**,
+  reinícialo con el comando que enseña su aviso (el puente de antes de esta
+  versión aún no tiene el botón); desde la siguiente ya es un botón.
+  **Después de reiniciarlo**, reabre la conversación de Claude (el aviso de
+  arriba → «Reabrir la conversación de Claude», o el menú de la conversación
+  → «Reabrir»), para que Claude tenga las herramientas nuevas. Reábrela
+  después de reiniciar el puente, no antes: si no, se abre como hasta ahora,
+  con tus conectores y skills personales.
+
+- **Si el Mac está en español de España**, en la pantalla del puente elige
+  «Español - ISO» junto a «Pegar texto»: con el teclado equivocado, los
+  acentos salen como símbolos raros.
+
+### Nuevo
+
+- **Grabar una reunión del Mac con un botón (Puente KVM).** «Estoy en reunión»
+  en la pantalla del puente graba lo que suena en el Mac y su pantalla (tu voz
+  no: el JetKVM no tiene micrófono), y al pararla aparece en Reuniones y se
+  procesa sola en unos minutos. Hace falta el firmware 0.5.9 o posterior del
+  JetKVM y elegir en el Mac su salida USB (Sonido → Salida); los pasos, en la
+  ayuda del Puente KVM.
+- **Despertar el Mac y el jiggler (Puente KVM).** Bajo la imagen del Mac,
+  «Despertar el Mac» lo saca del reposo (como «Intentar despertar» de la web
+  del JetKVM) y dice si volvió la imagen; «Jiggler» lo enciende y lo apaga con
+  «Frecuente, cada 30 s», para que el Mac no se bloquee ni te ponga «ausente».
+  Claude puede ponerle horario («de 9 a 18 entre semana», con tu zona horaria)
+  si se lo pides, y despertar el Mac si le das el control. El jiggler lo hace
+  el JetKVM: sigue aunque cierres el puente.
+- **Contar un fallo o una idea desde el hub.** En Actualizaciones (y en
+  Ajustes, con la interfaz nueva) está «Contar un fallo o una idea»: eliges si
+  es un fallo o una idea, lo cuentas y ves entero lo que va a salir, con la
+  versión del hub y lo justo del equipo (sin rutas, usuario ni nombres; los
+  puedes quitar). «Abrir en GitHub» te lleva al formulario de incidencias del
+  repositorio de donde instalaste el hub, ya relleno, y lo envías tú con tu
+  cuenta; el hub no manda nada por su cuenta. Lo que se envía a GitHub es
+  público. Sin GitHub detrás, «Copiar el texto» y lo mandas por donde quieras.
+  Desde la pantalla del Puente KVM, «Avisar de un fallo del puente».
+- **Cuatro pingüinos nuevos para el secretario.** En su pantalla, Ajustes →
+  Personaje, un grupo nuevo «Pingüinos»: el pingüinito con bufanda, el de la
+  taza caliente, el de pajarita y el que va en su trocito de hielo. Como los
+  demás dibujados, con su pose para escuchar, pensar, buscar, anotar, hablar,
+  esperar tu sí, celebrar y dormir.
+
+### Qué cambia en lo que ya usabas
+
+- **Puente KVM, usando el Mac desde su pantalla:** un clic en la imagen del Mac
+  se lleva el teclado aunque estuvieras escribiendo en la terminal de Claude
+  (antes seguía yendo a Claude hasta pulsar «Pantalla grande»); y la rueda del
+  ratón mueve como en la web del JetKVM (con un touchpad iba lentísima).
+- **Puente KVM, pegar texto en el Mac:** se elige el teclado del Mac junto a
+  «Pegar texto» («U.S.» o «Español - ISO»), y tras pegar algo con acentos te
+  dice con cuál se tecleó: si no es el del Mac, los acentos salían como
+  símbolos raros. Con «U.S.» ya se pegan las comillas “ ”, las rayas — y el
+  resto de lo que se copia de una respuesta de Claude (antes no se pegaba
+  nada). Si tu Mac está en español de España, elige «Español - ISO».
+- **Puente KVM, terminal de Claude:** lo que seleccionas con el ratón se copia
+  al portapapeles de la PC (y de ahí, «Pegar texto» lo lleva al Mac). Ctrl+C
+  justo después de seleccionar ya no interrumpe a Claude; para eso, Esc.
+- **Puente KVM, tras actualizar: botones en vez de comandos.** Si la
+  actualización no pudo reiniciar el puente (estaba ocupado), Actualizaciones
+  lo dice con un enlace al Puente KVM, y en su pantalla el aviso de arriba
+  trae dos pasos: «Reiniciar el puente» y «Reabrir la conversación de Claude».
+  Si está ocupado, el botón dice por qué y no lo corta; ni el botón ni la
+  actualización lo reinician mientras tienes abierto «Usar el Mac desde aquí»
+  en su pantalla, aunque no estés moviendo nada. Si Claude está trabajando
+  (o, recién reiniciado el puente, no se sabe si lo estaba), reabrir o abrir
+  otra conversación te pregunta antes de cortarlo. Sin systemd, el aviso sigue
+  diciendo el comando. La primera vez, si el puente sigue con el programa de
+  antes de esta versión, el aviso también dice el comando: reinícialo así esa
+  vez y desde la siguiente ya son botones.
+- **Puente KVM, la terminal de Claude sólo carga lo del puente.** Ya no carga
+  tus conectores, skills, agentes ni plugins personales: gasta menos en cada
+  llamada (cuanto más tengas puesto en tu Claude Code, más se nota) y lo que
+  lee del Mac no tiene otro camino para salir. De tus ajustes de Claude Code
+  se sigue llevando el modelo, el esfuerzo, la interfaz, la barra de estado,
+  los avisos al teléfono, lo que tengas prohibido y lo que te pregunta. La
+  terminal del puente ya no sale en el control remoto de Claude, aunque lo
+  tengas encendido: es otra forma de manejar una sesión que ve el Mac de otro.
+  **Una excepción:** si tus ajustes de Claude Code dicen cómo autenticarse
+  (`apiKeyHelper`, `env` u otra forma), el puente los carga para poder
+  arrancar y sólo deja fuera tus servidores MCP y lo que sincronizas de
+  claude.ai (skills y plugins). Con «Sin pedir permisos», Claude ya tiene las
+  skills del puente (antes arrancaba sin ellas). Si Claude Code se cierra,
+  vuelve con el menú de la conversación → «Reabrir»; un `claude` escrito en
+  la terminal también abre con lo del puente. Vale desde la siguiente
+  conversación que abras o reabras.
+
 ## 0.8.0 — 2026-11-20
 
 El Puente KVM con la pantalla del Mac en grande y Claude recorriendo una hoja
