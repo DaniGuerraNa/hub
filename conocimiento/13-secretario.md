@@ -331,8 +331,8 @@ vuelve a «Secretario». (En el teléfono, una app ya instalada puede quedarse c
 el nombre viejo bajo el icono hasta que la reinstales.)
 
 **Puedes elegir quién es.** En **Ajustes → Personaje**, arriba, están el
-cubo de siempre y varios dibujados (ranitas, hongos, los dos juntos y
-pingüinos): pulsa
+cubo de siempre y varios dibujados (ranitas, hongos, los dos juntos,
+pingüinos, gatos y otros amigos: un ajolote, una capibara, un búho y una nutria): pulsa
 «Usar este» y lo verás en la cabecera, en la pestaña de abajo si lo pusiste en
 todas las pantallas y en todos tus aparatos.
 Los dibujados tienen su propia pose para escuchar, pensar, buscar, anotar,

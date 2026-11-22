@@ -131,6 +131,14 @@ PERSONAJES: dict[str, tuple[str, str]] = {
     "pinguino-taza": ("Pingüino con taza caliente", "Pingüinos"),
     "pinguino-pajarita": ("Pingüino de pajarita", "Pingüinos"),
     "pinguino-hielo": ("Pingüino en su hielo", "Pingüinos"),
+    "gato-naranja": ("Gatito naranja con cascabel", "Gatos"),
+    "gato-negro": ("Gatito negro de moño", "Gatos"),
+    "gato-siames": ("Gato siamés con audífonos", "Gatos"),
+    "gato-caja": ("Gatito en su caja", "Gatos"),
+    "ajolote": ("Ajolote con libretita", "Otros amigos"),
+    "capibara": ("Capibara con mandarina", "Otros amigos"),
+    "buho": ("Búho de lentes", "Otros amigos"),
+    "nutria": ("Nutria con su piedrita", "Otros amigos"),
 }
 POR_OMISION = "cubo"
 #: La clave en la memoria del secretario, como el modo inglés (C-0159): vale

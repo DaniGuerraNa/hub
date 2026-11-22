@@ -13,6 +13,31 @@ bash scripts/actualizar.sh
 Al terminar te enseña esta misma lista, sólo con las versiones que acabas de
 cruzar.
 
+## 0.11.0 — 2026-11-22
+
+Más personajes para el secretario: cuatro gatos y cuatro amigos nuevos (un
+ajolote, una capibara, un búho y una nutria), con sus poses.
+
+### Qué tienes que hacer
+
+- **Actualiza** con el botón de **Actualizaciones** (o con
+  `bash scripts/actualizar.sh` en la carpeta del hub).
+- Si quieres uno de los nuevos, elígelo en la pantalla del secretario,
+  **Ajustes → Personaje**, con «Usar este».
+
+### Nuevo
+
+- **Gatos y otros amigos para el secretario.** En Ajustes → Personaje, dos
+  grupos nuevos: «Gatos» (el gatito naranja con cascabel, el negro de moño,
+  el siamés con audífonos y el que se asoma desde su caja) y «Otros amigos»
+  (el ajolote con su libretita, la capibara con su mandarina, el búho de
+  lentes y la nutria con su piedrita). Cada uno con sus poses para escuchar,
+  pensar, buscar, anotar, hablar, esperar tu sí, celebrar y dormir.
+
+### Qué cambia en lo que ya usabas
+
+Nada: el personaje que tenías elegido sigue igual.
+
 ## 0.10.0 — 2026-11-22
 
 Usar el Mac desde el Puente KVM va como en la web del JetKVM: la pantalla es
