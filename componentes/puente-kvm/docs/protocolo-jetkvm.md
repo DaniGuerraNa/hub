@@ -94,7 +94,10 @@ Mensajes, todos de texto, JSON `{"type": …, "data": …}`:
    (`{"candidate":"candidate:…","sdpMid":"…","sdpMLineIndex":N,"usernameFragment":null}`).
    Pueden llegar **antes** que la respuesta (el aparato empieza a reunirlos en
    `SetLocalDescription` y escribe la respuesta después): se guardan y se añaden
-   tras `setRemoteDescription`. El aparato nunca manda el fin de candidatos.
+   tras `setRemoteDescription`. El aparato nunca manda el fin de candidatos
+   (ni `a=end-of-candidates` en la respuesta: con él, aioice 0.13 da el ICE
+   por fallido si aún no ha llegado ningún candidato; le pasaba al JetKVM
+   falso según el orden en que corrían los dos lados, 22-nov).
    aiortc reúne los suyos antes de terminar `setLocalDescription` y los mete en
    la oferta, así que mandarlos aparte es opcional.
 5. Latido: el aparato manda *Ping* del protocolo WebSocket cada 15 s (aiohttp
@@ -286,6 +289,17 @@ Por eso el puente no soporta la española.
 - **No hay ninguna URL de captura** en el aparato: capturar es decodificar la
   pista de vídeo.
 - Calidad: `getStreamQualityFactor` / `setStreamQualityFactor {factor}`.
+- ▸ **El directo del navegador** (C-0469): las tramas H.264 que llegan se
+  pasan tal cual al navegador por `/ws/pantalla` (Annex B, sin recomprimir), y
+  el navegador las decodifica con WebCodecs. Se toman antes del decodificador
+  de aiortc, envolviendo el `put` de la cola privada de su receptor
+  (`video.enganchar`): por eso aiortc va fijada a 1.16. El puente guarda el
+  último SPS y PPS y los pone delante de la primera clave de quien empieza a
+  mirar, por si el aparato no los repite con cada clave: según su código los
+  manda con cada una, **NO VERIFICADO** con un aparato. Que Chromium
+  decodifique el perfil y el nivel reales a 1080p tampoco se ha visto: la
+  página lo pregunta (`VideoDecoder.isConfigSupported` con el códec del SPS)
+  y, si no, se queda con las imágenes.
 
 ## g. Métodos JSON-RPC (`rpcHandlers` en `jsonrpc.go`)
 
@@ -364,6 +378,9 @@ Esto sólo se sabe con el JetKVM delante (ver `docs/pruebas-con-el-aparato.md`):
 6. La resolución que entrega con el Mac real (y si el Mac la cambia al ver un
    monitor nuevo).
 7. Cómo reacciona macOS al teclado USB nuevo (el asistente de teclado; ANSI/ISO).
+8. El códec real del vídeo (perfil y nivel del SPS, «avc1.64002a» o el que
+   sea), si repite SPS y PPS con cada clave, y cuántos fotogramas por segundo
+   y qué retraso tiene el directo del navegador (`/panel?medir=1`).
 
 ## Si el cliente no conecta o se comporta distinto
 

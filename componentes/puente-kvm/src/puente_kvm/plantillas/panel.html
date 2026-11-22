@@ -17,10 +17,14 @@
       <button id="ampliar" title="La pantalla del Mac ocupa toda la ventana del navegador, no el monitor">⤢ Pantalla grande</button>
     </div>
     <p class="aviso aviso-reunion" id="reunion-aviso" role="status" hidden></p>
+    <span class="placa medida" id="medida" hidden></span>
+    {# Con el JetKVM, la pantalla es su vídeo H.264 pintado en el canvas (C-0469);
+       hasta que llega el primer fotograma, y si no se puede, las imágenes del <img>. #}
     <div class="pantalla" id="pantalla" tabindex="-1" data-ancho="{{ estado.dispositivo.ancho or 1920 }}" data-alto="{{ estado.dispositivo.alto or 1080 }}"
-         data-conectado="{{ 'si' if estado.dispositivo.conectado else 'no' }}">
+         data-conectado="{{ 'si' if estado.dispositivo.conectado else 'no' }}" data-video="{{ estado.video }}">
       <div class="marco-mac" id="marco-mac">
-        <img id="directo" src="/api/pantalla.mjpg?ancho=1280" alt="Pantalla del Mac en directo" draggable="false">
+        <img id="directo" class="superficie" src="/api/pantalla.mjpg?ancho=1280" alt="Pantalla del Mac en directo" draggable="false">
+        <canvas id="directo-video" class="superficie" hidden aria-label="Pantalla del Mac en directo"></canvas>
         <div class="region" id="region"></div>
       </div>
     </div>

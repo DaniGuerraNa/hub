@@ -66,7 +66,15 @@ Todo se hace en **una sola pantalla: http://127.0.0.1:8794**.
    - **Para usar el Mac tú, sin la web del JetKVM** (que admite una sola
      sesión y desconectaría el puente): **«Usar el Mac desde aquí»**, bajo la
      imagen. Desde ahí, tu teclado y tu ratón van al Mac; un clic fuera de la
-     imagen o «Dejar de usar» lo suelta. **Ctrl = ⌘** (marcado de fábrica)
+     imagen o «Dejar de usar» lo suelta. Con el JetKVM, la imagen es **su vídeo
+     tal cual**, como en su web: el puente no lo recomprime y el navegador lo
+     pinta a los fotogramas que mande el aparato. Con el Mac simulado, o si el
+     navegador no sabe decodificarlo, va por imágenes (unas 11 por segundo
+     usándolo, 2 mirando). Por qué: si es cosa del puente (otra versión de
+     aiortc, un fallo al pasar el vídeo), la bitácora y `diagnostico`, en
+     «Directo»; si es del navegador (sin WebCodecs, un códec que no sabe), su
+     consola (F12). Si el aparato se desconecta, vuelven las imágenes, que
+     dicen por qué, y el vídeo vuelve solo con él. **Ctrl = ⌘** (marcado de fábrica)
      cambia Ctrl y ⌘ de sitio, porque Windows se queda la tecla ⌘; ⌘Tab y
      ⌘Espacio tienen botón, y «Pegar texto» teclea lo del portapapeles con el
      **teclado del Mac** que eliges a su lado («U.S.» o «Español - ISO»): si no
@@ -208,11 +216,18 @@ por WebRTC de verdad.
   línea 1.000 y 12,3 s en la última de 2.017 (13-nov).
 - **Reiniciar con el botón** (con systemd, en una unidad de prueba): la página
   vuelve a los 0,7 s sin nadie mirando el directo, y a los 5,7 s con otra
-  pestaña mirándolo, porque el directo no termina mientras se mira y el puente
-  lo corta a los 5 s al parar; sin ese tope, esperaba al `TimeoutStopSec` de
+  pestaña mirándolo por imágenes, porque el directo de imágenes no termina
+  mientras se mira y el puente lo corta a los 5 s al parar (el de vídeo, con el
+  JetKVM, se cierra en el acto al parar); sin ese tope, esperaba al `TimeoutStopSec` de
   systemd (90 s por omisión: el stop de 93 s del 17-nov). Recorrido en un
   navegador de verdad, de pulsar a la página recargada con el código nuevo:
   1,2 s (20-nov).
+
+- **El directo** (C-0469), contra el JetKVM falso y con el mismo arnés antes y
+  después (`uv run --frozen python -m tests.medir_directo`): de 10,7 a 30
+  fotogramas pintados por segundo usando el Mac (de 2 a 30 mirando), el
+  puntero de 204 a 83 ms de p50 y de 270 a 97 de p95, y la CPU del puente de
+  30 % a 15 % (22-nov). Es la cifra del falso en este equipo, no la del aparato.
 
 ## Lo que aún no se ha medido con el aparato
 
@@ -232,3 +247,5 @@ conectado a uno real. En la primera prueba hay que medir:
 7. Si el diálogo de «Ir a la línea» del cliente se ve en pantalla lo bastante
    grande (4 cuadros de 64×32) para que el puente lo dé por abierto.
 8. Cuánto tarda la comprobación antes de escribir, por página.
+9. Lo fluido que va el directo con su vídeo de verdad (`/panel?medir=1`,
+   paso 12 de `docs/pruebas-con-el-aparato.md`).

@@ -23,6 +23,7 @@ from mcp.server.fastmcp import FastMCP, Image
 from PIL import Image as PILImage
 
 from . import config
+from .motor import filas_distintas
 
 URL = os.environ.get("PUENTE_URL", f"http://127.0.0.1:{os.environ.get('PUENTE_PUERTO', '8794')}")
 
@@ -236,6 +237,42 @@ async def clic(x: int, y: int, boton: str = "izquierdo", doble: bool = False) ->
     return await _llamar("POST", "/api/clic", {"x": x, "y": y, "boton": boton, "doble": doble})
 
 
+def desde_donde(alto: int, subio: int | None) -> int:
+    """Desde qué fila de una página k>1 de un recorrido se le manda a Claude (0: entera).
+
+    El puente sigue bajando con solape —sin él, `motor.desplazamiento` no tiene con
+    qué medir cuánto subió y los pasos no se ajustan—, pero lo de arriba de la página
+    ya le llegó al final de la anterior: cada página entera repetía un 22–26 %
+    (C-0471). Se le deja una franja repetida de un octavo de la zona (64 px como
+    poco, unas dos filas de una hoja) para que empalme las dos sin perder la fila del
+    corte. Sin una medida de cuánto subió (None), sin que subiera (0) o sin nada en
+    común (≥ alto), entera: recortar a ciegas podría quitarle una fila nueva.
+    """
+    if not subio or subio >= alto:
+        return 0
+    return max(0, alto - subio - max(alto // 8, 64))
+
+
+def ya_salia(previa: PILImage.Image | None, img: PILImage.Image, subio: int, corte: int) -> bool:
+    """¿Cada una de las `corte` filas de arriba que se le quitan a `img` ya estaba en la
+    página anterior, a resolución completa: `subio` px más abajo (lo que se desplazó) o
+    en su mismo sitio (lo que no se mueve, como un borde o una cabecera fija)?
+
+    `desplazamiento` mide en una copia reducida y puede quedarse corto: si la medida
+    se queda por debajo de lo que subió de verdad, el recorte se llevaría filas nuevas
+    que Claude no vería nunca. Comprobándolo aquí, cada fila quitada es igual, por
+    debajo del umbral de ruido, a una de la página anterior entera, que le llegó o
+    que, a su vez, era igual a una de la anterior a ésa.
+    """
+    if previa is None or previa.size != img.size or subio + corte > img.height:
+        return False
+    w = img.width
+    arriba = img.crop((0, 0, w, corte))
+    movida = filas_distintas(previa.crop((0, subio, w, subio + corte)), arriba)
+    quieta = filas_distintas(previa.crop((0, 0, w, corte)), arriba)
+    return not any(a and b for a, b in zip(movida, quieta))
+
+
 @herramienta
 async def recorrer_pantalla(x: int, y: int, ancho: int, alto: int, pasos: int = 5, max_paginas: int = 10) -> list:
     """Baja una zona de la pantalla con la rueda, de donde esté hasta su final, y la devuelve página a página.
@@ -247,18 +284,26 @@ async def recorrer_pantalla(x: int, y: int, ancho: int, alto: int, pasos: int = 
     quieres leerla entera (⌘↑, o un clic en la primera celda).
 
     Cada página llega quieta y a tamaño real, con cuánto subió el contenido desde la
-    anterior: lo de arriba de una página ya salía al final de la otra, no lo cuentes dos
-    veces. Los pasos de rueda se ajustan solos para que cada bajada sea unas tres cuartas
-    partes de la zona. Para cuando la zona deja de cambiar (el final) o en max_paginas
-    (20 como mucho): entonces vuelve a llamarla para seguir desde ahí. Necesita el control.
+    anterior. De la segunda en adelante, sin lo que ya salía al final de la anterior salvo
+    una franja de arriba para empalmar: el texto dice cuántos px repiten, no los cuentes
+    dos veces. Los pasos de rueda se ajustan solos para que cada bajada sea unas tres
+    cuartas partes de la zona. Para cuando la zona deja de cambiar (el final) o en
+    max_paginas (20 como mucho): entonces vuelve a llamarla para seguir desde ahí.
+    Necesita el control.
     """
     r = await _llamar("POST", "/api/recorrer", {"x": x, "y": y, "ancho": ancho, "alto": alto,
                                                 "pasos": pasos, "max_paginas": max_paginas}, timeout=300)
     n = r["paginas"]
     salida: list = []
+    previa = None
     for k in range(1, n + 1):
         img = await _bajar(f"/api/recorridos/{r['id']}/{k}.png")
         subio = r["subio"][k - 1]
+        corte = desde_donde(img.height, subio) if k > 1 else 0
+        dudosa = bool(corte) and not ya_salia(previa, img, subio, corte)
+        if dudosa:
+            corte = 0
+        previa = img
         if k == 1:
             texto = f"Página 1 de {n}: la zona {ancho}×{alto} en ({x}, {y}), a tamaño real."
         elif subio == 0:
@@ -267,6 +312,14 @@ async def recorrer_pantalla(x: int, y: int, ancho: int, alto: int, pasos: int = 
         elif subio is None:
             texto = (f"Página {k} de {n}: no sé cuánto subió el contenido (no encuentro lo que tiene en "
                      "común con la anterior): compáralas tú antes de contar filas.")
+        elif dudosa:
+            texto = (f"Página {k} de {n}: el contenido subió {subio} px, según la medida, pero lo de arriba "
+                     "no casa del todo con el final de la anterior: te llega entera, compáralas tú antes de "
+                     "contar filas.")
+        elif corte:
+            texto = (f"Página {k} de {n}: el contenido subió {subio} px. Te llega desde {corte} px por debajo "
+                     f"del borde de arriba de la zona (lo de encima ya salía en la anterior), y sus primeros "
+                     f"{img.height - subio - corte} px repiten el final de la anterior, para empalmar.")
         elif subio < img.height:
             texto = (f"Página {k} de {n}: el contenido subió {subio} px; sus primeros {img.height - subio} px "
                      "ya salían al final de la anterior.")
@@ -274,7 +327,8 @@ async def recorrer_pantalla(x: int, y: int, ancho: int, alto: int, pasos: int = 
             texto = f"Página {k} de {n}: el contenido subió {subio} px, sin nada en común con la anterior."
         if img.width > ANCHO_IMAGEN:
             texto += f" Reducida a {ANCHO_IMAGEN} px de ancho."
-        salida += [texto, await _imagen("", ancho=ANCHO_IMAGEN, img=img)]
+        caja = (0, corte, img.width, img.height - corte) if corte else None
+        salida += [texto, await _imagen("", ancho=ANCHO_IMAGEN, img=img, caja=caja)]
     salida.append("Final: tras la última página la zona ya no cambia." if r["final"] else
                   f"Paré en {n} páginas sin llegar al final: vuelve a llamarla para seguir desde aquí.")
     return salida
@@ -337,16 +391,22 @@ async def _esperar_tarea(tope: float) -> None:
 async def leer_documento(nombre: str) -> dict:
     """Recorre el documento abierto en el editor del Mac, de principio a fin, página a página.
 
-    Captura cada página (sin transcribirla) y devuelve la lectura. Después, por cada
-    página: ver_pagina(lectura, n) y transcribir_pagina(lectura, n, texto). Las páginas
-    se pueden repartir entre subagentes: cada una es independiente.
+    Captura cada página (sin transcribirla) y devuelve la lectura. Después, ver_pagina
+    de la primera y, en cada respuesta, transcribir_pagina de la que acabas de ver junto
+    con ver_pagina de la siguiente. Las páginas se pueden repartir entre subagentes:
+    cada una es independiente.
     """
     r = await _llamar("POST", "/api/lecturas", {"nombre": nombre})
     await _esperar_tarea(1800)
     res = await _llamar("GET", f"/api/lecturas/{r['id']}")
     res.pop("paginas_detalle", None)
-    res["siguiente"] = (f"Transcribe las {res['paginas']} páginas: ver_pagina('{r['id']}', n) y "
-                        f"transcribir_pagina('{r['id']}', n, texto), n = 1…{res['paginas']}.")
+    # Una vuelta por página, no dos (C-0474): cada vuelta vuelve a leer de la
+    # caché toda la conversación, y ver la página n+1 no depende de haber
+    # guardado la n.
+    res["siguiente"] = (f"Transcribe las {res['paginas']} páginas, n = 1…{res['paginas']}: "
+                        f"ver_pagina('{r['id']}', 1) y, en cada respuesta, a la vez, "
+                        f"transcribir_pagina('{r['id']}', n, texto) de la que acabas de ver y "
+                        f"ver_pagina('{r['id']}', n+1) de la siguiente (en la última, sólo transcribir).")
     if res.get("inestables"):
         res["siguiente"] += (f" Ojo: las páginas {res['inestables']} se capturaron con la pantalla aún "
                              "moviéndose y pueden estar a medio pintar: míralas antes de transcribirlas, y "
@@ -461,10 +521,45 @@ async def escribir_cambio(cambio: str) -> dict:
 
 
 @herramienta
-async def ver_tramo(cambio: str, i: int) -> list:
-    """La captura del editor tras escribir el tramo i, para comprobar que quedó como debía."""
-    return [f"Tramo {i} del cambio {cambio}, tras escribirlo",
-            await _imagen(f"/api/cambios/{cambio}/tramos/{i}.png")]
+async def ver_tramo(cambio: str, i: int, entera: bool = False) -> list:
+    """La captura del editor tras escribir el tramo i, para comprobar que quedó como debía.
+
+    Llega sólo la franja de filas que cambió al escribirlo, con dos filas de margen:
+    fuera de ella la pantalla está igual, por debajo del umbral de ruido, que justo
+    antes de teclearlo. Llega entera si no cambió nada visible o apenas (quizá sólo el
+    cursor), si cambió de arriba abajo (p. ej. se movió la vista) o con entera=True.
+    """
+    c = await _llamar("GET", f"/api/cambios/{cambio}")
+    t = next((t for t in c["tramos"] if t["i"] == i), None)
+    if t is None:
+        raise ErrorPuente(f"el cambio {cambio} no tiene tramo {i} (tiene {len(c['tramos'])})")
+    img = await _bajar(f"/api/cambios/{cambio}/tramos/{i}.png")
+    franja = t.get("franja")
+    if t["hasta"] < t["desde"]:
+        donde = f"inserta antes de la línea {t['desde']} del original"
+    elif t["hasta"] == t["desde"]:
+        donde = f"línea {t['desde']} del original"
+    else:
+        donde = f"líneas {t['desde']}–{t['hasta']} del original"
+    cabeza = f"Tramo {i} del cambio {cambio} ({donde}), tras escribirlo"
+    # La web enseña siempre la captura entera; aquí se recorta (C-0474): un
+    # reemplazo de una a tres líneas cambia unas pocas filas, y el editor entero
+    # costaba lo mismo en cada tramo.
+    if entera or franja is None:
+        motivo = "" if entera else " (no sé qué cambió al escribirlo)"
+        return [f"{cabeza}: la captura entera del editor{motivo}.", await _imagen("", img=img)]
+    if not franja:
+        return [f"{cabeza}: la captura entera del editor, porque al escribirlo apenas cambió nada visible "
+                "respecto de justo antes de teclear (quizá sólo el cursor): mírala entera, y mira si se "
+                "escribió y dónde.", await _imagen("", img=img)]
+    desde, hasta = franja
+    if desde <= 0 and hasta >= img.height:
+        return [f"{cabeza}: la captura entera del editor, porque cambió de arriba abajo (puede que se moviera "
+                "la vista).", await _imagen("", img=img)]
+    return [f"{cabeza}: sólo las filas {desde}–{hasta} px de la captura del editor ({img.width}×{img.height}), "
+            "lo que cambió y dos filas de margen. Fuera de ellas, la pantalla está igual, por debajo del "
+            "umbral de ruido, que justo antes de teclearlo. Para verla entera, entera=True.",
+            await _imagen("", img=img, caja=(0, desde, img.width, hasta - desde))]
 
 
 def main() -> None:

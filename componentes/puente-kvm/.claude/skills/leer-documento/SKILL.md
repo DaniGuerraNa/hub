@@ -29,14 +29,19 @@ vuelve solo a la persona: díselo («ya puedes usar el Mac»).
 ## 2. Transcribir — en paralelo
 
 Reparte las páginas entre subagentes, **8–10 páginas por agente**, todos a la
-vez. A cada uno dale estas instrucciones (son las que se midieron: 2.017 líneas
-exactas a la primera):
+vez. A cada uno dale estas instrucciones. Con las de antes (ver y transcribir cada
+página por separado) salieron 2.017 líneas exactas a la primera; éstas transcriben
+una página y miran la siguiente en la misma respuesta. Medidas las dos el 22-nov
+con Sonnet 5 sobre el mismo documento: ninguna dio la huella, y éstas no leen
+peor:
 
 > Transcribe con tu vista, sin ningún otro recurso, las páginas N–M de la
 > lectura L. Carga las dos herramientas en una sola búsqueda:
 > `select:mcp__puente-kvm__ver_pagina,mcp__puente-kvm__transcribir_pagina`.
-> Para cada página: `ver_pagina(L, n)` y después
-> `transcribir_pagina(L, n, texto)`. Formato: una línea por renglón del
+> Empieza con `ver_pagina(L, N)`. Después, en cada respuesta, dos llamadas
+> a la vez: `transcribir_pagina(L, n, texto)` de la página que acabas de ver
+> y `ver_pagina(L, n+1)` de la siguiente (en la última, sólo transcribir).
+> Formato: una línea por renglón del
 > editor, `número|contenido`, incluidas las vacías (`57|`). El número es el de
 > la columna gris. El contenido EXACTO: sangría contada por la rejilla
 > monoespaciada, mayúsculas, comillas, acentos, espacios entre columnas

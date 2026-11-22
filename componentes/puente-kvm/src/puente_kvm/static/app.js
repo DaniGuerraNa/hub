@@ -173,8 +173,17 @@
       const conectado = d.conectado ? 'si' : 'no';
       if (pant && pant.dataset.conectado !== conectado) {
         pant.dataset.conectado = conectado;
+        if (window.PuenteDirecto) window.PuenteDirecto.conectado(d.conectado);
         if (window.PuenteRegion) window.PuenteRegion();
       }
+    }
+    // El vídeo directo puede llegar después de cargar la página (el aparato conectó
+    // luego) o volver tras perderlo: `abrir` no hace nada si ya está abierto o si
+    // este navegador no puede.
+    const pv = $('#pantalla');
+    if (pv && e.video) {
+      pv.dataset.video = e.video;
+      if (window.PuenteDirecto && e.video === 'h264') window.PuenteDirecto.abrir();
     }
     const ce = $('#control-estado');
     if (ce) {
@@ -421,7 +430,7 @@
   function pintarRegion(contenedor, region) {
     const caja = $('#region', contenedor);
     if (!caja || !region) return;
-    const img = $('img', contenedor);
+    const img = $('.superficie:not([hidden])', contenedor) || $('img', contenedor);
     const ancho = Number(contenedor.dataset.ancho), alto = Number(contenedor.dataset.alto);
     const ex = img.clientWidth / ancho, ey = img.clientHeight / alto;
     Object.assign(caja.style, {
@@ -585,6 +594,232 @@
     }
   });
 
+  // ── el vídeo directo (C-0469, decisión 449 del hub) ─────────────────────
+  // Con el JetKVM, la pantalla es su vídeo H.264 tal como llega (/ws/pantalla),
+  // decodificado aquí con WebCodecs y pintado en un canvas, como en su web: sin
+  // recomprimir nada en la PC. Las imágenes (/api/pantalla.mjpg) se ven hasta que
+  // llega el primer fotograma y quedan de reserva: el simulador, un navegador sin
+  // WebCodecs, un códec que este navegador no sabe, un decodificador que falla o
+  // un puente que dice que no.
+  const Directo = (() => {
+    const img = $('#directo'), lienzo = $('#directo-video'), pant = $('#pantalla');
+    if (!img || !lienzo || !pant) return null;
+    const ctx = lienzo.getContext('2d');
+    let fuente = img.getAttribute('src');  // las imágenes que tocan (las cambia el zoom)
+    let ws = null, decod = null, codec = '', enVideo = false, esperaClave = true;
+    let rendido = false, espera = 2000, reintento = 0;
+    let configurando = null, enCola = [];  // lo que llega mientras se mira si se sabe decodificar
+    const medida = { pintados: 0, descartes: 0, bytes: 0, desde: performance.now() };
+    const sabe = () => typeof window.VideoDecoder === 'function' && window.isSecureContext;
+
+    function cerrarVideo() {
+      if (ws) { const v = ws; ws = null; v.onclose = null; try { v.close(); } catch (e) { /* ya cerrado */ } }
+      if (decod) { try { decod.close(); } catch (e) { /* ya cerrado */ } decod = null; }
+      codec = '';
+      enCola = [];
+      clearTimeout(reintento);
+    }
+    // Enseñar las imágenes sin cerrar el vídeo: el aparato se desconectó y lo que
+    // queda en el canvas es el último fotograma, no el directo. Las imágenes dicen
+    // qué pasa («Sin imagen del aparato: …»); al volver, el primer fotograma nuevo
+    // devuelve el canvas.
+    function verImagenes() {
+      if (!enVideo) return;
+      enVideo = false;
+      lienzo.hidden = true;
+      img.hidden = false;
+      if (cortado) img.dataset.directo = fuente; else img.setAttribute('src', fuente);
+      if (window.PuenteRegion) window.PuenteRegion();
+    }
+    // `definitivo`: este navegador no puede (sin WebCodecs, códec que no sabe, un
+    // decodificador que falla) o el puente no lo da: no se vuelve a pedir hasta
+    // recargar. Si no, sólo se perdió ahora, y se vuelve a pedir.
+    function aImagenes(motivo, definitivo) {
+      cerrarVideo();
+      if (definitivo) rendido = true;
+      if (motivo) console.info('Puente: la pantalla va por imágenes:', motivo);
+      verImagenes();
+    }
+    function reintentar() {
+      clearTimeout(reintento);
+      reintento = setTimeout(abrir, espera);
+      espera = Math.min(espera * 2, 30000);
+    }
+    function aVideo() {
+      enVideo = true;
+      espera = 2000;
+      lienzo.hidden = false;
+      img.hidden = true;
+      img.removeAttribute('src');  // que el puente deje de hacer imágenes que nadie mira
+      delete img.dataset.directo;
+      if (window.PuenteRegion) window.PuenteRegion();
+    }
+    // El puente sólo lo manda al empezar y cuando cambia el SPS (otra resolución,
+    // otro perfil): se reconfigura siempre, y lo siguiente que llega es su clave.
+    function configurar(d) {
+      // La primera clave llega justo detrás de esto: se guarda en vez de tirarla y
+      // esperar a la siguiente.
+      configurando = configurarYa(d).catch((e) => aImagenes('no se pudo configurar: ' + e.message, true)).finally(() => {
+        configurando = null;
+        const cola = enCola; enCola = [];
+        for (const b of cola) trama(b);
+      });
+    }
+    async function configurarYa(d) {
+      const config = { codec: d.codec, optimizeForLatency: true };  // sin description: llega en Annex B
+      let vale = false;
+      try { vale = (await VideoDecoder.isConfigSupported(config)).supported; } catch (e) { vale = false; }
+      if (!ws) return;  // se cortó mientras se preguntaba
+      if (!vale) return aImagenes('este navegador no decodifica ' + d.codec, true);
+      if (!decod || decod.state === 'closed') {
+        decod = new VideoDecoder({
+          output: (frame) => {
+            try {
+              if (lienzo.width !== frame.displayWidth || lienzo.height !== frame.displayHeight) {
+                lienzo.width = frame.displayWidth; lienzo.height = frame.displayHeight;
+              }
+              ctx.drawImage(frame, 0, 0);
+            } finally {
+              frame.close();  // si no, el decodificador se queda sin fotogramas y se para
+            }
+            medida.pintados++;
+            if (!enVideo && pant.dataset.conectado !== 'no') aVideo();
+          },
+          error: (e) => aImagenes('el decodificador falló: ' + (e && e.message), true),
+        });
+      }
+      try {
+        decod.configure(config);
+      } catch (e) {
+        return aImagenes('no se pudo configurar el decodificador: ' + e.message, true);
+      }
+      codec = d.codec;
+      esperaClave = true;
+    }
+    function trama(buf) {
+      if (configurando) { if (enCola.length < 30) enCola.push(buf); return; }
+      medida.bytes += buf.byteLength;
+      if (!decod || decod.state !== 'configured') return;
+      const vista = new DataView(buf);
+      const clave = (vista.getUint8(0) & 1) === 1;
+      if (esperaClave && !clave) return;
+      // Si el decodificador se atrasa, lo que espera ya es viejo: hasta la siguiente clave.
+      if (!clave && decod.decodeQueueSize > 2) { esperaClave = true; medida.descartes++; return; }
+      const marca = Number(vista.getBigUint64(1));
+      try {
+        decod.decode(new EncodedVideoChunk({ type: clave ? 'key' : 'delta', timestamp: Math.round(marca * 1e6 / 90000),
+          data: new Uint8Array(buf, 9) }));
+        esperaClave = false;
+      } catch (e) {
+        aImagenes('no se pudo decodificar: ' + e.message, true);
+      }
+    }
+    function abrir() {
+      if (ws || rendido || cortado || pant.dataset.video !== 'h264') return;
+      clearTimeout(reintento);
+      if (!sabe()) { rendido = true; return; }
+      const v = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/pantalla');
+      v.binaryType = 'arraybuffer';
+      ws = v;
+      v.onmessage = (m) => {
+        if (ws !== v) return;
+        if (typeof m.data !== 'string') return trama(m.data);
+        let d = {}; try { d = JSON.parse(m.data); } catch (e) { return; }
+        if (d.no) {
+          aImagenes(d.no, !d.otra_vez);
+          if (d.otra_vez) reintentar();
+        } else if (d.codec) configurar(d);
+      };
+      // Se cortó sin pedirlo (el puente se reinicia): las imágenes mientras
+      // tanto, y se vuelve a intentar, cada vez más despacio.
+      v.onclose = () => {
+        if (ws !== v) return;
+        ws = null;
+        aImagenes('se cortó el vídeo directo');
+        reintentar();
+      };
+    }
+    alCortar.push([cerrarVideo, abrir]);
+    abrir();
+    return {
+      superficie: () => (enVideo ? lienzo : img),
+      esSuperficie: (el) => el === img || el === lienzo,
+      // El zoom pide otras imágenes: con el vídeo, sólo se apunta para la reserva.
+      fuente(src) {
+        fuente = src;
+        if (enVideo) return;
+        if (cortado) img.dataset.directo = src;
+        else if (img.getAttribute('src') !== src) img.setAttribute('src', src);
+      },
+      modo: () => (enVideo ? 'h264' : 'mjpeg'),
+      abrir,
+      // Lo dice el sondeo del estado: sin aparato, las imágenes (que dicen por qué).
+      conectado(si) { if (!si) verImagenes(); },
+      medida,
+    };
+  })();
+  window.PuenteDirecto = Directo;
+
+  // «?medir=1» (docs/pruebas-con-el-aparato.md): lo que pinta el directo y el
+  // retraso del puntero, medidos aquí, en el navegador. El retraso es aproximado:
+  // de mandar un movimiento a que cambie la pantalla donde tiene que aparecer el
+  // puntero del Mac (o algo más que se mueva ahí mismo).
+  const Medir = (() => {
+    const placa = $('#medida');
+    if (!Directo || !placa || !new URLSearchParams(location.search).has('medir')) return null;
+    placa.hidden = false;
+    const caja = document.createElement('canvas');
+    caja.width = caja.height = 16;
+    const c2 = caja.getContext('2d', { willReadFrequently: true });
+    const retrasos = [];
+    let pendiente = null, antes = { p: 0, t: performance.now() };
+    function region(x, y) {
+      const s = Directo.superficie(), pant = $('#pantalla');
+      const ancho = s.tagName === 'CANVAS' ? s.width : s.naturalWidth;
+      if (!ancho) return null;
+      const e = ancho / (Number(pant.dataset.ancho) || 1920);
+      try {
+        c2.clearRect(0, 0, 16, 16);
+        c2.drawImage(s, x * e, y * e, 16 * e, 16 * e, 0, 0, 16, 16);
+        return c2.getImageData(0, 0, 16, 16).data;
+      } catch (err) { return null; }
+    }
+    function distinta(a, b) {
+      let d = 0;
+      for (let i = 0; i < a.length; i += 4) d += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+      return d / (a.length / 4) > 24;
+    }
+    const pct = (p) => { const o = [...retrasos].sort((a, b) => a - b); return o.length ? Math.round(o[Math.min(o.length - 1, Math.round(p * (o.length - 1)))]) : '—'; };
+    function cuadro() {
+      if (pendiente) {
+        const ahora = region(pendiente.x, pendiente.y);
+        if (ahora && distinta(ahora, pendiente.r)) {
+          retrasos.push(performance.now() - pendiente.t);
+          if (retrasos.length > 50) retrasos.shift();
+          pendiente = null;
+        } else if (performance.now() - pendiente.t > 2000) pendiente = null;
+      }
+      requestAnimationFrame(cuadro);
+    }
+    requestAnimationFrame(cuadro);
+    setInterval(() => {
+      const m = Directo.medida, t = performance.now(), s = (t - antes.t) / 1000;
+      const fps = Directo.modo() === 'h264' ? (m.pintados - antes.p) / s : null;
+      antes = { p: m.pintados, t };
+      placa.textContent = (Directo.modo() === 'h264' ? 'vídeo H.264 · ' + fps.toFixed(1) + ' fotogramas/s · '
+        + (m.bytes * 8 / 1e6 / ((t - m.desde) / 1000)).toFixed(1) + ' Mbit/s · ' + m.descartes + ' descartes'
+        : 'imágenes (MJPEG)') + ' · puntero p50 ' + pct(0.5) + ' ms, p95 ' + pct(0.95) + ' ms (' + retrasos.length + ')';
+    }, 1000);
+    return {
+      // Cada movimiento mandado sustituye al que aún no se vio: un punto de paso
+      // puede no salir en ningún fotograma, y se mide hasta donde paró la mano.
+      movido(p) {
+        const r = region(p.x, p.y);
+        pendiente = r ? { x: p.x, y: p.y, t: performance.now(), r } : null;
+      },
+    };
+  })();
+
   // ── usar el Mac desde la pantalla del puente ────────────────────────────
   // El ratón y el teclado de la persona van al Mac por /ws/mando. Se manda la
   // tecla FÍSICA (KeyboardEvent.code → código HID), como la web del JetKVM: el
@@ -607,23 +842,28 @@
 
   const pantallaMando = $('#pantalla');
   const botonUsar = $('#mando-usar');
-  if (pantallaMando && botonUsar) {
-    const imagen = $('#directo');
+  if (pantallaMando && botonUsar && Directo) {
     const casillaCtrl = $('#mando-ctrl');
     const ayuda = $('#mando-ayuda');
     const ayudaQuieto = ayuda.textContent;
     const extras = $$('[data-mando-atajo], #mando-pegar, #mando-teclado-caja');
     const teclado = $('#mando-teclado');
     let pegadoConAcentos = false;
-    let ws = null, activo = false, botones = 0, ultimoMov = 0, acumulado = 0;
+    let ws = null, activo = false, botones = 0, acumulado = 0, movido = null, cuadroMov = 0;
     try { casillaCtrl.checked = localStorage.getItem('puente-mando-ctrl') !== 'no'; } catch (e) { /* sin almacenamiento */ }
     casillaCtrl.addEventListener('change', () => {
       try { localStorage.setItem('puente-mando-ctrl', casillaCtrl.checked ? 'si' : 'no'); } catch (e) { /* idem */ }
     });
 
-    const enviar = (o) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
+    // Lo que se hace antes de que abra (un clic justo después de «Usar el Mac»)
+    // espera a que abra, en vez de perderse.
+    const antesDeAbrir = [];
+    const enviar = (o) => {
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify(o));
+      else if (ws && ws.readyState === 0 && antesDeAbrir.length < 200) antesDeAbrir.push(o);
+    };
     const punto = (e) => {
-      const r = imagen.getBoundingClientRect();
+      const r = Directo.superficie().getBoundingClientRect();
       const ancho = Number(pantallaMando.dataset.ancho) || 1920;
       const alto = Number(pantallaMando.dataset.alto) || 1080;
       return { x: Math.round((e.clientX - r.left) / r.width * ancho), y: Math.round((e.clientY - r.top) / r.height * alto) };
@@ -646,6 +886,8 @@
     function empezar() {
       const v = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/mando');
       ws = v;
+      antesDeAbrir.length = 0;
+      v.onopen = () => { if (ws === v) for (const o of antesDeAbrir.splice(0)) v.send(JSON.stringify(o)); };
       v.onmessage = (m) => {
         let d = {}; try { d = JSON.parse(m.data); } catch (e) { return; }
         if (d.no) parar(d.no);
@@ -665,16 +907,27 @@
     botonUsar.addEventListener('click', () => (activo ? parar() : cortado ? null : empezar()));
     alCortar.push([() => parar(), () => {}]);  // al reanudar, la persona lo vuelve a pedir si quiere
 
-    // Sólo lo que pasa sobre la imagen: con zoom, la caja tiene márgenes negros y
-    // barras de desplazamiento, y un clic ahí llegaría al Mac como clic en el borde.
+    // Sólo lo que pasa sobre la imagen (o el vídeo): con zoom, la caja tiene
+    // márgenes negros y barras de desplazamiento, y un clic ahí llegaría al Mac
+    // como clic en el borde. El movimiento, una vez por cuadro y el último punto:
+    // con un tope de 30 ms se perdía el último, y el puntero se quedaba antes de
+    // donde paró la mano (C-0469).
     pantallaMando.addEventListener('mousemove', (e) => {
-      if (!activo || e.target !== imagen || Date.now() - ultimoMov < 30) return;
-      ultimoMov = Date.now();
-      enviar({ t: 'raton', ...punto(e), b: botones });
+      if (!activo || !Directo.esSuperficie(e.target)) return;
+      movido = punto(e);
+      if (cuadroMov) return;
+      cuadroMov = requestAnimationFrame(() => {
+        cuadroMov = 0;
+        if (!movido || !activo) return;
+        enviar({ t: 'raton', ...movido, b: botones });
+        if (Medir) Medir.movido(movido);
+        movido = null;
+      });
     });
     pantallaMando.addEventListener('mousedown', (e) => {
-      if (!activo || e.target !== imagen) return;
+      if (!activo || !Directo.esSuperficie(e.target)) return;
       e.preventDefault();
+      movido = null;  // el clic ya lleva su punto
       // Cancelarlo (para no arrastrar la imagen) también deja el foco donde
       // estaba: en la terminal de Claude, que es de la página de fuera, lo
       // tecleado seguía yendo a ella (20-nov). Se trae aquí a mano.
@@ -684,6 +937,7 @@
     });
     window.addEventListener('mouseup', (e) => {
       if (!activo || !botones) return;
+      movido = null;
       botones &= ~bitDe(e.button);
       enviar({ t: 'raton', ...punto(e), b: botones });
     });
@@ -774,8 +1028,10 @@
       }
       pant.classList.toggle('desplazable', ampliada()
         && (pant.scrollWidth > pant.clientWidth + 1 || pant.scrollHeight > pant.clientHeight + 1));
+      // Al reanudar, la de ahora; con el vídeo, la reserva (el vídeo ya llega entero).
       const src = '/api/pantalla.mjpg?ancho=' + pedir;
-      if (cortado) img.dataset.directo = src;  // al reanudar, el de ahora
+      if (Directo) Directo.fuente(src);
+      else if (cortado) img.dataset.directo = src;
       else if (img.getAttribute('src') !== src) img.setAttribute('src', src);
       if (window.PuenteRegion) window.PuenteRegion();
     };

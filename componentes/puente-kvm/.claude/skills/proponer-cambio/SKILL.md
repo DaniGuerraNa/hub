@@ -29,8 +29,10 @@ Herramientas, en una sola búsqueda:
    escribir, el puente comprueba que la pantalla es la del documento leído; si
    falla, no escribe nada: cuéntale por qué y qué hacer (normalmente, volver al
    documento, o leerlo de nuevo si cambió).
-6. Revisa cada tramo con `ver_tramo`. Si alguno no quedó como debía, dilo con
-   precisión (tramo, línea, qué se ve).
+6. Revisa cada tramo con `ver_tramo`: llega sólo la franja que cambió al
+   escribirlo (lo demás está igual que antes de teclear); si necesitas el
+   resto, `entera=True`. Si alguno no quedó como debía, dilo con precisión
+   (tramo, línea, qué se ve).
 7. Pídele que lo revise en el Mac y **lo guarde o ejecute ella**. Después, la
    huella (consulta en el puente o `consultar-catalogo`) → el puente dice si lo
    guardado es exactamente lo acordado. Hasta entonces, el cambio no está hecho.

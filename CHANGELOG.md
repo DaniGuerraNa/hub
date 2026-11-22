@@ -13,6 +13,56 @@ bash scripts/actualizar.sh
 Al terminar te enseña esta misma lista, sólo con las versiones que acabas de
 cruzar.
 
+## 0.10.0 — 2026-11-22
+
+Usar el Mac desde el Puente KVM va como en la web del JetKVM: la pantalla es
+su vídeo tal cual y el puntero responde antes. Su Claude gasta menos al leer
+y al revisar lo que escribe, y el secretario avisa de un compromiso media
+hora antes también cuando se lo apuntas tú.
+
+### Qué tienes que hacer
+
+- **Actualiza** con el botón de **Actualizaciones** (o con
+  `bash scripts/actualizar.sh` en la carpeta del hub).
+
+- **Si usas el Puente KVM**, la actualización lo reinicia si está libre; si
+  estaba ocupado, su pantalla te lo ofrece con «Reiniciar el puente». Después,
+  «Reabrir la conversación de Claude» (el mismo aviso o el menú de la
+  conversación), para que Claude use la forma nueva de leer. Recarga su
+  pantalla (Ctrl+Shift+R) para ver el vídeo nuevo.
+
+### Nuevo
+
+- **Puente KVM: usar el Mac desde la pantalla del puente va como en la web
+  del JetKVM.** La imagen es ahora el vídeo del aparato tal cual, a los
+  fotogramas que mande (antes, unas 12 imágenes por segundo recomprimidas en
+  tu PC), y el puntero responde antes; el puente, además, gasta menos CPU.
+  Con el Mac simulado, o en un navegador que no sabe decodificar el vídeo,
+  sigue por imágenes como antes. `/panel?medir=1` enseña cuántos fotogramas
+  se pintan y el retraso del puntero.
+
+### Qué cambia en lo que ya usabas
+
+- **Puente KVM, el puntero** llega siempre a donde paras el ratón (antes
+  podía quedarse corto si lo movías rápido), y reiniciar el puente con el
+  vídeo abierto ya no espera unos segundos a que se cierre.
+- **Puente KVM, menos gasto de Claude al leer y al revisar:** al transcribir
+  un documento, Claude guarda una página y mira la siguiente en el mismo
+  paso; al recorrer una hoja o una web larga, a partir de la segunda página
+  sólo recibe lo nuevo; y al revisar un cambio ya escrito, sólo la franja que
+  cambió (entera si no cambió nada, si se movió la vista o si la pide). Lo
+  que ves en la pantalla del puente y lo que se teclea en el Mac no cambian.
+  Para que Claude lo use, reabre su conversación después de actualizar.
+- **Puente KVM, «Nueva conversación»:** si no se puede preparar la orden de
+  Claude, lo dice y deja la conversación que tenías abierta, sin apuntar una
+  nueva vacía en la lista.
+
+- **Secretario, recordatorios:** un compromiso que le apuntas o le mueves con
+  plazo pero sin decir cuándo avisarte te avisa **media hora antes** del plazo
+  (si es sólo un día, esa mañana a las 9), como ya hacía con lo que sale de tus
+  chats; antes te avisaba justo a la hora del plazo. Al moverlo, el aviso
+  conserva la antelación que tenía, y un plazo que ya pasó no te suena de golpe.
+
 ## 0.9.0 — 2026-11-20
 
 El Puente KVM despierta el Mac y lleva el jiggler con un botón, pega con los

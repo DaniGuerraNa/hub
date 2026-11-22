@@ -1035,8 +1035,8 @@ def comprometer(con: sqlite3.Connection, que: str, *, quien: str = "yo", para_qu
     (medido el 2026-10-24). Lo último que dijo el dueño es lo que vale.
 
     Un plazo que llega sin aviso no se vuelve aviso: el triaje no lo da a lo
-    que le pide otro (C-0410) ni a un plazo ya pasado, y `reprogramar` hacía
-    del plazo la hora del aviso.
+    que le pide otro (C-0410) ni a un plazo ya pasado; por eso aquí sólo
+    pasa por `reprogramar` lo que trae aviso.
 
     Lo que parece una llave se tapa antes de compararlo y de guardarlo
     (`ocultar_secretos`, C-0434: una red, no una garantía)."""
@@ -1055,14 +1055,69 @@ def comprometer(con: sqlite3.Connection, que: str, *, quien: str = "yo", para_qu
         (quien or "yo", para_quien, que.strip(), vence, recordar_en, evento, origen, ahora())).lastrowid
 
 
+#: Sin otra indicación, cuánto antes de un plazo con hora.
+ANTES_POR_OMISION_MIN = 30
+
+
+def cuando_avisar(vence: str | None, con_hora: bool, antes_min=None, momento: str | None = None) -> str | None:
+    """La hora del recordatorio de un compromiso que sólo trae plazo (UTC), o None.
+
+    La única regla para sacar el aviso del plazo (C-0066): la usan el
+    triaje, apuntar un compromiso y moverlo. Cada uno tenía la suya y el
+    mismo «a las 12» avisaba a las 11:30 o a las 12 según quién lo apuntara.
+    Si el dueño da la hora del aviso, manda la suya y esto no se llama.
+
+    - Plazo con hora: `antes_min` según el trabajo que hay detrás (10 min
+      para ir a una reunión, horas para preparar algo), entre 5 min y un
+      día; si no se dice, 30 min antes. Avisar a la hora del plazo —como se
+      hacía hasta el 27-oct— llegaba tarde para todo lo que no fuera
+      presentarse.
+    - Plazo de un día sin hora: esa mañana a las 9 (`a_utc` ya lo pone así).
+    - Si la antelación ya pasó pero el plazo no: en cuanto se lee. Una
+      tarea para las 12 que se apunta a las 11 avisa ya, no nunca.
+    - Si el plazo ya pasó: nada. Al leer dos semanas de golpe, cada plazo
+      viejo sería un aviso por algo que ya no tiene arreglo (medido: tres
+      timbres al leer dos reuniones del martes); y lo que el dueño apunta
+      vencido ya lo sabe: sigue en Pendientes como vencido.
+    """
+    momento = momento or ahora()
+    if not vence or vence <= momento:
+        return None
+    if not con_hora:
+        return vence
+    try:
+        minutos = int(antes_min) if antes_min not in (None, "") else ANTES_POR_OMISION_MIN
+    except (TypeError, ValueError):
+        minutos = ANTES_POR_OMISION_MIN
+    minutos = max(5, min(minutos, 24 * 60))
+    aviso = (datetime.fromisoformat(vence) - timedelta(minutes=minutos)).isoformat(timespec="seconds")
+    return max(aviso, momento)
+
+
+def antelacion_min(vence: str | None, recordar_en: str | None) -> int | None:
+    """Cuántos minutos antes del plazo avisaba un compromiso, para que al
+    moverlo el aviso se mueva con él; None si le falta una de las dos."""
+    if not (vence and recordar_en):
+        return None
+    return int((datetime.fromisoformat(vence) - datetime.fromisoformat(recordar_en)).total_seconds() // 60)
+
+
 def reprogramar(con: sqlite3.Connection, id_: int, *, vence: str | None = None,
-                recordar_en: str | None = None) -> None:
-    """Fechas nuevas para un compromiso; el aviso vuelve a quedar pendiente."""
+                recordar_en: str | None = None, con_hora: bool = True) -> None:
+    """Fechas nuevas para un compromiso; el aviso vuelve a quedar pendiente.
+
+    Si sólo llega el plazo, el aviso sale de él por `cuando_avisar`, con la
+    antelación que ya tenía (como al moverlo el triaje); antes el plazo se
+    volvía la hora del aviso. `con_hora`: si el plazo lo dio con hora o es
+    un día (a las 9). Un plazo ya pasado queda sin aviso."""
     if vence:
+        if not recordar_en:
+            f = con.execute("SELECT vence, recordar_en FROM compromiso WHERE id = ?", (id_,)).fetchone()
+            recordar_en = cuando_avisar(vence, con_hora, antelacion_min(f["vence"], f["recordar_en"]) if f else None)
         con.execute("UPDATE compromiso SET vence = ? WHERE id = ?", (vence, id_))
     if recordar_en or vence:
         con.execute("UPDATE compromiso SET recordar_en = ?, recordado = NULL, estado = 'abierto' WHERE id = ?",
-                    (recordar_en or vence, id_))
+                    (recordar_en, id_))
 
 
 def editar_compromiso(con: sqlite3.Connection, id_: int, *, que: str, vence: str | None,

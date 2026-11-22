@@ -51,7 +51,7 @@ import unicodedata
 from datetime import datetime, timezone
 
 from . import enrutador, memoria, motor
-from .tiempo import a_local, a_utc
+from .tiempo import a_local, a_utc, tiene_hora
 
 LOTE = 30
 POR_EVENTO = 1500
@@ -308,8 +308,8 @@ def triar(con: sqlite3.Connection, dueno: str = "su dueño", ahora: datetime | N
                 continue
             # Al teléfono sólo lo que dijo que haría (regla dura 3, 302): lo
             # que le pide otro queda con su plazo en Pendientes (C-0410).
-            recordar = cuando_avisar(vence, con_hora=len((c.get("vence") or "").strip()) > 10,
-                                     antes_min=c.get("avisar_antes_min")) if quien == "yo" else None
+            recordar = memoria.cuando_avisar(vence, con_hora=tiene_hora(c.get("vence")),
+                                             antes_min=c.get("avisar_antes_min")) if quien == "yo" else None
             memoria.comprometer(con, c["que"], quien=quien, para_quien=c.get("para_quien", ""), vence=vence,
                                 recordar_en=recordar, evento=e["id"], origen=origen)
     memoria.marcar_triados(con, list(por_id))
@@ -376,16 +376,13 @@ def _mover(con: sqlite3.Connection, cambio: dict, origen: str) -> None:
     c = con.execute("SELECT * FROM compromiso WHERE id = ? AND estado = 'abierto'", (cid,)).fetchone()
     if c is None or not vence or vence == c["vence"]:
         return
-    antes = None
-    if c["vence"] and c["recordar_en"]:
-        from datetime import datetime
-        antes = int((datetime.fromisoformat(c["vence"]) - datetime.fromisoformat(c["recordar_en"])).total_seconds() // 60)
+    antes = memoria.antelacion_min(c["vence"], c["recordar_en"])
     # Lo que le pidió otro no gana un aviso por moverse (C-0410), ni lo que
     # dejó un proyecto sin `recordar` (387); si ya lo tenía, lo pidió él (o es
     # de antes) y se mueve con el plazo.
     from .de_proyectos import de_donde
     suyo = c["recordar_en"] or ((c["quien"] or "yo").lower() == "yo" and de_donde(c) != "proyectos")
-    recordar = cuando_avisar(vence, con_hora=True, antes_min=antes) if suyo else None
+    recordar = memoria.cuando_avisar(vence, con_hora=True, antes_min=antes) if suyo else None
     memoria.editar_compromiso(con, cid, que=c["que"], vence=vence, recordar_en=recordar)
     motivo = (cambio.get("motivo") or "").strip()
     texto = f"Moví «{c['que']}» de {a_local(c['vence'])} a {a_local(vence)}" + (f": {motivo}" if motivo else ".")
@@ -393,41 +390,6 @@ def _mover(con: sqlite3.Connection, cambio: dict, origen: str) -> None:
                     motivo=origen, resultado=texto)
     from . import avisos
     avisos.intentar(con, texto, "mover_compromiso", titulo="🔁 Pendiente movido", enlace="/secretario?p=pendientes")
-
-
-#: Sin indicación del modelo, cuánto antes de un plazo con hora.
-ANTES_POR_OMISION_MIN = 30
-
-
-def cuando_avisar(vence: str | None, con_hora: bool, antes_min=None, ahora: str | None = None) -> str | None:
-    """La hora del recordatorio de un compromiso sacado del triaje (UTC), o None.
-
-    - Plazo con hora: lo que diga el modelo según el trabajo que hay detrás
-      (10 min para ir a una reunión, horas para preparar algo), entre 5 min
-      y un día; si no dice nada, 30 min antes. Avisar a la hora del plazo
-      —como se hacía hasta el 27-oct— llegaba tarde para todo lo que no
-      fuera presentarse.
-    - Plazo de un día sin hora: esa mañana a las 9 (`a_utc` ya lo pone así).
-    - Si la antelación ya pasó pero el plazo no: en cuanto se lee. Una
-      tarea para las 12 que se apunta a las 11 avisa ya, no nunca.
-    - Si el plazo ya pasó: nada. Al leer dos semanas de golpe, cada plazo
-      viejo sería un aviso por algo que ya no tiene arreglo (medido: tres
-      timbres al leer dos reuniones del martes).
-    """
-    from datetime import datetime, timedelta
-
-    ahora = ahora or memoria.ahora()
-    if not vence or vence <= ahora:
-        return None
-    if not con_hora:
-        return vence
-    try:
-        minutos = int(antes_min) if antes_min not in (None, "") else ANTES_POR_OMISION_MIN
-    except (TypeError, ValueError):
-        minutos = ANTES_POR_OMISION_MIN
-    minutos = max(5, min(minutos, 24 * 60))
-    aviso = (datetime.fromisoformat(vence) - timedelta(minutes=minutos)).isoformat(timespec="seconds")
-    return max(aviso, ahora)
 
 
 def _fallo(con: sqlite3.Connection, ids: list[int], exc: motor.MotorCaido) -> None:

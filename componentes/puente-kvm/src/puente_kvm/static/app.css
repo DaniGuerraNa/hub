@@ -122,7 +122,10 @@ label { display: block; color: var(--texto-2); font-size: 13px; margin: 10px 0 4
 /* ── pantalla en directo ─────────────────────────────────────────────── */
 .pantalla { position: relative; background: #000; border-radius: var(--r-input); overflow: hidden; line-height: 0; }
 .marco-mac { position: relative; }
-.pantalla img { width: 100%; height: auto; display: block; }
+.pantalla .superficie { width: 100%; height: auto; display: block; }
+.pantalla .superficie[hidden] { display: none; }
+/* «?medir=1»: lo que va midiendo el directo, para las pruebas con el aparato. */
+.medida { margin: 0 0 8px; font-variant-numeric: tabular-nums; }
 .barra-pantalla { margin-bottom: 10px; }
 .barra-pantalla h2 { margin: 0 auto 0 0; }
 /* La reunión que se graba: el tiempo en su placa, y lo que hay que saber debajo de la barra. */

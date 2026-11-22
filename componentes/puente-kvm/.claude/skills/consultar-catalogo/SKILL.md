@@ -28,7 +28,8 @@ Herramientas, en una sola búsqueda:
    - **Más filas de las que caben, pero cortas:** `recorrer_pantalla` sobre la
      zona de la rejilla, desde la primera fila (si no está arriba, súbela
      antes con `rueda` en negativo): la baja con la rueda y te da todas las
-     páginas en una sola llamada, con lo que se repite entre una y otra.
+     páginas en una sola llamada; de la segunda en adelante, sin lo que ya
+     salía en la anterior salvo una franja para empalmar (el texto dice cuánto).
    - **Muchas filas o texto largo** (un plan, una definición): llévalo a un
      editor y léelo con la skill `leer-documento`. Con el control: clic en la
      rejilla, Cmd+A, Cmd+C, pestaña nueva (Cmd+]), Cmd+V. El portapapeles es el

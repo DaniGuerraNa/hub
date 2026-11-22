@@ -21,25 +21,108 @@ import uuid
 
 import av
 from aiohttp import web
+from PIL import Image, ImageDraw
 from aiortc import MediaStreamTrack, RTCPeerConnection, RTCRtpSender, RTCSessionDescription, VideoStreamTrack
 
 from puente_kvm.simulador import Simulador
 
 
+# La marca de las mediciones (`medir_directo.py`): el número de fotograma y dónde
+# está el puntero, en bloques blancos y negros arriba a la izquierda. La fila de
+# abajo es la de arriba invertida, para que quien la lea sepa si la leyó bien.
+MARCA_BLOQUE = 16
+MARCA_CAMPOS = (("n", 12), ("x", 11), ("y", 11))
+
+
+def marcar(img: Image.Image, n: int, puntero: tuple[int, int]) -> Image.Image:
+    img = img.copy()
+    d = ImageDraw.Draw(img)
+    valores = {"n": n % 4096, "x": puntero[0], "y": puntero[1]}
+    i = 0
+    for campo, bits in MARCA_CAMPOS:
+        for b in range(bits - 1, -1, -1):
+            uno = (valores[campo] >> b) & 1
+            x0 = i * MARCA_BLOQUE
+            d.rectangle([x0, 0, x0 + MARCA_BLOQUE - 1, MARCA_BLOQUE - 1], fill="#fff" if uno else "#000")
+            d.rectangle([x0, MARCA_BLOQUE, x0 + MARCA_BLOQUE - 1, 2 * MARCA_BLOQUE - 1],
+                        fill="#000" if uno else "#fff")
+            i += 1
+    return img
+
+
+def tipos_nal(datos: bytes) -> list[int]:
+    tipos, i = [], datos.find(b"\x00\x00\x01")
+    while i != -1 and i + 3 < len(datos):
+        tipos.append(datos[i + 3] & 0x1F)
+        i = datos.find(b"\x00\x00\x01", i + 3)
+    return tipos
+
+
+def sin_sps_ni_pps(datos: bytes) -> bytes:
+    """La misma unidad sin sus SPS (7) ni PPS (8), con el código de inicio de 4 bytes."""
+    inicios = []
+    i = datos.find(b"\x00\x00\x01")
+    while i != -1:
+        inicios.append(i)
+        i = datos.find(b"\x00\x00\x01", i + 3)
+    nales = []
+    for k, i in enumerate(inicios):
+        fin = inicios[k + 1] if k + 1 < len(inicios) else len(datos)
+        if k + 1 < len(inicios) and datos[fin - 1] == 0:
+            fin -= 1  # el cero de delante de un código de inicio de 4 bytes
+        nales.append(datos[i + 3:fin])
+    return b"".join(b"\x00\x00\x00\x01" + n for n in nales if n and n[0] & 0x1F not in (7, 8))
+
+
 class PantallaFalsa(VideoStreamTrack):
+    """La pantalla del Mac en H.264, codificada como el aparato: perfil High y un
+    fotograma clave cada medio segundo (GOP = fps/2, `video.c` de 0.5.11), con SPS
+    y PPS delante de cada clave. Se codifica aquí (aiortc lo manda tal cual) porque
+    el codificador de aiortc sólo sabe Baseline y un fotograma clave cada 250."""
+
     def __init__(self, sim: Simulador, falso: "JetKVMFalso | None" = None):
         super().__init__()
         self.sim = sim
         self.falso = falso
+        self._codec = None
+        self._n = 0
+
+    def _codificar(self, trama: av.VideoFrame) -> list[bytes]:
+        f = self.falso
+        if self._codec is not None and (self._codec.width, self._codec.height) != (trama.width, trama.height):
+            self._codec = None  # otra resolución: otro SPS, como el aparato cuando el Mac cambia la suya
+        if self._codec is None:
+            c = av.CodecContext.create("libx264", "w")
+            c.width, c.height, c.pix_fmt = trama.width, trama.height, "yuv420p"
+            c.time_base, c.framerate = fractions.Fraction(1, 90000), fractions.Fraction(30, 1)
+            c.gop_size, c.bit_rate = f.gop, 4_000_000
+            c.profile = "High" if f.perfil == "high" else "Baseline"
+            c.options = {"preset": "veryfast", "tune": "zerolatency", "keyint": str(f.gop),
+                         "min-keyint": str(f.gop), "scenecut": "0"}
+            self._codec = c
+        return [bytes(p) for p in self._codec.encode(trama.reformat(format="yuv420p"))]
 
     async def recv(self):
         # Con el Mac en reposo (o la pantalla apagada) no hay HDMI y no sale vídeo.
         while self.falso is not None and (self.falso.usb == "suspended" or not self.falso.video):
             await asyncio.sleep(0.05)
         pts, base = await self.next_timestamp()
-        trama = av.VideoFrame.from_image(await self.sim.captura())
+        img = await self.sim.captura()
+        if self.falso is not None and self.falso.marcar:
+            img = marcar(img, self._n, self.sim.puntero)
+        if self.falso is not None and self.falso.tamano and self.falso.tamano != img.size:
+            img = img.resize(self.falso.tamano)
+        self._n += 1
+        trama = av.VideoFrame.from_image(img)
         trama.pts, trama.time_base = pts, base
-        return trama
+        if self.falso is None:
+            return trama
+        datos = b"".join(await asyncio.to_thread(self._codificar, trama))
+        if self.falso.sps_solo_al_principio and self._n > 1:
+            datos = sin_sps_ni_pps(datos)  # como un codificador que sólo los manda al empezar
+        paquete = av.Packet(datos)
+        paquete.pts, paquete.time_base = pts, base
+        return paquete
 
 
 class SonidoFalso(MediaStreamTrack):
@@ -79,6 +162,7 @@ class JetKVMFalso:
         self.version = version
         self.token = ""
         self.pcs: list[RTCPeerConnection] = []
+        self.senales: list[web.WebSocketResponse] = []
         self.mensajes_hid: list[bytes] = []
         self.rpc: list[dict] = []
         self.runner: web.AppRunner | None = None
@@ -96,6 +180,13 @@ class JetKVMFalso:
         self.usb = "configured"  # «suspended» con el Mac dormido, «not attached» sin el cable
         self.video = True  # False: el Mac despierto pero sin imagen (la pantalla aún apagada)
         self.despertares = 0
+        # El vídeo (C-0469): perfil, fotogramas por clave, y un codificador que sólo
+        # manda SPS y PPS en la primera clave. `marcar` pinta la marca de las mediciones.
+        self.perfil = "high"
+        self.gop = 15
+        self.sps_solo_al_principio = False
+        self.marcar = False
+        self.tamano: tuple[int, int] | None = None  # otra resolución que la del Mac simulado
 
     def _dentro(self, req: web.Request) -> bool:
         return bool(self.token) and req.cookies.get("authToken") == self.token
@@ -122,6 +213,7 @@ class JetKVMFalso:
             return web.json_response({"error": "Unauthorized"}, status=401)
         ws = web.WebSocketResponse()
         await ws.prepare(req)
+        self.senales.append(ws)
         await ws.send_str(json.dumps({"type": "device-metadata", "data": {"deviceVersion": self.version}}))
         async for m in ws:
             if m.data == "ping":
@@ -159,7 +251,11 @@ class JetKVMFalso:
         await pc.setLocalDescription(await pc.createAnswer())
         sdp = pc.localDescription.sdp
         candidatos = [l[2:] for l in sdp.splitlines() if l.startswith("a=candidate:")]
-        sin = "\r\n".join(l for l in sdp.splitlines() if not l.startswith("a=candidate:")) + "\r\n"
+        # Como el goteo de pion: la respuesta va sin candidatos y sin «end-of-candidates».
+        # Con él, aioice daba por acabados los candidatos antes de que llegara el
+        # primero y, según el orden en que corrían los dos lados, fallaba el ICE.
+        sin = "\r\n".join(l for l in sdp.splitlines()
+                           if not l.startswith(("a=candidate:", "a=end-of-candidates"))) + "\r\n"
         mid = next((l.split(":", 1)[1] for l in sdp.splitlines() if l.startswith("a=mid:")), "0")
 
         def ice(c):
@@ -229,7 +325,8 @@ class JetKVMFalso:
         canal.send(json.dumps({"jsonrpc": "2.0", "id": j["id"],
                                **({"result": resultado} if resultado is not None else {})}))
 
-    async def arrancar(self) -> str:
+    async def arrancar(self, puerto: int = 0) -> str:
+        """En `puerto`, para volver a arrancarlo donde estaba (el aparato que vuelve)."""
         app = web.Application()
         app.router.add_get("/device/status", self.status)
         app.router.add_get("/device", self.device)
@@ -237,13 +334,18 @@ class JetKVMFalso:
         app.router.add_get("/webrtc/signaling/client", self.senalizacion)
         self.runner = web.AppRunner(app)
         await self.runner.setup()
-        sitio = web.TCPSite(self.runner, "127.0.0.1", 0)
+        sitio = web.TCPSite(self.runner, "127.0.0.1", puerto)
         await sitio.start()
         self.puerto = sitio._server.sockets[0].getsockname()[1]
         return f"http://127.0.0.1:{self.puerto}"
 
     async def parar(self):
+        """Como el aparato que se apaga: cierra lo abierto sin esperar al cliente."""
         for pc in self.pcs:
             await pc.close()
+        for ws in self.senales:
+            await ws.close()
+        self.pcs, self.senales = [], []
         if self.runner:
             await self.runner.cleanup()
+            self.runner = None

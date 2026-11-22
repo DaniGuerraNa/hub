@@ -565,6 +565,9 @@ def informe(publico: bool = False) -> str:
             f"- Tarea: {'sí' if estado.get('tarea') else 'ninguna'}",
             f"- Aparato: {disp.get('tipo')}, conectado={disp.get('conectado')}, resolución={disp.get('resolucion')}, "
             f"firmware={disp.get('firmware', '—')}, último fotograma hace {disp.get('ultimo_fotograma_s', '—')} s",
+            # Cómo llega la pantalla al navegador (C-0469), y por qué no por vídeo si no.
+            f"- Directo: {estado.get('video', '—')}"
+            + (f" ({tapar(str(disp['aviso_video']))})" if disp.get("aviso_video") else ""),
             f"- Motivo: {tapar(str(disp.get('motivo') or '—'))}",
             f"- Error de conexión: {tapar(estado.get('error_conexion') or '—')}",
         ]

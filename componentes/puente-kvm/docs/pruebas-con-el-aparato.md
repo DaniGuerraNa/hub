@@ -44,6 +44,10 @@ en la pantalla del puente, el puente teclea sólo los tramos que cambian, y
   simulador (57 páginas, 12,3 s). Con el aparato será más lento: sin medir.
 - El cliente del JetKVM, contra un JetKVM falso que habla su protocolo por
   WebRTC de verdad: entra, recibe vídeo H.264, teclea, hace clic y usa la rueda.
+- El directo de la pantalla (C-0469), contra ese JetKVM falso: el vídeo H.264
+  llega al navegador sin recomprimirlo y se pinta a 30 fotogramas por segundo
+  (antes, 11 usando el Mac y 2 mirando), con el puntero a 83 ms de p50 y 97 de
+  p95 (antes, 204 y 270), y el puente gasta la mitad de CPU (15 % frente a 30 %).
 
 **Sin medir: todo lo que tiene que ver con el aparato.** El cliente sigue el
 código del firmware (contrastado con 0.5.9, 0.5.10 y 0.5.11, ver
@@ -106,13 +110,22 @@ orden y lo que hay que vigilar.
    Después, en una hoja o una web larga, pídele que la recorra con
    **`recorrer_pantalla`** (la zona de las celdas, desde arriba): ¿llega al
    final y dice cuánto subió cada página? Si dice «no sé cuánto subió», el
-   ruido del vídeo es más que su margen. Apunta: páginas, segundos y eso.
+   ruido del vídeo es más que su margen. Si dice «no casa del todo con el final
+   de la anterior», la página llegó entera porque lo de arriba no salió igual
+   que en la anterior (ruido, o una medida corta): no se pierde nada, sólo
+   cuesta más. Apunta: páginas, segundos y cuántas llegaron enteras así.
 7. **Huella** de un objeto real pequeño (skill, paso 7). Apunta: la consulta que
    funcionó y la variante que coincide.
 8. **Escritura de prueba** en la pestaña de prueba: Claude propone un cambio
    pequeño sobre la lectura del paso 6, tú lo apruebas, se escribe. Mira cada
    tramo en el Mac. **No guardes.** Apunta: si quedó exacto y cuánto tardó la
-   comprobación previa (bitácora: «las páginas 1–N son las leídas (x s)»).
+   comprobación previa (bitácora: «las páginas 1–N son las leídas (x s)»). Y
+   si `ver_tramo` le llegó a Claude recortado a lo que cambió o entero: con el
+   ruido del vídeo puede salir entero, que no es un fallo, sólo cuesta más. Y si
+   alguno llegó entero diciendo «quizá sólo el cursor»: el cursor parpadea entre
+   la captura de antes de teclear y la de después, y una caja de su anchura no
+   se enseña como lo que cambió; si pasa con un tramo que sí se escribió, el
+   cursor no estaba en la misma columna en las dos (apúntalo).
 9. Cierra la pestaña de prueba **sin guardar**. Sólo entonces, un documento
    real.
 10. **Una reunión de prueba**, cuando haya una (o un vídeo con voz en el Mac).
@@ -133,6 +146,24 @@ orden y lo que hay que vigilar.
    segundos tardó la imagen y qué dijo el aviso. Si el Mac tiene la pantalla
    bloqueada con contraseña al volver, el jiggler no la evita: sólo evita que
    se bloquee mientras está encendido.
+12. **El directo: que usar el Mac vaya fluido.** Abre la pantalla del puente
+   con la medida encendida, en otra pestaña: `http://127.0.0.1:8794/panel?medir=1`
+   (el panel solo, sin la terminal). Encima de la imagen sale una placa: con el
+   JetKVM tiene que decir **«vídeo H.264»**. Si dice «imágenes (MJPEG)»: lo del
+   puente lo dicen la bitácora y `diagnostico` («Directo»); lo del navegador
+   (el códec que no sabe decodificar, por ejemplo), su consola (F12), en una
+   línea «Puente: la pantalla va por imágenes». Pulsa «Usar
+   el Mac desde aquí» y mueve el ratón por el Mac un minuto, parando de vez en
+   cuando: la placa va diciendo los fotogramas por segundo que se pintan, los
+   Mbit/s, los descartes (fotogramas tirados porque el navegador no daba
+   abasto) y el retraso del puntero, p50 y p95 de los últimos 50 movimientos.
+   Ese retraso es aproximado: de mandar el movimiento a que cambie la pantalla
+   justo donde tiene que aparecer el puntero del Mac. Compáralo con la web del
+   JetKVM a ojo (ciérrala antes de volver al puente: una sola sesión).
+   Apunta: lo que dice la placa (fotogramas/s, Mbit/s, descartes, p50 y p95),
+   el códec que sale en la consola del navegador si vuelve a imágenes, y si se
+   nota distinto de la web del JetKVM. Con el JetKVM falso, en este equipo, el
+   mismo directo da 30 fotogramas/s y 83 ms de p50 (`tests/medir_directo.py`).
 
 ## Qué mandar de vuelta
 

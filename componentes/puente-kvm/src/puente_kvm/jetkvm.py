@@ -16,7 +16,9 @@ aparato.** Lo que hace, en orden:
    la rueda, por JSON-RPC (`wheelReport`), que es lo único que el binario
    ignora.
 4. El vídeo llega en H.264 y se decodifica continuamente; `captura()` devuelve
-   el último fotograma. No hay ninguna URL de captura en el aparato.
+   el último fotograma. No hay ninguna URL de captura en el aparato. Antes de
+   decodificarlas, las tramas se derivan tal cual para el directo del
+   navegador (`video.py`, C-0469).
 5. El sonido del Mac (para grabar una reunión) llega en G722 si el audio del
    aparato está encendido; sale de la tarjeta de sonido USB que el JetKVM le
    presenta al Mac, no del HDMI (`docs/protocolo-jetkvm.md`).
@@ -37,6 +39,7 @@ import time
 import aiohttp
 from PIL import Image
 
+from . import video as video_directo
 from .dispositivo import AparatoNoDisponible, Dispositivo
 
 # Las versiones del firmware cuyo código se leyó y en las que casa todo lo que
@@ -76,6 +79,10 @@ class JetKVM(Dispositivo):
         self._sin_video = False
         self._pista_audio = None
         self._botones = 0
+        # El vídeo directo del navegador: vive lo que vive este aparato, no cada
+        # conexión, para que quien lo mira siga al reconectar (una reunión reconecta).
+        self.derivacion = video_directo.Derivacion()
+        self._derivado = False
         self.ancho, self.alto = 1920, 1080
         self.version = ""
         self.conectado = False
@@ -114,6 +121,10 @@ class JetKVM(Dispositivo):
         # Sólo H.264: es lo que manda el aparato, y así un JetKVM falso tampoco puede elegir otro.
         video.setCodecPreferences([c for c in RTCRtpReceiver.getCapabilities("video").codecs
                                    if c.mimeType in ("video/H264", "video/rtx")])
+        if not self.derivacion.apagada:
+            self.derivacion.nueva_conexion()
+            self._derivado = video_directo.enganchar(video.receiver, self.derivacion.alimentar,
+                                                     self._sin_video_directo)
         # El sonido, para grabar una reunión (C-0461). Sólo G722: 16 kHz, lo que
         # pide la transcripción (su PCMU es de 8). Ofrecerlo no le cuesta nada al
         # aparato con su audio apagado, que es como viene: contesta con la línea
@@ -227,6 +238,13 @@ class JetKVM(Dispositivo):
             raise AparatoNoDisponible("conectado, pero no llega vídeo (¿el Mac está dormido, apagado o sin HDMI?)")
         self.conectado, self.motivo = True, ""
 
+    def _sin_video_directo(self, motivo: str) -> None:
+        """El directo del navegador vuelve a las imágenes; las capturas siguen igual."""
+        self._derivado = False
+        self.derivacion.apagar(motivo)
+        if self.avisar is not None:
+            self.avisar(motivo)
+
     async def _esperar_abiertos(self, tope: float) -> None:
         fin = time.monotonic() + tope
         while time.monotonic() < fin:
@@ -313,6 +331,13 @@ class JetKVM(Dispositivo):
             return await asyncio.to_thread(lambda: trama.to_image().convert("RGB"))
         alto = max(2, round(trama.height * ancho / trama.width) // 2 * 2)
         return await asyncio.to_thread(lambda: trama.reformat(width=ancho, height=alto, format="rgb24").to_image())
+
+    def video_codificado(self) -> video_directo.Suscripcion | None:
+        return self.derivacion.suscribir() if self._derivado else None
+
+    @property
+    def video(self) -> str:
+        return "h264" if self._derivado and not self.derivacion.apagada else "mjpeg"
 
     async def informe_teclado(self, modificadores: int, teclas: list[int]) -> None:
         self._listo()
@@ -455,7 +480,9 @@ class JetKVM(Dispositivo):
              "firmware": self.version, "url": self.url,
              "firmware_contrastado": self.version in FIRMWARE_CONTRASTADO,
              "ultimo_fotograma_s": round(edad, 1) if edad is not None else None,
-             "sonido": self.da_sonido, "jiggler": self.jiggler}
+             "sonido": self.da_sonido, "jiggler": self.jiggler, "video": self.video}
+        if self.derivacion.apagada:
+            e["aviso_video"] = self.derivacion.apagada
         if self.version or self.conectado:
             aviso = aviso_firmware(self.version)
             if aviso:

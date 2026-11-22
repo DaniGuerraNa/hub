@@ -356,7 +356,10 @@ def ajustes_de_sesion(saltar: bool) -> tuple[str, Path]:
     if deny:
         datos.setdefault("permissions", {})["deny"] = deny
     # Lo apunta Claude Code en los ajustes de usuario al aceptar su aviso la
-    # primera vez; sin él aquí, sin la fuente «user», lo pediría en cada arranque.
+    # primera vez, también con «user» fuera de `--setting-sources` (medido con
+    # la 2.1.322, C-0473: escribe en ese archivo, pero no lo lee); sin él aquí
+    # lo pediría en cada arranque. Basta en `--settings`: el aviso se salta con
+    # la clave en «user», «local», `--settings` o la política.
     if saltar and usuario.get("skipDangerousModePermissionPrompt") is True:
         datos["skipDangerousModePermissionPrompt"] = True
     ruta = config.hogar() / "claude-sesion.json"
@@ -392,9 +395,9 @@ def asegurar_sesion() -> bool:
     conv = conversaciones.actual()
     retomar = conv is not None
     if conv is None:
-        conv = conversaciones.nueva("", modelo)
+        conv = conversaciones.preparar("", modelo)
     conv.modelo = modelo
-    _crear(conv, cc, orden_claude(conv, retomar))
+    _crear(conv, cc, _preparar_orden(conv, retomar), apuntar=not retomar)
     return True
 
 
@@ -404,23 +407,37 @@ def cerrar() -> None:
         subprocess.run([*tmux(), "kill-session", "-t", f"={SESION}"], capture_output=True, timeout=10)
 
 
-def abrir(conv: conversaciones.Conversacion, retomar: bool) -> None:
+def abrir(conv: conversaciones.Conversacion, retomar: bool, apuntar: bool = False) -> None:
     """Cierra la que hubiera y abre ésta: una sola viva a la vez.
 
     Lo que puede impedir abrirla se mira ANTES de cerrar la abierta: si no, un
     Claude Code viejo dejaría a la persona sin ninguna. Lo mismo la orden, que
     lee los permisos del puente y escribe en PUENTE_HOME: un `preguntar.json`
     roto o una carpeta sin sitio no pueden cerrar la que había.
+
+    `apuntar`: es nueva (`conversaciones.preparar`) y entra en la lista al
+    abrirse, no antes (C-0472).
     """
     modelo = modelo_elegido()
     cc = comprobar_claude(modelo)
     conv.modelo = modelo
-    orden = orden_claude(conv, retomar)
+    orden = _preparar_orden(conv, retomar)
     cerrar()
-    _crear(conv, cc, orden)
+    _crear(conv, cc, orden, apuntar=apuntar)
 
 
-def _crear(conv: conversaciones.Conversacion, cc: dict, orden_dentro: str) -> None:
+def _preparar_orden(conv: conversaciones.Conversacion, retomar: bool) -> str:
+    """`orden_claude`, con un fallo del disco dicho en claro: escribe sus dos
+    archivos en PUENTE_HOME, y un «IsADirectoryError: …» de Python no le dice a
+    la persona qué pasa ni que la conversación abierta sigue."""
+    try:
+        return orden_claude(conv, retomar)
+    except OSError as e:
+        raise ValueError(f"no pude preparar la orden de Claude: no se puede escribir en {config.hogar()} "
+                         f"({e.strerror or e}). La conversación abierta sigue como estaba.") from e
+
+
+def _crear(conv: conversaciones.Conversacion, cc: dict, orden_dentro: str, apuntar: bool = False) -> None:
     for aviso in espacio.preparar():
         print(f"[terminal] {aviso}", flush=True)
     # Antes de abrirla: su servidor MCP arranca con lo que haya ahora en el disco.
@@ -442,14 +459,20 @@ def _crear(conv: conversaciones.Conversacion, cc: dict, orden_dentro: str) -> No
                            timeout=10)
         if r.returncode != 0:
             print(f"[terminal] tmux no aceptó {' '.join(opcion)}: {r.stderr.strip()}", flush=True)
+    if apuntar:
+        conversaciones.apuntar(conv)
     conversaciones.marcar_abierta(conv.id, conv.modelo, cc.get("version") or "", codigo=codigo)
 
 
 def reiniciar(nombre: str = "") -> conversaciones.Conversacion:
-    """Una conversación nueva (la abierta se cierra, y queda en la lista para retomarla)."""
-    comprobar_claude(modelo_elegido())  # antes de apuntarla en la lista
-    conv = conversaciones.nueva(nombre, modelo_elegido())
-    abrir(conv, retomar=False)
+    """Una conversación nueva (la abierta se cierra, y queda en la lista para retomarla).
+
+    Se apunta en la lista cuando ya está abierta (C-0472): si Claude Code es
+    viejo para el modelo, o la orden no se puede preparar, no queda ninguna
+    apuntada sin abrir.
+    """
+    conv = conversaciones.preparar(nombre, modelo_elegido())
+    abrir(conv, retomar=False, apuntar=True)
     return conv
 
 

@@ -33,6 +33,33 @@ def diferencia(a: Image.Image, b: Image.Image) -> float:
     return cambiados / (a.size[0] * a.size[1])
 
 
+def caja_cambiada(a: Image.Image, b: Image.Image) -> tuple[int, int, int, int] | None:
+    """La caja (x0, y0, x1, y1; los finales, exclusivos) de los píxeles cambiados; None si ninguno.
+
+    Por píxel y por el canal que más se mueve, no por cuadros ni por la media de
+    los tres como `diferencia`: aquí no se pregunta «¿se movió algo?» sino «¿qué
+    queda fuera?», y un «;» que pasa a «:» no llega a mover un cuadro de 64×32.
+    """
+    d = ImageChops.difference(a.convert("RGB"), b.convert("RGB"))
+    r, g, v = d.split()
+    return ImageChops.lighter(ImageChops.lighter(r, g), v).point(lambda x: 255 if x > UMBRAL_PIXEL else 0).getbbox()
+
+
+def filas_distintas(a: Image.Image, b: Image.Image) -> list[bool]:
+    """Para cada fila de píxeles, si tiene algún píxel cambiado (como `caja_cambiada`)."""
+    d = ImageChops.difference(a.convert("RGB"), b.convert("RGB"))
+    r, g, v = d.split()
+    marca = ImageChops.lighter(ImageChops.lighter(r, g), v).point(lambda x: 255 if x > UMBRAL_PIXEL else 0)
+    # En coma flotante, la media de una fila no redondea a 0 un solo píxel cambiado.
+    return [m > 0 for m in marca.convert("F").resize((1, a.height), Image.BOX).get_flattened_data()]
+
+
+def filas_cambiadas(a: Image.Image, b: Image.Image) -> tuple[int, int] | None:
+    """La primera y la última (exclusiva) fila de píxeles con algún píxel cambiado; None si ninguno."""
+    caja = caja_cambiada(a, b)
+    return None if caja is None else (caja[1], caja[3])
+
+
 # Cuadros para comparar por zonas. Una letra cambiada son ~80 píxeles: en la
 # pantalla entera es un 0,005 %, invisible en una media; en su cuadro de
 # 64×32 es más del 4 %. El cursor parpadeando (2×22 px) se queda en el 2 %.

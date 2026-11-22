@@ -7,7 +7,7 @@
 {# Dentro del espacio de trabajo, cada página se ve en el marco de la izquierda
    y la cabecera ya está arriba: la propia sobra. Antes de pintar, para que no parpadee. #}
 <script>if (window.top !== window.self) document.documentElement.classList.add('en-marco');</script>
-<link rel="stylesheet" href="/static/app.css?v=16">
+<link rel="stylesheet" href="/static/app.css?v=17">
 {% block cabeza %}{% endblock %}
 </head>
 <body data-pagina="{% block pagina %}{% endblock %}">
@@ -44,7 +44,7 @@
 <main class="{% block main_clase %}{% endblock %}">
 {% block contenido %}{% endblock %}
 </main>
-<script src="/static/app.js?v=15"></script>
+<script src="/static/app.js?v=16"></script>
 {% block guiones %}{% endblock %}
 </body>
 </html>

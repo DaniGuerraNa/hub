@@ -157,7 +157,10 @@ def puente(tmp_path, monkeypatch):
 def pantalla(texto: str, tope: float = 10) -> str:
     fin = time.time() + tope
     while True:
-        r = subprocess.run([*terminal.tmux(), "capture-pane", "-p", "-t", f"={terminal.SESION}:"],
+        # -J une los renglones que el ancho del panel partió: con la carpeta del
+        # código en una ruta más larga (otro clon, un worktree), la orden no cabe
+        # en 160 columnas y el id de la conversación salía cortado en dos.
+        r = subprocess.run([*terminal.tmux(), "capture-pane", "-p", "-J", "-t", f"={terminal.SESION}:"],
                            capture_output=True, text=True)
         if texto in r.stdout or time.time() > fin:
             return r.stdout
@@ -298,6 +301,57 @@ def test_fable_con_un_claude_code_viejo_no_se_arranca_a_ciegas_y_la_abierta_sigu
     # Con otro modelo, ese mismo Claude Code sí vale.
     c.post("/api/ajustes", json={"claude": {"modelo": "claude-opus-5-5"}}, headers=PERSONA)
     assert c.post("/api/conversaciones", json={"nombre": "Con Opus"}, headers=PERSONA).status_code == 200
+
+
+@pytest.mark.parametrize("que_falla", ["preguntar.json ilegible", "PUENTE_HOME sin poder escribir"])
+def test_si_no_se_puede_preparar_la_orden_una_nueva_no_queda_apuntada_y_la_abierta_sigue(puente, monkeypatch,
+                                                                                         que_falla):
+    # C-0472: `abrir` ya fallaba sin cerrar la de antes, pero «Nueva conversación»
+    # la había apuntado ya en conversaciones.json: quedaba una en la lista que
+    # nunca se abrió, y la persona no sabía cuál era la viva.
+    from puente_kvm import repertorio
+    c, tmp = puente
+    a = c.post("/api/conversaciones", json={"nombre": "La buena"}, headers=PERSONA).json()
+    if que_falla == "preguntar.json ilegible":
+        roto = tmp / "preguntar.json"
+        roto.write_text("{ esto no es json")
+        monkeypatch.setattr(repertorio, "PREGUNTAR", roto)
+        esperado = "permisos de Claude del puente"
+    else:
+        # Donde va el archivo de la sesión hay una carpeta: escribirlo falla
+        # igual que en un PUENTE_HOME sin permiso o sin sitio.
+        (config.hogar() / "claude-sesion.json").unlink()
+        (config.hogar() / "claude-sesion.json").mkdir()
+        esperado = "no pude preparar la orden de Claude"
+    antes = (config.hogar() / "conversaciones.json").read_text()
+    for ruta in ("/api/conversaciones", "/api/terminal/reiniciar"):
+        r = c.post(ruta, json={"nombre": "La que no se abre"}, headers=PERSONA)
+        assert r.status_code == 400, r.text
+        assert esperado in r.json()["detail"]
+    assert (config.hogar() / "conversaciones.json").read_text() == antes
+    estado = c.get("/api/conversaciones").json()
+    assert estado["actual"]["id"] == a["id"] and [x["id"] for x in estado["lista"]] == [a["id"]]
+    assert a["id"] in pantalla(a["id"])  # la que estaba abierta no se cerró
+    # Reabrir la buena tampoco la cierra ni cambia nada de la lista.
+    assert c.post(f"/api/conversaciones/{a['id']}/abrir", headers=PERSONA).status_code == 400
+    assert (config.hogar() / "conversaciones.json").read_text() == antes
+
+
+def test_si_no_se_puede_preparar_la_orden_al_entrar_en_la_terminal_no_queda_ninguna_apuntada(monkeypatch,
+                                                                                             tmp_path):
+    # La primera vez (sin sesión ni conversación), la terminal web abre una nueva
+    # al engancharse: con la orden imposible, nada nuevo en la lista.
+    from puente_kvm import repertorio
+    roto = tmp_path / "preguntar.json"
+    roto.write_text("{ esto no es json")
+    monkeypatch.setattr(repertorio, "PREGUNTAR", roto)
+    monkeypatch.delenv("PUENTE_TERMINAL_ORDEN")
+    monkeypatch.setattr(terminal, "saltar_permisos", lambda: False)
+    monkeypatch.setattr(terminal, "comprobar_claude", lambda modelo: {"ruta": None, "version": None})
+    with pytest.raises(ValueError, match="permisos de Claude del puente"):
+        terminal.asegurar_sesion()
+    assert not terminal.existe()
+    assert conversaciones.todas() == [] and conversaciones.actual() is None
 
 
 def test_dentro_de_la_sesion_el_path_es_el_del_puente_aunque_el_login_lo_reinicie(monkeypatch):

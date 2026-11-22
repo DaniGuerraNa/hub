@@ -37,6 +37,13 @@ instalación. Encendida, sale en el menú (Agentes) y su pantalla es
   botón ni la dirección.
 - **Lo que le falta**, mientras falte algo, con «Preparar con Claude».
 
+En la pantalla del puente, la imagen del Mac es **el vídeo del JetKVM tal
+cual**, decodificado por el navegador: va a los fotogramas que mande el
+aparato y el puntero responde casi como en su web. Con el Mac simulado, o en
+un navegador que no sabe decodificar ese vídeo, va por imágenes sueltas (unas
+12 por segundo usándolo). `/panel?medir=1` enseña cuántos fotogramas se pintan
+y el retraso del puntero, por si algo va lento.
+
 Dar el control a Claude, pararlo y aprobar un cambio se hace **en la pantalla
 del puente**, no desde el hub. El hub no le manda nada: sólo le pregunta cómo
 está, y de lo que contesta no enseña lo que se ha leído del Mac.

@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from ..reloj import a_local, instante, zona
 
-__all__ = ["a_local", "a_utc", "ahora_local", "dicho_el", "limite_utc", "zona"]
+__all__ = ["a_local", "a_utc", "ahora_local", "dicho_el", "limite_utc", "tiene_hora", "zona"]
 
 DIAS = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
 
@@ -56,6 +56,12 @@ def a_utc(local: str | None) -> str | None:
     if d.tzinfo is None:
         d = d.replace(tzinfo=ZoneInfo(zona()))
     return d.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+def tiene_hora(local: str | None) -> bool:
+    """Si lo que dijo lleva hora o es sólo un día, que `a_utc` pone a las 9:
+    el aviso de un plazo depende de eso (`memoria.cuando_avisar`)."""
+    return len((local or "").strip()) > 10
 
 
 def limite_utc(local: str | None, *, fin: bool = False) -> str | None:

@@ -22,7 +22,10 @@ por la interfaz gráfica. Las herramientas son las del servidor MCP
    vuelve solo a la persona al terminar una lectura o una escritura, y tras 10
    minutos sin que hagas nada.
 2. **Mira antes de teclear.** Lo que teclees va a la ventana que tenga el foco,
-   sea la que sea. `ver_pantalla` antes de cualquier `teclear`/`atajo` suelto.
+   sea la que sea. `ver_pantalla` antes de cualquier `teclear`/`atajo` suelto:
+   **antes de teclear, la pantalla completa**. Para comprobar algo que tiene
+   sitio conocido (una celda, un diálogo, la barra de estado), basta su zona:
+   `ver_pantalla(x=…, y=…, ancho=…, alto=…)` cuesta una fracción.
 3. **Nunca guardes ni ejecutes en el Mac.** Ni Cmd+S, ni F5, ni ejecutar un
    `ALTER`, ni pulsar «Ejecutar». Escribes en el editor; guardar es de la persona.
 4. **Lo que escribes de vuelta pasa por `proponer_cambio`** y lo aprueba la

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from .. import asuntos, conversacion, memoria, misdatos
 from ..piezas import Accion
-from ..tiempo import a_local, a_utc
+from ..tiempo import a_local, a_utc, tiene_hora
 
 
 class Anotar(Accion):
@@ -40,7 +40,8 @@ class Comprometer(Accion):
     resumen = "Apunta algo que vas a hacer (o que te pidieron) y, si le das hora, te lo recuerda."
     descripcion = ("Apunta un compromiso: algo que el dueño va a hacer (quien='yo') o que alguien le pidió. "
                    "`vence` y `recordar_en` en hora local, 'AAAA-MM-DDTHH:MM'. Si hay `recordar_en`, el "
-                   "secretario le avisará al teléfono a esa hora. Si es un asunto suyo que pidió anotar "
+                   "secretario le avisará al teléfono a esa hora; si sólo hay `vence`, 30 min antes (un día sin "
+                   "hora, esa mañana a las 9), y si ya pasó, sin aviso. Si es un asunto suyo que pidió anotar "
                    "(«anótalo en mis pendientes»), pasa su `clave` en `asunto`: queda como anotado.")
     parametros = {"type": "object", "properties": {
         "que": {"type": "string"}, "quien": {"type": "string"}, "para_quien": {"type": "string"},
@@ -52,7 +53,10 @@ class Comprometer(Accion):
 
     def ejecutar(self, con, params):
         asunto = (params.get("asunto") or "").strip()
-        vence, recordar_en = a_utc(params.get("vence")), a_utc(params.get("recordar_en") or params.get("vence"))
+        vence = a_utc(params.get("vence"))
+        # Sin hora de aviso, la del triaje (C-0066): el plazo como aviso llegaba tarde.
+        recordar_en = (a_utc(params.get("recordar_en"))
+                       or memoria.cuando_avisar(vence, con_hora=tiene_hora(params.get("vence"))))
         if asunto:
             # «Anótalo» (381), por la misma regla que su botón: ni lo que sólo
             # él contesta (un permiso perdía lo nuevo sin contestarse), ni lo
@@ -93,7 +97,8 @@ class Reprogramar(Accion):
     nombre = "Cambiar la fecha de un compromiso"
     resumen = "Mueve el plazo o la hora del aviso de un compromiso que ya existe."
     descripcion = ("Cambia la fecha de un compromiso que ya existe (por su id) y vuelve a dejar pendiente su "
-                   "aviso. `vence` y `recordar_en` en hora local, 'AAAA-MM-DDTHH:MM'.")
+                   "aviso. `vence` y `recordar_en` en hora local, 'AAAA-MM-DDTHH:MM'. Si sólo cambia `vence`, el "
+                   "aviso se mueve con él, a la misma antelación (30 min si no tenía).")
     parametros = {"type": "object", "properties": {
         "id": {"type": "integer"}, "vence": {"type": "string"}, "recordar_en": {"type": "string"}},
         "required": ["id"]}
@@ -104,10 +109,12 @@ class Reprogramar(Accion):
         if not (params.get("vence") or params.get("recordar_en")):
             raise ValueError("falta la fecha nueva")
         memoria.reprogramar(con, int(params["id"]), vence=a_utc(params.get("vence")),
-                            recordar_en=a_utc(params.get("recordar_en")))
+                            recordar_en=a_utc(params.get("recordar_en")), con_hora=tiene_hora(params.get("vence")))
         f = con.execute("SELECT recordar_en FROM compromiso WHERE id = ?", (int(params["id"]),)).fetchone()
         if not f:
             raise ValueError("ese compromiso no existe")
+        if not f["recordar_en"]:
+            return f"compromiso {params['id']}: sin aviso, el plazo ya pasó"
         return f"compromiso {params['id']}: aviso el {a_local(f['recordar_en'])} (hora local)"
 
 

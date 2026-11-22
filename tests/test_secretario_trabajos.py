@@ -156,31 +156,31 @@ LAS_12 = "2026-10-27T18:00:00+00:00"
 
 def test_la_antelacion_la_pone_el_trabajo_que_hay_detras():
     # Ir a una reunión: 10 min. Preparar una propuesta: 2 h.
-    assert triaje.cuando_avisar(LAS_12, True, 10, AHORA) == "2026-10-27T17:50:00+00:00"
-    assert triaje.cuando_avisar(LAS_12, True, 120, AHORA) == "2026-10-27T16:00:00+00:00"
+    assert memoria.cuando_avisar(LAS_12, True, 10, AHORA) == "2026-10-27T17:50:00+00:00"
+    assert memoria.cuando_avisar(LAS_12, True, 120, AHORA) == "2026-10-27T16:00:00+00:00"
 
 
 def test_sin_antelacion_del_modelo_es_media_hora_antes():
-    assert triaje.cuando_avisar(LAS_12, True, None, AHORA) == "2026-10-27T17:30:00+00:00"
-    assert triaje.cuando_avisar(LAS_12, True, "mucho", AHORA) == "2026-10-27T17:30:00+00:00"
+    assert memoria.cuando_avisar(LAS_12, True, None, AHORA) == "2026-10-27T17:30:00+00:00"
+    assert memoria.cuando_avisar(LAS_12, True, "mucho", AHORA) == "2026-10-27T17:30:00+00:00"
 
 
 def test_si_la_antelacion_ya_paso_pero_el_plazo_no_avisa_ya():
-    assert triaje.cuando_avisar(LAS_12, True, 240, AHORA) == AHORA
+    assert memoria.cuando_avisar(LAS_12, True, 240, AHORA) == AHORA
 
 
 def test_un_plazo_de_solo_un_dia_avisa_esa_mañana():
     nueve = "2026-10-28T15:00:00+00:00"   # lo que da a_utc para «2026-10-28»
-    assert triaje.cuando_avisar(nueve, False, 120, AHORA) == nueve
+    assert memoria.cuando_avisar(nueve, False, 120, AHORA) == nueve
 
 
 def test_la_antelacion_tiene_tope_por_los_dos_lados():
-    assert triaje.cuando_avisar(LAS_12, True, 0, AHORA) == "2026-10-27T17:55:00+00:00"
-    assert triaje.cuando_avisar("2026-11-10T18:00:00+00:00", True, 99999, AHORA) == "2026-11-09T18:00:00+00:00"
+    assert memoria.cuando_avisar(LAS_12, True, 0, AHORA) == "2026-10-27T17:55:00+00:00"
+    assert memoria.cuando_avisar("2026-11-10T18:00:00+00:00", True, 99999, AHORA) == "2026-11-09T18:00:00+00:00"
 
 
 def test_un_plazo_pasado_no_avisa():
-    assert triaje.cuando_avisar("2026-10-27T15:00:00+00:00", True, 30, AHORA) is None
+    assert memoria.cuando_avisar("2026-10-27T15:00:00+00:00", True, 30, AHORA) is None
 
 
 def test_el_triaje_guarda_la_antelacion_que_decide_el_modelo(con, monkeypatch):

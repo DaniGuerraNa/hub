@@ -485,6 +485,75 @@ def test_reprogramar_por_la_accion_cambia_la_hora(con, monkeypatch):
     assert r["hecho"] is True and "2026-10-27 09:00" in r["resultado"], r
 
 
+
+# ── la hora del aviso, la misma regla que el triaje (C-0066) ─────────────────
+# Apuntar o mover un compromiso por la acción avisaba a la hora del plazo,
+# justo lo que el triaje dejó de hacer el 27-oct porque llegaba tarde.
+
+def test_apuntar_un_plazo_con_hora_sin_aviso_avisa_media_hora_antes(con, monkeypatch):
+    monkeypatch.setenv("TZ", "America/Mexico_City")
+    r = herramientas.usar_accion(con, piezas.acciones()["comprometer"],
+                                 {"que": "Mandar la propuesta", "vence": "2099-10-23T12:00"})
+    assert r["hecho"] is True, r
+    c = memoria.compromisos(con)[0]
+    assert c["vence"] == "2099-10-23T18:00:00+00:00" and c["recordar_en"] == "2099-10-23T17:30:00+00:00"
+
+
+def test_apuntar_un_plazo_de_solo_un_dia_avisa_esa_mañana_a_las_9(con, monkeypatch):
+    monkeypatch.setenv("TZ", "America/Mexico_City")
+    herramientas.usar_accion(con, piezas.acciones()["comprometer"], {"que": "Pagar la luz", "vence": "2099-10-23"})
+    assert memoria.compromisos(con)[0]["recordar_en"] == "2099-10-23T15:00:00+00:00"
+
+
+def test_apuntar_con_aviso_explicito_respeta_su_hora_aunque_haya_plazo(con, monkeypatch):
+    monkeypatch.setenv("TZ", "America/Mexico_City")
+    herramientas.usar_accion(con, piezas.acciones()["comprometer"],
+                             {"que": "Mandar la propuesta", "vence": "2099-10-23T12:00", "recordar_en": "2099-10-22T20:00"})
+    assert memoria.compromisos(con)[0]["recordar_en"] == "2099-10-23T02:00:00+00:00"
+
+
+def test_apuntar_un_plazo_ya_pasado_sin_aviso_no_suena_de_golpe(con, monkeypatch):
+    monkeypatch.setenv("TZ", "America/Mexico_City")
+    r = herramientas.usar_accion(con, piezas.acciones()["comprometer"],
+                                 {"que": "Llamar al banco", "vence": "2020-01-02T12:00"})
+    assert r["hecho"] is True and "con aviso" not in r["resultado"], r
+    c = memoria.compromisos(con)[0]
+    assert c["vence"] and c["recordar_en"] is None
+
+
+def test_mover_solo_el_plazo_avisa_media_hora_antes_del_nuevo(con, monkeypatch):
+    monkeypatch.setenv("TZ", "America/Mexico_City")
+    i = memoria.comprometer(con, "Llamar a Ana")
+    r = herramientas.usar_accion(con, piezas.acciones()["reprogramar_compromiso"], {"id": i, "vence": "2099-10-23T12:00"})
+    assert r["hecho"] is True and "2099-10-23 11:30" in r["resultado"], r
+    assert memoria.compromisos(con)[0]["recordar_en"] == "2099-10-23T17:30:00+00:00"
+
+
+def test_mover_el_plazo_conserva_la_antelacion_que_tenia_el_aviso(con, monkeypatch):
+    """Lo mismo que hace el triaje al mover un pendiente (`_mover`, 333)."""
+    monkeypatch.setenv("TZ", "America/Mexico_City")
+    i = memoria.comprometer(con, "Preparar la demo", vence="2099-10-23T18:00:00+00:00",
+                            recordar_en="2099-10-23T16:00:00+00:00")
+    herramientas.usar_accion(con, piezas.acciones()["reprogramar_compromiso"], {"id": i, "vence": "2099-10-24T15:00"})
+    c = memoria.compromisos(con)[0]
+    assert c["vence"] == "2099-10-24T21:00:00+00:00" and c["recordar_en"] == "2099-10-24T19:00:00+00:00"
+
+
+def test_mover_a_un_dia_sin_hora_avisa_esa_mañana_a_las_9(con, monkeypatch):
+    monkeypatch.setenv("TZ", "America/Mexico_City")
+    i = memoria.comprometer(con, "Pagar la luz")
+    herramientas.usar_accion(con, piezas.acciones()["reprogramar_compromiso"], {"id": i, "vence": "2099-10-23"})
+    assert memoria.compromisos(con)[0]["recordar_en"] == "2099-10-23T15:00:00+00:00"
+
+
+def test_mover_un_plazo_al_pasado_no_deja_un_aviso_que_suene_de_golpe(con, monkeypatch):
+    monkeypatch.setenv("TZ", "America/Mexico_City")
+    i = memoria.comprometer(con, "Llamar al banco")
+    r = herramientas.usar_accion(con, piezas.acciones()["reprogramar_compromiso"], {"id": i, "vence": "2020-01-02T12:00"})
+    assert r["hecho"] is True and "sin aviso" in r["resultado"], r
+    assert memoria.compromisos(con)[0]["recordar_en"] is None
+
+
 def test_cada_lectura_contesta_sin_reventar_con_una_memoria_vacia(con):
     from hub import db
     h = db.conectar()

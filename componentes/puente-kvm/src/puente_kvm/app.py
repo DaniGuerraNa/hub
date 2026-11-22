@@ -23,6 +23,7 @@ import io
 import json
 import os
 import re
+import struct
 import subprocess
 import time
 import uuid
@@ -135,6 +136,7 @@ class Puente:
         self.dispositivo = dispositivo or crear_dispositivo(self.ajustes)
         self.control = Control()
         self.bitacora = Bitacora()
+        self.dispositivo.avisar = self.aviso_del_aparato
         self.motor = Motor(self.dispositivo, self.control, self.bitacora, self.ajustes["perfil"])
         self.error_conexion = ""
         self.tareas: set[asyncio.Task] = set()
@@ -184,6 +186,9 @@ class Puente:
             with contextlib.suppress(Exception):
                 await self.dispositivo.apagar_sonido()
 
+    def aviso_del_aparato(self, texto: str) -> None:
+        self.bitacora.apuntar("aviso", texto, quien="puente")
+
     def devolver_control(self, motivo: str) -> None:
         """El control dado vale para el aparato al que se dio, no para otro."""
         if self.control.modo == "claude":
@@ -213,6 +218,13 @@ class Puente:
             finally:
                 self._mirando_reinicio = False
         self.en_segundo_plano(mirar())
+
+
+def _modo_video(p: Puente) -> str:
+    try:
+        return p.dispositivo.video
+    except Exception:
+        return "mjpeg"
 
 
 def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = None) -> FastAPI:
@@ -258,6 +270,24 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             return False
         anfitrion = req.headers.get("host", "")
         return origen in (f"http://{anfitrion}", f"https://{anfitrion}")
+
+    def ws_de_esta_web(ws: WebSocket) -> bool:
+        """Las puertas de los tres WebSocket (el mando, la terminal y la pantalla): el
+        nombre y el origen de ESTA web, o nada. Un WebSocket no pasa por el
+        middleware de arriba, y el navegador sí deja abrir uno a otra web."""
+        anfitrion = ws.headers.get("host", "")
+        origen = ws.headers.get("origin", "")
+        return anfitrion in admitidos and origen in (f"http://{anfitrion}", f"https://{anfitrion}")
+
+    def imagen_de_esta_web(req: Request) -> None:
+        """La pantalla del Mac, por GET: la piden la propia página (un `<img>`, sin
+        `Origin` y con `Sec-Fetch-Site: same-origin`) y las herramientas de Claude
+        (sin cabeceras de navegador). Otra web que la incruste no la recibe: no
+        podría leerla, pero el puente se la seguiría haciendo."""
+        if req.headers.get("origin") and not mismo_origen(req):
+            raise HTTPException(403, "origen no admitido")
+        if req.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):
+            raise HTTPException(403, "origen no admitido")
 
     def de_la_persona(req: Request) -> None:
         if not mismo_origen(req):
@@ -364,6 +394,9 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                 # Con «Usar el Mac» abierto, aunque no se mueva nada: leyendo lo que
                 # hay, la persona también lo está usando.
                 "mando": p.mandos > 0 or time.time() < p.mando_hasta,
+                # Cómo llega la pantalla al navegador (C-0469): el vídeo del aparato
+                # tal cual («h264») o imágenes («mjpeg»: el simulador, o sin vídeo directo).
+                "video": _modo_video(p),
                 "claude": p.actividad.publico(), "error_conexion": p.error_conexion, "tarea": p.motor.tarea,
                 "reunion": p.grabadora.estado(),
                 "jiggler_texto": jiggler.describir(disp.get("jiggler")),
@@ -421,6 +454,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
 
     @app.get("/api/pantalla.jpg")
     async def api_pantalla(req: Request, region: str = "completa", ancho: int = 1280):
+        imagen_de_esta_web(req)
         try:
             return Response(await jpeg(puente(req), region, ancho), media_type="image/jpeg",
                             headers={"Cache-Control": "no-store"})
@@ -429,6 +463,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
 
     @app.get("/api/pantalla.png")
     async def api_pantalla_png(req: Request, region: str = "completa"):
+        imagen_de_esta_web(req)
         p = puente(req)
         try:
             img = await p.motor.captura()
@@ -444,6 +479,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
     async def api_directo(req: Request, ancho: int = 1280):
         """En la tarjeta del panel, 1280 px; en «Pantalla grande», hasta el ancho real
         del Mac: reducida y estirada después, la letra pequeña no se lee."""
+        imagen_de_esta_web(req)
         p = puente(req)
 
         async def fotogramas():
@@ -717,6 +753,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                 "lectura_verificada": not c.sin_verificar,
                 "tramos": [{"i": t.i, "desde": t.desde, "hasta": t.hasta, "estado": t.estado,
                             "antes": t.antes, "nuevas": t.nuevas, "captura_inestable": t.captura_inestable,
+                            "franja": t.franja,
                             "png": str(c.png(t.i)) if c.png(t.i).exists() else None}
                            for t in c.tramos]}
 
@@ -840,6 +877,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             with contextlib.suppress(Exception):
                 await p.dispositivo.cerrar()
             p.dispositivo = crear_dispositivo(nuevos)
+            p.dispositivo.avisar = p.aviso_del_aparato
             p.motor.dispositivo = p.dispositivo
             p.grabadora.dispositivo = p.dispositivo
             await p.conectar()
@@ -1136,9 +1174,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         ningún sitio (puede ser una contraseña del Mac): la bitácora sólo dice
         cuánto rato se usó.
         """
-        anfitrion = ws.headers.get("host", "")
-        origen = ws.headers.get("origin", "")
-        if anfitrion not in admitidos or origen not in (f"http://{anfitrion}", f"https://{anfitrion}"):
+        if not ws_de_esta_web(ws):
             await ws.close(code=4403)
             return
         await ws.accept()
@@ -1244,12 +1280,78 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                 p.bitacora.apuntar("mando", f"la persona usó el Mac desde la pantalla (~{minutos} min)",
                                    quien="persona")
 
+    @app.websocket("/ws/pantalla")
+    async def ws_pantalla(ws: WebSocket):
+        """La pantalla del Mac como el vídeo H.264 del aparato, sin recomprimirlo, para
+        pintarlo con WebCodecs (C-0469, decisión 449 del hub).
+
+        Primero un texto `{"codec": "avc1.PPCCLL", "ancho", "alto"}` (otra vez si
+        cambia el SPS); después, una trama por mensaje binario: byte 0 las marcas
+        (bit 0, clave), 8 bytes de marca de tiempo a 90 kHz (big-endian) y la trama
+        en Annex B. `{"no": "…"}` si no hay vídeo directo: la página vuelve a las
+        imágenes, y con `"otra_vez": true` (cambió el aparato) lo vuelve a pedir
+        después. Mirar no es usar el Mac: no cuenta en `comprobar.ocupado`.
+        """
+        if not ws_de_esta_web(ws):
+            await ws.close(code=4403)
+            return
+        await ws.accept()
+        p: Puente = ws.app.state.puente
+        aparato = p.dispositivo
+        suscripcion = aparato.video_codificado()
+        if suscripcion is None:
+            with contextlib.suppress(Exception):
+                await ws.send_json({"no": "este aparato no da el vídeo directo: la pantalla va por imágenes"})
+                await ws.close()
+            return
+
+        async def oir() -> None:
+            # Lo único que llega es el cierre: así se sabe en el acto, también al
+            # parar el puente, y nadie se queda esperando a la siguiente trama.
+            while (await ws.receive())["type"] != "websocket.disconnect":
+                pass
+
+        oido = asyncio.create_task(oir())
+        enviado = None
+        try:
+            while True:
+                siguiente = asyncio.ensure_future(suscripcion.siguiente())
+                hecho, _ = await asyncio.wait({siguiente, oido}, timeout=2, return_when=asyncio.FIRST_COMPLETED)
+                if oido in hecho:
+                    siguiente.cancel()
+                    break
+                if siguiente not in hecho:
+                    siguiente.cancel()
+                    if p.dispositivo is not aparato:
+                        # No es que no se pueda: la página vuelve a pedirlo, ya al nuevo.
+                        await ws.send_json({"no": "cambió el aparato", "otra_vez": True})
+                        break
+                    continue
+                trama = siguiente.result()
+                if trama is None:
+                    await ws.send_json({"no": suscripcion.motivo or "se acabó el vídeo directo"})
+                    break
+                if trama.sps != enviado:
+                    await ws.send_json({"codec": trama.codec, "ancho": getattr(aparato, "ancho", 0),
+                                        "alto": getattr(aparato, "alto", 0)})
+                    enviado = trama.sps
+                await ws.send_bytes(bytes([1 if trama.clave else 0]) + struct.pack(">Q", trama.marca) + trama.datos)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            suscripcion.cerrar()
+            oido.cancel()
+            # Recogida: tras el cierre, `receive` lanza, y una tarea con su excepción
+            # sin recoger acaba en el registro como «never retrieved».
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await oido
+            with contextlib.suppress(Exception):
+                await ws.close()
+
     @app.websocket("/ws/terminal")
     async def ws_terminal(ws: WebSocket):
         # 🔴 Una shell: el nombre y el origen de ESTA web, o nada.
-        anfitrion = ws.headers.get("host", "")
-        origen = ws.headers.get("origin", "")
-        if anfitrion not in admitidos or origen not in (f"http://{anfitrion}", f"https://{anfitrion}"):
+        if not ws_de_esta_web(ws):
             await ws.close(code=4403)
             return
         await ws.accept()

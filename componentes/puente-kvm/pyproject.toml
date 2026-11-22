@@ -5,7 +5,7 @@ description = "Puente entre Claude Code y un Mac remoto a través de un JetKVM"
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.14.5",
-    "aiortc>=1.16.0",
+    "aiortc>=1.16,<1.17",
     "av>=19.0.2",
     "fastapi>=0.162.2",
     "httpx>=0.28.1",

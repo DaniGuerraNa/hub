@@ -1078,6 +1078,9 @@ hora si es contestar algo, varias horas si hay que preparar un entregable. Si
 el plazo es sólo un día, esa mañana a las 9. Si la antelación ya pasó cuando lo
 lee, avisa en ese momento. Un plazo que ya pasó no avisa, y un compromiso sin
 plazo tampoco. Lo que le pides tú («recuérdame a las 10») avisa a esa hora exacta.
+Si le das un plazo sin decir cuándo avisarte («apunta que lo mando el viernes a
+las 12»), media hora antes; si es sólo un día, esa mañana a las 9. Y si le
+mueves el plazo, el aviso se mueve con él, con la misma antelación.
 
 **Aún no repite recordatorios.** Si le pides uno «cada lunes», te dice que no
 sabe repetirlo y apunta sólo el primero.

@@ -120,9 +120,22 @@ def actual() -> Conversacion | None:
 
 # ── cambios ─────────────────────────────────────────────────────────────────
 def nueva(nombre: str, modelo: str) -> Conversacion:
+    return apuntar(preparar(nombre, modelo))
+
+
+def preparar(nombre: str, modelo: str) -> Conversacion:
+    """Una conversación nueva, todavía sin apuntar en la lista.
+
+    Para la terminal, que la apunta sólo cuando ya la ha podido abrir (C-0472):
+    si la orden de Claude no se puede preparar, en la lista no queda una que
+    nunca se abrió.
+    """
     ahora = time.time()
-    c = Conversacion(id=str(uuid.uuid4()), nombre=limpiar_nombre(nombre), creada=ahora, usada=ahora,
-                     modelo=config.validar_modelo(modelo), espacio=str(config.espacio()))
+    return Conversacion(id=str(uuid.uuid4()), nombre=limpiar_nombre(nombre), creada=ahora, usada=ahora,
+                        modelo=config.validar_modelo(modelo), espacio=str(config.espacio()))
+
+
+def apuntar(c: Conversacion) -> Conversacion:
     with _cerrojo:
         datos = _leer()
         datos["conversaciones"].append(c)

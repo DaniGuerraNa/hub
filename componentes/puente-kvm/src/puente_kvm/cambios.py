@@ -42,7 +42,7 @@ from PIL import Image
 from . import hid, huellas, lecturas
 from .config import hogar
 from .control import SinControl
-from .motor import Motor, PantallaInesperada, diferencia_local
+from .motor import Motor, PantallaInesperada, caja_cambiada, diferencia_local
 
 # La pantalla «es la misma» que la primera página leída si ningún cuadro
 # cambia más que esto (ver `motor.diferencia_local`): una letra ya lo supera.
@@ -59,6 +59,12 @@ class Tramo:
     estado: str = "pendiente"  # pendiente, escrito, fallido
     # La captura de comprobación se tomó con la pantalla aún moviéndose.
     captura_inestable: bool = False
+    # Las filas de píxeles [desde, hasta) de esa captura que cambiaron respecto de
+    # justo antes de teclear el tramo, con dos filas de texto de margen: lo que
+    # `ver_tramo` le enseña a Claude. [] si no cambió nada visible o apenas (quizá
+    # sólo el cursor); None si no se sabe (un cambio de antes, o no se pudo
+    # capturar o comparar).
+    franja: list[int] | None = None
 
 
 @dataclass
@@ -224,17 +230,19 @@ async def escribir(motor: Motor, c: Cambio, quien: str) -> Cambio:
             "comprobacion", f"{c.id}: las páginas 1–{hasta} son las leídas ({time.monotonic() - t0:.1f} s)",
             cambio=c.id)
         total = len(c.original)
+        fila = alto_de_fila(lectura)
         for t in sorted(c.tramos, key=lambda t: t.desde, reverse=True):
             motor.progreso = f"tramo {t.i} de {len(c.tramos)}"
             ultima_actual = total + sum(len(o.nuevas) - (o.hasta - o.desde + 1)
                                         for o in c.tramos if o.desde > t.desde)
-            await _escribir_tramo(motor, t, ultima_actual)
+            antes = await _escribir_tramo(motor, t, ultima_actual, c.id)
             t.estado = "escrito"
             await motor.aparcar_raton()
             await motor.ir_a_linea(max(1, t.desde))
             img, quieta = await motor.esperar_estable()
             img.save(c.png(t.i))
             t.captura_inestable = not quieta
+            t.franja = _franja_sin_cortar(motor, c, antes, img, fila)
             motor.bitacora.apuntar("tramo", f"{c.id}: tramo {t.i} escrito (líneas {t.desde}–{t.hasta})"
                                    + ("; su captura salió con la pantalla moviéndose" if not quieta else ""),
                                    cambio=c.id)
@@ -256,7 +264,81 @@ async def escribir(motor: Motor, c: Cambio, quien: str) -> Cambio:
     return c
 
 
-async def _escribir_tramo(motor: Motor, t: Tramo, ultima_actual: int) -> None:
+# Sin una lectura que diga cuántas líneas caben en su página, un alto de fila
+# holgado: más margen sólo enseña más, nunca esconde.
+FILA_POR_OMISION = 40
+
+
+def alto_de_fila(lectura: lecturas.Lectura) -> int:
+    """Cuántos px mide una fila del editor, por la página de la lectura con más líneas."""
+    lineas = max((pg.ultima - pg.primera + 1 for pg in lectura.paginas
+                  if pg.primera is not None and pg.ultima is not None and pg.ultima >= pg.primera), default=0)
+    if not lineas or not lectura.paginas or not lectura.png(1).exists():
+        return FILA_POR_OMISION
+    with Image.open(lectura.png(1)) as img:
+        return max(1, -(-img.height // lineas))
+
+
+# Un cursor de texto mide 1–3 px de ancho (2 en el Mac simulado, que lo pinta).
+# Si parpadea entre la captura de antes de teclear y la de después, sale como
+# «lo que cambió»: una caja así de estrecha no se enseña sola, porque lo que se
+# escribió puede no estar en ella. 4 deja margen al borde suavizado del vídeo.
+ANCHO_CURSOR = 4
+
+
+def franja(antes: Image.Image | None, despues: Image.Image, fila: int) -> list[int] | None:
+    """Las filas de píxeles de `despues` que cambiaron respecto de `antes`, con dos filas de margen.
+
+    Es lo único que `ver_tramo` le enseña a Claude (C-0474): un reemplazo de una o
+    tres líneas cambia unas pocas filas, y mandarle el editor entero en cada tramo
+    era pagar la pantalla completa por ellas. Las dos filas de margen son para que
+    vea el número de línea y lo que tiene alrededor. Fuera de la franja, cada
+    píxel está igual (por debajo de `UMBRAL_PIXEL`) que justo antes de teclear.
+    Si no cambió nada o sólo una caja de la anchura de un cursor, [] (entera).
+    """
+    if antes is None or antes.size != despues.size:
+        return None
+    caja = caja_cambiada(antes, despues)
+    if caja is None or caja[2] - caja[0] <= ANCHO_CURSOR:
+        return []
+    return [max(0, caja[1] - 2 * fila), min(despues.height, caja[3] + 2 * fila)]
+
+
+def _franja_sin_cortar(motor: Motor, c: Cambio, antes: Image.Image | None, despues: Image.Image,
+                       fila: int) -> list[int] | None:
+    """`franja`, sin que un fallo al comparar corte la escritura: el tramo ya está tecleado
+    y sólo se pierde el recorte (se enseña entero)."""
+    try:
+        return franja(antes, despues, fila)
+    except Exception as e:
+        motor.bitacora.apuntar("error", f"{c.id}: no pude comparar el tramo con lo de antes de teclearlo "
+                               f"({type(e).__name__}: {e}); se enseña entero", cambio=c.id)
+        return None
+
+
+async def _vista(motor: Motor, cambio: str) -> Image.Image | None:
+    """La región del editor tal como está, para comparar con la del tramo ya escrito.
+
+    Una sola captura, sin esperar a que se quede quieta: aquí ya se está a punto
+    de teclear, y lo que se escribe, en qué orden y con qué esperas sigue igual que
+    sin ella. Si la pantalla aún se estaba pintando, la franja sale más grande, no
+    más pequeña. Si no se puede capturar, se escribe igual y el tramo se enseña
+    entero.
+    """
+    try:
+        return motor.recortar(await motor.captura())
+    except Exception as e:
+        motor.bitacora.apuntar("error", f"{cambio}: no pude capturar antes de teclear el tramo "
+                               f"({type(e).__name__}: {e}); se enseña entero", cambio=cambio)
+        return None
+
+
+async def _escribir_tramo(motor: Motor, t: Tramo, ultima_actual: int, cambio: str) -> Image.Image | None:
+    """Teclea el tramo y devuelve la vista de justo antes de teclear (ver `franja`).
+
+    La vista se captura ya colocado (tras «Ir a la línea» o ir al final) y antes
+    de la primera tecla que cambia algo: ni la selección con Mayús+↓ ha salido aún.
+    """
     p = motor.perfil
     fin = p["fin_de_linea"]
     cuantas = t.hasta - t.desde + 1
@@ -264,22 +346,26 @@ async def _escribir_tramo(motor: Motor, t: Tramo, ultima_actual: int) -> None:
     if cuantas == 0:  # sólo insertar
         if t.desde <= ultima_actual:
             await motor.ir_a_linea(t.desde)
+            antes = await _vista(motor, cambio)
             await motor.teclear(texto + "\n")
         else:
             await motor.atajo(p["fin_documento"])
+            antes = await _vista(motor, cambio)
             await motor.teclear("\n" + texto)
-        return
+        return antes
     if t.hasta < ultima_actual:
         await motor.ir_a_linea(t.desde)
+        antes = await _vista(motor, cambio)
         await motor.atajo("shift+down", veces=cuantas)
         if t.nuevas:
             await motor.teclear(texto + "\n")
         else:
             await motor.atajo("backspace")
-        return
+        return antes
     # El tramo llega a la última línea: Mayús+↓ ahí no baja, va al final.
     if t.nuevas:
         await motor.ir_a_linea(t.desde)
+        antes = await _vista(motor, cambio)
         if cuantas > 1:
             await motor.atajo("shift+down", veces=cuantas - 1)
         await motor.atajo("shift+" + fin)
@@ -288,10 +374,12 @@ async def _escribir_tramo(motor: Motor, t: Tramo, ultima_actual: int) -> None:
         if t.desde == 1:
             raise RuntimeError("el cambio borra el documento entero: eso no se hace tecleando")
         await motor.ir_a_linea(t.desde - 1)
+        antes = await _vista(motor, cambio)
         await motor.atajo(fin)
         await motor.atajo("shift+down", veces=cuantas)
         await motor.atajo("shift+" + fin)
         await motor.atajo("backspace")
+    return antes
 
 
 def comprobar_huella(c: Cambio, referencia: str) -> dict:

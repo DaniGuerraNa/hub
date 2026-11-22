@@ -12,8 +12,12 @@ from __future__ import annotations
 import abc
 import asyncio
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from PIL import Image
+
+if TYPE_CHECKING:
+    from .video import Suscripcion
 
 
 class AparatoNoDisponible(RuntimeError):
@@ -25,6 +29,9 @@ class Dispositivo(abc.ABC):
     #: Quién oye lo que suena en el Mac: recibe PCM de 16 bits a 16 kHz, mono, y
     #: la hora de llegada. Sólo mientras se graba una reunión (`reunion.py`).
     oido: Callable[[bytes, float], None] | None = None
+    #: Quién apunta en la bitácora lo que el aparato tiene que contar sin que
+    #: nadie le pregunte (que el vídeo directo se apagó, por ejemplo).
+    avisar: Callable[[str], None] | None = None
 
     @abc.abstractmethod
     async def conectar(self) -> None: ...
@@ -47,6 +54,18 @@ class Dispositivo(abc.ABC):
             return img
         alto = round(img.height * ancho / img.width)
         return await asyncio.to_thread(img.resize, (ancho, alto), Image.BILINEAR)
+
+    # ── el vídeo tal como llega, para pintarlo en el navegador (C-0469) ─────
+    def video_codificado(self) -> Suscripcion | None:
+        """Las tramas H.264 del aparato sin decodificar, empezando por una clave
+        (`video.Suscripcion`). None si este aparato no las da: el simulador pinta
+        imágenes, y su directo va por `/api/pantalla.mjpg`."""
+        return None
+
+    @property
+    def video(self) -> str:
+        """Cómo va el directo de la pantalla: «h264» (el vídeo del aparato) o «mjpeg»."""
+        return "mjpeg"
 
     @abc.abstractmethod
     async def informe_teclado(self, modificadores: int, teclas: list[int]) -> None:

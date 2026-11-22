@@ -71,3 +71,26 @@ def proponer_y_aprobar(c: TestClient, lectura: str, nuevo: list[str], descripcio
     cid = r.json()["id"]
     assert c.post(f"/api/cambios/{cid}/aprobar", headers=PERSONA).status_code == 200
     return cid
+
+
+def mcp_contra(c: TestClient, monkeypatch) -> None:
+    """Las herramientas de Claude (`mcp_servidor`) hablando con este puente de prueba, por su API."""
+    import io
+
+    from PIL import Image
+
+    from puente_kvm import mcp_servidor
+
+    def respuesta(r):
+        if r.status_code >= 400:
+            raise mcp_servidor.ErrorPuente(str(r.json().get("detail")))
+        return r
+
+    async def llamar(metodo, ruta, cuerpo=None, timeout=60):
+        return respuesta(c.request(metodo, ruta, json=cuerpo)).json()
+
+    async def bajar(ruta):
+        return Image.open(io.BytesIO(respuesta(c.get(ruta)).content)).convert("RGB")
+
+    monkeypatch.setattr(mcp_servidor, "_llamar", llamar)
+    monkeypatch.setattr(mcp_servidor, "_bajar", bajar)
