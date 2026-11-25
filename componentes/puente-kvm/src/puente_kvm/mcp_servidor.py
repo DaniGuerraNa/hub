@@ -382,10 +382,11 @@ async def sondear_teclado() -> dict:
     """Teclea el sondeo del teclado donde esté el foco: cada tecla que escribe en sus
     cuatro capas (sin nada, Mayús, Opción, Mayús+Opción), una línea por tecla y capa.
 
-    Sólo en una pestaña de script NUEVA Y VACÍA, con el Bloq Mayús quitado: mira la
-    pantalla antes. Necesita el control. Las teclas reservadas en Ajustes (Opción+X,
-    que en DBeaver ejecuta el script) no se pulsan: su línea sale vacía. Después, lee
-    la pestaña entera con leer_documento y pásale esa lectura a medir_teclado.
+    Cada línea lleva su número delante («007 xg x»). Sólo en un TEXTO PLANO NUEVO Y
+    VACÍO (TextEdit en «Texto normal», con las sustituciones apagadas), con el Bloq
+    Mayús quitado: mira la pantalla antes. Necesita el control. Las teclas reservadas
+    en Ajustes no se pulsan: su línea sale vacía. Después, lee el texto entero con
+    leer_documento, con la zona de esa ventana, y pásale esa lectura a medir_teclado.
     """
     return await _llamar("POST", "/api/teclado/sondear", {}, timeout=900)
 
@@ -407,7 +408,8 @@ async def probar_teclado(medida: str, motor: str = "SQL Server") -> dict:
     """Teclea, con el borrador `medida`, una consulta de sólo lectura que calcula la huella
     de lo que llega al editor, en filas de 8–10 caracteres. motor: "SQL Server" o "PostgreSQL".
 
-    En una pestaña de script vacía y con el control, que al acabar vuelve a la persona.
+    En una pestaña vacía del programa donde la persona escribe sus consultas (el que sea),
+    y con el control, que al acabar vuelve a ella.
     NO la ejecutes: la ejecuta ella. Después lee la rejilla de resultados (n, largo, huella) y pásasela a
     comprobar_teclado. Cada ronda sólo lleva lo que falta por verificar.
     """
@@ -438,15 +440,23 @@ async def _esperar_tarea(tope: float) -> None:
 
 
 @herramienta
-async def leer_documento(nombre: str) -> dict:
+async def leer_documento(nombre: str, x: int = 0, y: int = 0, ancho: int = 0, alto: int = 0) -> dict:
     """Recorre el documento abierto en el editor del Mac, de principio a fin, página a página.
 
     Captura cada página (sin transcribirla) y devuelve la lectura. Después, ver_pagina
     de la primera y, en cada respuesta, transcribir_pagina de la que acabas de ver junto
     con ver_pagina de la siguiente. Las páginas se pueden repartir entre subagentes:
     cada una es independiente.
+
+    Sin zona, cada página es la región del editor de Ajustes. Para otra ventana (el texto
+    plano del sondeo del teclado), su zona en píxeles REALES del Mac (x, y, ancho, alto,
+    las cuatro): sólo el texto, sin la barra de menús ni otras ventanas, que se mueven y
+    no dejan ver dónde acaba.
     """
-    r = await _llamar("POST", "/api/lecturas", {"nombre": nombre})
+    cuerpo = {"nombre": nombre}
+    if x or y or ancho or alto:
+        cuerpo.update(x=x, y=y, ancho=ancho, alto=alto)
+    r = await _llamar("POST", "/api/lecturas", cuerpo)
     await _esperar_tarea(1800)
     res = await _llamar("GET", f"/api/lecturas/{r['id']}")
     res.pop("paginas_detalle", None)

@@ -45,6 +45,17 @@ def lineas_del_sondeo(fuente, reservadas=("alt+x",)) -> list[str]:
     return sim.editor.lineas
 
 
+def cambiar(lineas: list[str], cambios: dict[str, str]) -> list[str]:
+    """Cambia el contenido de las líneas del sondeo, sin tocar su número: comparar
+    la línea entera ya no casaría con ninguna, y el test dejaría de probar nada."""
+    salida = []
+    for l in lineas:
+        numero, dentro = l[:4], l[4:]
+        salida.append(numero + cambios.get(dentro, dentro))
+    assert salida != lineas, "ningún cambio casó con una línea"
+    return salida
+
+
 def una_ronda(b: dict, sim: Simulador, estropear: int | None = None) -> dict:
     """Probar, «ejecutar» como SQL Server lo tecleado y comprobar, sin la API."""
     consulta, ronda = teclados.consulta(b, reservadas=["alt+x"])
@@ -120,8 +131,9 @@ def test_el_sondeo_da_una_linea_por_tecla_y_capa_y_no_pulsa_las_reservadas():
     lineas = lineas_del_sondeo("mac-es")
     assert len(lineas) == teclados.LINEAS_SONDEO == 4 * len(teclados.TECLAS_SONDEO)
     alt_x = 2 * len(teclados.TECLAS_SONDEO) + teclados.TECLAS_SONDEO.index(hid.TECLAS["x"])
-    assert lineas[alt_x] == "x x"  # sin pulsar: vacía, y no se usa nunca
-    assert all(l[0] == "x" and l[-1] == "x" for l in lineas)
+    assert lineas[alt_x] == f"{alt_x + 1:03d} x x"  # sin pulsar: vacía, y no se usa nunca
+    # Con su número delante: en un texto plano no hay margen que lo diga (C-0482).
+    assert all(l[:4] == f"{i:03d} " and l[4] == "x" and l[-1] == "x" for i, l in enumerate(lineas, 1))
 
 
 def test_el_sondeo_distingue_la_tecla_normal_la_muerta_y_la_vacia():
@@ -147,9 +159,35 @@ def test_un_sondeo_con_lineas_de_menos_se_rechaza():
     lineas = lineas_del_sondeo("mac-es")
     with pytest.raises(ValueError, match="faltan"):
         teclados.construir(lineas[:-1], "corto")
-    del lineas[5]  # una línea perdida corre las demás de sitio: la «f» ya no está donde va
-    with pytest.raises(ValueError, match="a-z"):
-        teclados.construir(lineas + ["x x"], "corrido")
+    del lineas[5]  # una línea perdida corre las demás de sitio: su número lo delata
+    with pytest.raises(ValueError, match="línea 6 lleva el número 007"):
+        teclados.construir(lineas + ["193 x x"], "corrido")
+
+
+def test_el_sondeo_sin_numero_de_antes_sigue_valiendo_pero_no_mezclado():
+    # Las lecturas de antes de C-0482 no llevan número: se miden igual.
+    lineas = [l[4:] for l in lineas_del_sondeo("mac-es")]
+    assert teclados.construir(lineas, "de antes")["crudas"] == \
+        teclados.construir(lineas_del_sondeo("mac-es"), "de ahora")["crudas"]
+    mezcladas = lineas_del_sondeo("mac-es")
+    mezcladas[40] = mezcladas[40][4:]
+    with pytest.raises(ValueError, match="no lleva su número"):
+        teclados.construir(mezcladas, "mezclado")
+
+
+def test_un_teclado_cuya_fila_de_numeros_no_da_cifras_lo_dice():
+    # En la francesa del Mac, la fila de números sin Mayús da «&é"'(§è!çà».
+    francesa = str.maketrans("1234567890", "&é\"'(§è!çà")
+    lineas = [l[:3].translate(francesa) + l[3:] for l in lineas_del_sondeo("mac-es")]
+    with pytest.raises(ValueError, match="no da cifras"):
+        teclados.construir(lineas, "francés")
+
+
+def test_un_sondeo_con_comillas_tipograficas_se_rechaza():
+    # TextEdit con «Comillas inteligentes»: «'» llega como «’» y «"» como «”».
+    lineas = [l.replace("'", "’").replace('"', "”") for l in lineas_del_sondeo("mac-us", reservadas=())]
+    with pytest.raises(ValueError, match="comillas inteligentes"):
+        teclados.construir(lineas, "con sustituciones")
 
 
 def test_los_compuestos_se_deducen_pero_no_se_teclean_hasta_verificarlos():
@@ -202,7 +240,7 @@ def test_un_dudoso_a_la_vista_se_resuelve_con_la_huella_de_su_fila():
     # En «Español - ISO», Mayús+Opción+[ da «ˆ» (U+02C6) y la iso sin nada «º»;
     # quien lee las confunde con «^» y «°». La huella lo corrige sin preguntar.
     lineas = lineas_del_sondeo("mac-es")
-    lineas = ["x^ x" if l == "xˆ x" else "x° x" if l == "xº x" else l for l in lineas]
+    lineas = cambiar(lineas, {"xˆ x": "x^ x", "xº x": "x° x"})
     b = teclados.construir(lineas, "Español mal leído")
     borrador = teclados.distribucion_del_borrador(b)
     assert [str(p) for p in hid.caracter("°", borrador)] == ["iso"]  # mal: la iso da «º»
@@ -325,7 +363,7 @@ def test_una_tecla_muerta_leida_como_normal_no_queda_verificada_ni_escribe_otra_
     # «x´x» leído «x´ x»: el borrador cree que la tecla da «´» sola. Seguida de «<» o
     # de la comilla de cierre, la muerta escribe «´<» igual que una normal y su fila
     # coincidía; después, «'´e'» salía «'é'». Con su letra detrás, la huella la caza.
-    lineas = ["x´ x" if l == "x´x" else l for l in lineas_del_sondeo("mac-es")]
+    lineas = cambiar(lineas_del_sondeo("mac-es"), {"x´x": "x´ x"})
     b = teclados.guardar(teclados.construir(lineas, "mal leída"))
     muerta = [(0, "'")]
     assert [list(p) for p in teclados.distribucion_del_borrador(b).tabla["´"]] == [list(p) for p in muerta]
@@ -395,3 +433,29 @@ def test_si_probar_falla_a_mitad_el_control_vuelve_y_la_ronda_no_se_apunta(monke
         assert c.get("/api/estado").json()["control"]["modo"] == "libre"
     guardada = teclados.cargar(b["id"])
     assert guardada["ronda"] is None and guardada["rondas"] == 0
+
+
+def test_leer_documento_con_zona_captura_esa_ventana_y_una_zona_fuera_de_pantalla_se_rechaza(monkeypatch):
+    # El sondeo se lee en la ventana de un texto plano, no en la región del
+    # editor de Ajustes (C-0482).
+    from PIL import Image
+
+    from puente_kvm import lecturas
+
+    with puente_simulado(lineas=40) as (c, _):
+        mcp_contra(c, monkeypatch)
+        c.post("/api/control", json={"accion": "dar"}, headers=PERSONA)
+        fuera = c.post("/api/lecturas", json={"nombre": "x", "x": 1800, "y": 0, "ancho": 400, "alto": 300})
+        assert fuera.status_code == 400 and "se sale" in fuera.text
+        a_medias = c.post("/api/lecturas", json={"nombre": "x", "x": 10, "y": 10, "ancho": 400})
+        assert a_medias.status_code == 400
+        r = asyncio.run(mcp_servidor.leer_documento("sondeo del teclado", x=40, y=60, ancho=700, alto=500))
+        l = lecturas.cargar(r["id"])
+        assert l.zona == [40, 60, 700, 500] and l.paginas
+        assert Image.open(l.png(1)).size == (700, 500)
+        # Sin zona, como siempre: la región del editor. (Al capturar, el control volvió.)
+        c.post("/api/control", json={"accion": "dar"}, headers=PERSONA)
+        r = asyncio.run(mcp_servidor.leer_documento("procedimiento"))
+        x, y, w, h = config.leer_ajustes()["perfil"]["region_editor"]
+        assert lecturas.cargar(r["id"]).zona is None
+        assert Image.open(lecturas.cargar(r["id"]).png(1)).size == (w, h)

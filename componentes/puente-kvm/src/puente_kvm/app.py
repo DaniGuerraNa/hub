@@ -678,7 +678,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         ancho = getattr(p.dispositivo, "ancho", 1920) or 1920
         alto = getattr(p.dispositivo, "alto", 1080) or 1080
         if w < 50 or h < 50:
-            raise ValueError("la zona es demasiado pequeña para recorrerla (50×50 como poco)")
+            raise ValueError("la zona es demasiado pequeña (50×50 como poco)")
         if x < 0 or y < 0 or x + w > ancho or y + h > alto:
             raise ValueError(f"la zona se sale de la pantalla, que mide {ancho}×{alto}")
         return x, y, w, h
@@ -720,6 +720,11 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         p, datos = puente(req), await cuerpo(req)
         nombre = str(datos.get("nombre") or "documento").strip()[:80]
         try:
+            # Sin zona, la región del editor del perfil. Con ella, otra ventana
+            # (el texto plano donde se sondea el teclado, C-0482): las cuatro o
+            # ninguna, para no leer media pantalla sin querer.
+            dadas = [k for k in ("x", "y", "ancho", "alto") if k in datos]
+            zona = _zona(p, datos) if dadas else None
             p.control.comprobar()
         except Exception as e:
             raise fallo(e) from e
@@ -730,7 +735,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         async def correr():
             try:
                 async with p.motor.ocupar(f"leer «{nombre}»"):
-                    await lecturas.capturar(p.motor, l)
+                    await lecturas.capturar(p.motor, l, zona=zona)
                 # Transcribir no toca el Mac: no hay por qué seguir con el teclado tomado.
                 p.control.devolver("terminó de capturar: el Mac vuelve a ti")
             except Ocupado as e:

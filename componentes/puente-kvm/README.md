@@ -143,9 +143,10 @@ En macOS, la fuente de entrada activa mientras Claude teclea tiene que ser la
 que dice Ajustes → Teclado del puente: **«U.S.»** o **«Español - ISO»** (con el
 teclado del JetKVM como ANSI). Si no coinciden, `{ } [ ] | \ ~ @` salen
 distintos. Si el Mac usa otra (la latinoamericana, por ejemplo), pídele a
-Claude que **calibre el teclado** (skill `calibrar-teclado`): pulsa cada tecla
-en una pestaña de script vacía, lee lo que sale y lo verifica con huellas de la
-base; tú ejecutas su consulta de prueba y pulsas «Usar» en Ajustes. La medida
+Claude que **calibre el teclado** (skill `calibrar-teclado`), en dos partes:
+pulsa cada tecla en un TextEdit vacío y lee lo que sale; después teclea una
+consulta de prueba en el programa donde escribes tus consultas (el que sea), tú
+la ejecutas y con sus huellas se verifica. Al final pulsas «Usar» en Ajustes. La medida
 queda en los datos del puente, no en el repositorio. En Ajustes también están
 las **teclas que el puente nunca pulsa** al teclear: de fábrica, Opción+X, que
 en DBeaver para Mac ejecuta el script.

@@ -36,7 +36,8 @@ rellenándolo.
 5. **Atajos.** Teclea 60 líneas numeradas de prueba en esa pestaña y comprueba:
    Cmd+↑ / Cmd+↓, **Av Pág** (¿avanza una página exacta o deja líneas de
    solape?), **Ir a la línea** (¿qué atajo, y deja el cursor en la columna 1?),
-   **fin de línea**. Corrige los atajos en Ajustes si no son los de DBeaver.
+   **fin de línea**. Los de fábrica son los de DBeaver: si escribe sus
+   consultas en otro programa, corrígelos en Ajustes con lo que midas aquí.
 6. **Lectura.** `leer_documento` de esa pestaña de prueba y transcríbela: debe
    salir idéntica a lo tecleado. Apunta cuántas líneas caben por página.
 7. **Huella.** En un objeto real pequeño: compara la huella de la base con la

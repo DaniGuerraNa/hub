@@ -124,7 +124,28 @@ En la pantalla del puente, bajo la imagen del Mac:
   texto» (y Claude al teclear) escribe tecla a tecla, y el Mac convierte cada
   tecla según su fuente de entrada. Si no es la misma, los acentos salen como
   símbolos raros (con «U.S.» en un Mac español, «á» sale «€a»). Un Mac en
-  español de España suele tener «Español - ISO»; la latinoamericana aún no está.
+  español de España suele tener «Español - ISO».
+- **Calibrar el teclado**, para una fuente que el puente no trae (la
+  latinoamericana, por ejemplo). No hay botón: se le pide al Claude del puente
+  («calibra el teclado») y lo hace en dos partes, sin pedir ningún programa en
+  concreto:
+  1. **Medir, en un TextEdit vacío** en texto normal, con las comillas
+     inteligentes y la corrección automática apagadas. Pulsa cada tecla en sus
+     cuatro capas (sin nada, Mayús, Opción, Mayús+Opción), una línea numerada
+     por tecla, y lee lo que sale.
+  2. **Comprobar, en el programa donde escribes tus consultas** (el que uses,
+     con SQL Server o PostgreSQL): teclea una consulta que no lee ninguna tabla
+     ni cambia nada, la ejecutas tú, y con las huellas que devuelve se verifica
+     cada carácter. Así se comprueba también que ese programa no cambia lo
+     tecleado (cierre automático de paréntesis, atajos con Opción).
+
+  Al final, en **Ajustes → Teclado** sale «Medida: … verificada» con el botón
+  **«Usar»**: lo pulsas tú. ¿Por qué no basta con el texto? El puente no abre
+  archivos del Mac, sólo ve su pantalla, y a la vista se confunden `´` `'` `’`
+  o `^` `ˆ`, justo lo que rompe un SQL; la huella la calcula el Mac con lo que
+  de verdad llegó. En Ajustes están también las **teclas que el puente nunca
+  pulsa** al teclear (de fábrica Opción+X, que en DBeaver ejecuta el script;
+  en VS Code conviene añadir `alt+z, shift+alt+a, shift+alt+f, shift+alt+i`).
 
 ## Grabar una reunión del Mac
 

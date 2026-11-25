@@ -15,6 +15,29 @@ cruzar.
 
 ## Sin publicar
 
+## 0.13.0 — 2026-11-25
+
+La calibración del teclado del Puente KVM ya no pide DBeaver ni ningún
+programa concreto: se mide en un TextEdit y se comprueba en el programa donde
+escribes tus consultas.
+
+### Qué tienes que hacer
+
+- Actualiza. Si usas el Puente KVM, en su pantalla, «Reabrir la conversación
+  de Claude» para que lea sus instrucciones nuevas.
+
+### Qué cambia en lo que ya usabas
+
+- **Puente KVM: calibrar el teclado va en dos partes.** Primero, en un
+  **TextEdit vacío** (texto normal, comillas inteligentes y corrección
+  automática apagadas), su Claude pulsa cada tecla, una línea numerada por
+  tecla, y lee lo que sale. Después, en el programa donde **escribes tus
+  consultas** —el que uses, con SQL Server o PostgreSQL—, teclea una consulta
+  que no lee ninguna tabla, la ejecutas tú y con sus huellas se verifica. Si el
+  TextEdit tenía las comillas inteligentes encendidas o tu teclado no da
+  cifras en la fila de números, te lo dice en vez de medir mal. Al final
+  sigues pulsando «Usar» en Ajustes → Teclado.
+
 ## 0.12.0 — 2026-11-25
 
 El Puente KVM teclea bien en un Mac con cualquier teclado: si el Mac usa uno

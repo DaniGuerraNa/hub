@@ -61,6 +61,9 @@ class Lectura:
     huella_referencia: str = ""
     variante: dict | None = None
     verificada: bool = False
+    # La parte de la pantalla que se capturó (x, y, ancho, alto), cuando no es
+    # la región del editor del perfil: la ventana de un texto plano (C-0482).
+    zona: list[int] | None = None
 
     # ── disco ───────────────────────────────────────────────────────────────
     @property
@@ -124,9 +127,15 @@ def nueva(nombre: str) -> Lectura:
 
 
 # ── capturar ────────────────────────────────────────────────────────────────
-async def capturar(motor: Motor, lectura: Lectura) -> Lectura:
-    """Recorre el documento con Av Pág desde el principio y guarda cada página."""
+async def capturar(motor: Motor, lectura: Lectura,
+                   zona: tuple[int, int, int, int] | None = None) -> Lectura:
+    """Recorre el documento con Av Pág desde el principio y guarda cada página.
+
+    Sin `zona`, cada página es la región del editor del perfil; con ella, esa
+    parte de la pantalla (la ventana de otro programa).
+    """
     p = motor.perfil
+    lectura.zona = list(zona) if zona else None
     try:
         motor.bitacora.apuntar("lectura", f"empiezo a capturar «{lectura.nombre}»", lectura=lectura.id)
         await motor.aparcar_raton()
@@ -138,7 +147,7 @@ async def capturar(motor: Motor, lectura: Lectura) -> Lectura:
             await motor.atajo(p["pagina_abajo"], apuntar=False)
 
         # Una de más: con MAX_PAGINAS justas, la siguiente dice si era el final.
-        async for img, quieta in motor.paginas(avanzar, tope=MAX_PAGINAS + 1):
+        async for img, quieta in motor.paginas(avanzar, zona=zona, tope=MAX_PAGINAS + 1):
             n = len(lectura.paginas) + 1
             if n > MAX_PAGINAS:
                 raise RuntimeError(f"más de {MAX_PAGINAS} páginas: ¿Av Pág no avanza en este programa?")

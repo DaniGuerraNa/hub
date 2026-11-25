@@ -29,7 +29,7 @@
     </select>
     <p class="sub" style="margin:6px 0 0">La fuente de entrada que tiene el Mac mientras Claude teclea (se cambia allí con Ctrl+Espacio): si no coinciden, los acentos y <code>{ } [ ] | \ ~ @</code> salen distintos. Si el Mac está en español de España, «Español - ISO». También se cambia junto a «Pegar texto» mientras usas el Mac.
       Con «Español - ISO», el Mac tiene que tener el teclado como <b>ANSI</b> (si el asistente de teclado pregunta); con ISO, <code>&lt; &gt;</code> salen como <code>º ª</code>.
-      Si el Mac usa otra (la latinoamericana, por ejemplo), pídele a Claude que <b>calibre el teclado</b>: lo mide en ese Mac y lo comprueba con huellas de la base.</p>
+      Si el Mac usa otra (la latinoamericana, por ejemplo), pídele a Claude que <b>calibre el teclado</b>: lo mide en un TextEdit vacío y lo comprueba con una consulta que ejecutas tú en tu programa de consultas.</p>
     {% if medidas %}
     <ul id="teclados-medidos" style="list-style:none;padding:0;margin:8px 0 0">
       {% for m in medidas %}<li class="fila" style="margin-bottom:6px">

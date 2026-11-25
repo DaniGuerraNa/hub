@@ -3,15 +3,24 @@
 El puente teclea códigos de tecla, y el Mac los convierte en caracteres con
 su fuente de entrada. Para las que el puente no trae de serie (la
 latinoamericana de Apple, de la que no hay copia fiable), no se adivina: se
-mide en ese Mac, sin tocar su configuración, en una pestaña de script vacía.
+mide en ese Mac, sin tocar su configuración. En dos partes, y ninguna pide un
+programa concreto (C-0482):
+
+**Medir, en un texto plano** (TextEdit, por ejemplo):
 
 1. **Sondear** (`sondeo`): el puente pulsa cada tecla que escribe, en cuatro
-   capas (nada, Mayús, Opción, Mayús+Opción), una línea por tecla y capa.
-2. **Leer**: Claude lee esas líneas de la pantalla (`leer_documento`).
+   capas (nada, Mayús, Opción, Mayús+Opción), una línea por tecla y capa, con
+   su número delante: un texto plano no numera las líneas.
+2. **Leer**: Claude lee esas líneas de la pantalla (`leer_documento`, con la
+   zona de esa ventana).
 3. **Medir** (`construir`): de lo leído sale un borrador de tabla.
+
+**Comprobar, en el programa donde la persona escribe sus consultas:**
+
 4. **Probar** (`consulta`): el puente teclea con el borrador una consulta que
    calcula, fila a fila, la huella de lo que de verdad llegó al editor. La
-   ejecuta la persona; Claude nunca ejecuta.
+   ejecuta la persona; Claude nunca ejecuta. Así se comprueba también que ese
+   programa no cambia lo tecleado.
 5. **Comprobar** (`comprobar`): se comparan esas huellas con las que calcula
    el puente (`huellas.py`). Sólo lo que coincide queda verificado.
 
@@ -53,6 +62,15 @@ MARCO = hid.Pulsacion(0, hid.TECLAS["x"])
 ESPACIO = hid.Pulsacion(0, hid.TECLAS["space"])
 ENTER = hid.Pulsacion(0, hid.TECLAS["enter"])
 
+# El número que lleva delante cada línea del sondeo (C-0482): tres cifras y un
+# espacio, `007 xg x`. Un texto plano no tiene margen numerado, y sin número
+# dos páginas que se solapan no se pueden casar (hay muchas líneas `x x`
+# iguales). Las cifras van por código de tecla, sin modificador: en U.S.,
+# Español y la latinoamericana dan cifras; donde no (la francesa del Mac),
+# `construir` lo dice en vez de medir corrido.
+CIFRAS = {str(d): hid.Pulsacion(0, hid.TECLAS[str(d)]) for d in range(10)}
+PREFIJO = re.compile(r"(\d{3}) (.*)\Z", re.S)
+
 ID_MEDIDA = re.compile(r"medida-\d{8}-\d{4}(-\d{1,3})?")
 MESES = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
 
@@ -93,7 +111,7 @@ MOTORES = {
     },
 }
 
-# Lo que el cliente de BD (DBeaver) toma por variables o parámetros: `${x}`,
+# Lo que un cliente de BD (DBeaver, por ejemplo) toma por variables o parámetros: `${x}`,
 # `:x` y `?`. Dentro de un literal no deberían contar, pero con un borrador sin
 # verificar la comilla puede salir mal, y entonces lo de después ya no está
 # dentro de un literal: el cliente pediría valores en vez de ejecutar. Por eso
@@ -109,30 +127,30 @@ def carpeta() -> Path:
 # ── sondear ─────────────────────────────────────────────────────────────────
 def sondeo(reservadas=()) -> list[hid.Pulsacion]:
     """Las pulsaciones del sondeo: una línea por tecla y capa, en el orden de
-    `CAPAS` y `TECLAS_SONDEO`, sin número (no se sabe aún cómo salen los dígitos).
+    `CAPAS` y `TECLAS_SONDEO`, cada una con su número delante (`PREFIJO`).
 
-    Cada línea es `x`, la tecla, un espacio y `x`. Con eso se distinguen las
-    tres cosas que puede hacer una tecla sin adivinar:
+    Cada línea es su número, un espacio, `x`, la tecla, un espacio y `x`. Con
+    eso se distinguen las tres cosas que puede hacer una tecla sin adivinar:
     - **normal**: deja su carácter y el espacio → `xK x`;
     - **muerta**: se come el espacio y deja su acento suelto → `x´x`;
     - **vacía** (no escribe nada) → `x x`.
     Las `x` de los bordes protegen lo que hay dentro: un espacio al principio o
     al final de una línea no se ve en una captura, y la lectura los quita.
 
-    Una pulsación reservada (Opción+X ejecuta el script en DBeaver) no se pulsa:
+    Una pulsación reservada (en DBeaver, Opción+X ejecuta el script) no se pulsa:
     su línea sale vacía y esa tecla no se usa nunca.
     """
     prohibidas = hid.pulsaciones_reservadas(reservadas)
     salida: list[hid.Pulsacion] = []
-    for capa in CAPAS:
-        for tecla in TECLAS_SONDEO:
-            if salida:
-                salida.append(ENTER)
-            salida.append(MARCO)
-            p = hid.Pulsacion(capa, tecla)
-            if p not in prohibidas:
-                salida.append(p)
-            salida += [ESPACIO, MARCO]
+    for n, (capa, tecla) in enumerate(itertools.product(CAPAS, TECLAS_SONDEO), start=1):
+        if salida:
+            salida.append(ENTER)
+        salida += [CIFRAS[c] for c in f"{n:03d}"]
+        salida += [ESPACIO, MARCO]
+        p = hid.Pulsacion(capa, tecla)
+        if p not in prohibidas:
+            salida.append(p)
+        salida += [ESPACIO, MARCO]
     return salida
 
 
@@ -146,12 +164,52 @@ def _donde(i: int) -> str:
 
 
 # ── medir ───────────────────────────────────────────────────────────────────
+def _sin_numero(lineas: list[str]) -> list[str]:
+    """Quita el número de delante de cada línea, comprobando que van 001, 002…
+
+    Un número fuera de su sitio es una línea que falta o sobra en la
+    transcripción: todas las de después quedarían de otra tecla. Sin número en
+    la primera, es el formato de antes (C-0481); con algo que no son cifras,
+    es que en ese teclado la fila de números no da cifras sin modificador.
+    """
+    if PREFIJO.match(lineas[0]) is None:
+        if re.match(r"\S{3} \S", lineas[0]):
+            raise ValueError(f"la línea 1 empieza por «{lineas[0][:3]}» y debería ser «001»: en este teclado la "
+                             "fila de números no da cifras sin Mayús, y así no se puede medir en un texto plano. "
+                             "¿Está bien transcrita?")
+        return lineas
+    salida = []
+    for i, linea in enumerate(lineas):
+        m = PREFIJO.match(linea)
+        if m is None:
+            raise ValueError(f"la {_donde(i)} no lleva su número delante y la primera sí: {linea!r}. "
+                             "Corrígela con resolver_linea y vuelve a medir.")
+        if int(m[1]) != i + 1:
+            raise ValueError(f"la línea {i + 1} lleva el número {m[1]}: antes de ella falta o sobra una línea "
+                             "(¿se saltó o se repitió al transcribir?). Corrígelo con resolver_linea.")
+        salida.append(m[2])
+    return salida
+
+
+def _sin_comillas_tipograficas(crudas: list) -> None:
+    """Con las comillas tipográficas encendidas, el editor cambia `'` por `’` y
+    `"` por `”` al teclearlas: el borrador se quedaría sin ellas y ni siquiera
+    se podría teclear el literal de la consulta de prueba."""
+    todo = "".join(c[3] for c in crudas)
+    if ("'" not in todo or '"' not in todo) and any(q in todo for q in "‘’“”"):
+        raise ValueError("ninguna tecla da «'» o «\"», y salen comillas tipográficas (’ ”): el editor las cambia "
+                         "al teclear. Apaga las comillas inteligentes (en TextEdit: Edición → Sustituciones), "
+                         "borra el texto y vuelve a sondear.")
+
+
 def construir(lineas: list[str] | str, nombre: str) -> dict:
     """Lo leído del sondeo → un borrador de medida, sin guardar.
 
     Rechaza un sondeo con líneas de menos (una tecla sin su línea correría
-    todas las demás de sitio) y uno tecleado con Bloq Mayús (la capa sin nada
-    no da `a-z`: todo lo medido sería de otra capa).
+    todas las demás de sitio), uno tecleado con Bloq Mayús (la capa sin nada
+    no da `a-z`: todo lo medido sería de otra capa) y uno tecleado con las
+    comillas tipográficas encendidas. Acepta las líneas con su número delante
+    (`007 xg x`) o, como las medidas de antes de C-0482, sin él; nunca mezcladas.
     """
     if isinstance(lineas, str):
         lineas = lineas.replace("\r\n", "\n").split("\n")
@@ -161,8 +219,9 @@ def construir(lineas: list[str] | str, nombre: str) -> dict:
     if len(lineas) != LINEAS_SONDEO:
         falta = "faltan" if len(lineas) < LINEAS_SONDEO else "sobran"
         raise ValueError(f"el sondeo tiene {len(lineas)} líneas y son {LINEAS_SONDEO}: {falta} "
-                         "(¿se cortó el tecleo, o la lectura no llegó al final?). Vuelve a sondear en una "
-                         "pestaña vacía.")
+                         "(¿se cortó el tecleo, o la lectura no llegó al final?). Vuelve a sondear en un "
+                         "texto vacío.")
+    lineas = _sin_numero(lineas)
     nombre = " ".join(str(nombre).split())[:60]
     if not nombre:
         raise ValueError("falta el nombre de la medida (p. ej. «Latinoamericano»)")
@@ -182,13 +241,14 @@ def construir(lineas: list[str] | str, nombre: str) -> dict:
     letras = [c[3] if c[2] == "normal" else "" for c in crudas[:26]]
     if "".join(letras) == "".join(letras).upper() and "".join(letras).isalpha():
         raise ValueError("la capa sin nada da mayúsculas: el Mac tenía el Bloq Mayús puesto. Quítalo, borra "
-                         "la pestaña y vuelve a sondear.")
+                         "el texto y vuelve a sondear.")
     if sorted(letras) != list("abcdefghijklmnopqrstuvwxyz"):
         raise ValueError("la capa sin nada no da las letras a-z: ¿Bloq Mayús, otra fuente de entrada a medias, "
                          "o la lectura no empieza en la línea 1 del sondeo?")
     if letras[TECLAS_SONDEO.index(MARCO.tecla)] != marco:
         raise ValueError(f"cada línea va enmarcada con la tecla «x», y aquí da «{marco}»: no casa con su propia "
                          "línea. Revisa la transcripción.")
+    _sin_comillas_tipograficas(crudas)
     ahora = time.time()
     return {"id": "", "nombre": nombre, "creada": ahora, "crudas": crudas, "verificados": {},
             "compuestos": {}, "descartes": [], "sospechosos": [], "ronda": None, "rondas": 0}

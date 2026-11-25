@@ -180,8 +180,11 @@ orden y lo que hay que vigilar.
 - **Fuente de entrada del Mac.** El puente teclea para la que dice Ajustes →
   Teclado («U.S.», «Español - ISO» o una medida); si el Mac tiene otra (la
   latinoamericana, por ejemplo), `{ } [ ] | \ ~ @` salen distintos y nadie se
-  entera hasta la huella. Se mide con la skill `calibrar-teclado` (C-0481), que
-  aún no se ha probado con el aparato real.
+  entera hasta la huella. Se mide con la skill `calibrar-teclado` (C-0481; en
+  dos partes desde C-0482: el sondeo en un TextEdit, la consulta de huellas en
+  el programa de consultas de la persona), que aún no se ha probado con el
+  aparato real. Sin medir en el Mac real: que Cmd+↑ y Av Pág recorran TextEdit
+  como se espera, y que la fila de números dé cifras en su fuente.
 - **El asistente de teclado de macOS** al ver un teclado USB nuevo (paso 3):
   ANSI frente a ISO cambia dónde salen `` ` `` y `~`.
 - **Bloq Mayús** encendido invierte mayúsculas: el puente no lo mira.

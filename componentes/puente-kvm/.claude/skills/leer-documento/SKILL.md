@@ -24,7 +24,9 @@ Herramientas, en una sola búsqueda:
 
 `leer_documento(nombre)` con el nombre del objeto (`usp_ConciliarMovimientos`).
 Va al principio, baja con Av Pág y guarda cada página. Al terminar, el control
-vuelve solo a la persona: díselo («ya puedes usar el Mac»).
+vuelve solo a la persona: díselo («ya puedes usar el Mac»). Cada página es la
+región del editor de Ajustes; para leer otra ventana (el texto plano del
+sondeo del teclado), pásale su zona: `leer_documento(nombre, x, y, ancho, alto)`.
 
 ## 2. Transcribir — en paralelo
 
