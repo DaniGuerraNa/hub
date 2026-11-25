@@ -48,6 +48,20 @@ def test_reconectar_el_aparato_devuelve_el_control_a_la_persona(entorno):
     assert any(e["tipo"] == "control" and "reconect" in e["detalle"] for e in bitacora(c))
 
 
+def test_con_una_reunion_grabandose_reconectar_no_corta_su_sonido(entorno):
+    # C-0477: con «Reconectar» siempre en el panel, un clic suelto no puede cortar
+    # el audio de la reunión, que va en esta conexión.
+    c, _ = entorno
+    p = c.app.state.puente
+    p.grabadora.empezando = True
+    try:
+        r = c.post("/api/reconectar", headers=PERSONA)
+        assert r.status_code == 409 and "reunión" in r.json()["detail"]
+    finally:
+        p.grabadora.empezando = False
+    assert c.post("/api/reconectar", headers=PERSONA).status_code == 200
+
+
 def test_guardar_otros_ajustes_sin_cambiar_de_aparato_no_quita_el_control(entorno):
     c, _ = entorno
     c.post("/api/control", json={"accion": "dar"}, headers=PERSONA)
@@ -183,11 +197,13 @@ def test_una_distribucion_de_teclado_desconocida_no_se_guarda(entorno):
     assert config.leer_ajustes()["perfil"]["distribucion"] == "mac-us"
 
 
-def test_elegir_espanol_cambia_tambien_la_fuente_del_mac_simulado(entorno):
+def test_elegir_espanol_en_ajustes_no_cambia_la_fuente_del_mac_simulado(entorno):
+    # El Mac simulado tiene la suya, como el de verdad (C-0481): si siguiera al
+    # ajuste, un puente que teclea con otra fuente no se podría probar nunca.
     c, sim = entorno
     perfil = {**config.PERFIL_POR_OMISION, "distribucion": "mac-es"}
     assert c.post("/api/ajustes", json={"perfil": perfil}, headers=PERSONA).status_code == 200
-    assert sim.editor.distribucion == "mac-es"
+    assert sim.editor.fuente.id == "mac-us"
 
 
 def test_la_rueda_lleva_antes_el_puntero_a_donde_tiene_que_girar(entorno):

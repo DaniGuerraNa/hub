@@ -38,7 +38,7 @@ from PIL import Image, ImageDraw, ImageFont
 from starlette.background import BackgroundTask
 
 from . import (cambios, comprobar, config, conversaciones, hid, huellas, jiggler, lecturas, reinicio, repertorio,
-               reunion, terminal)
+               reunion, teclados, terminal)
 from .control import Bitacora, Control, SinControl
 from .dispositivo import AparatoNoDisponible, Dispositivo
 from .motor import Motor, Ocupado, PantallaInesperada
@@ -106,8 +106,11 @@ def crear_dispositivo(ajustes: dict) -> Dispositivo:
         return JetKVM(d["url"], os.environ.get(d.get("clave_env") or "JETKVM_CLAVE", ""))
     from .simulador import Simulador
 
-    # El Mac simulado escribe con la fuente de entrada que se eligió para el de verdad.
-    return Simulador(distribucion=ajustes.get("perfil", {}).get("distribucion", "mac-us"))
+    # El Mac simulado tiene su propia fuente de entrada, como el de verdad (C-0481):
+    # arranca con la del ajuste si es de serie, y después no la sigue. Si la
+    # siguiera, un puente que teclea con otra no se podría probar nunca.
+    inicial = ajustes.get("perfil", {}).get("distribucion", "mac-us")
+    return Simulador(fuente=inicial if inicial in hid.DE_SERIE else "mac-us")
 
 
 # El directo: 2 imágenes por segundo mirando, ~12 mientras la persona usa el Mac.
@@ -139,6 +142,10 @@ class Puente:
         self.dispositivo.avisar = self.aviso_del_aparato
         self.motor = Motor(self.dispositivo, self.control, self.bitacora, self.ajustes["perfil"])
         self.error_conexion = ""
+        # Mientras conecta (al arrancar, «Reconectar», una reunión que reconecta),
+        # el aparato dice «sin conectar» sin que nada haya fallado: el panel lo
+        # dice como «conectando», no como un fallo (C-0477).
+        self.conectando = False
         self.tareas: set[asyncio.Task] = set()
         self.actividad = repertorio.Actividad(config.hogar() / "actividad.json")
         # Tras reiniciar el puente, la conversación de Claude sigue viva en tmux:
@@ -164,12 +171,15 @@ class Puente:
         self.grabadora = reunion.Grabadora(self.dispositivo)
 
     async def conectar(self) -> None:
+        self.conectando = True
         try:
             await self.dispositivo.conectar()
             await self.tras_conectar()
         except Exception as e:  # se enseña en la pantalla, no se traga
             self.error_conexion = explicar_error(e, self.dispositivo)
             self.bitacora.apuntar("error", f"no conecta: {self.error_conexion}", quien="puente")
+        finally:
+            self.conectando = False
 
     async def tras_conectar(self) -> None:
         """Lo de después de conectar. También cuando la conexión vuelve sola: con el
@@ -331,7 +341,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         return pagina(req, "panel.html", titulo="Panel",
                       lecturas=[lecturas.resumen(l) for l in lecturas.todas()[:20]],
                       cambios=[c for c in cambios.todos()[:20]],
-                      distribuciones=hid.DISTRIBUCIONES, nombres_distribucion=hid.NOMBRES_DISTRIBUCION)
+                      teclados_disponibles=teclados.disponibles())
 
     @app.get("/lecturas/{id_}", response_class=HTMLResponse)
     async def ver_lectura(req: Request, id_: str):
@@ -367,8 +377,8 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         clave_env = p.ajustes["dispositivo"].get("clave_env") or "JETKVM_CLAVE"
         return pagina(req, "ajustes.html", titulo="Ajustes", ajustes=p.ajustes,
                       clave_puesta=bool(os.environ.get(clave_env)),
-                      distribuciones=hid.DISTRIBUCIONES, modelos=config.MODELOS,
-                      nombres_distribucion=hid.NOMBRES_DISTRIBUCION)
+                      teclados_disponibles=teclados.disponibles(), medidas=teclados.medidas(),
+                      modelos=config.MODELOS)
 
     # ── estado y pantalla ───────────────────────────────────────────────────
     def estado(p: Puente) -> dict:
@@ -398,6 +408,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                 # tal cual («h264») o imágenes («mjpeg»: el simulador, o sin vídeo directo).
                 "video": _modo_video(p),
                 "claude": p.actividad.publico(), "error_conexion": p.error_conexion, "tarea": p.motor.tarea,
+                "conectando": p.conectando,
                 "reunion": p.grabadora.estado(),
                 "jiggler_texto": jiggler.describir(disp.get("jiggler")),
                 "progreso": p.motor.progreso, "perfil": p.ajustes["perfil"], "t": time.time(),
@@ -549,6 +560,90 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             return {"ok": True}
         except Exception as e:
             raise fallo(e) from e
+
+    # ── el teclado del Mac: medirlo (Claude) ────────────────────────────────
+    # Activar una medida no está aquí: lo hace la persona en Ajustes
+    # (`/api/ajustes`), como elegir cualquier otra distribución.
+    @app.get("/api/teclado")
+    async def api_teclado(req: Request):
+        p = puente(req)
+        return {"activa": p.ajustes["perfil"].get("distribucion", "mac-us"),
+                "reservadas": p.ajustes["perfil"].get("reservadas", []),
+                "disponibles": teclados.disponibles(), "medidas": teclados.medidas()}
+
+    @app.post("/api/teclado/sondear")
+    async def api_teclado_sondear(req: Request):
+        de_claude(req)
+        p = puente(req)
+        try:
+            async with p.motor.ocupar("sondear el teclado"):
+                p.control.comprobar()  # antes de apuntar nada: sin control, no se teclea
+                p.bitacora.apuntar("teclado", f"sondeo del teclado: {teclados.LINEAS_SONDEO} líneas")
+                n = await p.motor.pulsar(teclados.sondeo(p.motor.reservadas()))
+            return {"pulsaciones": n, "lineas": teclados.LINEAS_SONDEO}
+        except Exception as e:
+            raise fallo(e) from e
+
+    @app.post("/api/teclado/medir")
+    async def api_teclado_medir(req: Request):
+        de_claude(req)
+        p, datos = puente(req), await cuerpo(req)
+        try:
+            if datos.get("lectura"):
+                ens = lecturas.ensamblar(lecturas.cargar(str(datos["lectura"])))
+                if not ens.completo:
+                    raise ValueError("la lectura del sondeo no está entera (páginas sin transcribir, huecos o "
+                                     "conflictos): termínala antes de medir")
+                lineas = ens.lineas
+            else:
+                lineas = str(datos.get("texto", ""))
+            b = teclados.guardar(teclados.construir(lineas, str(datos.get("nombre", ""))))
+        except FileNotFoundError as e:
+            raise HTTPException(404, "no existe esa lectura") from e
+        except Exception as e:
+            raise fallo(e) from e
+        p.bitacora.apuntar("teclado", f"medida {b['id']} ({b['nombre']}), sin verificar")
+        return teclados.resumen(b)
+
+    @app.post("/api/teclado/probar")
+    async def api_teclado_probar(req: Request):
+        de_claude(req)
+        p, datos = puente(req), await cuerpo(req)
+        try:
+            b = teclados.cargar(str(datos.get("medida", "")))
+            texto, ronda = teclados.consulta(b, str(datos.get("motor") or "SQL Server"), p.motor.reservadas())
+            async with p.motor.ocupar("probar el teclado medido"):
+                p.control.comprobar()  # antes de apuntar nada: sin control, no se teclea
+                p.bitacora.apuntar("teclado", f"consulta de prueba de {b['id']}, ronda {ronda['n']}: "
+                                   f"{len(ronda['filas'])} filas")
+                try:
+                    n = await p.motor.teclear(texto, apuntar=False,
+                                              distribucion=teclados.distribucion_del_borrador(b))
+                finally:
+                    # Lo siguiente es de la persona, haya salido entera o no: ejecutarla, o
+                    # borrar lo que quedó a medias. Claude nunca ejecuta.
+                    p.control.devolver("terminó de teclear la consulta de prueba del teclado: el Mac vuelve a "
+                                       "ti para ejecutarla")
+                # Sólo ahora: unas huellas de una consulta que no se tecleó entera no valen.
+                teclados.empezar_ronda(b, ronda)
+                teclados.guardar(b)
+            return {"pulsaciones": n, "ronda": ronda["n"], "filas": len(ronda["filas"]),
+                    "caracteres": len(ronda["pasos"])}
+        except Exception as e:
+            raise fallo(e) from e
+
+    @app.post("/api/teclado/comprobar")
+    async def api_teclado_comprobar(req: Request):
+        de_claude(req)
+        p, datos = puente(req), await cuerpo(req)
+        try:
+            b = teclados.cargar(str(datos.get("medida", "")))
+            r = teclados.comprobar(b, datos.get("huellas") or "")
+            teclados.guardar(b)
+        except Exception as e:
+            raise fallo(e) from e
+        p.bitacora.apuntar("teclado", f"{b['id']}: {r['verificados']} caracteres verificados ({r['estado']})")
+        return r
 
     @app.post("/api/clic")
     async def api_clic(req: Request):
@@ -728,7 +823,9 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         datos = await cuerpo(req)
         try:
             l = lecturas.cargar(str(datos["lectura"]))
-            c = cambios.proponer(l, str(datos["texto"]), str(datos.get("descripcion") or "cambio"))
+            m = puente(req).motor
+            c = cambios.proponer(l, str(datos["texto"]), str(datos.get("descripcion") or "cambio"),
+                                 m.distribucion(), m.reservadas())
             puente(req).bitacora.apuntar(
                 "propuesta", f"{c.descripcion}: {len(c.tramos)} {'tramo' if len(c.tramos) == 1 else 'tramos'}"
                 + (" (sobre una lectura sin verificar)" if c.sin_verificar else ""), cambio=c.id)
@@ -852,8 +949,13 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                 nuevos[seccion].update(datos.get(seccion, {}))
             config.validar_modelo(nuevos["claude"]["modelo"])
             nuevos["claude"]["saltar_permisos"] = nuevos["claude"].get("saltar_permisos") is True
-            if nuevos["perfil"].get("distribucion", "mac-us") not in hid.DISTRIBUCIONES:
-                raise ValueError("distribución de teclado desconocida")
+            if nuevos["perfil"].get("distribucion", "mac-us") not in {d["id"] for d in teclados.disponibles()}:
+                raise ValueError("distribución de teclado desconocida, o una medida sin verificar")
+            reservadas = nuevos["perfil"].get("reservadas", [])
+            if not isinstance(reservadas, list) or len(reservadas) > 20:
+                raise ValueError("las teclas reservadas van en una lista, como «alt+x»")
+            # Escritas como las escribe el puente («option+x» → «alt+x»), sin repetir.
+            nuevos["perfil"]["reservadas"] = list(dict.fromkeys(str(hid.combinacion(str(r))) for r in reservadas))
             for clave in ("inicio_documento", "fin_documento", "pagina_abajo", "ir_a_linea", "fin_de_linea"):
                 hid.combinacion(nuevos["perfil"][clave])
             r = [int(v) for v in nuevos["perfil"]["region_editor"]]
@@ -869,9 +971,6 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         cambia_aparato = nuevos["dispositivo"] != p.ajustes["dispositivo"]
         p.ajustes = nuevos
         p.motor.perfil = nuevos["perfil"]
-        editor = getattr(p.dispositivo, "editor", None)
-        if editor is not None:  # el simulador: su Mac cambia de fuente con el ajuste
-            editor.distribucion = nuevos["perfil"].get("distribucion", "mac-us")
         if cambia_aparato:
             p.devolver_control("cambió el aparato: el control vuelve a la persona")
             with contextlib.suppress(Exception):
@@ -896,6 +995,11 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         p = puente(req)
         if p.motor.tarea:
             raise HTTPException(409, f"hay una tarea en marcha ({p.motor.tarea}): espera a que acabe o pulsa Parar")
+        # Con «Reconectar» siempre en el panel (C-0477), un clic suelto no puede
+        # cortar el sonido de una reunión que se graba: su audio va en esta conexión.
+        if p.grabadora.actual is not None or p.grabadora.empezando:
+            raise HTTPException(409, "se está grabando una reunión: reconectar cortaría su sonido. "
+                                     "Termínala y vuelve a pulsar «Reconectar»")
         # Tras reconectar, lo que hay al otro lado puede no ser lo que era.
         p.devolver_control("se reconectó el aparato: el control vuelve a la persona")
         with contextlib.suppress(Exception):
@@ -997,7 +1101,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                                      "Parar, y vuelve a pulsar «Estoy en reunión»")
 
         async def reconectar():
-            # Como «Reintentar»: con lo que haya al otro lado recién conectado, el
+            # Como «Reconectar»: con lo que haya al otro lado recién conectado, el
             # control vuelve a la persona; y dentro de `ocupar`, Claude no empieza
             # nada mientras tanto (y si tenía algo suelto en marcha, no se corta).
             async with p.motor.ocupar("conectar el sonido de la reunión"):
@@ -1257,11 +1361,19 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                     elif tipo == "pegar":
                         texto = str(orden.get("texto", ""))[:5000]
                         await soltar()
-                        for pulsacion in hid.secuencia(texto, p.ajustes["perfil"].get("distribucion", "mac-us")):
+                        id_teclado = p.ajustes["perfil"].get("distribucion", "mac-us")
+                        try:
+                            # Con las reservadas del perfil: pegar un «≈» no puede ejecutar el script.
+                            pulsaciones = hid.secuencia(texto, teclados.resolver(id_teclado), p.motor.reservadas())
+                        except hid.TextoIntraducible:
+                            raise
+                        except ValueError as e:  # una medida que ya no se lee: se dice, no se calla
+                            await ws.send_json({"no": f"No pegué nada: {e}"})
+                            continue
+                        for pulsacion in pulsaciones:
                             await pulsar(pulsacion)
                         # Con qué teclado se tecleó, el de verdad: otra pestaña pudo cambiarlo.
-                        await ws.send_json({"hecho": "pegar", "teclado": hid.NOMBRES_DISTRIBUCION.get(
-                            p.ajustes["perfil"].get("distribucion", "mac-us"), "").replace("macOS ", "").strip("«»")})
+                        await ws.send_json({"hecho": "pegar", "teclado": teclados.nombre_corto(id_teclado)})
                 except hid.TextoIntraducible as e:
                     await ws.send_json({"no": f"No pegué nada: {e}"})
                 except (KeyError, TypeError, ValueError):

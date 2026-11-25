@@ -253,7 +253,7 @@ def test_tres_sesiones_del_mismo_slot_se_distinguen_por_su_pestana(escena, monke
                VALUES (1,?,'Personal',?,0,'/tmp/alfa','✳ x','claude','x','alfa',1)""",
             (pane, ventana))
     escena.commit()
-    monkeypatch.setattr(orq.tmux, "listar_ventanas", lambda s: [
+    monkeypatch.setattr(orq.tmux, "listar_ventanas", lambda s, dados=None: [
         {"indice": 1, "etiqueta": "Hub remoto"},
         {"indice": 2, "etiqueta": "Hub - Dev"},
         {"indice": 3, "etiqueta": "hub · orquestador"},

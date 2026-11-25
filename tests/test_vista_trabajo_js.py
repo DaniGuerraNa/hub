@@ -729,6 +729,68 @@ def test_un_valor_vacío_no_lleva_a_ninguna_parte(tmp_path):
     assert _anotados(r, "href") == [""]
 
 
+# Tres opciones como las que pinta el servidor: dos ventanas de la sesión que
+# se ve (la 1 marcada al cargar) y una de otra sesión.
+OPCIONES_DEL_SELECTOR = """
+  const s = nodo('ir-a');
+  const opcion = (sesion, ventana, marcada) => ({
+    dataset: { sesion, ventana }, selected: marcada, defaultSelected: marcada,
+    value: `/trabajo?session=${sesion}&ventana=${ventana}` });
+  s.options = [opcion('work', '1', true), opcion('work', '2', false), opcion('otra', '2', false)];
+  const marcadas = () => JSON.stringify(s.options.map(o => [o.selected, o.defaultSelected]));
+"""
+
+
+def test_elegir_en_el_selector_una_ventana_de_la_misma_sesion_no_recarga(tmp_path):
+    """C-0479: como en el árbol, cambiar de ventana dentro de la sesión que ya
+    se ve no recarga —recargar cortaría el terminal—. Y la opción elegida
+    queda como la marcada, también para `slot-nuevo.js`, que vuelve a la
+    `defaultSelected` al cancelar."""
+    r = ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path, PULSO,
+        accion=OPCIONES_DEL_SELECTOR + """
+          s.selectedOptions = [s.options[1]];
+          s.value = s.options[1].value;
+          s.disparar('change');
+          registro.valores.push(['href', location.href]);
+          registro.valores.push(['enfoque', document.body.dataset.enfoque]);
+          registro.valores.push(['marcadas', marcadas()]);
+        """,
+    )
+    assert r["errores"] == []
+    assert _anotados(r, "href") == [""]
+    assert _anotados(r, "enfoque") == ["work:2"]
+    assert json.loads(_anotados(r, "marcadas")[0]) == [[False, False], [True, True], [False, False]]
+
+
+def test_una_ventana_de_otra_sesion_se_abre_navegando(tmp_path):
+    r = ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path, PULSO,
+        accion=OPCIONES_DEL_SELECTOR + """
+          s.selectedOptions = [s.options[2]];
+          s.value = s.options[2].value;
+          s.disparar('change');
+          registro.valores.push(['href', location.href]);
+        """,
+    )
+    assert _anotados(r, "href") == ["/trabajo?session=otra&ventana=2"]
+
+
+def test_cambiar_de_pestana_marca_su_ventana_en_el_selector(tmp_path):
+    """Sin esto el selector seguía diciendo la ventana de antes: en el
+    teléfono, la franja y el selector se contradecían (C-0350)."""
+    r = ejecutar(
+        script_de("trabajo.html", CONTEXTO), tmp_path, {**PULSO, "/ventanas": DOS_VENTANAS},
+        accion=OPCIONES_DEL_SELECTOR + """
+          nodo('ventanas').disparar('click', { target: { dataset: {},
+            closest: (sel) => sel === '[data-ir]' ? { dataset: { ir: '2' } } : null } });
+          setTimeout(() => registro.valores.push(['marcadas', marcadas()]), 5);
+        """,
+    )
+    assert r["errores"] == []
+    assert json.loads(_anotados(r, "marcadas")[0]) == [[False, False], [True, True], [False, False]]
+
+
 # ───────────── el terminal a solas (decisión 210) ─────────────
 
 
@@ -1147,6 +1209,9 @@ HUBGRABAR_ESPIA = """
     },
     subir: async (audio, o) => { registro.api.push(['subir', audio, o]);
                                  return { ok: true, texto: 'por el grabador común' }; },
+    // El botón grabando o en reposo (C-0480): se anota si se marcó con la toma
+    // o con `null`, que es lo que distingue «grabando» de «parado».
+    marcar: (boton, toma) => { registro.api.push(['marcar', toma ? 'toma' : null]); },
   };
 """
 
@@ -1179,8 +1244,12 @@ def test_dictar_en_la_terminal_graba_y_sube_por_el_grabador_comun_con_lo_suyo(tm
     medirlo aparte (C-0246). Lo que hace con el texto sigue siendo suyo."""
     r = _con_socket_abierto(tmp_path_factory, PULSAR_DICTAR_DOS_VECES, previo=HUBGRABAR_ESPIA)
     assert r["errores"] == []
-    assert r["api"] == [["calentar"], ["grabar", "LLANO"],
-                        ["subir", "AUDIO", {"campos": {"origen": "terminal"}}]]
+    # Los dos micrófonos (barra y teclas) se marcan grabando y luego en reposo;
+    # el arnés da tres botones por selector.
+    marcas = [a for a in r["api"] if a[0] == "marcar"]
+    assert marcas == [["marcar", "toma"]] * 3 + [["marcar", None]] * 3
+    assert [a for a in r["api"] if a[0] != "marcar"] == [
+        ["calentar"], ["grabar", "LLANO"], ["subir", "AUDIO", {"campos": {"origen": "terminal"}}]]
     assert r["pegados"] == ["por el grabador común"]
     assert r["estado"] == "dictado escrito: revísalo y pulsa Enter"
 
@@ -1416,3 +1485,34 @@ def test_sin_sesion_la_lista_no_se_esconde_porque_nadie_la_devolveria():
     """Sin sesión el script de la vista no corre, y con él tampoco quien oye
     `hub:barra`: escondida antes de pintar, abrir la barra no la devolvería."""
     assert _antes_de_pintar_del_taller({**CONTEXTO, "session": None}) == []
+
+
+# ── Sin sesión (C-0480) ──────────────────────────────────────────────────────
+# Un slot sin ventana: el script sale pronto («este slot no tiene ventana
+# abierta»), y lo que se enganchaba después no existía. El selector del
+# teléfono es ahora el nombre de la barra: tiene que navegar igual.
+SIN_SESION = {**CONTEXTO, "session": None, "ventana": None}
+
+
+def test_sin_sesion_el_selector_del_telefono_navega_al_elegir_otro_sitio(tmp_path):
+    r = ejecutar(script_de("trabajo.html", SIN_SESION), tmp_path, {}, accion="""
+      const s = nodo('ir-a');
+      s.value = '/trabajo?session=otra&ventana=2';
+      s.selectedOptions = [{ dataset: { sesion: 'otra', ventana: '2' } }];
+      s.disparar('change');
+      registro.destino = location.href;
+    """)
+    assert r["errores"] == []
+    assert r["sockets"] == []                      # de verdad salió sin sesión
+    assert r["destino"] == "/trabajo?session=otra&ventana=2"
+
+
+def test_sin_sesion_el_aviso_flotante_se_quita_tocandolo(tmp_path):
+    r = ejecutar(script_de("trabajo.html", SIN_SESION), tmp_path, {}, accion="""
+      registro.antes = nodo('estado').textContent;
+      nodo('estado').disparar('click', { target: { closest: () => null } });
+      registro.despues = nodo('estado').textContent;
+    """)
+    assert r["errores"] == []
+    assert r["antes"] == "este slot no tiene ventana abierta"
+    assert r["despues"] == ""

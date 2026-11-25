@@ -529,7 +529,7 @@ def test_el_desplegable_de_otro_proyecto_sale_en_el_html(escena_ajena):
 def _con_ventanas(monkeypatch, indices):
     monkeypatch.setattr(
         tmux, "listar_ventanas",
-        lambda s: [{"indice": i, "etiqueta": f"w{i}", "activa": i == 0,
+        lambda s, dados=None: [{"indice": i, "etiqueta": f"w{i}", "activa": i == 0,
                     "paneles": 1, "nombre": f"w{i}", "comando": "claude",
                     "renombrada": False, "ancho": None, "cwd": "/tmp/demo"}
                    for i in indices])
@@ -776,14 +776,71 @@ def test_una_ventana_que_no_esta_en_la_lista_sale_marcada_como_viendo(escena, mo
     assert _marcadas(html) == ["Viendo: suelta:0 · sin slot"]
 
 
-def test_en_el_selector_los_slots_con_ventana_van_antes_que_los_cerrados(escena, monkeypatch):
+def _opciones(html: str, grupo: str | None = None) -> list[tuple[str, str]]:
+    """(valor, texto) de las opciones del selector, o sólo las de un grupo."""
+    sel = _selector(html)
+    if grupo is not None:
+        sel = sel.split(f'<optgroup label="{grupo}">', 1)[1].split("</optgroup>", 1)[0]
+    return [(v, re.sub(r"\s+", " ", t).strip())
+            for v, t in re.findall(r'<option value="([^"]*)"[^>]*>(.*?)</option>', sel, re.S)]
+
+
+def test_el_selector_lista_las_ventanas_de_cada_slot(escena, monkeypatch):
+    """C-0479: en el teléfono el selector es el árbol. Elegía slots y dejaba la
+    ventana a la franja de pestañas; ahora cada ventana es una opción, con la
+    misma etiqueta que el árbol y nada que no sea una ventana del slot."""
+    trabajo = slots.crear(escena, "demo", "Trabajo")
+    slots.vincular(escena, "%1", trabajo)
+    slots.vincular(escena, "%2", trabajo)
+    html = _trabajo_html(escena, monkeypatch, f"/trabajo?slot={trabajo}")
+    assert _opciones(html, "Demo") == [
+        ("/trabajo?session=work&ventana=0", "Trabajo › Back"),
+        ("/trabajo?session=work&ventana=1", "Trabajo › Front"),
+    ]
+
+
+def test_en_el_selector_los_slots_sin_ventana_van_al_final(escena, monkeypatch):
+    """Juntos, en su grupo y detrás de «Sin organizar»: eran once «· sin
+    ventana» repartidos entre los proyectos de una lista plana de sesenta."""
     cerrado = slots.crear(escena, "demo", "aa cerrado")
     abierto = slots.crear(escena, "demo", "zz abierto")
     slots.vincular(escena, "%2", abierto)
     html = _trabajo_html(escena, monkeypatch, f"/trabajo?slot={abierto}")
     sel = _selector(html)
-    assert sel.index(f"slot={abierto}") < sel.index(f"slot={cerrado}")
-    assert _marcadas(html) == ["zz abierto"]
+    assert _opciones(html, "Demo") == [("/trabajo?session=work&ventana=1", "zz abierto › Front")]
+    assert _opciones(html, "Sin ventana abierta") == [(f"/trabajo?slot={cerrado}", "aa cerrado · Demo")]
+    assert sel.index('label="Sin organizar"') < sel.index('label="Sin ventana abierta"')
+    assert _marcadas(html) == ["zz abierto › Front"]
+
+
+def test_el_selector_tiene_una_sola_opcion_de_slot_nuevo(escena, monkeypatch):
+    """Era una por proyecto —catorce—, más un «· sin slots» por cada proyecto
+    con ventanas y sin slots. Crear se elige proyecto en el diálogo."""
+    escena.execute("INSERT INTO proyecto (id, nombre, asiento) VALUES ('otro','Otro','/tmp/otro')")
+    trabajo = slots.crear(escena, "demo", "Trabajo")
+    slots.vincular(escena, "%1", trabajo)
+    sel = _selector(_trabajo_html(escena, monkeypatch, f"/trabajo?slot={trabajo}"))
+    assert sel.count("data-nuevo-slot") == 1
+    assert '<option value="" data-nuevo-slot="">+ Slot nuevo…</option>' in sel
+    assert "sin slots" not in sel and "/proyecto/" not in sel
+
+
+def test_el_selector_marca_la_ventana_que_se_ve(escena, monkeypatch):
+    """Por sesión y ventana, no por slot: con dos ventanas del mismo slot,
+    marcar el slot no decía cuál de las dos está debajo (C-0350)."""
+    trabajo = slots.crear(escena, "demo", "Trabajo")
+    slots.vincular(escena, "%1", trabajo)
+    slots.vincular(escena, "%2", trabajo)
+    assert _marcadas(_trabajo_html(escena, monkeypatch, "/trabajo?session=work&ventana=1")) \
+        == ["Trabajo › Front"]
+    assert _marcadas(_trabajo_html(escena, monkeypatch, f"/trabajo?slot={trabajo}")) \
+        == ["Trabajo › Back"]
+
+
+def test_un_slot_sin_ventana_que_se_esta_mirando_sale_marcado(escena, monkeypatch):
+    cerrado = slots.crear(escena, "demo", "aa cerrado")
+    assert _marcadas(_trabajo_html(escena, monkeypatch, f"/trabajo?slot={cerrado}")) \
+        == ["aa cerrado · Demo"]
 
 
 # ── las shells sin usar desde el arranque (C-0352) ───────────────────────────

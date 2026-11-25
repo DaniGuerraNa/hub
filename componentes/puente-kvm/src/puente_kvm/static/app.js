@@ -152,6 +152,59 @@
   };
   let ultimoEstado = null;
 
+  /* El aviso de conexión del panel, con lo que dice el aparato del Mac
+     (C-0477). Lo pinta el sondeo: en cuanto vuelve la imagen se va solo.
+     Todo con textContent: el error trae texto del aparato y su dirección. */
+  function pintarAvisoConexion(e) {
+    const caja = $('#aviso-conexion');
+    if (!caja) return;
+    const d = e.dispositivo || {};
+    let titulo = '', texto = '', tono = 'riesgo', despertar = true, ajustes = false;
+    // Conectando, el aparato dice «sin conectar» sin que nada haya fallado.
+    const conectando = !!e.conectando;
+    for (const r of $$('[data-reconectar]')) {
+      if (!r.dataset.texto) r.dataset.texto = r.textContent;
+      r.disabled = conectando;
+      r.textContent = conectando ? 'Reconectando…' : r.dataset.texto;
+    }
+    if (conectando) {
+      titulo = 'Conectando con el JetKVM…';
+      texto = 'Puede tardar unos segundos.';
+      tono = 'accion';
+      despertar = false;
+    } else if (d.mac === 'reposo') {
+      titulo = 'El Mac está en reposo.';
+      texto = 'El JetKVM está conectado, pero no llega imagen. «Despertar el Mac» lo saca del reposo; también vuelve solo si alguien toca su teclado o su ratón.';
+      tono = 'accion';
+    } else if (d.mac === 'sin_usb') {
+      titulo = 'El JetKVM no ve el Mac por USB.';
+      texto = (d.conectado ? 'Se ve su pantalla, pero el teclado y el ratón no le llegan, ni la señal de despertar.'
+        : 'Ni el teclado ni la señal de despertar le llegan.') + ' ¿Está puesto el cable USB entre los dos?';
+      despertar = false;
+    } else if (!d.conectado && d.mac === 'despierto') {
+      // El USB ya dice que despertó, pero la imagen tarda (un Mac recién
+      // despierto, o con la pantalla apagada): no es un fallo de conexión.
+      titulo = 'El Mac está despierto, pero aún no llega su imagen.';
+      texto = d.senal && d.senal !== 'ok'
+        ? 'El JetKVM no recibe señal de vídeo: puede que su pantalla esté apagada o el HDMI suelto. Mover su ratón suele encenderla.'
+        : 'Suele llegar en unos segundos.';
+      tono = 'accion';
+      despertar = false;
+    } else if (!d.conectado) {
+      titulo = 'No hay conexión con el aparato.';
+      texto = e.error_conexion || d.motivo || d.error || '';
+      ajustes = true;
+    }
+    caja.hidden = !titulo;
+    caja.className = 'aviso aviso-conexion ' + tono;
+    $('#aviso-conexion-titulo').textContent = titulo;
+    $('#aviso-conexion-texto').textContent = texto;
+    $('#aviso-conexion-despertar').hidden = !despertar;
+    $('#aviso-conexion-ajustes').hidden = !ajustes;
+    const aparato = $('#aviso-aparato');
+    if (aparato) aparato.hidden = !!titulo;
+  }
+
   function pintarEstado(e) {
     ultimoEstado = e;
     const modo = e.control.modo;
@@ -162,12 +215,14 @@
         + (modo === 'claude' ? 'accion' : modo === 'parado' ? 'riesgo' : 'ok');
     }
     pintarAvisoCodigo(e);
+    pintarAvisoConexion(e);
     const pa = $('#placa-aparato');
     if (pa) {
       const d = e.dispositivo || {};
+      // En reposo, aunque la conexión siga abierta: la imagen está congelada.
       pa.textContent = (d.tipo === 'simulador' ? 'Simulador' : 'JetKVM') +
-        (d.conectado ? ' · ' + (d.resolucion || 'conectado') : ' · sin conexión');
-      pa.className = 'placa ' + (d.conectado ? 'ok' : 'riesgo');
+        (d.mac === 'reposo' ? ' · Mac en reposo' : d.conectado ? ' · ' + (d.resolucion || 'conectado') : ' · sin conexión');
+      pa.className = 'placa ' + (d.mac === 'reposo' ? 'accion' : d.conectado ? 'ok' : 'riesgo');
       pa.title = pa.textContent + (d.firmware ? ' · firmware ' + d.firmware : '');
       const pant = $('#pantalla');
       const conectado = d.conectado ? 'si' : 'no';
@@ -464,7 +519,8 @@
       try {
         const r = await accion(() => api('/api/despertar', {}));
         fugaz(r.texto, !r.despierto);
-        if (r.despierto && $('[data-reconectar]')) setTimeout(() => location.reload(), 900);
+        // Sin recargar: cortaría el mando y el directo. El sondeo quita el aviso.
+        if (r.despierto) sondear();
       } catch (e) { /* ya lo dijo accion */ } finally { b.disabled = false; b.textContent = texto; }
       return;
     }
@@ -496,12 +552,22 @@
       return;
     }
     if ('reconectar' in d) {
-      b.disabled = true;
+      // Todos los «Reconectar» a la vez (el panel tiene dos): uno pulsado no deja otro en marcha.
+      const botones = $$('[data-reconectar]');
+      for (const r of botones) {
+        if (!r.dataset.texto) r.dataset.texto = r.textContent;
+        r.disabled = true;
+        r.textContent = 'Reconectando…';
+      }
       try {
         const r = await accion(() => api('/api/reconectar', {}));
         fugaz(r.error_conexion ? 'No conecta: ' + r.error_conexion : 'Conectado. El control vuelve a ti.', !!r.error_conexion);
-        setTimeout(() => location.reload(), r.error_conexion ? 2500 : 900);
-      } finally { b.disabled = false; }
+        // En el panel lo pinta el sondeo, sin recargar (C-0477); en Ajustes, como siempre.
+        if ($('#aviso-conexion')) await sondear();
+        else setTimeout(() => location.reload(), r.error_conexion ? 2500 : 900);
+      } catch (e) { /* ya lo dijo accion */ } finally {
+        for (const r of botones) { r.disabled = false; r.textContent = r.dataset.texto; }
+      }
       return;
     }
     if ('leer' in d) {
@@ -1099,12 +1165,23 @@
         let v = campo.type === 'checkbox' ? campo.checked : campo.value;
         if (clave === 'region_editor' || clave === 'aparcar_raton') v = v.split(',').map((x) => Number(x.trim()));
         if (clave === 'retardo_tecla_ms') v = Number(v);
+        if (clave === 'reservadas') v = v.split(',').map((x) => x.trim()).filter(Boolean);
         (datos[seccion] = datos[seccion] || {})[clave] = v;
       }
       const r = await accion(() => api('/api/ajustes', datos), 'Ajustes guardados');
       if (r.error_conexion) fugaz('No conecta: ' + r.error_conexion, true);
       setTimeout(() => location.reload(), 800);
     });
+    // Una medida verificada se activa aquí, con un clic de la persona: nunca sola al verificarse.
+    for (const b of $$('[data-usar-teclado]', document)) {
+      b.addEventListener('click', async () => {
+        try {
+          await accion(() => api('/api/ajustes', { perfil: { distribucion: b.dataset.usarTeclado } }),
+            'Teclado del Mac: la medida está en uso');
+          setTimeout(() => location.reload(), 800);
+        } catch (e) { /* `accion` ya lo dijo */ }
+      });
+    }
     const cont = $('#pantalla-ajustes');
     const img = $('#captura-ajustes');
     const sel = $('#seleccion');

@@ -169,17 +169,17 @@ def test_en_el_movil_el_selector_tambien_crea_un_slot(cliente):  # noqa: F811
     con.commit()
     con.close()
     selector = _selector_movil(cliente.get("/trabajo?slot=5").text)
-    grupo = selector.split('<optgroup label="Demo">', 1)[1].split("</optgroup>", 1)[0]
-    assert '<option value="" data-nuevo-slot="demo">+ Slot nuevo</option>' in grupo
-    # Detrás de los slots, como en el raíl.
-    assert grupo.index('value="/trabajo?slot=5"') < grupo.index("data-nuevo-slot")
+    # Una sola, al final de todo: el proyecto se elige en el diálogo (C-0479).
+    assert selector.count("data-nuevo-slot") == 1
+    assert '<option value="" data-nuevo-slot="">+ Slot nuevo…</option>' in selector
+    assert selector.index('value="/trabajo?slot=5"') < selector.index("data-nuevo-slot")
 
 
 def test_sin_nada_abierto_el_selector_ofrece_crear_y_no_se_queda_elegido(cliente):  # noqa: F811
     """Con una sola opción, elegirla no cambia nada y el `change` no llega:
     va detrás de una primera que ya está elegida y no se puede elegir."""
     selector = _selector_movil(cliente.get("/trabajo").text)
-    assert '<option value="" data-nuevo-slot="">+ Slot nuevo</option>' in selector
+    assert '<option value="" data-nuevo-slot="">+ Slot nuevo…</option>' in selector
     assert selector.index("selected disabled") < selector.index("data-nuevo-slot")
 
 

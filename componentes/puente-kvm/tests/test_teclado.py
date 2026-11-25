@@ -60,7 +60,7 @@ def test_los_atajos_se_leen_con_sus_modificadores():
 
 # ── «Español - ISO» de macOS (generada de la de Apple) ──────────────────────
 def test_en_espanol_iso_todo_el_ascii_y_lo_nuestro_llega_igual():
-    sim = Simulador(lineas=[""], distribucion="mac-es")
+    sim = Simulador(lineas=[""], fuente="mac-es")
     texto = "".join(chr(i) for i in range(32, 127)) + " ¿Año? ¡Sí! pingüino Ñandú ç Ç € º ª"
     teclear_en(sim, texto, "mac-es")
     assert sim.editor.lineas == [texto]
@@ -98,7 +98,7 @@ COPIADO = "“Listo” — it’s ‘así’… • ç Ç © ® ™ ± ≠ ≤ �
 
 @pytest.mark.parametrize("distribucion", hid.DISTRIBUCIONES)
 def test_lo_copiado_de_una_respuesta_se_pega_igual_con_las_dos_distribuciones(distribucion):
-    sim = Simulador(lineas=[""], distribucion=distribucion)
+    sim = Simulador(lineas=[""], fuente=distribucion)
     teclear_en(sim, COPIADO, distribucion)
     assert sim.editor.lineas == [COPIADO]
 
@@ -136,6 +136,6 @@ def test_la_tabla_entera_va_y_vuelve_por_el_mac_simulado_sin_choques(distribucio
     # tecla da dos caracteres, cada acento compone su letra), no lo que da el Mac de
     # verdad; eso lo contrastan los casos de arriba y el paso 3 con el aparato.
     texto = "".join(c for c in tabla if not c.isspace())
-    sim = Simulador(lineas=[""], distribucion=distribucion)
+    sim = Simulador(lineas=[""], fuente=distribucion)
     teclear_en(sim, texto, distribucion)
     assert sim.editor.lineas == [texto]

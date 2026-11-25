@@ -340,7 +340,9 @@ def test_si_no_se_puede_pegar_lo_dictado_lo_dice_en_vez_de_quedarse_transcribien
 
 
 # Abrir el micrófono, grabar y subir la voz: lo que sólo hace `grabar.js`.
-_POR_SU_CUENTA = re.compile(r"getUserMedia\s*\(|new\s+MediaRecorder\b|fetch\(\s*['\"`]/api/voz")
+# El menú del modelo (C-0313) pregunta y elige en `/api/voz/estado` y
+# `/api/voz/modelo`: no graba ni sube voz, y no cuenta.
+_POR_SU_CUENTA = re.compile(r"getUserMedia\s*\(|new\s+MediaRecorder\b|fetch\(\s*['\"`]/api/voz(?!/estado|/modelo)")
 
 
 def _quien_graba_por_su_cuenta() -> list[str]:
@@ -384,3 +386,60 @@ def test_un_doble_clic_en_dictar_abre_un_solo_microfono_y_parar_lo_cierra(tmp_pa
     """, respuestas={"POST /orquestador/audio": {"ok": True, "texto": "x"}})
     assert r["errores"] == []
     assert r["microfonos"] == 1 and r["pistas_vivas"] == 0
+
+
+# ── El botón de dictar, grabando y en reposo (C-0480) ────────────────────────
+
+# Un botón con el icono dentro, como lo pinta `ui.microfono`: el texto que
+# tenía y los atributos que se le ponen se anotan, y el reloj se puede adelantar.
+BOTON_CON_ICONO = """
+  globalThis.atributos = (b) => { b.attrs = {}; b.setAttribute = (k, v) => { b.attrs[k] = String(v); };
+                                  b.getAttribute = (k) => (k in b.attrs ? b.attrs[k] : null); return b; };
+  globalThis.tics = [];
+  global.setInterval = (fn) => { tics.push(fn); return tics.length; };
+  globalThis.adelantar = (ms) => { const antes = Date.now; Date.now = () => antes() + ms; tics.forEach(f => f()); };
+"""
+
+
+def test_marcar_no_borra_el_icono_cuenta_los_segundos_y_vuelve_al_reposo(tmp_path):
+    r = ejecutar(GUION, tmp_path, previo=BOTON_CON_ICONO, accion="""
+      const b = atributos(nodo('micro'));
+      b.textContent = '<svg micrófono>';
+      b.setAttribute('aria-label', 'Dictar'); b.title = 'Dictar: se escribe sin enviarlo';
+      HubGrabar.marcar(b, { parar(){} });
+      registro.grabando = { texto: b.textContent, seg: b.querySelector('[data-mic-seg]').textContent,
+                            on: b.classList.contains('on'), pulsado: b.attrs['aria-pressed'],
+                            nombre: b.attrs['aria-label'], pista: b.title };
+      adelantar(65000);
+      registro.pasado = b.querySelector('[data-mic-seg]').textContent;
+      HubGrabar.marcar(b, null);
+      registro.reposo = { texto: b.textContent, seg: b.querySelector('[data-mic-seg]').textContent,
+                          on: b.classList.contains('on'), pulsado: b.attrs['aria-pressed'],
+                          nombre: b.attrs['aria-label'], pista: b.title };
+    """)
+    assert r["errores"] == []
+    assert r["grabando"] == {"texto": "<svg micrófono>", "seg": "0:00", "on": True, "pulsado": "true",
+                             "nombre": "Parar y transcribir", "pista": "Parar y transcribir"}
+    assert r["pasado"] == "1:05"
+    assert r["reposo"] == {"texto": "<svg micrófono>", "seg": "", "on": False, "pulsado": "false",
+                           "nombre": "Dictar", "pista": "Dictar: se escribe sin enviarlo"}
+
+
+def test_data_grabar_no_toca_el_texto_del_boton_al_grabar(tmp_path):
+    """Escribía «Parar y transcribir» y luego el texto de antes en el
+    `textContent`, que con el icono dentro lo borraba (C-0480)."""
+    r = ejecutar(GUION, tmp_path, previo=MICROFONO + BOTON_CON_ICONO + """
+      const b = atributos(document.querySelectorAll('[data-grabar]')[0]);
+      b.textContent = '<svg micrófono>';
+    """, accion="""
+      const b = document.querySelectorAll('[data-grabar]')[0];
+      b.disparar('click');
+      setTimeout(() => { registro.durante = [b.textContent, b.attrs['aria-pressed'], b.classList.contains('on')];
+                         b.disparar('click'); }, 3);
+      setTimeout(() => { registro.despues = [b.textContent, b.attrs['aria-pressed'], b.classList.contains('on')];
+                         registro.texto = nodo('destino-0').value; }, 12);
+    """, respuestas={"POST /orquestador/audio": {"ok": True, "texto": "revisa alfa"}})
+    assert r["errores"] == []
+    assert r["durante"] == ["<svg micrófono>", "true", True]
+    assert r["despues"] == ["<svg micrófono>", "false", False]
+    assert r["texto"] == "revisa alfa"

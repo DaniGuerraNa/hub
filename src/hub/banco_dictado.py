@@ -156,7 +156,20 @@ CLAVES_MICRO = ("echoCancellation", "noiseSuppression", "autoGainControl", "voic
 #: Las categorías que no entran en el total y se informan aparte: las cifras
 #: dichas («ocho mil ochenta») Whisper las puede escribir en dígitos, y sin un
 #: normalizador de números contarían como fallos lo que no lo es.
-APARTE = ("cifras",)
+APARTE = ("cifras", "largo", "muy largo")
+
+#: Los dictados largos (C-0036): uno de cada tres dictados reales pasa de 30 s
+#: (78 de 186 desde el 25-oct) y Whisper los trata en tramos de 30 s, con lo
+#: de antes como contexto. Lo que va bien en una frase suelta puede perder
+#: frases enteras ahí, así que se miden aparte: las grabaciones del banco
+#: unidas de `LARGO_FRASES` en `LARGO_FRASES` («largo», ~50 s) y de
+#: `MUY_LARGO_FRASES` («muy largo», ~2,5 min, lo más largo que se ha dictado),
+#: con una pausa entre una y otra. Hacen falta los dos: el 24-nov, `hotwords`
+#: salió igual que sin glosario en los de ~50 s y perdió 42 palabras de 262 en
+#: el de 2,5 min.
+LARGO_FRASES = 10
+MUY_LARGO_FRASES = 30
+LARGO_PAUSA_S = 0.7
 
 #: Lo que espera `medir` a que un servidor cargue su modelo, y a cada frase.
 ESPERA_CARGA_S = 600
@@ -218,16 +231,10 @@ def _en_exclusiva():
 
 
 def _nombres_de_proyectos() -> list[str]:
-    """Los proyectos activos con carpeta: los de ejemplo del registro recién
-    instalado tienen rutas inventadas y no son de nadie."""
+    """Los proyectos activos con carpeta (`registry.nombres_activos`, que
+    comparte con el glosario del dictado, C-0036)."""
     from . import registry
-    try:
-        proyectos = registry.cargar()
-    except (registry.YamlInvalido, OSError):
-        proyectos = []
-    return [p.nombre for p in proyectos
-            if p.tipo == "proyecto" and p.status == "activo" and p.asiento
-            and Path(p.asiento).expanduser().is_dir()] or ["el proyecto"]
+    return registry.nombres_activos() or ["el proyecto"]
 
 
 def _rellenar(texto: str, proyecto: str, secretario: str) -> str:
@@ -530,6 +537,13 @@ def _config(c: dict) -> dict:
     limpia = {"modelo": str(c["modelo"]), "dispositivo": str(c.get("dispositivo") or "auto")}
     if c.get("tipo"):
         limpia["tipo"] = str(c["tipo"])
+    # Con o sin el glosario del dictado (C-0036): sólo esos dos modos, que son
+    # los que entiende el servidor.
+    from . import transcribir
+    glosario = c.get("glosario") or None
+    if glosario not in (None, *transcribir.GLOSARIO_MODOS):
+        raise ValueError(f"glosario desconocido: {glosario!r} (hotwords, prompt o nada)")
+    limpia["glosario"] = glosario
     return {**c, **limpia}
 
 
@@ -564,10 +578,14 @@ def _rss_pico_mb(pid) -> float | None:
     return None
 
 
-def _puntuar(g: dict, respuesta: dict | None) -> dict:
+def _puntuar(g: dict, respuesta: dict | None, del_glosario: list[str] | None = None) -> dict:
+    """`del_glosario`: los términos del glosario del dictado. La frase cuya
+    referencia lleva alguno se marca `con_glosario`: el glosario la mejora por
+    construcción, y lo que hay que vigilar es que no empeore las demás (C-0036)."""
     from . import transcribir
     fila = {"frase": g["frase"], "aparato": g["aparato"], "categoria": g.get("categoria", ""),
-            "referencia": g["referencia"]}
+            "referencia": g["referencia"],
+            "con_glosario": any(_contiene(g["referencia"], t) for t in del_glosario or ())}
     if not respuesta or "texto" not in respuesta:
         # Sin respuesta no hay nada que puntuar: contarla como WER 1,0 haría
         # pasar un servidor caído por un modelo que no entiende (regla 13).
@@ -614,12 +632,20 @@ def _resumir(filas: list[dict]) -> dict:
             "cer": tasa("cer"),
             "terminos": round(sum(f["terminos"]["acertados"] for f in oidas) / total_t, 4) if total_t else None,
             "nada": sum(1 for f in oidas if f["nada"]), "errores": len(filas) - len(oidas),
+            # Palabras que no se dijeron (C-0036): lo que más molesta al dictar, y lo
+            # que un glosario puede subir metiendo un término en un silencio.
+            "inserciones": sum(f["wer"]["i"] for f in oidas),
+            # Y las que se dijeron y no salen: en un dictado largo se pierden frases enteras.
+            "borradas": sum(f["wer"]["b"] for f in oidas),
             "ms_p50": _percentil(ms, 0.5), "ms_p90": _percentil(ms, 0.9)}
 
 
 def _informe(filas: list[dict]) -> dict:
     """El total (sin las categorías de `APARTE`), y por categoría y aparato."""
-    return {"totales": _resumir([f for f in filas if f["categoria"] not in APARTE]),
+    sin_aparte = [f for f in filas if f["categoria"] not in APARTE]
+    return {"totales": _resumir(sin_aparte),
+            "con_glosario": _resumir([f for f in sin_aparte if f.get("con_glosario")]),
+            "sin_glosario": _resumir([f for f in sin_aparte if not f.get("con_glosario")]),
             "por_categoria": {c: _resumir([f for f in filas if f["categoria"] == c])
                               for c in sorted({f["categoria"] for f in filas})},
             "por_aparato": {a: _resumir([f for f in filas if f["aparato"] == a])
@@ -629,6 +655,7 @@ def _informe(filas: list[dict]) -> dict:
 def _medir_una(cfg: dict, grabaciones: list[dict], enchufe: Path, python: str, al_avance) -> dict:
     from . import transcribir
     d = enchufe.parent
+    glosario = transcribir.glosario()
     al_avance({"fase": "cargando", "config": cfg})
     try:
         huella = transcribir.arrancar_servidor(enchufe, python=python, modelo=cfg["modelo"], tipo=cfg.get("tipo"),
@@ -642,10 +669,19 @@ def _medir_una(cfg: dict, grabaciones: list[dict], enchufe: Path, python: str, a
             return {"config": cfg, "error": "el servidor no llegó a cargar el modelo: " + _cola_del_registro(d)}
         estado = transcribir.estado_servidor(enchufe) or {}
         filas = []
+        pedido = {"idioma": "es"}
+        if cfg.get("glosario"):
+            # El que usaría el dictado ahora mismo, por la misma puerta.
+            pedido["glosario"] = {"modo": cfg["glosario"], "texto": glosario["texto"]}
         for n, g in enumerate(grabaciones, 1):
-            respuesta = transcribir.pedir(enchufe, {"ruta": str(_audio(d, g).resolve()), "idioma": "es"},
-                                          ESPERA_FRASE_S)
-            filas.append(_puntuar(g, respuesta))
+            respuesta = transcribir.pedir(enchufe, {**pedido, "ruta": str(_audio(d, g).resolve())}, ESPERA_FRASE_S)
+            aplicado = ((respuesta or {}).get("medidas") or {}).get("glosario", "no")
+            if respuesta and "texto" in respuesta and aplicado != (cfg.get("glosario") or "no"):
+                # Un glosario que el servidor no aplicó daría una cifra que no es la de esta
+                # configuración (regla 13): la frase no cuenta, y se dice.
+                respuesta = {"error": f"el servidor aplicó glosario «{aplicado}» y se pidió "
+                                      f"«{cfg.get('glosario') or 'no'}»"}
+            filas.append(_puntuar(g, respuesta, glosario["terminos_lista"]))
             al_avance({"fase": "frase", "config": cfg, "hechas": n, "total": len(grabaciones)})
         rss = _rss_pico_mb(estado.get("pid"))
         # Si alguien dictó mientras tanto, hubo dos modelos a la vez y la cifra
@@ -656,11 +692,52 @@ def _medir_una(cfg: dict, grabaciones: list[dict], enchufe: Path, python: str, a
             transcribir.apagar_servidor(enchufe)
         except RuntimeError as exc:   # dicho, no tragado (regla 21)
             print(f"[banco] {exc}", flush=True)
+    # Del glosario, su huella y cuántos términos: el texto no se guarda aquí.
     return {"config": cfg, "servidor": estado, "rss_pico_mb": rss, "dictado_cargado": dictado,
+            "glosario": {"huella": glosario["huella"], "terminos": glosario["terminos"],
+                         "recortado": glosario["recortado"]} if cfg.get("glosario") else None,
             **_informe(filas), "frases": filas}
 
 
-def medir(configs: list[dict], al_avance=None, *, aparatos: tuple[str, ...] | None = None) -> dict:
+def _componer_largos(d: Path, lista: list[dict]) -> list[dict]:
+    """Une las grabaciones de cada aparato en audios de más de 30 s (wav,
+    600), en la carpeta del banco —el servidor sólo lee de la de su socket—,
+    y devuelve sus grabaciones con la referencia unida. Son derivados: los
+    borra `_borrar_largos` al acabar. Sin `ffmpeg`, `ValueError`."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("ffmpeg"):
+        raise ValueError("para medir dictados largos hace falta ffmpeg (sudo apt install ffmpeg)")
+    largos = []
+    for aparato in APARATOS:
+        suyas = [g for g in lista if g["aparato"] == aparato and g.get("categoria") not in APARTE]
+        grupos = [("largo", suyas[n:n + LARGO_FRASES]) for n in range(0, len(suyas) - LARGO_FRASES + 1, LARGO_FRASES)]
+        grupos += [("muy largo", suyas[n:n + MUY_LARGO_FRASES])
+                   for n in range(0, len(suyas) - MUY_LARGO_FRASES + 1, MUY_LARGO_FRASES)]
+        for i, (categoria, grupo) in enumerate(grupos, 1):
+            nombre = f"largo-{aparato}-{i}.wav"
+            entradas = [a for g in grupo for a in ("-i", str(_audio(d, g)))]
+            filtro = "".join(f"[{i}:a]aresample=16000,apad=pad_dur={LARGO_PAUSA_S}[a{i}];" for i in range(len(grupo)))
+            filtro += "".join(f"[a{i}]" for i in range(len(grupo))) + f"concat=n={len(grupo)}:v=0:a=1[s]"
+            destino = d / nombre
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-y", *entradas, "-filter_complex", filtro,
+                            "-map", "[s]", "-ac", "1", "-ar", "16000", str(destino)],
+                           check=True, capture_output=True, timeout=120)
+            os.chmod(destino, 0o600)
+            largos.append({"frase": f"largo{i}", "aparato": aparato, "categoria": categoria,
+                           "referencia": " ".join(g["referencia"] for g in grupo),
+                           "terminos": [t for g in grupo for t in g.get("terminos") or []], "archivo": nombre})
+    return largos
+
+
+def _borrar_largos(d: Path) -> None:
+    for a in d.glob("largo-*.wav"):
+        a.unlink(missing_ok=True)
+
+
+def medir(configs: list[dict], al_avance=None, *, aparatos: tuple[str, ...] | None = None,
+          largos: bool = False) -> dict:
     """Mide cada configuración (`{modelo, tipo, dispositivo, …}`, abierta)
     contra lo grabado, y lo deja en `resultados/<fecha>.json`.
 
@@ -688,7 +765,12 @@ def medir(configs: list[dict], al_avance=None, *, aparatos: tuple[str, ...] | No
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise Ocupado("ya hay otra medida en marcha: espera a que acabe") from None
-        return _medir(configs, lista, avisar)
+        if not largos:
+            return _medir(configs, lista, avisar)
+        try:
+            return _medir(configs, lista + _componer_largos(d, lista), avisar)
+        finally:
+            _borrar_largos(d)
     finally:
         os.close(fd)
 
@@ -743,7 +825,8 @@ def resultados(n: int = 20) -> list[dict]:
         salida.append({"fecha": fecha, "cuando": legible, "version": r.get("version"),
                        "grabaciones": r.get("grabaciones"), "terminada": r.get("terminada", True),
                        "configs": [{k: c.get(k) for k in ("config", "servidor", "totales", "por_categoria",
-                                                          "por_aparato", "dictado_cargado", "error")}
+                                                          "por_aparato", "dictado_cargado", "error",
+                                                          "con_glosario", "sin_glosario", "glosario")}
                                    for c in r.get("configs") or []]})
     return salida
 
@@ -757,11 +840,13 @@ def _pct(x) -> str:
 
 def _tabla(r: dict) -> str:
     lineas = [f"{'configuración':<36} {'WER':>8} {'sin tildes':>11} {'CER':>8} {'términos':>9} "
-              f"{'p50 ms':>7} {'p90 ms':>7} {'carga s':>8} {'sin resp.':>9}",
+              f"{'p50 ms':>7} {'p90 ms':>7} {'carga s':>8} {'sin resp.':>9} {'inventadas':>10}",
               f"(el total no lleva {', '.join(APARTE)}: va en su línea)"]
     for c in r["configs"]:
         cfg = c.get("config") or {}
         nombre = " ".join(str(cfg.get(k)) for k in ("modelo", "tipo", "dispositivo") if cfg.get(k))
+        if cfg.get("glosario"):
+            nombre += f" +glosario:{cfg['glosario']}"
         if c.get("error"):
             lineas.append(f"{nombre:<36} no se midió: {c['error']}")
             continue
@@ -769,12 +854,21 @@ def _tabla(r: dict) -> str:
         real = f"{nombre} → {s.get('tipo', '?')}/{s.get('dispositivo', '?')}"
         lineas.append(f"{real:<36} {_pct(t.get('wer')):>8} {_pct(t.get('wer_sin_tildes')):>11} "
                       f"{_pct(t.get('cer')):>8} {_pct(t.get('terminos')):>9} {t.get('ms_p50') or '—':>7} "
-                      f"{t.get('ms_p90') or '—':>7} {s.get('s_carga') or '—':>8} {t.get('errores') or 0:>9}")
+                      f"{t.get('ms_p90') or '—':>7} {s.get('s_carga') or '—':>8} {t.get('errores') or 0:>9} "
+                      f"{t.get('inserciones', '—'):>10}")
+        for clave, rotulo in (("con_glosario", "frases con términos del glosario"),
+                              ("sin_glosario", "frases sin ninguno")):
+            ct = c.get(clave) or {}
+            if ct.get("frases"):
+                lineas.append(f"    {rotulo:<32} {_pct(ct.get('wer')):>8} {_pct(ct.get('wer_sin_tildes')):>11} "
+                              f"{_pct(ct.get('cer')):>8}   {ct.get('frases')} frases, "
+                              f"{ct.get('inserciones', 0)} inventadas")
         if c.get("dictado_cargado"):
             lineas.append("    ⚠ el Whisper del dictado estaba cargado al acabar: hubo dos modelos a la vez")
         for cat, ct in sorted((c.get("por_categoria") or {}).items()):
             lineas.append(f"    {cat:<32} {_pct(ct.get('wer')):>8} {_pct(ct.get('wer_sin_tildes')):>11} "
-                          f"{_pct(ct.get('cer')):>8}" + (f"   {ct['nada']} sin oír" if ct.get("nada") else ""))
+                          f"{_pct(ct.get('cer')):>8}   {ct.get('inserciones', 0)} inventadas, "
+                          f"{ct.get('borradas', 0)} perdidas" + (f", {ct['nada']} sin oír" if ct.get("nada") else ""))
     return "\n".join(lineas)
 
 
@@ -794,6 +888,13 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--tipos", default="", help="compute_type, separados por comas (vacío: el de siempre)")
     m.add_argument("--dispositivo", default="auto", choices=("auto", "cuda", "cpu"))
     m.add_argument("--aparato", choices=APARATOS, help="sólo lo grabado en uno")
+    m.add_argument("--largos", action="store_true",
+                   help=f"además, dictados de más de 30 s: las frases unidas de {LARGO_FRASES} en {LARGO_FRASES}")
+    m.add_argument("--glosarios", default="", help="no,hotwords,prompt: medir cada modelo con y sin el "
+                                                   "glosario del dictado (vacío: sin él)")
+    g = ordenes.add_parser("glosario", help="el glosario que lleva el dictado: de dónde sale y si se recorta")
+    g.add_argument("--sembrar", action="store_true",
+                   help="escribe la lista de base en voz/glosario.txt para editarla (si aún no existe)")
     r = ordenes.add_parser("resultados", help="las medidas guardadas")
     r.add_argument("--json", action="store_true")
     args = partes.parse_args(argv)
@@ -809,6 +910,17 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"{n} frases en {carpeta() / 'frases.yml'}")
         return 0
+    if args.orden == "glosario":
+        from . import transcribir
+        if args.sembrar:
+            print("sembrado en " if transcribir.sembrar_glosario() else "ya existía, no se toca: ",
+                  transcribir.ruta_glosario(), sep="")
+        gl = transcribir.glosario()
+        print(f"{gl['terminos']} términos ({gl['de']['origen']} + {gl['de']['proyectos']} proyectos), "
+              f"{len(gl['texto'])} caracteres{', RECORTADO' if gl['recortado'] else ''}; "
+              f"modo del dictado: {transcribir.GLOSARIO_MODO or 'sin glosario'}")
+        print(gl["texto"])
+        return 0
     if args.orden == "estado":
         for a in APARATOS:
             p = progreso(a)
@@ -818,8 +930,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.orden == "medir":
         tipos = [t.strip() for t in args.tipos.split(",") if t.strip()] or [None]
-        configs = [{"modelo": mo.strip(), "tipo": t, "dispositivo": args.dispositivo}
-                   for mo in args.modelos.split(",") if mo.strip() for t in tipos]
+        glosarios = [None if x.strip() in ("", "no") else x.strip() for x in args.glosarios.split(",")] or [None]
+        configs = [{"modelo": mo.strip(), "tipo": t, "dispositivo": args.dispositivo, "glosario": gl}
+                   for mo in args.modelos.split(",") if mo.strip() for t in tipos for gl in glosarios]
 
         def avance(a: dict) -> None:
             cfg = a["config"]
@@ -829,7 +942,8 @@ def main(argv: list[str] | None = None) -> int:
             elif a["hechas"] == a["total"] or a["hechas"] % 10 == 0:
                 print(f"{nombre}: {a['hechas']} de {a['total']}", flush=True)
         try:
-            resultado = medir(configs, avance, aparatos=(args.aparato,) if args.aparato else None)
+            resultado = medir(configs, avance, aparatos=(args.aparato,) if args.aparato else None,
+                              largos=args.largos)
         except (ValueError, Ocupado, RuntimeError) as exc:
             print(f"no se midió: {exc}")
             return 1

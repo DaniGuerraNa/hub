@@ -48,6 +48,13 @@ from .dispositivo import AparatoNoDisponible, Dispositivo
 FIRMWARE_CONTRASTADO = ("0.5.9", "0.5.10", "0.5.11")
 
 
+def mac_de_usb(usb: str | None) -> str | None:
+    """Lo que el USB dice del Mac (C-0477). «not attached» también sale con la
+    emulación USB apagada: «sin_usb» no afirma que falte el cable. Lo demás
+    (`attached`, `addressed`, `unknown`) no dice nada seguro: None."""
+    return {"configured": "despierto", "suspended": "reposo", "not attached": "sin_usb"}.get(usb or "")
+
+
 def aviso_firmware(version: str) -> str:
     if not version:
         return "el JetKVM no dijo su versión de firmware: no se sabe si es una de las contrastadas"
@@ -87,6 +94,11 @@ class JetKVM(Dispositivo):
         self.version = ""
         self.conectado = False
         self.motivo = "sin conectar"
+        # Lo que dice el aparato del Mac (C-0477): el USB hacia él («suspended»
+        # mientras duerme) y la señal HDMI. Llegan solos, como eventos del canal
+        # rpc; sin saberlo, None. Valen para esta conexión y no para otra.
+        self.usb: str | None = None
+        self.senal: str | None = None
 
     # ── conexión ────────────────────────────────────────────────────────────
     async def conectar(self) -> None:
@@ -149,6 +161,7 @@ class JetKVM(Dispositivo):
         async def _estado():
             if pc.connectionState in ("failed", "closed"):
                 self.conectado, self._sin_video = False, False
+                self.usb = self.senal = None
                 self.motivo = f"conexión {pc.connectionState}"
 
         @self._rpc.on("message")
@@ -158,12 +171,19 @@ class JetKVM(Dispositivo):
             except Exception:
                 return
             if "id" in j and j["id"] in self._pendientes:
-                self._pendientes.pop(j["id"]).set_result(j)
+                f = self._pendientes.pop(j["id"])
+                if not f.done():  # la que llega tarde: quien preguntaba ya dejó de esperar
+                    f.set_result(j)
             elif j.get("method") == "otherSessionConnected":
                 self.conectado, self._sin_video = False, False
+                self.usb = self.senal = None
                 self.motivo = "otra sesión abrió el JetKVM (¿su web en un navegador?): el puente quedó fuera"
             elif j.get("method") == "videoInputState":
                 self._leer_video(j.get("params") or {})
+            elif j.get("method") == "usbState":
+                # Su `params` es la cadena tal cual («suspended»), no un objeto
+                # (`triggerUSBStateUpdate` del firmware); un objeto se acepta por si acaso.
+                self._leer_usb(j.get("params"))
 
         saludo: asyncio.Future = asyncio.get_running_loop().create_future()
 
@@ -223,18 +243,32 @@ class JetKVM(Dispositivo):
 
         with contextlib.suppress(Exception):
             self._leer_video((await self._llamar("getVideoState")).get("result") or {})
+        # El USB se empuja al abrir el canal; por si ese evento se perdió, se pide.
+        # Con tope corto: un firmware que no contesta no puede costar más de lo que ahorra.
+        with contextlib.suppress(Exception):
+            await self._usb(tope=1.5)
         # Antes del vídeo: con el Mac dormido no llega imagen y la conexión se da
         # por fallida, pero el jiggler y despertarlo sólo necesitan este canal.
         with contextlib.suppress(Exception):
             await self.leer_jiggler()
 
+        # La pista y quien la lee, siempre, también con el Mac en reposo: al
+        # despertar, la primera imagen da la conexión por buena (C-0463).
         track = await asyncio.wait_for(pista, 10)
         self._tareas.append(asyncio.create_task(self._recibir_video(track)))
+        if self.usb == "suspended" and self._trama is None:
+            # Ya se sabe que duerme: esperar la imagen 5 s no diría nada nuevo.
+            self._sin_video = True
+            raise AparatoNoDisponible("el Mac está en reposo: el JetKVM está conectado, pero no llega imagen "
+                                      "(«Despertar el Mac» lo saca del reposo)")
         fin = time.monotonic() + 5
         while self._trama is None and time.monotonic() < fin:
             await asyncio.sleep(0.1)
         if self._trama is None:
             self._sin_video = True
+            if self.usb == "suspended":
+                raise AparatoNoDisponible("el Mac está en reposo: el JetKVM está conectado, pero no llega imagen "
+                                          "(«Despertar el Mac» lo saca del reposo)")
             raise AparatoNoDisponible("conectado, pero no llega vídeo (¿el Mac está dormido, apagado o sin HDMI?)")
         self.conectado, self.motivo = True, ""
 
@@ -256,6 +290,13 @@ class JetKVM(Dispositivo):
     def _leer_video(self, v: dict) -> None:
         if v.get("width") and v.get("height"):
             self.ancho, self.alto = int(v["width"]), int(v["height"])
+        if "ready" in v or "error" in v:
+            self.senal = "ok" if v.get("ready") else (str(v.get("error") or "") or None)
+
+    def _leer_usb(self, valor) -> None:
+        if isinstance(valor, dict):
+            valor = valor.get("state") or valor.get("usbState")
+        self.usb = str(valor) if valor else None
 
     async def _recibir_video(self, track) -> None:
         while True:
@@ -284,13 +325,13 @@ class JetKVM(Dispositivo):
             if oido is not None:
                 oido(bytes(trama.planes[0])[: trama.samples * 2], time.time())
 
-    async def _llamar(self, metodo: str, **params) -> dict:
+    async def _llamar(self, metodo: str, tope: float = 5, **params) -> dict:
         self._n += 1
         f = asyncio.get_running_loop().create_future()
         self._pendientes[self._n] = f
         self._rpc.send(json.dumps({"jsonrpc": "2.0", "method": metodo, "params": params, "id": self._n}))
         # Las llamadas JSON-RPC se atienden en paralelo en el aparato: se espera cada una.
-        return await asyncio.wait_for(f, 5)
+        return await asyncio.wait_for(f, tope)
 
     async def cerrar(self) -> None:
         for t in self._tareas:
@@ -308,6 +349,7 @@ class JetKVM(Dispositivo):
         self.jiggler = None  # se vuelve a leer al conectar: lo de antes puede no ser de este aparato
         self._sin_video = False
         self.conectado = False
+        self.usb = self.senal = None
 
     # ── Dispositivo ─────────────────────────────────────────────────────────
     def _listo(self) -> None:
@@ -467,10 +509,14 @@ class JetKVM(Dispositivo):
                 return {"antes": antes, "despues": despues, "imagen": True}
         return {"antes": antes, "despues": despues, "imagen": self._trama_t > t0 + 0.2}
 
-    async def _usb(self) -> str | None:
-        """El estado del USB del aparato hacia el Mac: «suspended» mientras duerme."""
-        r = await self._llamar("getUSBState")
-        return r.get("result") if "error" not in r else None
+    async def _usb(self, tope: float = 5) -> str | None:
+        """El estado del USB del aparato hacia el Mac: «suspended» mientras duerme.
+        Lo que lee se queda en `self.usb`: una sola fuente para `estado()`."""
+        r = await self._llamar("getUSBState", tope=tope)
+        valor = r.get("result") if "error" not in r else None
+        if valor is not None:  # un firmware que rechaza el método no borra lo que trajo el evento
+            self._leer_usb(valor)
+        return valor
 
     def estado(self) -> dict:
         edad = time.time() - self._trama_t if self._trama_t else None
@@ -480,7 +526,8 @@ class JetKVM(Dispositivo):
              "firmware": self.version, "url": self.url,
              "firmware_contrastado": self.version in FIRMWARE_CONTRASTADO,
              "ultimo_fotograma_s": round(edad, 1) if edad is not None else None,
-             "sonido": self.da_sonido, "jiggler": self.jiggler, "video": self.video}
+             "sonido": self.da_sonido, "jiggler": self.jiggler, "video": self.video,
+             "mac": mac_de_usb(self.usb), "senal": self.senal}
         if self.derivacion.apagada:
             e["aviso_video"] = self.derivacion.apagada
         if self.version or self.conectado:

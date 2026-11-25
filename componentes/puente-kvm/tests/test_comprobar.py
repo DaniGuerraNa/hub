@@ -298,3 +298,14 @@ def test_la_pantalla_copia_el_diagnostico_publico():
         r = c.get("/api/diagnostico")
         assert r.status_code == 200 and r.json()["texto"].startswith("# Diagnóstico del puente KVM")
         assert "192.168.1.77" not in r.json()["texto"]
+
+
+def test_con_el_mac_en_reposo_comprobar_avisa_y_no_lo_da_por_fallo():
+    # C-0477: el aparato está y se despierta desde el panel.
+    ajustes = {"dispositivo": {"tipo": "jetkvm", "url": "http://jetkvm.local"}}
+    estado = {"control": {"modo": "libre"}, "error_conexion": "el Mac está en reposo",
+              "dispositivo": {"tipo": "jetkvm", "conectado": False, "mac": "reposo", "url": "http://jetkvm.local",
+                              "firmware": "0.5.11"}}
+    puntos = comprobar._aparato(ajustes, estado, entrar=False)
+    assert puntos[0].estado == comprobar.OJO and "reposo" in puntos[0].detalle
+    assert "Despertar el Mac" in puntos[0].arreglo

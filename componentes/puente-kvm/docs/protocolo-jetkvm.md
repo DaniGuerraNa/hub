@@ -188,6 +188,10 @@ Los crea **el cliente**; el aparato reacciona en `OnDataChannel` según la etiqu
   networkState, otaProgress, otaState, otherSessionConnected, usbState,
   videoInputState, willReboot`. Los tres de teclado van por JSON-RPC sólo hasta
   el saludo HID; después llegan en binario por `hidrpc`.
+- `usbState` lleva en `params` la **cadena** del estado (`configured`,
+  `suspended` con el Mac en reposo, `not attached`…), no un objeto
+  (`triggerUSBStateUpdate`); el puente la lee como `mac` de su estado (C-0477).
+  Leído del código, **NO VERIFICADO** con un aparato.
 
 ## d. Teclado
 

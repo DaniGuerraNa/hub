@@ -8,6 +8,8 @@
       "mcp__puente-kvm__rueda",
       "mcp__puente-kvm__recorrer_pantalla",
       "mcp__puente-kvm__jiggler",
+      "mcp__puente-kvm__sondear_teclado",
+      "mcp__puente-kvm__probar_teclado",
       "Edit(/src/**)",
       "Edit(/.claude/**)",
       "WebFetch",

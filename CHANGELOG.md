@@ -13,6 +13,96 @@ bash scripts/actualizar.sh
 Al terminar te enseña esta misma lista, sólo con las versiones que acabas de
 cruzar.
 
+## Sin publicar
+
+## 0.12.0 — 2026-11-25
+
+El Puente KVM teclea bien en un Mac con cualquier teclado: si el Mac usa uno
+que el puente no trae (el latinoamericano, por ejemplo), su Claude lo mide en
+el propio Mac y lo comprueba antes de usarlo. El dictado entiende mejor tu
+voz y tus palabras, y la barra de la terminal en el teléfono cabe en una línea.
+
+### Qué tienes que hacer
+
+- **Actualiza** con el botón de **Actualizaciones** (o con
+  `bash scripts/actualizar.sh` en la carpeta del hub).
+- **Si usas el Puente KVM**, la actualización lo reinicia si está libre; si
+  estaba ocupado, su pantalla te lo ofrece con «Reiniciar el puente». Después,
+  «Reabrir la conversación de Claude», para que su Claude tenga las
+  herramientas nuevas.
+- **Si en el Mac `< > { } [ ]` salen cambiados**, pídele a su Claude que
+  calibre el teclado (skill `calibrar-teclado`): teclea en una pestaña de
+  script vacía, te pide que ejecutes una consulta que sólo calcula huellas, y
+  al final pulsas **«Usar»** en Ajustes → Teclado del Mac.
+
+### Nuevo
+
+- **Puente KVM: calibrar el teclado del Mac.** Hasta ahora sólo sabía teclear
+  para «U.S.» y «Español - ISO»; con otra fuente de entrada, los símbolos
+  salían cambiados. Ahora su Claude pulsa cada tecla del Mac en una pestaña
+  vacía, lee lo que sale y arma la tabla, y una consulta que ejecutas tú
+  confirma con huellas, fila a fila, que cada carácter sale exacto. Sólo una
+  medida comprobada se puede elegir, y la eliges tú.
+
+- **Eliges qué Whisper transcribe tu dictado**, en la flechita pegada al
+  micrófono de la terminal y del Tablero (en el teléfono, en el «⋯» de la
+  barra de la terminal, «Modelo del dictado») y en el chat del secretario:
+  «Ligero» (el de siempre), «Preciso» (large-v3-turbo en la GPU: medido con una voz real, la
+  mitad de errores por unas centésimas de segundo más) o «Apagado» (suelta la
+  memoria de la GPU; el dictado sigue, más lento, por la CPU). Sólo se
+  ofrecen los modelos ya descargados, y nada cambia tu elección.
+- **El dictado conoce tus palabras**: se le da a Whisper una lista de
+  términos (Claude, commit, worktree, Tailscale, SQLite… y los nombres de tus
+  proyectos), y escribe bien los nombres propios y técnicos que antes
+  confundía. La lista es tuya: `python -m hub.banco_dictado glosario
+  --sembrar` la deja en `voz/glosario.txt` para que la edites. Sólo se usa
+  con tu dictado, no con audios de otras personas.
+
+### Qué cambia en lo que ya usabas
+
+- **Dictar es un micrófono en todo el hub.** En Trabajo, Tablero y
+  Orquestador el botón «Dictar» pasa a ser el icono del micrófono, como en el
+  chat; mientras graba enseña un cuadrado de parar y los segundos. Igual en
+  la interfaz de siempre y en la nueva.
+- **Trabajo: la barra de encima de la terminal cabe en una línea**, también
+  en la interfaz de siempre. En el teléfono quedan el selector (que ahora es
+  el nombre de lo que ves y ya no ocupa una fila aparte), el micrófono y un
+  «⋯»; la terminal gana alto y empieza más arriba. En el PC quedan fuera la
+  letra, «Nota», el micrófono con su modelo y el «⋯». Dentro del «⋯»: la
+  letra y la nota (en el teléfono), «Conversaciones anteriores», «Reabrir al
+  encender» (lo que era «↻ Persistente», ahora un interruptor; un slot
+  persistente lleva un icono de encendido junto a su nombre), «Pantalla
+  completa», el reparto y «Ajustar a tmux». Las columnas ya no son un número
+  suelto en la barra: si tmux tiene más de las que se ven, sale un aviso
+  sobre la terminal con su botón «Ajustar». Ese aviso y los mensajes de la terminal
+  (conectando, grabando, dictado escrito…) flotan sobre su esquina de arriba
+  en vez de ocupar una fila, y se quitan tocándolos.
+- **El selector de Trabajo en el teléfono ya navega desde un slot sin
+  ventana.** Antes, en esa pantalla, elegir otro sitio no hacía nada.
+- **Trabajo en el teléfono: cada ventana se llama igual que en el escritorio.**
+  Las pestañas de un slot salían con el nombre del slot o de la sesión en
+  vez de lo que hace cada una; ahora dicen lo mismo que el árbol: el nombre
+  que tú le pusiste o, si no, el título de la conversación. Y lo que
+  renombras se ve también en el árbol, no sólo en la pestaña. El selector
+  de arriba elige ventanas («slot › ventana»), deja los slots sin ventana
+  juntos al final y tiene un solo «+ Slot nuevo…» en lugar de uno por
+  proyecto.
+- **Puente KVM: sabe al momento si el Mac está en reposo.** El JetKVM se lo
+  dice por el USB: la placa de arriba pone «Mac en reposo» y el panel lo
+  avisa con «Despertar el Mac». El aviso de conexión ya no se queda en
+  pantalla hasta recargar: se va solo en cuanto vuelve la imagen. Y
+  **«Reconectar»** está siempre en el panel, junto a «Despertar el Mac» (antes
+  sólo en Ajustes o cuando fallaba); con una reunión grabándose no reconecta,
+  para no cortar su sonido.
+- **Puente KVM: Opción+X no se pulsa nunca al teclear.** En DBeaver para Mac
+  es «Ejecutar script», y el puente la usaba para escribir `≈` y `∑`. Ni su
+  Claude ni tu «Pegar texto» la pulsan; un texto que la necesite no se
+  teclea y te dice qué carácter. Puedes añadir más teclas en Ajustes →
+  «Teclas que el puente nunca pulsa al teclear».
+- **Puente KVM: un cambio aprobado se comprueba entero antes de la primera
+  tecla** con el teclado del Mac: si un carácter no se puede escribir, no se
+  escribe nada en vez de quedarse a medias.
+
 ## 0.11.0 — 2026-11-22
 
 Más personajes para el secretario: cuatro gatos y cuatro amigos nuevos (un

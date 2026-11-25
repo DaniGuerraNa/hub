@@ -2224,6 +2224,29 @@ def api_voz_calentar():
     return JSONResponse({"ok": True, "estado": estado})
 
 
+@app.get("/api/voz/estado")
+def api_voz_estado(gpu: int = 0, solo: str = ""):
+    """El menú del modelo del dictado al abrirse (C-0313). `def`: lanza un
+    intérprete para ver qué hay descargado y, con `gpu=1`, `nvidia-smi`:
+    bajo demanda, nunca en un sondeo. `solo=eleccion`, para el rótulo al
+    cargar la página: sólo lee un archivo."""
+    return JSONResponse(api.voz_estado(gpu=bool(gpu), solo_eleccion=solo == "eleccion"))
+
+
+@app.post("/api/voz/modelo")
+def api_voz_modelo(modelo: str = Form(...)):
+    """Elegir el modelo del dictado o apagarlo (C-0313). Contesta cuando el
+    anterior ya murió y, si hay uno nuevo, cuando ya está cargado: puede
+    tardar segundos. El `Origin` lo mira el middleware, como en todo POST."""
+    from . import transcribir
+
+    try:
+        estado = transcribir.elegir(modelo)
+    except (ValueError, RuntimeError, OSError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)})
+    return JSONResponse({"ok": True, **estado})
+
+
 @app.post("/archivos/terminal")
 async def archivos_terminal(request: Request):
     """Abre una ventana de tmux en esa carpeta, con el comando escrito y sin Enter.
@@ -3187,7 +3210,10 @@ async def api_nueva_ventana(session: str, request: Request):
                     return {"ok": True}
             finally:
                 con.close()
-        tmux.nueva_ventana(session, cuerpo.get("ruta") or None, cuerpo.get("nombre") or None)
+        # Un nombre que llega aquí lo escribió quien usa el hub: cuenta como
+        # suyo y manda sobre el título (C-0479, `tmux.etiqueta_de_ventana`).
+        tmux.nueva_ventana(session, cuerpo.get("ruta") or None, cuerpo.get("nombre") or None,
+                           a_mano=bool(cuerpo.get("nombre")))
     except (tmux.DestinoInvalido, tmux.TmuxNoDisponible, RuntimeError, ValueError) as exc:
         return {"ok": False, "error": str(exc)}
     return {"ok": True}

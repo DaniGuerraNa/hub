@@ -26,7 +26,6 @@
   .idea-nueva .con-dictado { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px }
   .idea-nueva .estado-dictado, .idea-nueva .elegidos { color:var(--texto-3); font-size:var(--letra-2) }
   .idea-nueva.encima { outline:2px dashed var(--acento); outline-offset:4px }
-  .boton.grabando { border-color:var(--riesgo); color:var(--riesgo) }
   .adjuntos { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px }
   .adjuntos a { display:flex; align-items:center; gap:6px; font-size:var(--letra-2); color:var(--texto-2);
                 text-decoration:none; max-width:100%; overflow-wrap:anywhere }
@@ -63,10 +62,12 @@
     <div>
       <label for="detalle-idea">Detalle, escrito o dictado</label>
       <textarea id="detalle-idea" name="detalle" rows="3" maxlength="4000"
-                placeholder="lo que no cabe arriba; con «Dictar» lo dices en voz"></textarea>
+                placeholder="lo que no cabe arriba; con el micrófono lo dices en voz"></textarea>
       <div class="con-dictado">
-        <button type="button" class="boton" data-grabar="detalle-idea"
-                data-grabar-estado="estado-dictado" data-grabar-url="/api/voz" data-grabar-quien="tablero">Dictar</button>
+        {# Sube a /api/voz: el modelo del dictado va a su lado (decisión 452). #}
+        {{ ui.microfono(datos={'grabar': 'detalle-idea', 'grabar-estado': 'estado-dictado',
+                               'grabar-url': '/api/voz', 'grabar-quien': 'tablero'},
+                        modelo=true, modelo_lado='izq') }}
         <button type="button" class="boton" data-elegir="archivos-idea">Adjuntar</button>
         <input id="archivos-idea" type="file" name="archivos" multiple hidden>
         <span class="estado-dictado" id="estado-dictado"></span>

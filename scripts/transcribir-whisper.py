@@ -38,6 +38,10 @@ def main() -> int:
     partes.add_argument("audio")
     partes.add_argument("--modelo", default="small")
     partes.add_argument("--idioma", default="es")
+    # El glosario del dictado del dueño (C-0036): el mismo que el servidor
+    # recibe en cada pedido, para que la frase que cae aquí salga igual.
+    partes.add_argument("--glosario-modo", choices=("hotwords", "prompt"), default=None)
+    partes.add_argument("--glosario", default="")
     args = partes.parse_args()
 
     try:
@@ -51,7 +55,10 @@ def main() -> int:
         return 2
 
     modelo = WhisperModel(args.modelo, device="cpu", compute_type="int8")
-    trozos, _ = modelo.transcribe(args.audio, language=args.idioma, vad_filter=True)
+    extra = {}
+    if args.glosario_modo and args.glosario.strip():
+        extra = {"hotwords" if args.glosario_modo == "hotwords" else "initial_prompt": args.glosario.strip()}
+    trozos, _ = modelo.transcribe(args.audio, language=args.idioma, vad_filter=True, **extra)
     texto = " ".join(t.text.strip() for t in trozos).strip()
     if not texto:
         return 3      # se entendió nada; el hub lo distingue de no haber podido

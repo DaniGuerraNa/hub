@@ -1,8 +1,12 @@
 """Un Mac simulado con un cliente de base de datos abierto en un procedimiento.
 
 Recibe los mismos informes HID que recibiría el Mac por el JetKVM y los
-interpreta como macOS con la fuente «U.S.» (incluidas las teclas muertas de
-Option para á, ñ, ü). Pinta una pantalla de 1920×1080 con la misma pinta que
+interpreta como macOS con SU fuente de entrada —«U.S.» si no se dice otra,
+incluidas las teclas muertas de Option para á, ñ, ü—. Esa fuente es del Mac
+simulado, no del ajuste del puente (C-0481): como en el de verdad, la elige
+quien usa el Mac. Si siguiera al ajuste, nunca se podría probar un puente que
+teclea con una distribución distinta de la del Mac, que es lo que mide
+`teclados.py`. Pinta una pantalla de 1920×1080 con la misma pinta que
 tendría un cliente en «modo captura»: Menlo —aquí DejaVu Sans Mono, de la que
 Menlo deriva—, fondo blanco, números de línea y barra de estado.
 
@@ -86,25 +90,31 @@ def _fuente(ruta: str | None, tam: int) -> ImageFont.FreeTypeFont:
 _BITS = hid.SHIFT | hid.ALT
 
 
-def _tablas(distribucion: str) -> tuple[dict, dict, dict]:
-    tabla, muertas = ((hid._MAC_ES, hid._MUERTAS_MAC_ES) if distribucion == "mac-es"
-                      else (hid._MAC_US, hid._MUERTAS_MAC_US))
-    pasos = {c: hid.caracter(c, distribucion) for c in [chr(i) for i in range(32, 127)] + list(tabla)}
+def _tablas(fuente: hid.Distribucion) -> tuple[dict, dict, dict]:
+    # El ASCII primero: si dos caracteres comparten tecla, la tecla da el primero.
+    orden = [chr(i) for i in range(32, 127)] + [c for c in fuente.tabla if not " " <= c <= "~"]
+    pasos = {c: hid.caracter(c, fuente) for c in orden}
     caracter: dict[tuple[int, int], str] = {}
     for c, p in pasos.items():
         if p and len(p) == 1:
             caracter.setdefault((p[0].modificadores & _BITS, p[0].tecla), c)
     caracter[(0, hid.TECLAS["space"])] = " "
-    muerta = {(m, hid.TECLAS[t]): acento for (m, t), acento in muertas.items()}
+    muerta = {(m, hid.TECLAS[t]): acento for (m, t), acento in fuente.muertas.items()}
     componer: dict[tuple[str, str], str] = {}
     for c, p in pasos.items():
         if p and len(p) == 2 and p[1].tecla != hid.TECLAS["space"]:
-            acento = muerta[(p[0].modificadores & _BITS, p[0].tecla)]
-            componer[(acento, caracter[(p[1].modificadores & _BITS, p[1].tecla)])] = c
+            acento = muerta.get((p[0].modificadores & _BITS, p[0].tecla))
+            letra = caracter.get((p[1].modificadores & _BITS, p[1].tecla))
+            if acento and letra:
+                componer[(acento, letra)] = c
     return caracter, muerta, componer
 
 
-_TABLAS = {d: _tablas(d) for d in hid.DISTRIBUCIONES}
+def fuente_del_mac(fuente: str | hid.Distribucion) -> hid.Distribucion:
+    """Una de serie por su id, o una tabla cualquiera (las pruebas montan Macs con
+    fuentes que el puente no tiene). Un id desconocido es un error: caer a «U.S.»
+    haría pasar una prueba que no prueba lo que dice."""
+    return fuente if isinstance(fuente, hid.Distribucion) else hid.de_serie(fuente)
 
 
 @dataclass
@@ -120,9 +130,18 @@ class EditorSimulado:
     izquierda: int = 0
     dialogo: str | None = None  # texto del «Ir a la línea» si está abierto
     muerta: str | None = None
-    distribucion: str = "mac-us"  # la fuente de entrada del Mac simulado
+    fuente: hid.Distribucion = hid.MAC_US  # la fuente de entrada del Mac simulado
     version: int = 0
     guardado: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.poner_fuente(self.fuente)
+
+    def poner_fuente(self, fuente: str | hid.Distribucion) -> None:
+        """Cambia la fuente de entrada del Mac simulado, como Ctrl+Espacio en el de verdad."""
+        self.fuente = fuente_del_mac(fuente)
+        self._tablas = _tablas(self.fuente)
+        self.muerta = None
 
     # ── utilidades ──────────────────────────────────────────────────────────
     def _ajustar_vista(self) -> None:
@@ -264,7 +283,7 @@ class EditorSimulado:
             self._caracter(mods, codigo, shift, alt)
 
     def _caracter(self, mods: int, codigo: int, shift: bool, alt: bool) -> None:
-        caracteres, muertas, componer = _TABLAS.get(self.distribucion, _TABLAS["mac-us"])
+        caracteres, muertas, componer = self._tablas
         bits = (hid.SHIFT if shift else 0) | (hid.ALT if alt else 0)
         if (bits, codigo) in muertas:
             self.muerta = muertas[(bits, codigo)]
@@ -295,7 +314,7 @@ class EditorSimulado:
         elif codigo == T["backspace"]:
             self.dialogo = self.dialogo[:-1] if self.dialogo else ""
         else:
-            car = _TABLAS.get(self.distribucion, _TABLAS["mac-us"])[0].get((0, codigo))
+            car = self._tablas[0].get((0, codigo))
             if car and car.isdigit() and len(self.dialogo or "") < 6:
                 self.dialogo = (self.dialogo or "") + car
 
@@ -317,7 +336,7 @@ def huella_sqlserver(lineas: list[str]) -> str:
 class Simulador(Dispositivo):
     tipo = "simulador"
 
-    def __init__(self, lineas: list[str] | None = None, distribucion: str = "mac-us"):
+    def __init__(self, lineas: list[str] | None = None, fuente: str | hid.Distribucion = "mac-us"):
         self._mono = _fuente(FUENTE_MONO, TAM_FUENTE)
         self._ui = _fuente(FUENTE_UI, 15)
         self._ui_peq = _fuente(FUENTE_UI, 13)
@@ -326,7 +345,7 @@ class Simulador(Dispositivo):
         columnas = int((ANCHO - TEXTO_X0 - 10) // self.ancho_car)
         texto = list(lineas) if lineas is not None else muestras.procedimiento()
         self.editor = EditorSimulado(lineas=list(texto), filas=filas, columnas=columnas,
-                                     guardado=list(texto), distribucion=distribucion)
+                                     guardado=list(texto), fuente=fuente_del_mac(fuente))
         self._pulsadas: set[int] = set()
         self._botones = 0
         self.puntero = (1500, 600)
@@ -424,6 +443,9 @@ class Simulador(Dispositivo):
             "resolucion": f"{ANCHO}×{ALTO}", "ancho": ANCHO, "alto": ALTO,
             "lineas": len(e.lineas), "modificado": e.modificado,
             "huella_base": huella_sqlserver(e.guardado), "jiggler": self.jiggler,
+            # Dormido sólo cambia lo que dice el USB (ver `dormido`): conectado sigue.
+            "mac": ("reposo" if self.dormido else "despierto") if self.conectado else None,
+            "senal": "ok" if self.conectado else None,
             "nota": "Mac simulado: cliente de BD con un procedimiento de muestra"
                     + ("" if FUENTE_MONO else f". Falta la fuente monoespaciada ({ARREGLO_FUENTES})"),
         }

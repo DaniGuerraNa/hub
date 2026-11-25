@@ -156,6 +156,10 @@ PERFIL_POR_OMISION = {
     "ir_a_linea": "cmd+l",
     "fin_de_linea": "cmd+right",
     "distribucion": "mac-us",
+    # Lo que el puente no pulsa nunca al teclear texto, ni al sondear el teclado:
+    # en DBeaver para Mac, Opción+X es «Ejecutar script», y con ella salen `≈`
+    # (U.S.) y `∑` (Español - ISO) (C-0481).
+    "reservadas": ["alt+x"],
     "retardo_tecla_ms": 12,
     "aparcar_raton": [1900, 1066],  # donde el puntero no tapa el texto
     # Con el desplazamiento natural de macOS la rueda va al revés: lo marca la

@@ -762,10 +762,7 @@ def ventanas_de_sesion(
       una ventana recién creada tarda hasta un ciclo en aparecer, y marcarla
       como huérfana durante 20 s sería inventarse un dato que no se tiene.
     """
-    ventanas = tmux.listar_ventanas(session)
-    if not ventanas:
-        return []
-
+    tmux.validar_sesion(session)
     # El último muestreo, que es lo que sabe de slots. Puede ir hasta un ciclo
     # por detrás de tmux, y de ahí el estado `nueva`.
     muestreadas: dict[int, int | None] = {}
@@ -782,6 +779,15 @@ def ventanas_de_sesion(
         _fila_a_dict(f) for f in con.execute(
             """SELECT s.id, s.nombre, p.nombre AS proyecto_nombre
                FROM slot s LEFT JOIN proyecto p ON p.id = s.proyecto_id"""))}
+
+    # 🔴 Transitorio (C-0479): el nombre del slot que el hub les ponía con `-n`
+    # a las ventanas abiertas antes de ese cambio no es del dueño. Lo mismo
+    # pasa el snapshotter, para que la pestaña y el árbol digan lo mismo.
+    dados = {indice: {nombres[suyo]["nombre"]}
+             for indice, suyo in muestreadas.items() if suyo in nombres}
+    ventanas = tmux.listar_ventanas(session, dados)
+    if not ventanas:
+        return []
 
     for v in ventanas:
         indice = v["indice"]
@@ -4263,6 +4269,17 @@ def personaje_vista(valor: Any = None) -> dict[str, str]:
     pid = _pj.elegido(valor)
     nombre, familia = _pj.PERSONAJES[pid]
     return {"id": pid, "nombre": nombre, "familia": familia, "hoja": _pj.hoja(pid)}
+
+
+def voz_estado(gpu: bool = False, solo_eleccion: bool = False) -> dict:
+    """El modelo del dictado (C-0313): cuál eligió, cuáles hay descargados,
+    qué tiene cargado el servidor y, con `gpu`, la memoria de la GPU medida
+    al momento. Lo lee el menú junto a cada micrófono al abrirse; cerrado,
+    sólo lo elegido (`solo_eleccion`), que no lanza nada."""
+    from . import transcribir
+    if solo_eleccion:
+        return transcribir.eleccion_dictado()
+    return transcribir.estado_dictado(gpu=gpu)
 
 
 def banco_dictado(aparato: str | None = None) -> dict:

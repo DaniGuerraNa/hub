@@ -12,6 +12,7 @@ import re
 import shlex
 import socket
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 
 from . import procesos
@@ -19,7 +20,11 @@ from . import procesos
 # session | window | pane | pane_id | cwd | título | comando | activo
 _FORMATO = (
     "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_id}\t"
-    "#{pane_current_path}\t#{pane_title}\t#{pane_current_command}\t#{pane_active}"
+    "#{pane_current_path}\t#{pane_title}\t#{pane_current_command}\t#{pane_active}\t"
+    # El nombre de la ventana y si lo puso alguien (C-0479): con ellos el
+    # muestreo nombra la ventana igual que la pestaña (`etiqueta_de_ventana`).
+    # Al final, para no mover los de antes.
+    "#{window_name}\t#{automatic-rename}"
 )
 
 # Claude Code antepone un glifo de estado al título ("⠂ Continuar con los
@@ -309,6 +314,13 @@ def listar_paneles(incluir_espejos: bool = False) -> list[dict]:
                 "titulo": titulo,
                 "comando": comando,
                 "activo": activo == "1",
+                # Sin los campos (tmux viejo) se asume automático, como en
+                # `listar_ventanas`: es el caso común.
+                # Por el final: van los últimos a propósito, y un tabulador en
+                # el título del panel desplazaría un índice contado desde el
+                # principio (revisor de C-0479).
+                "nombre_ventana": campos[-2] if len(campos) > 9 else "",
+                "a_mano": len(campos) > 9 and campos[-1] == "0",
             }
         )
     return paneles
@@ -331,8 +343,56 @@ _FORMATO_VENTANA = (
 )
 
 
-def listar_ventanas(session: str) -> list[dict]:
-    """Ventanas de una sesión, con la etiqueta de su panel activo."""
+# 🔴 Transitorio, como `dados` (C-0479): los nombres fijos con que el hub abría
+# sus propias ventanas con `-n` —el orquestador, el asistente, los agentes
+# del inventario—. Sin esto, las cinco ventanas de tareas viejas del
+# orquestador salían en «Sin organizar» como «orquestador», las cinco iguales
+# (medido el 24-nov en la instancia de prueba). `test_nombre_de_ventana`
+# comprueba que siguen casando con `orquestador.VENTANA`, `asistente.VENTANA` y
+# los `nombre_ventana="…"` fijos de `agentes.py`.
+_NOMBRES_DEL_HUB = frozenset({"orquestador", "asistente", "agente", "capa-base",
+                              "nuevo-proyecto", "nuevo-kit"})
+_PREFIJOS_DEL_HUB = ("agente:", "mantenedor:")
+
+
+def etiqueta_de_ventana(nombre: str, a_mano: bool, titulo: str, cwd: str,
+                        comando: str, dados: Iterable[str] = ()) -> str:
+    """El nombre visible de una ventana: la única puerta (C-0479, decisión 454).
+
+    Lo pone el dueño o nadie. Si la renombró él, manda su nombre; si no, el
+    título que pinta Claude Code o, en una shell, carpeta + comando + rama
+    (`inferir_etiqueta`). La pestaña y el árbol de Trabajo salen de aquí, y
+    por eso dicen lo mismo de la misma ventana.
+
+    `a_mano` es `#{automatic-rename}` apagado, y eso sólo prueba que alguien
+    le puso nombre: un `-n` también lo apaga, y el hub abría así todas las
+    suyas con el nombre del slot. Desde C-0479 las abre con el nombre como
+    `automatic-rename-format`, que lo deja encendido; las ya abiertas siguen
+    apagadas, y tmux-resurrect conserva ese «off» al restaurar.
+
+    🔴 `dados` es TRANSITORIO: los nombres que el hub ponía con `-n` a esas
+    ventanas viejas —el de su sesión y el de su slot—, para no tomarlos por
+    un nombre del dueño; los fijos de sus propias ventanas (`_NOMBRES_DEL_HUB`)
+    van siempre. Sobra cuando ya no quede ninguna ventana abierta antes de
+    C-0479. Un dueño que renombre una ventana justo con el nombre de
+    su slot verá el título: es el precio, y es raro.
+    """
+    if a_mano and nombre and not _lo_puso_el_hub(nombre, dados):
+        return nombre
+    return inferir_etiqueta(titulo, cwd, comando)
+
+
+def _lo_puso_el_hub(nombre: str, dados: Iterable[str] = ()) -> bool:
+    return (nombre in set(dados) or nombre in _NOMBRES_DEL_HUB
+            or nombre.startswith(_PREFIJOS_DEL_HUB))
+
+
+def listar_ventanas(session: str, dados: dict[int, Iterable[str]] | None = None) -> list[dict]:
+    """Ventanas de una sesión, con la etiqueta de su panel activo.
+
+    `dados`, por índice de ventana, los nombres que el hub le pudo poner sin
+    que fueran del dueño (el de su slot); el de la sesión va siempre. Ver
+    `etiqueta_de_ventana`."""
     validar_sesion(session)
     try:
         crudo = _correr(["list-windows", "-t", f"={session}", "-F", _FORMATO_VENTANA])
@@ -347,9 +407,12 @@ def listar_ventanas(session: str) -> list[dict]:
         indice, nombre, activa, paneles, comando, titulo, cwd = campos[:7]
         # Sin el campo (tmux viejo) se asume automático, que es el caso común.
         automatico = campos[7] != "0" if len(campos) > 7 else True
+        idx = int(indice) if indice.isdigit() else 0
+        suyos = {session, *((dados or {}).get(idx) or ())}
+        etiqueta = etiqueta_de_ventana(nombre, not automatico, titulo, cwd, comando, suyos)
         ventanas.append(
             {
-                "indice": int(indice) if indice.isdigit() else 0,
+                "indice": idx,
                 "nombre": nombre,
                 "activa": activa == "1",
                 "paneles": int(paneles) if paneles.isdigit() else 1,
@@ -359,9 +422,8 @@ def listar_ventanas(session: str) -> list[dict]:
                 # pestaña seguía pintando `pane_title`, que Claude Code
                 # reescribe cada pocos segundos. El renombrado funcionaba y
                 # parecía roto, que es la peor combinación.
-                "etiqueta": nombre if not automatico
-                else inferir_etiqueta(titulo, cwd, comando),
-                "renombrada": not automatico,
+                "etiqueta": etiqueta,
+                "renombrada": not automatico and bool(nombre) and not _lo_puso_el_hub(nombre, suyos),
                 "ancho": int(campos[8]) if len(campos) > 8 and campos[8].isdigit() else None,
                 "cwd": cwd,
                 "pane_id": campos[9] if len(campos) > 9 else "",
@@ -493,14 +555,37 @@ def literal(texto: str) -> str:
     return texto.replace("#", "##")
 
 
+def _nombre_sin_fijar(destino: str, nombre: str) -> list[str]:
+    """Lo que se encadena a la orden que crea una ventana con `-n` para que su
+    nombre no cuente como puesto a mano (C-0479, decisión 454).
+
+    `-n` apaga `automatic-rename`, igual que un `rename-window`, y
+    `etiqueta_de_ventana` no podía distinguir el nombre que pone el hub del
+    que pone el dueño. Con el nombre como `automatic-rename-format` y el
+    renombrado automático encendido, tmux enseña el mismo nombre en su barra
+    y la ventana sigue contando como automática; si el dueño la renombra,
+    tmux lo apaga solo. Medido con tmux 3.4 en un servidor aparte (24-nov):
+    `##` sale `#`, `#(` sin escapar EJECUTA la orden y escapado con `literal`
+    no, y sin `-t` el `set-option` cae en la ventana activa del cliente, no
+    en la recién creada: por eso va el destino explícito.
+    """
+    formato = literal(nombre)
+    return [";", "set-option", "-w", "-t", destino, "automatic-rename-format", formato,
+            ";", "set-option", "-w", "-t", destino, "automatic-rename", "on"]
+
+
 def nueva_ventana(
     session: str,
     ruta: str | None = None,
     nombre: str | None = None,
     comando: str | None = None,
     entorno: dict[str, str] | None = None,
+    a_mano: bool = False,
 ) -> int | None:
     """Crea una ventana y devuelve su índice, para poder navegar hasta ella.
+
+    `a_mano` sólo si el nombre lo escribió el dueño: entonces cuenta como suyo
+    y manda sobre el título (`etiqueta_de_ventana`). Si lo pone el hub, no.
 
     Sin `ruta` se abre donde está la ventana actual de esa sesión, que es lo que
     significa «una ventana más aquí». 🔴 Sin el `-c`, tmux hereda el cwd de quien
@@ -517,6 +602,10 @@ def nueva_ventana(
         args += ["-n", literal(nombre)]
     if comando:
         args.append(con_entorno(comando, entorno))
+    # En la misma orden: `new-window` sin `-d` deja la nueva como la actual de
+    # su sesión, y `=sesión:` es ella.
+    if nombre and not a_mano:
+        args += _nombre_sin_fijar(f"={session}:", nombre)
     salida = _correr(args).strip()
     return int(salida) if salida.isdigit() else None
 
@@ -537,8 +626,9 @@ def nueva_sesion(
     comando: str | None = None,
     entorno: dict[str, str] | None = None,
     conservar: bool = False,
+    a_mano: bool = False,
 ) -> None:
-    """Crea la sesión desasida.
+    """Crea la sesión desasida. `a_mano`, como en `nueva_ventana`.
 
     El comando va aquí y no en un `send-keys` posterior a propósito: `new-session`
     lo arranca **como** el proceso de la ventana, sin pasar por una shell cuyo
@@ -553,6 +643,8 @@ def nueva_sesion(
         args += ["-n", literal(nombre_ventana)]
     if comando:
         args.append(con_entorno(comando, entorno))
+    if nombre_ventana and not a_mano:
+        args += _nombre_sin_fijar(f"={session}:", nombre_ventana)
     # Ver `abrir_ventana`: aquí importa aún más, porque una sesión cuyo único
     # comando muere desaparece ENTERA, y con ella cualquier forma de mirar.
     if conservar:
@@ -722,10 +814,12 @@ def al_final(session: str) -> list[str]:
 def abrir_ventana(ruta: str, nombre: str, comando: str | None = None,
                   session: str | None = None,
                   conservar: bool = False,
-                  entorno: dict[str, str] | None = None) -> str:
+                  entorno: dict[str, str] | None = None,
+                  a_mano: bool = False) -> str:
     """Abre una ventana nueva en la ruta del slot.
 
     La UI LANZA terminales, no las hospeda: sin PTY, sin rendering, sin resize.
+    `a_mano`, como en `nueva_ventana`.
     """
     args = ["new-window", "-P", "-F", "#{pane_id}", "-c", literal(ruta), "-n", literal(nombre)]
     # 🔴 Sin `-e PATH=`: se probó y NO llega al proceso —la ventana nueva sale
@@ -743,7 +837,18 @@ def abrir_ventana(ruta: str, nombre: str, comando: str | None = None,
     # nueva como actual de su sesión, y `-t =sesion:` es esa ventana.
     if conservar and session:
         args += [";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"]
-    return _correr(args).strip()
+    if nombre and not a_mano and session:
+        args += _nombre_sin_fijar(f"={session}:", nombre)
+    pane_id = _correr(args).strip()
+    # Sin sesión no hay destino que nombrar en la misma orden: va después, por
+    # el panel. Si la ventana muere entre las dos, sólo queda su nombre mal
+    # contado, y se dice (regla 21).
+    if nombre and not a_mano and not session and PANEL_VALIDO.match(pane_id):
+        try:
+            _correr(_nombre_sin_fijar(pane_id, nombre)[1:])
+        except (RuntimeError, TmuxNoDisponible) as exc:
+            print(f"[tmux] no se pudo dejar automático el nombre de {pane_id}: {exc}", flush=True)
+    return pane_id
 
 
 def panel_enfocado(excluir: set[str] | None = None) -> str | None:

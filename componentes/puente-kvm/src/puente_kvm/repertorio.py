@@ -33,7 +33,7 @@ PREGUNTAR = PROYECTO / ".claude" / "preguntar.json"
 
 # Lo que exige algo de la persona en el puente, además del permiso de Claude Code.
 NECESITA_CONTROL = {"teclear", "atajo", "ir_a_linea", "clic", "rueda", "recorrer_pantalla", "leer_documento",
-                    "escribir_cambio", "despertar_mac"}
+                    "escribir_cambio", "despertar_mac", "sondear_teclado", "probar_teclado"}
 NECESITA_APROBACION = {"escribir_cambio"}
 
 
@@ -75,6 +75,8 @@ def skills() -> list[dict]:
 _SITIOS = {
     "~/.local/share/puente-kvm/": "los datos del puente (~/.local/share/puente-kvm: lecturas y cambios)",
     "~/.config/puente-kvm/": "~/.config/puente-kvm (la contraseña del JetKVM)",
+    "~/.local/share/puente-kvm/teclados/": "los teclados medidos del puente (sólo los cambia el puente, al verificarlos)",
+    "~/.local/share/puente-kvm/ajustes.json": "los ajustes del puente (el teclado en uso y las teclas reservadas)",
 }
 
 

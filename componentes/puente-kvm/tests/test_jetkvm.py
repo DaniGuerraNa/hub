@@ -8,7 +8,7 @@ import pytest
 
 from puente_kvm import hid, reunion
 from puente_kvm.dispositivo import AparatoNoDisponible
-from puente_kvm.jetkvm import JetKVM
+from puente_kvm.jetkvm import JetKVM, mac_de_usb
 from puente_kvm.motor import diferencia_local
 from puente_kvm.simulador import Simulador
 
@@ -294,6 +294,84 @@ def test_si_el_usb_despierta_pero_no_llega_imagen_no_se_dice_que_hay():
     correr(prueba())
 
 
+async def hasta(cond, tope: float = 5.0) -> bool:
+    fin = time.monotonic() + tope
+    while time.monotonic() < fin:
+        if cond():
+            return True
+        await asyncio.sleep(0.05)
+    return cond()
+
+
+def test_conectar_con_el_mac_en_reposo_lo_dice_sin_esperar_la_imagen_y_vuelve_solo_al_despertar():
+    # C-0477: el aparato dice «suspended» por el USB; esperar 5 s la imagen no diría nada nuevo.
+    async def prueba():
+        falso = JetKVMFalso(Simulador(lineas=["x"]))
+        falso.usb = "suspended"
+        url = await falso.arrancar()
+        kvm = JetKVM(url, "secreta")
+        try:
+            t0 = time.monotonic()
+            with pytest.raises(AparatoNoDisponible, match="en reposo"):
+                await kvm.conectar()
+            assert time.monotonic() - t0 < 4
+            e = kvm.estado()
+            assert (e["conectado"], e["mac"], e["senal"]) == (False, "reposo", "no_signal")
+            # Despierta solo (alguien tocó su teclado): lo empuja el aparato y llega la imagen.
+            falso.poner_usb("configured")
+            assert await hasta(lambda: kvm.estado()["conectado"])
+            e = kvm.estado()
+            assert (e["mac"], e["senal"]) == ("despierto", "ok")
+        finally:
+            await kvm.cerrar()
+            await falso.parar()
+
+    correr(prueba())
+
+
+def test_si_el_mac_se_duerme_con_la_conexion_abierta_lo_dice_el_aparato_sin_preguntarle():
+    async def prueba():
+        falso = JetKVMFalso(Simulador(lineas=["x"]))
+        url = await falso.arrancar()
+        kvm = JetKVM(url, "secreta")
+        try:
+            await kvm.conectar()
+            assert kvm.estado()["mac"] == "despierto"
+            preguntas = sum(1 for j in falso.rpc if j["method"] == "getUSBState")
+            falso.poner_usb("suspended")
+            assert await hasta(lambda: kvm.estado()["mac"] == "reposo")
+            # La conexión sigue: lo que cambia es lo que se dice del Mac.
+            assert kvm.estado()["conectado"] is True
+            assert sum(1 for j in falso.rpc if j["method"] == "getUSBState") == preguntas
+            await kvm.cerrar()
+            assert (kvm.estado()["mac"], kvm.estado()["senal"]) == (None, None)
+        finally:
+            await kvm.cerrar()
+            await falso.parar()
+
+    correr(prueba())
+
+
+def test_un_firmware_que_no_dice_el_usb_no_sabe_del_mac_y_espera_la_imagen_como_antes():
+    async def prueba():
+        falso = JetKVMFalso(Simulador(lineas=["x"]))
+        falso.usb_falla = True
+        falso.video = False  # despierto pero sin imagen: no es el reposo
+        url = await falso.arrancar()
+        kvm = JetKVM(url, "secreta")
+        try:
+            t0 = time.monotonic()
+            with pytest.raises(AparatoNoDisponible, match="no llega vídeo"):
+                await kvm.conectar()
+            assert time.monotonic() - t0 >= 5
+            assert kvm.estado()["mac"] is None
+        finally:
+            await kvm.cerrar()
+            await falso.parar()
+
+    correr(prueba())
+
+
 def test_conectado_con_el_mac_dormido_vuelve_solo_al_despertarlo():
     # Sin vídeo la conexión se da por fallida, pero el canal rpc está: se despierta por él.
     async def prueba():
@@ -302,7 +380,7 @@ def test_conectado_con_el_mac_dormido_vuelve_solo_al_despertarlo():
         url = await falso.arrancar()
         kvm = JetKVM(url, "secreta")
         try:
-            with pytest.raises(AparatoNoDisponible, match="dormido"):
+            with pytest.raises(AparatoNoDisponible, match="en reposo"):
                 await kvm.conectar()
             assert kvm.estado()["conectado"] is False
             assert kvm.estado()["jiggler"] is not None  # leído antes de esperar el vídeo
@@ -310,6 +388,46 @@ def test_conectado_con_el_mac_dormido_vuelve_solo_al_despertarlo():
             assert r["imagen"] is True and kvm.estado()["conectado"] is True
             await kvm.informe_teclado(0, [hid.TECLAS["a"]])  # el teclado ya va
             await kvm.informe_teclado(0, [])
+        finally:
+            await kvm.cerrar()
+            await falso.parar()
+
+    correr(prueba())
+
+
+def test_lo_que_dice_el_usb_del_mac_y_lo_que_no_se_afirma():
+    assert [mac_de_usb(u) for u in ("configured", "suspended", "not attached", "attached", "unknown", None)] == \
+        ["despierto", "reposo", "sin_usb", None, None, None]
+
+
+def test_si_otra_sesion_echa_al_puente_lo_que_sabia_del_mac_se_olvida():
+    async def prueba():
+        falso = JetKVMFalso(Simulador(lineas=["x"]))
+        url = await falso.arrancar()
+        kvm = JetKVM(url, "secreta")
+        try:
+            await kvm.conectar()
+            assert kvm.estado()["mac"] == "despierto"
+            falso.echar()
+            assert await hasta(lambda: not kvm.estado()["conectado"])
+            assert (kvm.estado()["mac"], kvm.estado()["senal"]) == (None, None)
+        finally:
+            await kvm.cerrar()
+            await falso.parar()
+
+    correr(prueba())
+
+
+def test_un_firmware_que_empuja_el_usb_pero_no_contesta_a_preguntarlo_no_lo_pierde():
+    async def prueba():
+        falso = JetKVMFalso(Simulador(lineas=["x"]))
+        url = await falso.arrancar()
+        kvm = JetKVM(url, "secreta")
+        try:
+            await kvm.conectar()
+            falso.usb_falla = True  # el método falla; el evento ya llegó
+            assert await kvm._usb() is None
+            assert kvm.estado()["mac"] == "despierto"
         finally:
             await kvm.cerrar()
             await falso.parar()

@@ -506,7 +506,7 @@ def test_el_dictado_dice_por_que_camino_fue(tmp_path, monkeypatch):
         assert transcribir.dictado(b"x", "a.webm", "es", medidas) == "hola"
         assert medidas["camino"] == camino and medidas["ms_whisper"] >= 0
 
-    def servidor_vivo(ruta, python, idioma, medidas):
+    def servidor_vivo(ruta, python, idioma, medidas, con_glosario=None):
         medidas.update({"ms_whisper": 7, "modelo": "small", "dispositivo": "cuda"})
         return "hola"
     monkeypatch.setattr(transcribir, "_python_del_servidor", lambda aj: "")

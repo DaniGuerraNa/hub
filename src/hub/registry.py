@@ -284,6 +284,20 @@ def cargar(ruta: Path | None = None, *, estricto: bool = False) -> list[Proyecto
     return proyectos
 
 
+def nombres_activos() -> list[str]:
+    """Los nombres de los proyectos activos con carpeta (C-0036). Los de
+    ejemplo del registro recién instalado tienen rutas inventadas y no son de
+    nadie. Lo usan el banco de dictado y el glosario del dictado; un registro
+    roto o ausente da una lista vacía."""
+    try:
+        proyectos = cargar()
+    except (YamlInvalido, OSError):
+        return []
+    return [p.nombre for p in proyectos
+            if p.tipo == "proyecto" and p.status == "activo" and p.asiento
+            and Path(p.asiento).expanduser().is_dir()]
+
+
 def cargar_conexiones(ruta: Path | None = None) -> list[Conexion]:
     """Conexiones declaradas en el mismo `projects.yml`, bajo `conexiones:`.
 

@@ -94,3 +94,66 @@ def mcp_contra(c: TestClient, monkeypatch) -> None:
 
     monkeypatch.setattr(mcp_servidor, "_llamar", llamar)
     monkeypatch.setattr(mcp_servidor, "_bajar", bajar)
+
+
+# ── el teclado del Mac (C-0481) ─────────────────────────────────────────────
+def pulsar_en(sim: Simulador, pulsaciones) -> None:
+    """Los informes que mandaría el puente, directos al Mac simulado. En un hilo
+    aparte: las pruebas de navegador ya tienen un bucle de asyncio en éste."""
+    import asyncio
+    import threading
+
+    async def correr():
+        for p in pulsaciones:
+            await sim.informe_teclado(p.modificadores, [p.tecla])
+            await sim.informe_teclado(0, [])
+
+    hilo = threading.Thread(target=lambda: asyncio.run(correr()))
+    hilo.start()
+    hilo.join()
+
+
+def vaciar(sim: Simulador) -> None:
+    """Una pestaña de script nueva y vacía."""
+    sim.editor.lineas, sim.editor.cursor, sim.editor.ancla = [""], (0, 0), None
+
+
+def ejecutar_como_sql_server(lineas: list[str]) -> dict[int, dict]:
+    """Lo que devolvería SQL Server al ejecutar la consulta de prueba tal como quedó
+    tecleada en el editor: con lo que de verdad salió, no con lo que se quería."""
+    import hashlib
+    import re
+
+    texto = "\n".join(lineas)
+    assert texto.startswith("SELECT n, LEN(t)") and "HASHBYTES('SHA2_256', t)" in texto, texto[:200]
+    salida = {}
+    for n, literal in re.findall(r"\((\d+), N'((?:[^']|'')*)'\)", texto):
+        t = literal.replace("''", "'")
+        salida[int(n)] = {"largo": len(t), "huella": hashlib.sha256(t.encode("utf-16-le")).hexdigest()[:16].upper()}
+    return salida
+
+
+def rejilla(filas: dict[int, dict]) -> str:
+    """Las filas como las copiaría Claude de la rejilla de resultados."""
+    return "\n".join(f"{n} | {f['largo']} | {f['huella']}" for n, f in sorted(filas.items()))
+
+
+def medida_verificada(fuente="mac-es", nombre: str = "Latinoamericano", reservadas=("alt+x",)) -> dict:
+    """Una medida hecha de punta a punta contra un Mac simulado con `fuente`, sin la API."""
+    from puente_kvm import hid, teclados
+
+    sim = Simulador(lineas=[""], fuente=fuente)
+    pulsar_en(sim, teclados.sondeo(reservadas))
+    b = teclados.guardar(teclados.construir(sim.editor.lineas, nombre))
+    for _ in range(5):
+        try:
+            consulta, ronda = teclados.consulta(b, reservadas=reservadas)
+        except ValueError:
+            break
+        vaciar(sim)
+        pulsar_en(sim, hid.secuencia(consulta, teclados.distribucion_del_borrador(b), reservadas))
+        teclados.empezar_ronda(b, ronda)
+        teclados.comprobar(b, ejecutar_como_sql_server(sim.editor.lineas))
+        teclados.guardar(b)
+    assert teclados.resumen(b)["elegible"], teclados.resumen(b)
+    return b

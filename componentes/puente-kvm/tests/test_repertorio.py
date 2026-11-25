@@ -10,7 +10,7 @@ from puente_kvm.app import crear_app
 from puente_kvm.simulador import Simulador
 
 ESPERADAS = {"leer-documento", "explicar-funcion", "revisar-rendimiento", "consultar-catalogo",
-             "proponer-cambio", "primera-conexion"}
+             "proponer-cambio", "primera-conexion", "calibrar-teclado"}
 
 
 def test_cada_skill_tiene_nombre_igual_a_su_carpeta_descripcion_y_acceso():

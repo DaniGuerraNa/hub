@@ -23,6 +23,9 @@
  *                                           {ok:false, red:true, error}
  *   HubGrabar.calentar()                    que el Whisper cargado se vaya
  *                                           cargando (C-0292)
+ *   HubGrabar.marcar(boton, toma|null)      el botón de dictar (`ui.microfono`)
+ *                                           grabando —parar y los segundos— o
+ *                                           en reposo (C-0480)
  *
  * 🔴 Las restricciones NO se unifican: cambiarlas cambia cómo se oye, y cada
  * cliente pasa la suya. `ajustes` es lo que el micrófono dio de verdad
@@ -169,19 +172,57 @@
     try { fetch('/api/voz/calentar', { method: 'POST' }).catch(() => {}); } catch (e) { /* es un adelanto */ }
   }
 
-  window.HubGrabar = { puede, RESTRICCIONES, microfono, grabar, subir, calentar };
+  /* El botón de dictar mientras graba (C-0480): el cuadrado de parar, los
+   * segundos y su nombre para el lector. 🔴 Nunca el `textContent` del botón:
+   * reescribirlo («Parar», «Dictar») borraba el icono, y era lo que hacían
+   * `data-grabar` y la terminal. Los segundos van en `[data-mic-seg]`, con
+   * cifras de ancho fijo, y salen de la hora de inicio, no de contar vueltas:
+   * con la pestaña de fondo el navegador espacia los temporizadores. Con
+   * `null`, vuelve al reposo con el nombre que tenía. */
+  const reloj = (ms) => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  };
+  function marcar(boton, toma) {
+    if (!boton) return;
+    const seg = boton.querySelector ? boton.querySelector('[data-mic-seg]') : null;
+    if (boton._micReloj) { clearInterval(boton._micReloj); boton._micReloj = null; }
+    if (toma) {
+      if (boton.dataset.micNombre === undefined) {
+        boton.dataset.micNombre = boton.getAttribute('aria-label') || 'Dictar';
+        boton.dataset.micPista = boton.title || '';
+      }
+      boton.classList.add('on');
+      boton.setAttribute('aria-pressed', 'true');
+      boton.setAttribute('aria-label', 'Parar y transcribir');
+      boton.title = 'Parar y transcribir';
+      const desde = Date.now();
+      const pintar = () => { if (seg) seg.textContent = reloj(Date.now() - desde); };
+      pintar();
+      boton._micReloj = setInterval(pintar, 1000);
+      return;
+    }
+    boton.classList.remove('on');
+    boton.setAttribute('aria-pressed', 'false');
+    if (boton.dataset.micNombre !== undefined) {
+      boton.setAttribute('aria-label', boton.dataset.micNombre);
+      boton.title = boton.dataset.micPista || boton.dataset.micNombre;
+    }
+    if (seg) seg.textContent = '';
+  }
+
+  window.HubGrabar = { puede, RESTRICCIONES, microfono, grabar, subir, calentar, marcar };
 
   // ── Lo declarativo: `data-grabar` dicta en un campo ──────────────────────
   // Cada botón se engancha una vez; se repasa tras `hub:repintado` porque una
-  // acción sin recargar (C-0167) pinta botones nuevos —«Dictar» la respuesta
-  // al orquestador— que al cargar no existían.
+  // acción sin recargar (C-0167) pinta botones nuevos —el micrófono de la
+  // respuesta al orquestador— que al cargar no existían.
   function enganchar(boton) {
     if (boton.dataset.grabarListo) return;
     boton.dataset.grabarListo = '1';
     const destino = document.getElementById(boton.dataset.grabar);
     const estado = document.getElementById(boton.dataset.grabarEstado);
     const origen = document.getElementById(boton.dataset.grabarOrigen);
-    const inicial = boton.textContent;
     const url = boton.dataset.grabarUrl || '/orquestador/audio';
     let toma = null;
     let abriendo = false;
@@ -244,13 +285,11 @@
         abriendo = false;
       }
       toma = esta;
-      boton.textContent = 'Parar y transcribir';
-      boton.classList.add('grabando');
+      marcar(boton, esta);
       decir('Grabando… pulsa otra vez para terminar.');
       const audio = await esta.terminado;
       toma = null;
-      boton.textContent = inicial;
-      boton.classList.remove('grabando');
+      marcar(boton, null);
       if (!audio) {
         decir('No se grabó nada.');
         return;

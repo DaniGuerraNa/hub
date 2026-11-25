@@ -80,12 +80,94 @@
   'ondas': '<path d="M3 7.5v3M6 5v8M9 3v12M12 5v8M15 7.5v3"/>',
   'secretario': '<path d="M8 2.5l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z"/><path d="M14 11.5v4M12 13.5h4"/>',
   'teclado': '<rect x="1.8" y="4.5" width="14.4" height="9" rx="2"/><path d="M5 7.6h.01M7.7 7.6h.01M10.3 7.6h.01M13 7.6h.01M6 10.6h6"/>',
+  'cerrar': '<path d="M4.5 4.5l9 9M13.5 4.5l-9 9"/>',
+  'abajo': '<path d="M5 7l4 4 4-4"/>',
+  'ampliar': '<path d="M3 7V3h4M11 3h4v4M15 11v4h-4M7 15H3v-4"/>',
+  'letra': '<path d="M2.5 14l3.4-9 3.4 9M3.8 11h4.2"/><circle cx="13" cy="11.6" r="2.3"/><path d="M15.3 9.2V14"/>',
+  'encendido': '<path d="M9 2.5v5.5"/><path d="M5.3 5a5.6 5.6 0 107.4 0"/>',
+  'historial': '<path d="M3 9a6 6 0 106-6 6 6 0 00-4.6 2.2"/><path d="M3.6 2.8v3h3M9 6v3.2l2.2 1.4"/>',
+  'nota': '<path d="M3 3h12v8l-4 4H3z"/><path d="M11 15v-4h4M6 6.5h6M6 9.5h3.5"/>',
+  'parar': '<rect x="4.5" y="4.5" width="9" height="9" rx="1.8"/>',
+  'ancho': '<path d="M2.5 9h13M5.5 6L2.5 9l3 3M12.5 6l3 3-3 3"/>',
+  'imagen': '<rect x="2.5" y="3.5" width="13" height="11" rx="2"/><circle cx="6.5" cy="7.3" r="1.3"/><path d="M15.5 11.5l-3.8-3.8L4 14.5"/>',
 } -%}
 {%- set d = trazos.get(nombre) -%}
 {%- if d -%}
 <svg width="{{ px }}" height="{{ px }}" viewBox="0 0 18 18" fill="none" stroke="currentColor"
      stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">{{ d | safe }}</svg>
 {%- endif -%}
+{% endmacro %}
+
+{# ── Dictar: un solo botón para todo el hub (C-0480) ────────────────────────
+   Había cuatro: el chat con su micrófono y Trabajo, Tablero y Orquestador
+   escribiendo «Dictar» (Trabajo, dos veces), y dos que reescribían su
+   `textContent` al grabar. Aquí el botón es el icono; mientras graba, el
+   cuadrado de parar y los segundos, y lo pone `HubGrabar.marcar`
+   (`grabar.js`), que nunca toca el texto del botón: reescribirlo borraba el
+   icono. Es de los pocos iconos que van sin palabra (micrófono, como cerrar,
+   buscar, ajustes, más y enviar), siempre con `aria-label` y `title`.
+
+   `datos` son sus `data-*` (`{'grabar': 'campo'}` → `data-grabar="campo"`),
+   que deciden quién lo maneja: `data-grabar` lo engancha `grabar.js`;
+   `data-dictar`, la terminal. `pista` es el `title` largo si hace falta
+   explicar más que el nombre.
+
+   🔴 `modelo` sólo donde lo dictado sube a `/api/voz` (Trabajo, Tablero; el
+   chat del secretario lleva su propio micrófono): el Orquestador transcribe
+   por el camino de los encargos, y un menú de modelo a su lado mentiría
+   (decisión 452). Lo vigila `tests/test_microfono.py`.
+
+   Uso:  {{ ui.microfono(datos={'grabar': 'pedido'}) }} #}
+{% macro microfono(titulo='Dictar', datos={}, modelo=false, modelo_arriba=false, clase='sutil', id=none, pista=none, modelo_lado='der') %}
+  {%- if modelo %}<span class="mic-con-modelo">{% endif -%}
+  <button type="button" class="mic icono-solo {{ clase }}"{% if id %} id="{{ id }}"{% endif %}
+          aria-label="{{ titulo }}" title="{{ pista or titulo }}" aria-pressed="false"
+          {%- for k, v in datos.items() %} data-{{ k }}="{{ v }}"{% endfor %}>
+    <span class="mic-reposo">{{ icono('microfono') }}</span>
+    <span class="mic-graba">{{ icono('parar') }}</span>
+    <span class="mic-seg" data-mic-seg aria-hidden="true"></span>
+  </button>
+  {%- if modelo %}{{ modelo_dictado('flecha', arriba=modelo_arriba, lado=modelo_lado) }}</span>{% endif -%}
+{% endmacro %}
+
+{# ── El modelo del dictado (C-0313, decisión 452) ──────────────────────────
+   Ligero, turbo o apagado. Lo pinta `static/modelo-dictado.js` al abrirse,
+   con lo que dice `/api/voz/estado`; cerrado sólo pregunta lo elegido, para
+   el rótulo. Tres formas, y el contenido es el mismo en las tres:
+
+     `rotulo`  — un menú con la palabra («Dictado: turbo»), el del chat.
+     `flecha`  — la flechita pegada al micrófono (`ui.microfono(modelo=true)`):
+                 lo elegido va en su `title` y su `aria-label`, no en el texto,
+                 que borraría el icono.
+     `seccion` — un plegable SIN `.menu`, para ir dentro de un «⋯»: un menú
+                 dentro de otro se cerraría al abrirse (`hub-ui.js` cierra los
+                 menús que no contienen lo pulsado) y la flecha no llega a los
+                 44 px del dedo.
+
+   `arriba` lo abre hacia arriba donde vive pegado al borde inferior, y
+   `lado` ('der' o 'izq') hacia dónde se despliega: un micrófono a la
+   izquierda de la pantalla con el menú hacia la izquierda se sale de ella. #}
+{% macro modelo_dictado(forma='rotulo', arriba=false, lado='der') %}
+  {%- set opciones -%}
+    <div data-md-opciones></div>
+    <div class="separador"></div>
+    <p class="tenue md-nota" data-md-nota role="status"></p>
+  {%- endset -%}
+  {%- if forma == 'seccion' -%}
+  <details class="modelo-dictado md-seccion plegable-menu" data-modelo-dictado data-md-forma="seccion">
+    <summary title="Qué Whisper pasa a texto lo que dictas, en tu máquina">{{ icono('microfono', 15) }}<span data-md-resumen>Modelo del dictado</span></summary>
+    <div class="md-cuerpo">{{ opciones }}</div>
+  </details>
+  {%- else -%}
+  <details class="menu {{ lado }}{{ ' arriba' if arriba }} modelo-dictado{{ ' md-flecha' if forma == 'flecha' }}" data-modelo-dictado data-md-forma="{{ forma }}">
+    {%- if forma == 'flecha' %}
+    <summary data-md-resumen aria-label="Modelo del dictado" title="Modelo del dictado: qué Whisper pasa a texto lo que dictas, en tu máquina">{{ icono('abajo', 14) }}</summary>
+    {%- else %}
+    <summary class="tenue" data-md-resumen title="Qué Whisper pasa a texto lo que dictas, en tu máquina">Dictado</summary>
+    {%- endif %}
+    <div class="menu-pop"><div class="rotulo-menu">Modelo del dictado</div>{{ opciones }}</div>
+  </details>
+  {%- endif -%}
 {% endmacro %}
 
 {# Icono dentro de su placa tintada. `tono` usa la escala de atención. #}

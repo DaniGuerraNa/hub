@@ -17,6 +17,8 @@
       "mcp__puente-kvm__escribir_cambio",
       "mcp__puente-kvm__ver_tramo",
       "mcp__puente-kvm__despertar_mac",
+      "mcp__puente-kvm__medir_teclado",
+      "mcp__puente-kvm__comprobar_teclado",
       "Read(/**)",
       "Read(~/.local/share/puente-kvm/**)",
       "Edit(/trabajo/**)"
@@ -27,7 +29,9 @@
       "Read(~/.config/puente-kvm/**)",
       "Edit(~/.config/puente-kvm/**)",
       "Read(~/.local/share/puente-kvm/reuniones/**)",
-      "Edit(~/.local/share/puente-kvm/reuniones/**)"
+      "Edit(~/.local/share/puente-kvm/reuniones/**)",
+      "Edit(~/.local/share/puente-kvm/teclados/**)",
+      "Edit(~/.local/share/puente-kvm/ajustes.json)"
     ]
   },
   "hooks": {

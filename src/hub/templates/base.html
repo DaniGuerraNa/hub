@@ -29,6 +29,8 @@
    arrancar; sus botones `data-grabar` se enganchan al leerse el documento. #}
 <script src="/static/sondeo.js"></script>
 <script src="/static/grabar.js"></script>
+{# El menú del modelo del dictado (C-0313): se engancha al leerse el documento. #}
+<script src="/static/modelo-dictado.js" defer></script>
 <link rel="preload" href="/static/inter.woff2?v=1" as="font" type="font/woff2" crossorigin>
 <link rel="icon" href="/static/icono.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/static/icono-192.png">
@@ -694,6 +696,43 @@ button.icono-solo:hover { background: var(--superficie2); color: var(--texto); }
 /* Hacia arriba cuando el menú vive pegado al borde inferior —el asistente—: ahí
    abajo no queda pantalla y el desplegable se saldría de la ventana. */
 .menu.arriba .menu-pop { top: auto; bottom: calc(100% + 5px); }
+/* El modelo del dictado (`ui.modelo_dictado`). En el chat, una palabra: dice
+   qué modelo hay. Junto al micrófono, una flechita pegada a él, con lo
+   elegido en su `title`. Dentro de un «⋯», un plegable con cara de fila. */
+.menu.modelo-dictado > summary { width: auto; height: auto; display: inline-flex; white-space: nowrap;
+  padding: 4px 9px; }
+.menu.modelo-dictado.md-flecha > summary { padding: 0; width: 18px; height: 30px; }
+.modelo-dictado .menu-pop { min-width: 260px; }
+.modelo-dictado .md-nota { margin: 4px 10px 6px; max-width: 30ch; }
+/* Un plegable dentro de un menú (C-0480): con cara de fila, y se abre en
+   su sitio. Un `details.menu` dentro de otro se cerraría al abrirse, porque
+   `hub-ui.js` cierra los menús que no contienen lo pulsado. */
+.plegable-menu > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 7px;
+  padding: 7px 10px; border-radius: var(--r-boton); color: var(--texto-2); font-size: var(--letra-3);
+  font-weight: 450; }
+.plegable-menu > summary::-webkit-details-marker, .plegable-menu > summary::marker { display: none; content: ''; }
+.plegable-menu > summary::after { content: '▾'; margin-left: auto; color: var(--texto-3); font-size: var(--letra-1); }
+.plegable-menu[open] > summary::after { content: '▴'; }
+.plegable-menu > summary:hover { background: var(--elevado); color: var(--texto); }
+.md-seccion > .md-cuerpo { padding: 0 0 4px 12px; }
+
+/* ── Dictar: el micrófono común (`ui.microfono`, C-0480) ───────────────────
+   Grabando cambia el icono y nada más: el botón no cambia de tamaño. Los
+   segundos flotan debajo, fuera del flujo, porque en la barra de /trabajo un
+   botón que se ensancha empuja lo de al lado, y de esa barra depende el
+   hueco que mide la terminal (decisiones 90 y 93). Cifras de ancho fijo: un
+   «1:11» no es más estrecho que un «0:00». */
+.mic { position: relative; }
+.mic > .mic-reposo, .mic.on > .mic-graba { display: inline-flex; }
+.mic.on > .mic-reposo, .mic:not(.on) > .mic-graba, .mic:not(.on) > .mic-seg { display: none; }
+button.mic.on { color: var(--riesgo); background: color-mix(in srgb, var(--riesgo) 15%, transparent); }
+button.mic.on:hover { color: var(--texto); background: color-mix(in srgb, var(--riesgo) 26%, transparent); }
+.mic > .mic-seg { position: absolute; top: calc(100% + 3px); left: 50%; transform: translateX(-50%);
+  min-width: 5ch; padding: 1px 6px; border-radius: var(--r-pildora); background: var(--superficie2);
+  color: var(--riesgo); font-size: var(--letra-1); line-height: 1.45; text-align: center;
+  font-variant-numeric: tabular-nums; pointer-events: none; z-index: 5; }
+/* El modelo pegado al micrófono: los dos son un solo control. */
+.mic-con-modelo { display: inline-flex; align-items: center; flex: none; }
 .menu-pop form { display: block; width: 100%; margin: 0; }
 .menu-pop button, .menu-pop a.boton {
   width: 100%; justify-content: flex-start; background: transparent;

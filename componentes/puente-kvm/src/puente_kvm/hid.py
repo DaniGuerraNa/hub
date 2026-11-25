@@ -11,8 +11,11 @@ adivinar dónde están `{ } [ ] | \\ ~ @` es escribir otro carácter sin que nad
 se entere. Supone que el Mac tomó el teclado del JetKVM como **ANSI** (lo que
 se elige en el asistente de teclado): con ISO, macOS intercambia dos teclas y
 `< >` saldrían como `º ª`. La prueba de tecleo de `primera-conexion` lo caza.
-La latinoamericana no está: no hay una copia fiable de la de Apple, y no se
-adivina.
+La latinoamericana no está de serie: no hay una copia fiable de la de Apple, y
+no se adivina. Se **mide** en el propio Mac (`teclados.py`, C-0481): el puente
+pulsa cada tecla, se lee lo que sale y se verifica con huellas de la base. Por
+eso una distribución es un dato (`Distribucion`), no código: las dos de serie y
+las medidas se teclean igual.
 
 Todo el texto se traduce ANTES de pulsar nada: si un carácter no tiene
 traducción, no se escribe ni el primero (escribir medio fragmento es peor que
@@ -22,6 +25,7 @@ no escribirlo).
 from __future__ import annotations
 
 import unicodedata
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 # Bits del byte de modificadores del informe de teclado.
@@ -73,12 +77,38 @@ NOMBRE_DE_TECLA = {}
 for _n, _c in TECLAS.items():
     NOMBRE_DE_TECLA.setdefault(_c, _n)
 
+
+@dataclass(frozen=True)
+class Pulsacion:
+    """Una tecla pulsada y soltada con unos modificadores mantenidos."""
+
+    modificadores: int
+    tecla: int
+
+    def __str__(self) -> str:
+        partes = [n for n, b in (("cmd", GUI), ("ctrl", CTRL), ("alt", ALT), ("shift", SHIFT))
+                  if self.modificadores & b]
+        partes.append(NOMBRE_DE_TECLA.get(self.tecla, hex(self.tecla)))
+        return "+".join(partes)
+
+
 # Lo que en U.S. sale con Shift sobre otra tecla.
 _CON_SHIFT_US = {
     "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6", "&": "7",
     "*": "8", "(": "9", ")": "0", "_": "-", "+": "=", "{": "[", "}": "]",
     "|": "\\", ":": ";", '"': "'", "~": "`", "<": ",", ">": ".", "?": "/",
 }
+
+
+def _simple_us(c: str) -> Pulsacion | None:
+    if c in TECLAS and len(c) == 1:
+        return Pulsacion(0, TECLAS[c])
+    if "A" <= c <= "Z":
+        return Pulsacion(SHIFT, TECLAS[c.lower()])
+    if c in _CON_SHIFT_US:
+        return Pulsacion(SHIFT, TECLAS[_CON_SHIFT_US[c]])
+    return None
+
 
 # macOS «U.S.», fuera del ASCII: la capa de Option y sus teclas muertas, que
 # es como se escriben á, ñ, ç o las comillas “ ” sin cambiar de fuente. Sale
@@ -213,47 +243,71 @@ _MAC_ES: dict[str, tuple[tuple[int, str], ...]] = {
 # Sus teclas muertas y el acento que dejan (los «terminadores» de la de Apple).
 _MUERTAS_MAC_ES = {(0, "["): "`", (0, "'"): "´", (SHIFT, "["): "^", (SHIFT, "'"): "¨", (ALT, ";"): "~"}
 
-DISTRIBUCIONES = ("mac-us", "mac-es")
-NOMBRES_DISTRIBUCION = {"mac-us": "macOS «U.S.»", "mac-es": "macOS «Español - ISO»"}
+
+@dataclass(frozen=True, eq=False)
+class Distribucion:
+    """Una fuente de entrada del Mac como datos.
+
+    `tabla`: cada carácter, sus pulsaciones como (modificadores, nombre de tecla
+    de `TECLAS`); las de una tecla muerta van seguidas de la letra, o de un
+    espacio para el acento suelto. `muertas`: (modificadores, tecla) → el acento
+    que deja; el Mac simulado las necesita para componer, y una medida para
+    deducir sus compuestos. Los blancos (espacio, Enter, tabulador) no van en la
+    tabla: son las mismas teclas en todas.
+    """
+
+    id: str
+    nombre: str
+    tabla: Mapping[str, tuple[tuple[int, str], ...]]
+    muertas: Mapping[tuple[int, str], str]
+
+
+def _tabla_us() -> dict[str, tuple[tuple[int, str], ...]]:
+    """«U.S.» también como tabla: el ASCII de sus teclas y lo de Option, en ese orden
+    (el Mac simulado da a cada tecla el primer carácter que la usa)."""
+    tabla: dict[str, tuple[tuple[int, str], ...]] = {}
+    for i in range(33, 127):
+        p = _simple_us(chr(i))
+        if p:
+            tabla[chr(i)] = ((p.modificadores, NOMBRE_DE_TECLA[p.tecla]),)
+    tabla.update(_MAC_US)
+    return tabla
+
+
+MAC_US = Distribucion("mac-us", "macOS «U.S.»", _tabla_us(), _MUERTAS_MAC_US)
+MAC_ES = Distribucion("mac-es", "macOS «Español - ISO»", _MAC_ES, _MUERTAS_MAC_ES)
+DE_SERIE = {d.id: d for d in (MAC_US, MAC_ES)}
+DISTRIBUCIONES = tuple(DE_SERIE)
+NOMBRES_DISTRIBUCION = {d.id: d.nombre for d in DE_SERIE.values()}
+
+
+def de_serie(id_: str) -> Distribucion:
+    """La de serie con ese id. Las medidas las resuelve `teclados.resolver`: aquí
+    no se lee ningún archivo."""
+    try:
+        return DE_SERIE[id_]
+    except KeyError:
+        raise ValueError(f"distribución desconocida: {id_}") from None
 
 
 class TextoIntraducible(ValueError):
-    """Hay caracteres que la distribución no sabe teclear; no se escribe nada."""
+    """Hay caracteres que la distribución no sabe teclear; no se escribe nada.
 
-    def __init__(self, caracteres: list[str]):
+    `reservadas`: los que sí tienen teclas, pero alguna está reservada en el
+    perfil (`perfil.reservadas`), con cuál.
+    """
+
+    def __init__(self, caracteres: list[str], reservadas: dict[str, str] | None = None):
         self.caracteres = caracteres
-        legibles = ", ".join(repr(c) for c in caracteres)
-        super().__init__(f"no sé teclear estos caracteres: {legibles}")
-
-
-@dataclass(frozen=True)
-class Pulsacion:
-    """Una tecla pulsada y soltada con unos modificadores mantenidos."""
-
-    modificadores: int
-    tecla: int
-
-    def __str__(self) -> str:
-        partes = [n for n, b in (("cmd", GUI), ("ctrl", CTRL), ("alt", ALT), ("shift", SHIFT))
-                  if self.modificadores & b]
-        partes.append(NOMBRE_DE_TECLA.get(self.tecla, hex(self.tecla)))
-        return "+".join(partes)
-
-
-def _simple_us(c: str) -> Pulsacion | None:
-    if c == "\n":
-        return Pulsacion(0, TECLAS["enter"])
-    if c == "\t":
-        return Pulsacion(0, TECLAS["tab"])
-    if c == " ":
-        return Pulsacion(0, TECLAS["space"])
-    if c in TECLAS and len(c) == 1:
-        return Pulsacion(0, TECLAS[c])
-    if "A" <= c <= "Z":
-        return Pulsacion(SHIFT, TECLAS[c.lower()])
-    if c in _CON_SHIFT_US:
-        return Pulsacion(SHIFT, TECLAS[_CON_SHIFT_US[c]])
-    return None
+        self.reservadas = reservadas or {}
+        sin_tecla = [c for c in caracteres if c not in self.reservadas]
+        partes = []
+        if sin_tecla:
+            partes.append("no sé teclear estos caracteres: " + ", ".join(repr(c) for c in sin_tecla))
+        if self.reservadas:
+            partes.append("estos necesitan una tecla reservada en Ajustes, que no se pulsa nunca: "
+                          + ", ".join(f"{c!r} ({p})" for c, p in self.reservadas.items()))
+        super().__init__("; ".join(partes))
 
 
 def _blanco(c: str) -> Pulsacion | None:
@@ -261,39 +315,55 @@ def _blanco(c: str) -> Pulsacion | None:
             " ": Pulsacion(0, TECLAS["space"])}.get(c)
 
 
-def caracter(c: str, distribucion: str = "mac-us") -> list[Pulsacion] | None:
+def _distribucion(distribucion: str | Distribucion) -> Distribucion:
+    return distribucion if isinstance(distribucion, Distribucion) else de_serie(distribucion)
+
+
+def caracter(c: str, distribucion: str | Distribucion = "mac-us") -> list[Pulsacion] | None:
     """Las pulsaciones que producen `c`, o None si no se sabe."""
-    if distribucion == "mac-es":
-        blanco = _blanco(c)
-        if blanco:
-            return [blanco]
-        pasos = _MAC_ES.get(c)
-        return [Pulsacion(m, TECLAS[t]) for m, t in pasos] if pasos else None
-    if distribucion != "mac-us":
-        raise ValueError(f"distribución desconocida: {distribucion}")
-    simple = _simple_us(c)
-    if simple:
-        return [simple]
-    pasos = _MAC_US.get(c)
+    d = _distribucion(distribucion)
+    blanco = _blanco(c)
+    if blanco:
+        return [blanco]
+    pasos = d.tabla.get(c)
     return [Pulsacion(m, TECLAS[t]) for m, t in pasos] if pasos else None
 
 
-def secuencia(texto: str, distribucion: str = "mac-us") -> list[Pulsacion]:
-    """Todo el texto como pulsaciones; si falta alguna, no devuelve ninguna."""
+def pulsaciones_reservadas(reservadas: Iterable[str | Pulsacion]) -> set[Pulsacion]:
+    """«alt+x» → la Pulsacion. Lo valida `combinacion`: una mal escrita es un error,
+    no una reserva que no reserva nada."""
+    return {r if isinstance(r, Pulsacion) else combinacion(r) for r in reservadas}
+
+
+def secuencia(texto: str, distribucion: str | Distribucion = "mac-us",
+              reservadas: Iterable[str | Pulsacion] = ()) -> list[Pulsacion]:
+    """Todo el texto como pulsaciones; si falta alguna, no devuelve ninguna.
+
+    Nunca devuelve una pulsación de `reservadas`: un carácter que la necesite
+    cuenta como intraducible. En DBeaver para Mac, Opción+X es «Ejecutar
+    script», y con ella se teclean `≈` (U.S.) y `∑` (Español - ISO): pegar un
+    texto con uno de ellos ejecutaba lo que hubiera en el editor (C-0481).
+    """
+    d = _distribucion(distribucion)
+    prohibidas = pulsaciones_reservadas(reservadas)
     # Lo copiado de algunos sitios trae «á» como «a» más el acento suelto
     # (Unicode descompuesto), y ese acento no tiene tecla: se recompone antes.
     texto = unicodedata.normalize("NFC", texto.replace("\r\n", "\n"))
     salida: list[Pulsacion] = []
     faltan: list[str] = []
+    por_reserva: dict[str, str] = {}
     for c in texto:
-        p = caracter(c, distribucion)
-        if p is None:
+        p = caracter(c, d)
+        choque = next((x for x in p or () if x in prohibidas), None)
+        if p is None or choque is not None:
             if c not in faltan:
                 faltan.append(c)
+            if choque is not None:
+                por_reserva[c] = str(choque)
         else:
             salida.extend(p)
     if faltan:
-        raise TextoIntraducible(faltan)
+        raise TextoIntraducible(faltan, por_reserva)
     return salida
 
 

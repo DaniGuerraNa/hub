@@ -178,6 +178,8 @@ class JetKVMFalso:
         self.jiggler_config = {"inactivity_limit_seconds": 60, "jitter_percentage": 25, "schedule_cron_tab": "0 * * * * *"}
         self.rechazar_horario = False  # como un cron que su gocron no entiende
         self.usb = "configured"  # «suspended» con el Mac dormido, «not attached» sin el cable
+        self.usb_falla = False  # getUSBState contesta con error (un firmware que no lo sabe)
+        self.canales_rpc: list = []  # para empujar eventos, como el aparato
         self.video = True  # False: el Mac despierto pero sin imagen (la pantalla aún apagada)
         self.despertares = 0
         # El vídeo (C-0469): perfil, fotogramas por clave, y un codificador que sólo
@@ -230,6 +232,13 @@ class JetKVMFalso:
 
         @pc.on("datachannel")
         def canal(c):
+            if c.label == "rpc":
+                # Como el aparato: al abrirse el canal empuja el estado del vídeo y del USB.
+                self.canales_rpc.append(c)
+                self._evento(c, "videoInputState", self._estado_video())
+                if not self.usb_falla:
+                    self._evento(c, "usbState", self.usb)
+
             @c.on("message")
             def mensaje(m):
                 if c.label.startswith("hidrpc"):
@@ -270,6 +279,30 @@ class JetKVMFalso:
         for c in candidatos[1:]:
             await ws.send_str(ice(c))
 
+    def _estado_video(self) -> dict:
+        if self.usb == "suspended" or not self.video:
+            return {"ready": False, "streaming": 0, "error": "no_signal", "width": 0, "height": 0, "fps": 0}
+        return {"ready": True, "streaming": 1, "width": 1920, "height": 1080, "fps": 30}
+
+    @staticmethod
+    def _evento(canal, metodo: str, params) -> None:
+        # `usbState` lleva la cadena tal cual en `params` (`triggerUSBStateUpdate`).
+        if getattr(canal, "readyState", "open") == "open":
+            canal.send(json.dumps({"jsonrpc": "2.0", "method": metodo, "params": params}))
+
+    def echar(self) -> None:
+        """Como cuando alguien abre su web: a quien estaba se le dice que hay otra sesión."""
+        for c in self.canales_rpc:
+            self._evento(c, "otherSessionConnected", None)
+
+    def poner_usb(self, valor: str) -> None:
+        """El Mac se duerme o despierta por su cuenta: el aparato lo empuja a quien esté."""
+        self.usb = valor
+        for c in self.canales_rpc:
+            if not self.usb_falla:
+                self._evento(c, "usbState", valor)
+            self._evento(c, "videoInputState", self._estado_video())
+
     async def _hid(self, canal, m):
         if not isinstance(m, bytes):
             return  # el aparato rechaza texto en los canales HID
@@ -287,7 +320,7 @@ class JetKVMFalso:
         self.rpc.append(j)
         resultado = None
         if j["method"] == "getVideoState":
-            resultado = {"ready": True, "streaming": 1, "width": 1920, "height": 1080, "fps": 30}
+            resultado = self._estado_video()
         elif j["method"] == "wheelReport":
             await self.sim.rueda(-int(j["params"]["wheelY"]))  # en el aparato, positivo sube
         elif j["method"] in ("getAudioConfig", "setAudioConfig") and not self.sabe_audio:
@@ -313,12 +346,16 @@ class JetKVMFalso:
         elif j["method"] == "getTimezones":
             resultado = ["UTC", "America/Mexico_City", "Europe/Madrid"]
         elif j["method"] == "getUSBState":
+            if self.usb_falla:
+                canal.send(json.dumps({"jsonrpc": "2.0", "id": j["id"],
+                                       "error": {"code": -32601, "message": "Method not found"}}))
+                return
             resultado = self.usb
         elif j["method"] == "wakeHost":
             # Sin el USB conectado contesta bien sin hacer nada (`rpcWakeHost`).
             if self.usb not in ("not attached", "unknown", ""):
                 self.despertares += 1
-                self.usb = "configured"
+                self.poner_usb("configured")
         elif j["method"] == "setAudioConfig":
             # Sin el audio USB lo deja apagado, sin error (`rpcSetAudioConfig`).
             self.audio = bool(j["params"]["params"]["enabled"]) and self.audio_usb

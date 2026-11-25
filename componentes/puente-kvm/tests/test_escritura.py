@@ -146,3 +146,38 @@ def test_la_huella_tras_guardar_un_cambio_sin_huella_esperada_queda_guardada_con
     guardado = cambios.cargar(cid)
     assert guardado.variante and guardado.variante["codificacion"] == "utf-16-le"
     assert guardado.estado == "verificado"
+
+
+# ── todo o nada también con el teclado de Ajustes (C-0481) ──────────────────
+def _reservadas(c, lista: list[str]) -> None:
+    from puente_kvm import config
+    perfil = {**config.leer_ajustes()["perfil"], "reservadas": lista}
+    assert c.post("/api/ajustes", json={"perfil": perfil}, headers=PERSONA).status_code == 200
+
+
+def test_proponer_un_cambio_con_un_caracter_de_tecla_reservada_se_rechaza_al_proponerlo(entorno):
+    # `proponer` validaba con «U.S.» y sin reservadas; se teclea con las de Ajustes.
+    c, sim = entorno
+    lid = leida_y_verificada(c, sim)
+    nuevo = list(sim.editor.guardado)
+    nuevo[20] = nuevo[20] + " -- ≈ casi"
+    r = c.post("/api/cambios", json={"lectura": lid, "texto": "\n".join(nuevo), "descripcion": "x"})
+    assert r.status_code == 422 and "≈" in r.json()["detail"] and "alt+x" in r.json()["detail"]
+
+
+def test_si_un_tramo_ya_no_se_puede_teclear_no_se_escribe_ningun_otro(entorno):
+    # Se propuso sin reservas y luego se reservó Opción+X: antes, el tramo de abajo
+    # se escribía y el de arriba fallaba, y el editor quedaba a medias.
+    c, sim = entorno
+    lid = leida_y_verificada(c, sim)
+    _reservadas(c, [])
+    nuevo = list(sim.editor.guardado)
+    nuevo[10] = nuevo[10] + " -- ≈ casi"
+    nuevo[130] = nuevo[130] + " -- revisado"
+    cid = proponer_y_aprobar(c, lid, nuevo)
+    _reservadas(c, ["alt+x"])
+    antes, pulsaciones = list(sim.editor.lineas), sim.pulsaciones
+    cambio = escribir(c, cid)
+    assert cambio["estado"] == "fallido" and "≈" in cambio["error"]
+    assert sim.editor.lineas == antes
+    assert sim.pulsaciones == pulsaciones  # ni una tecla: tampoco los atajos de comprobar las páginas

@@ -35,21 +35,23 @@
       <button data-mando-atajo="cmd+space" hidden>⌘Espacio</button>
       <button id="mando-pegar" hidden>Pegar texto</button>
       <label class="casilla" id="mando-teclado-caja" hidden title="La fuente de entrada que tiene el Mac (en su barra de menús). «Pegar texto» teclea con ésta: si no es la del Mac, los acentos salen cambiados.">Teclado del Mac
-        <select id="mando-teclado">{% for d in distribuciones %}<option value="{{ d }}" {{ 'selected' if estado.perfil.distribucion == d }}>{{ nombres_distribucion.get(d, d)|replace('macOS ', '')|replace('«', '')|replace('»', '') }}</option>{% endfor %}</select></label>
+        <select id="mando-teclado">{% for d in teclados_disponibles %}<option value="{{ d.id }}" {{ 'selected' if estado.perfil.distribucion == d.id }}>{{ d.corto }}</option>{% endfor %}</select></label>
       <span class="fila mando-aparato">
         <button data-despertar title="Saca al Mac del reposo: lo mismo que «Intentar despertar» de la web del JetKVM.">Despertar el Mac</button>
+        <button data-reconectar title="Vuelve a conectar con el JetKVM. Si alguien tiene abierta su web, la cierra (el aparato admite una sola sesión), y el control vuelve a ti.">Reconectar</button>
         <button id="jiggler" aria-pressed="{{ 'true' if (estado.dispositivo.jiggler or {}).get('encendido') else 'false' }}"
                 title="Lo hace el JetKVM: mueve un poco el ratón cuando nadie lo toca, para que el Mac no se bloquee ni te ponga «ausente». Sigue aunque cierres el puente.">Jiggler: {{ estado.jiggler_texto }}</button>
       </span>
     </div>
     <p class="sub" id="mando-ayuda">Con tu teclado y tu ratón, sin abrir la web del JetKVM (que desconectaría el puente). Sólo mientras Claude no tiene el control.</p>
-    {% if estado.error_conexion %}
-    <div class="aviso riesgo" style="margin-top:12px">
-      <p style="margin:0 0 8px"><b>No hay conexión con el aparato.</b> {{ estado.error_conexion }}</p>
-      <div class="fila"><button data-reconectar>Reintentar</button><button data-despertar>Despertar el Mac</button><a class="boton" href="/ajustes">Revisar los ajustes</a></div>
+    {# Lo pinta el sondeo (`pintarAvisoConexion`), no el servidor: se va solo en
+       cuanto vuelve la imagen, sin recargar (C-0477). Aquí sólo cómo arranca. #}
+    <div class="aviso aviso-conexion riesgo" id="aviso-conexion" role="status" {{ '' if estado.error_conexion else 'hidden' }}>
+      <p><b id="aviso-conexion-titulo">{{ 'El Mac está en reposo.' if estado.dispositivo.mac == 'reposo' else 'No hay conexión con el aparato.' }}</b> <span id="aviso-conexion-texto">{{ estado.error_conexion }}</span></p>
+      <div class="fila"><button data-despertar id="aviso-conexion-despertar">Despertar el Mac</button><button data-reconectar>Reconectar</button><a class="boton" href="/ajustes" id="aviso-conexion-ajustes">Revisar los ajustes</a></div>
     </div>
-    {% elif estado.dispositivo.aviso %}
-    <p class="aviso" style="margin-top:12px">{{ estado.dispositivo.aviso }}</p>
+    {% if estado.dispositivo.aviso %}
+    <p class="aviso aviso-aparato" id="aviso-aparato" {{ 'hidden' if estado.error_conexion }}>{{ estado.dispositivo.aviso }}</p>
     {% endif %}
   </section>
 

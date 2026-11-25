@@ -59,9 +59,11 @@ def sesiones_disponibles() -> list[dict]:
             continue
         entrada = vistas.setdefault(nombre, {"session": nombre, "paneles": 0, "etiquetas": []})
         entrada["paneles"] += 1
-        entrada["etiquetas"].append(
-            tmux.inferir_etiqueta(p["titulo"], p["cwd"], p["comando"])
-        )
+        # Por la puerta del nombre visible (C-0479): un nombre puesto a mano
+        # manda, igual que en la pestaña.
+        entrada["etiquetas"].append(tmux.etiqueta_de_ventana(
+            p.get("nombre_ventana") or "", bool(p.get("a_mano")),
+            p["titulo"], p["cwd"], p["comando"], {nombre}))
     return sorted(vistas.values(), key=lambda s: s["session"])
 
 

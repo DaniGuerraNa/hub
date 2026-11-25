@@ -688,13 +688,20 @@ def test_marcar_que_un_slot_vuelve_se_ve_en_el_rail_y_en_la_cabecera(cliente, tm
                 "VALUES (5,'demo','back',?,'2026-10-22')", (str(tmp_path),))
     con.close()
     antes = cliente.get("/trabajo?slot=5").text
-    assert "↻ No persistente" in antes and 'class="marca-vuelve"' not in antes
+    # C-0480: en la cabecera es una marca junto al nombre, que se esconde si
+    # no lo es, y en el «⋯» el interruptor «Reabrir al encender».
+    assert re.search(r'data-marca-vuelve[^>]*\shidden>', antes)
+    assert re.search(r'id="vuelve"[^>]*role="switch"[^>]*aria-checked="false"', antes)
+    assert 'class="marca-vuelve"' not in antes
 
     r = cliente.post("/api/slot/5/restaurar", json={"restaurar": True})
     assert r.json() == {"ok": True, "restaurar": True}
 
     despues = cliente.get("/trabajo?slot=5").text
-    assert "↻ Persistente" in despues and 'class="marca-vuelve"' in despues
+    assert re.search(r'data-marca-vuelve[^>]*>', despues)
+    assert not re.search(r'data-marca-vuelve[^>]*\shidden>', despues)
+    assert re.search(r'id="vuelve"[^>]*aria-checked="true"', despues)
+    assert 'class="marca-vuelve"' in despues
     assert cliente.post("/api/slot/999/restaurar", json={"restaurar": True}).status_code == 404
 
 

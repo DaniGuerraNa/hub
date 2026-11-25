@@ -1076,9 +1076,9 @@ _TAPA = """() => {
 def test_con_la_nota_plegada_la_pestana_flotante_tapa_el_final_de_la_ultima_linea(chromium):
     """Lo que el dueño se lleva de vuelta (C-0450): como en la de siempre, la
     pestaña plegada se monta sobre la esquina de abajo a la derecha. Medido a
-    1200×900 con la nota plegada (96 columnas, filas de 16 px): tapa las dos
-    últimas líneas desde la columna 53, 43 de 96, y el personaje asoma sobre
-    una tercera en unas 5 columnas. Reservarle sitio quedó fuera del cambio."""
+    1200×900 con la nota plegada (96 columnas, filas de 16 px): tapa las tres
+    últimas líneas desde la columna 53, 43 de 96 (dos antes de C-0480), y el
+    personaje asoma sobre una más en unas 5 columnas. Reservarle sitio quedó fuera del cambio."""
     base, navegador = chromium
     contexto = _con_la_nueva(navegador, base, 1200)
     pagina = contexto.new_page()
@@ -1091,7 +1091,11 @@ def test_con_la_nota_plegada_la_pestana_flotante_tapa_el_final_de_la_ultima_line
     m = pagina.evaluate(_TAPA)
     print(f"\n[C-0450] pestaña sobre la terminal: {m}")
     assert m["sinNota"] and not pagina.evaluate("document.querySelector('#secretario-panel.abierto')")
-    assert m["filasTapadas"] == 2 and m["filasTapadasConFigura"] == 3, m
+    # C-0480: eran 2 y 3. Con la barra de la sesión en una línea (79 → 41 px
+    # a 1200) la terminal gana 38 px, la rejilla de filas de 16 px se corre y
+    # la franja de 34 px de la pestaña (y = 866-900) pisa ahora el borde de
+    # una tercera fila: medido 3, y 4 contando la figura que asoma encima.
+    assert m["filasTapadas"] == 3 and m["filasTapadasConFigura"] == 4, m
     assert 40 <= m["columnasTapadas"] <= 46 and m["figuraColumnas"] <= 6, m
     contexto.close()
 
@@ -1305,4 +1309,59 @@ def test_sin_javascript_se_navega_se_abre_mas_y_se_apaga_la_interfaz(chromium):
         pagina.locator(interruptor).tap()
     assert urlsplit(pagina.url).path == "/"
     assert pagina.locator("html[data-interfaz=nueva]").count() == 1
+    contexto.close()
+
+
+# ── La barra de la sesión en una línea (C-0480) ──────────────────────────────
+
+_BARRA_SESION = """() => {
+  const barra = document.querySelector('.barra-term');
+  const r = barra.getBoundingClientRect();
+  const visible = (e) => { const c = getComputedStyle(e), b = e.getBoundingClientRect();
+                           return c.display !== 'none' && c.visibility !== 'hidden' && b.width > 0 && b.height > 0; };
+  const hijos = [...barra.children].filter(visible).map(e => {
+    const b = e.getBoundingClientRect(); return { que: e.id || e.className, arriba: b.top, abajo: b.bottom }; });
+  const controles = [...barra.querySelectorAll('select, button, summary')]
+    .filter(e => visible(e) && !e.closest('.menu-pop'))
+    .map(e => { const b = e.getBoundingClientRect();
+                return { que: e.id || e.getAttribute('aria-label') || e.textContent.trim(), w: b.width, h: b.height }; });
+  return { alto: r.height, hijos, controles, desborda: barra.scrollWidth - barra.clientWidth,
+           documento: document.documentElement.scrollWidth,
+           selector: visible(document.getElementById('ir-a')),
+           marco: document.getElementById('marco').getBoundingClientRect().height };
+}"""
+
+
+@_con_tmux
+@pytest.mark.parametrize("cual", ["clasica", "nueva"])
+@pytest.mark.parametrize("ancho", [390, 1280])
+def test_la_barra_de_la_sesion_cabe_en_una_linea(chromium, cual, ancho):
+    """Eran cuatro líneas en el teléfono (191 px de 844) y dos a 1280. Una
+    línea, sin desbordar de lado, con controles de 44 px con el dedo y el
+    selector de ventanas como nombre en el teléfono. En las dos interfaces:
+    la plantilla es la misma."""
+    if cual == "nueva" and not interfaz.disponible():
+        pytest.skip("esta instalación no trae la interfaz nueva")
+    base, navegador = chromium
+    movil = ancho < 700
+    contexto = navegador.new_context(viewport={"width": ancho, "height": 844 if movil else 900},
+                                     is_mobile=movil, has_touch=movil, locale="es-ES")
+    if cual == "nueva":
+        contexto.add_cookies([{"name": interfaz.COOKIE, "value": interfaz.NUEVA, "url": base}])
+    pagina = contexto.new_page()
+    errores = []
+    pagina.on("pageerror", lambda e: errores.append(str(e)))
+    pagina.goto(base + "/trabajo", wait_until="load")
+    pagina.wait_for_timeout(600)
+    m = pagina.evaluate(_BARRA_SESION)
+    print(f"\n[C-0480] {cual} a {ancho}: barra {m['alto']:.0f} px, terminal {m['marco']:.0f} px")
+    assert not errores, errores
+    arriba = min(h["arriba"] for h in m["hijos"])
+    assert all(h["arriba"] < arriba + 16 for h in m["hijos"]), m["hijos"]   # una sola fila
+    assert m["alto"] <= (56 if movil else 46), m
+    assert m["desborda"] <= 0 and m["documento"] <= ancho, m
+    assert m["selector"] is movil, m
+    if movil:
+        pequenos = [c for c in m["controles"] if c["h"] < 44 or (c["que"] != "ir-a" and c["w"] < 44)]
+        assert not pequenos, pequenos
     contexto.close()

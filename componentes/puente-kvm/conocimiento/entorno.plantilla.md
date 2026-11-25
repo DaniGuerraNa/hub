@@ -31,7 +31,7 @@ skills. Vive en `trabajo/entorno.md`, que no entra al repositorio: es del trabaj
 
 ## Tecleo
 
-- Fuente de entrada durante el control: U.S. / Español - ISO (la de Ajustes → Teclado)
+- Fuente de entrada durante el control: U.S. / Español - ISO / medida (la de Ajustes → Teclado; si es medida, su id y fecha)
 - Pausa entre teclas que no pierde caracteres: 
 
 ## Huella

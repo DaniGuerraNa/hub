@@ -118,9 +118,43 @@ def _calentar(modelo, idioma: str) -> None:
         print(f"no se pudo calentar el modelo ({str(exc)[:200]}): sigo", file=sys.stderr, flush=True)
 
 
+#: Tope del glosario que se acepta: el hub recorta a 500; más es un pedido raro.
+TOPE_GLOSARIO = 2000
+
+
+def _glosario(pedido) -> tuple[dict, str]:
+    """Los argumentos de `transcribe` para el glosario del pedido (C-0036) y
+    cuál se aplicó. Uno mal formado no rompe la frase: se transcribe sin él
+    y se dice «no». Nunca los dos a la vez."""
+    if not isinstance(pedido, dict):
+        return {}, "no"
+    modo, texto = pedido.get("modo"), pedido.get("texto")
+    if modo not in ("hotwords", "prompt") or not isinstance(texto, str) or not texto.strip() \
+            or len(texto) > TOPE_GLOSARIO:
+        return {}, "no"
+    return {"hotwords" if modo == "hotwords" else "initial_prompt": texto.strip()}, modo
+
+
+def _disponibles(nombres: list[str]) -> dict:
+    """Qué modelos están ya en disco, sin bajar nada (C-0313): el selector del
+    dictado no ofrece uno que, al elegirlo, empezaría una descarga de gigas."""
+    from faster_whisper.utils import download_model
+
+    hay = {}
+    for nombre in nombres:
+        try:
+            download_model(nombre, local_files_only=True)
+            hay[nombre] = True
+        except Exception:  # noqa: BLE001 — no está, o el nombre no existe
+            hay[nombre] = False
+    return hay
+
+
 def main() -> int:
     partes = argparse.ArgumentParser(description=__doc__)
-    partes.add_argument("socket")
+    partes.add_argument("socket", nargs="?")
+    partes.add_argument("--disponibles", nargs="+", metavar="MODELO",
+                        help="dice en JSON cuáles de estos modelos están ya descargados y sale")
     partes.add_argument("--modelo", default="small")
     partes.add_argument("--idioma", default="es")
     partes.add_argument("--ocioso", type=int, default=900)
@@ -133,6 +167,11 @@ def main() -> int:
     except ImportError:
         print("este intérprete no tiene faster-whisper", file=sys.stderr)
         return 2
+    if args.disponibles:
+        print(json.dumps(_disponibles(args.disponibles)))
+        return 0
+    if not args.socket:
+        partes.error("falta el socket")
 
     ruta = Path(args.socket)
     carpeta = ruta.parent.resolve()
@@ -185,7 +224,8 @@ def main() -> int:
                         respuesta = {"error": "sólo transcribo audios de la carpeta de voz del hub"}
                     else:
                         t0 = time.perf_counter()
-                        trozos, info = modelo.transcribe(str(audio), language=idioma, vad_filter=True)
+                        extra, glosario = _glosario(pedido.get("glosario"))
+                        trozos, info = modelo.transcribe(str(audio), language=idioma, vad_filter=True, **extra)
                         texto = " ".join(t.text.strip() for t in trozos).strip()
                         # Lo que se midió, nunca el texto (C-0246). El generador de
                         # `transcribe` es perezoso: el tiempo cuenta tras leerlo entero.
@@ -193,7 +233,10 @@ def main() -> int:
                             "ms_whisper": round((time.perf_counter() - t0) * 1000),
                             "modelo": args.modelo, "tipo": tipo, "dispositivo": dispositivo,
                             "s_audio": _segundos(getattr(info, "duration", None)),
-                            "s_voz": _segundos(getattr(info, "duration_after_vad", None))}}
+                            "s_voz": _segundos(getattr(info, "duration_after_vad", None)),
+                            # Lo que se aplicó de verdad: el banco lo comprueba (C-0036).
+                            "glosario": glosario, "glosario_caracteres": len(extra.get("hotwords")
+                                                                            or extra.get("initial_prompt") or "")}}
                 except Exception as exc:  # noqa: BLE001 — una petición mala no tumba el servidor
                     respuesta = {"error": str(exc)[:300]}
                     # Al registro del servidor (stderr): el mensaje de la excepción, no lo dictado.

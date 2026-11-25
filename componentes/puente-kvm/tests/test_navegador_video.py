@@ -272,3 +272,66 @@ def test_si_el_mac_cambia_de_resolucion_el_video_se_reconfigura_y_sigue(pagina):
         assert pagina.evaluate("PuenteDirecto.modo()") == "h264"
         assert pagina.evaluate("document.querySelector('#directo-video').height") == 720
     assert pagina.errores == []
+
+
+def test_con_el_jetkvm_y_el_mac_en_reposo_el_aviso_se_va_solo_cuando_despierta(pagina):  # noqa: F811
+    # C-0477: lo que contó quien lo usa («tarda mucho en detectar que el jet está
+    # conectado a la mac, sobre todo en reposo»). El aparato lo dice por el USB, y
+    # el aviso, que antes pintaba el servidor y no se iba sin recargar, se va solo.
+    falso = FalsoAparte(usb="suspended")
+    try:
+        with en_marcha(JetKVM(falso.url, "secreta")) as base:
+            try:
+                pagina.goto(base + "/panel")
+                pagina.evaluate("window.__sinRecargar = 1")
+                pagina.wait_for_function("!document.querySelector('#aviso-conexion').hidden")
+                assert pagina.locator("#aviso-conexion-titulo").text_content() == "El Mac está en reposo."
+                assert "Mac en reposo" in pagina.locator("#placa-aparato").text_content()
+                falso.poner_usb("configured")  # alguien tocó su teclado
+                pagina.wait_for_function("document.querySelector('#aviso-conexion').hidden", timeout=5000)
+                pagina.wait_for_function("document.querySelector('#placa-aparato').textContent.includes('1920')")
+                assert pagina.evaluate("window.__sinRecargar") == 1
+            finally:
+                pagina.goto("about:blank")
+    finally:
+        falso.parar()
+    assert pagina.errores == []
+
+
+
+def test_con_el_mac_despierto_y_la_pantalla_apagada_no_dice_que_no_hay_conexion(pagina):  # noqa: F811
+    # El USB dice «despierto» y el HDMI no da señal: ni reposo ni un fallo de conexión.
+    falso = FalsoAparte(video=False)
+    try:
+        with en_marcha(JetKVM(falso.url, "secreta")) as base:
+            try:
+                pagina.goto(base + "/panel")
+                pagina.wait_for_function("!document.querySelector('#aviso-conexion').hidden")
+                assert pagina.locator("#aviso-conexion-titulo").text_content() == \
+                    "El Mac está despierto, pero aún no llega su imagen."
+                assert "pantalla esté apagada" in pagina.locator("#aviso-conexion-texto").text_content()
+                assert pagina.locator("#aviso-conexion-despertar").is_hidden()
+                falso.poner_video(True)  # se enciende su pantalla
+                pagina.wait_for_function("document.querySelector('#aviso-conexion').hidden", timeout=8000)
+            finally:
+                pagina.goto("about:blank")
+    finally:
+        falso.parar()
+    assert pagina.errores == []
+
+
+def test_si_el_jetkvm_no_ve_el_mac_por_usb_lo_dice_aunque_se_vea_la_pantalla(pagina):  # noqa: F811
+    falso = FalsoAparte(usb="not attached")
+    try:
+        with en_marcha(JetKVM(falso.url, "secreta")) as base:
+            try:
+                pagina.goto(base + "/panel")
+                pagina.wait_for_function("!document.querySelector('#aviso-conexion').hidden")
+                assert pagina.locator("#aviso-conexion-titulo").text_content() == "El JetKVM no ve el Mac por USB."
+                assert "teclado y el ratón no le llegan" in pagina.locator("#aviso-conexion-texto").text_content()
+                assert pagina.locator("#aviso-conexion-despertar").is_hidden()
+            finally:
+                pagina.goto("about:blank")
+    finally:
+        falso.parar()
+    assert pagina.errores == []

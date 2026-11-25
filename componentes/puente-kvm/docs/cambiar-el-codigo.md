@@ -36,3 +36,17 @@ puente, y casi ninguna cambia el código.
 - Lo que lanza Claude Code va con esas mismas banderas también en la shell que
   queda al cerrarse (`terminal._shell_de_despues`): un `claude` sin ellas
   cargaría lo personal y ninguna «ask».
+- Los «deny» que protegen los datos del puente (`ajustes.json`, que guarda el
+  teclado en uso y las teclas reservadas; `teclados/**`, las medidas; las
+  reuniones) van con la ruta por omisión, `~/.local/share/puente-kvm`. Claude
+  Code no lee variables en sus reglas: con otro `PUENTE_HOME`, **no cubren
+  nada**, y hay que añadir a mano las mismas reglas con esa ruta.
+
+## Límites conocidos
+
+- **Las huellas de la calibración del teclado (C-0481) y las de
+  `comprobar_huella` se fían de Claude.** Puede leer `ronda.filas` de la medida
+  (los datos del puente se leen sin preguntar) y calcular las huellas con Bash
+  en vez de leerlas de la rejilla: la verificación probaría la tabla contra sí
+  misma. Es el mismo modelo de confianza que la huella de una lectura, y no se
+  cambia: la barrera es que la persona ejecuta la consulta y ve el resultado.

@@ -162,6 +162,19 @@ def _gpu() -> list[Medida]:
     ]
 
 
+def gpu_memoria() -> tuple[int, int] | None:
+    """Memoria de la GPU en uso y total, en MB, medida al momento (C-0313), o
+    None si no hay GPU NVIDIA o el driver no contesta. Cuesta ~0,3 s: sólo bajo
+    demanda (el menú del modelo del dictado), nunca en un sondeo."""
+    try:
+        crudo = _salida(["nvidia-smi.exe", "--query-gpu=memory.used,memory.total",
+                         "--format=csv,noheader,nounits"])
+        usada, total = [int(float(c.strip())) for c in crudo.splitlines()[0].split(",")]
+    except (NoHay, OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None
+    return usada, total
+
+
 def _discos() -> list[Medida]:
     medidas: list[Medida] = []
     for clave, ruta in DISCOS:

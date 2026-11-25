@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 from PIL import Image, ImageChops, ImageStat
 
-from . import hid
+from . import config, hid, teclados
 from .control import Bitacora, Control
 from .dispositivo import Dispositivo
 
@@ -290,17 +290,40 @@ class Motor:
         if apuntar:
             self.bitacora.apuntar("atajo", atajo + (f" ×{veces}" if veces > 1 else ""))
 
-    async def teclear(self, texto: str, apuntar: bool = True) -> int:
-        """Teclea `texto` entero o nada (ver `hid.secuencia`). Devuelve pulsaciones."""
-        pulsaciones = hid.secuencia(texto, self.perfil.get("distribucion", "mac-us"))
-        if apuntar:
-            muestra = texto if len(texto) <= 80 else texto[:77] + "…"
-            self.bitacora.apuntar("teclear", f"{len(texto)} caracteres: {muestra!r}")
+    def distribucion(self) -> hid.Distribucion:
+        """La del ajuste, de serie o medida (`teclados.resolver`): una medida que ya
+        no se lee es un error, no un «U.S.» que escribe otra cosa."""
+        return teclados.resolver(self.perfil.get("distribucion", "mac-us"))
+
+    def reservadas(self) -> set[hid.Pulsacion]:
+        return hid.pulsaciones_reservadas(self.perfil.get("reservadas", config.PERFIL_POR_OMISION["reservadas"]))
+
+    async def pulsar(self, pulsaciones: list[hid.Pulsacion]) -> int:
+        """Pulsa estas teclas tal cual, sin pasar por ninguna distribución (el sondeo
+        del teclado). Si alguna está reservada, no pulsa ninguna."""
+        prohibidas = self.reservadas()
+        choque = next((p for p in pulsaciones if p in prohibidas), None)
+        if choque is not None:
+            raise ValueError(f"{choque} está reservada en Ajustes (perfil.reservadas): no pulso nada")
         for i, p in enumerate(pulsaciones):
             await self._pulsar(p)
             if i % 50 == 0:
                 self.progreso = f"tecleando {i}/{len(pulsaciones)}"
         return len(pulsaciones)
+
+    async def teclear(self, texto: str, apuntar: bool = True,
+                      distribucion: hid.Distribucion | None = None) -> int:
+        """Teclea `texto` entero o nada (ver `hid.secuencia`). Devuelve pulsaciones.
+
+        Con la distribución del ajuste, o con `distribucion` (la consulta de prueba
+        de una medida se teclea con su borrador). Las teclas reservadas no se pulsan
+        nunca, con una u otra.
+        """
+        pulsaciones = hid.secuencia(texto, distribucion or self.distribucion(), self.reservadas())
+        if apuntar:
+            muestra = texto if len(texto) <= 80 else texto[:77] + "…"
+            self.bitacora.apuntar("teclear", f"{len(texto)} caracteres: {muestra!r}")
+        return await self.pulsar(pulsaciones)
 
     # ── ratón ───────────────────────────────────────────────────────────────
     async def mover(self, x: int, y: int) -> None:

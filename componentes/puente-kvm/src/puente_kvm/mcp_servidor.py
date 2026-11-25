@@ -123,7 +123,7 @@ ANCHO_IMAGEN = 1600
 PARA_CLAUDE = {
     "control": ("modo", "motivo"),
     "dispositivo": ("tipo", "conectado", "motivo", "error", "resolucion", "firmware", "firmware_contrastado",
-                    "aviso", "ultimo_fotograma_s", "nota"),
+                    "aviso", "ultimo_fotograma_s", "nota", "mac", "senal"),
     "tarea": None, "progreso": None, "error_conexion": None, "jiggler_texto": None, "mando": None,
     "lecturas": ("id", "nombre", "estado", "error", "paginas", "transcritas", "lineas", "conflictos", "huecos",
                  "pendientes", "completo", "verificada", "errores_por_pagina", "inestables"),
@@ -374,6 +374,56 @@ async def jiggler(encendido: bool, horario: str = "", zona: str = "", inactivida
     if horario:
         cuerpo.update({"horario": horario, "zona": zona, "inactividad_s": inactividad_s})
     return await _llamar("POST", "/api/jiggler", cuerpo)
+
+
+# ── calibrar el teclado del Mac (C-0481, skill calibrar-teclado) ─────────────
+@herramienta
+async def sondear_teclado() -> dict:
+    """Teclea el sondeo del teclado donde esté el foco: cada tecla que escribe en sus
+    cuatro capas (sin nada, Mayús, Opción, Mayús+Opción), una línea por tecla y capa.
+
+    Sólo en una pestaña de script NUEVA Y VACÍA, con el Bloq Mayús quitado: mira la
+    pantalla antes. Necesita el control. Las teclas reservadas en Ajustes (Opción+X,
+    que en DBeaver ejecuta el script) no se pulsan: su línea sale vacía. Después, lee
+    la pestaña entera con leer_documento y pásale esa lectura a medir_teclado.
+    """
+    return await _llamar("POST", "/api/teclado/sondear", {}, timeout=900)
+
+
+@herramienta
+async def medir_teclado(lectura: str, nombre: str) -> dict:
+    """Arma un borrador de teclado con la lectura del sondeo (de leer_documento, ya
+    transcrita entera). `nombre`: cómo lo llama la persona («Latinoamericano»).
+
+    No teclea nada. Rechaza un sondeo con líneas de menos o hecho con Bloq Mayús. El
+    borrador queda «sin verificar»: no se puede usar hasta pasar por probar_teclado y
+    comprobar_teclado. Devuelve su id (`medida-…`).
+    """
+    return await _llamar("POST", "/api/teclado/medir", {"lectura": lectura, "nombre": nombre})
+
+
+@herramienta
+async def probar_teclado(medida: str, motor: str = "SQL Server") -> dict:
+    """Teclea, con el borrador `medida`, una consulta de sólo lectura que calcula la huella
+    de lo que llega al editor, en filas de 8–10 caracteres. motor: "SQL Server" o "PostgreSQL".
+
+    En una pestaña de script vacía y con el control, que al acabar vuelve a la persona.
+    NO la ejecutes: la ejecuta ella. Después lee la rejilla de resultados (n, largo, huella) y pásasela a
+    comprobar_teclado. Cada ronda sólo lleva lo que falta por verificar.
+    """
+    return await _llamar("POST", "/api/teclado/probar", {"medida": medida, "motor": motor}, timeout=600)
+
+
+@herramienta
+async def comprobar_teclado(medida: str, huellas: str) -> dict:
+    """Compara las huellas que dio la base con las que calcula el puente y apunta lo verificado.
+
+    `huellas`: la rejilla de la consulta de probar_teclado, una fila por línea, «n largo
+    huella» (p. ej. «1001 9 3F2A0C…»). No teclea nada. Dice qué filas coinciden, qué
+    corrigió (dudosos a la vista como ^/ˆ o º/°) y si la medida ya se puede usar: eso
+    lo decide la persona en Ajustes («Usar»), no tú.
+    """
+    return await _llamar("POST", "/api/teclado/comprobar", {"medida": medida, "huellas": huellas})
 
 
 # ── leer un documento largo ─────────────────────────────────────────────────

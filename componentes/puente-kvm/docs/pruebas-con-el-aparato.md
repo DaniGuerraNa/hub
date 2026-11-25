@@ -178,15 +178,21 @@ orden y lo que hay que vigilar.
 ## Riesgos conocidos
 
 - **Fuente de entrada del Mac.** El puente teclea para la que dice Ajustes →
-  Teclado («U.S.» o «Español - ISO»); si el Mac tiene otra (la latinoamericana,
-  por ejemplo, que aún no está), `{ } [ ] | \ ~ @` salen distintos y nadie se
-  entera hasta la huella.
+  Teclado («U.S.», «Español - ISO» o una medida); si el Mac tiene otra (la
+  latinoamericana, por ejemplo), `{ } [ ] | \ ~ @` salen distintos y nadie se
+  entera hasta la huella. Se mide con la skill `calibrar-teclado` (C-0481), que
+  aún no se ha probado con el aparato real.
 - **El asistente de teclado de macOS** al ver un teclado USB nuevo (paso 3):
   ANSI frente a ISO cambia dónde salen `` ` `` y `~`.
 - **Bloq Mayús** encendido invierte mayúsculas: el puente no lo mira.
 - **Una sola sesión en el aparato**: abrir su web en un navegador echa al puente
   (la bitácora lo dice: «otra sesión abrió el JetKVM»). Se vuelve con
-  «Reconectar el aparato» en Ajustes, que **devuelve el control a la persona**.
+  «Reconectar» del panel (o «Reconectar el aparato» en Ajustes), que **devuelve
+  el control a la persona**. Con una reunión grabándose no deja: cortaría su sonido.
+- **El Mac en reposo**: el aparato lo dice solo (`usbState` «suspended»), y el
+  panel enseña «El Mac está en reposo» con «Despertar el Mac»; el aviso se va
+  en cuanto vuelve la imagen. Comprobar con el aparato que el evento llega así
+  (su forma está leída del código, no medida).
 - **Versión del firmware**: fuera de 0.5.9–0.5.11 puede funcionar, pero nadie
   la ha leído.
 - **Cosas que se mueven encima del editor** (notificaciones, el salvapantallas,

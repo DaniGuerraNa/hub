@@ -77,12 +77,17 @@ Todo se hace en **una sola pantalla: http://127.0.0.1:8794**.
      dicen por qué, y el vídeo vuelve solo con él. **Ctrl = ⌘** (marcado de fábrica)
      cambia Ctrl y ⌘ de sitio, porque Windows se queda la tecla ⌘; ⌘Tab y
      ⌘Espacio tienen botón, y «Pegar texto» teclea lo del portapapeles con el
-     **teclado del Mac** que eliges a su lado («U.S.» o «Español - ISO»): si no
+     **teclado del Mac** que eliges a su lado («U.S.», «Español - ISO» o uno medido): si no
      es el que tiene el Mac, los acentos salen cambiados. Sólo funciona
      mientras Claude no tiene el control. Lo que teclees no se guarda en ningún
      sitio.
    - **«Despertar el Mac»**, bajo la imagen: lo saca del reposo, como
      «Intentar despertar» de la web del JetKVM, y dice si volvió la imagen.
+     El puente sabe al momento si el Mac está en reposo (se lo dice el JetKVM
+     por el USB): la placa de arriba dice «Mac en reposo» y el panel lo avisa,
+     y el aviso se va solo en cuanto vuelve la imagen. **«Reconectar»**, a su
+     lado, vuelve a conectar con el JetKVM (cierra su web si alguien la tiene
+     abierta, y el control vuelve a ti); con una reunión grabándose no deja.
      **«Jiggler»** lo enciende y lo apaga: el JetKVM mueve un poco el ratón
      cuando nadie lo toca, para que el Mac no se bloquee ni te ponga
      «ausente» (lo mueve 1 a 3 píxeles). El botón lo enciende con «Frecuente,
@@ -137,8 +142,13 @@ En el cliente de base de datos, un **«modo captura»**:
 En macOS, la fuente de entrada activa mientras Claude teclea tiene que ser la
 que dice Ajustes → Teclado del puente: **«U.S.»** o **«Español - ISO»** (con el
 teclado del JetKVM como ANSI). Si no coinciden, `{ } [ ] | \ ~ @` salen
-distintos. La latinoamericana aún no está: con ella, cambia a una de las dos
-(Ctrl+Espacio) antes de dar el control.
+distintos. Si el Mac usa otra (la latinoamericana, por ejemplo), pídele a
+Claude que **calibre el teclado** (skill `calibrar-teclado`): pulsa cada tecla
+en una pestaña de script vacía, lee lo que sale y lo verifica con huellas de la
+base; tú ejecutas su consulta de prueba y pulsas «Usar» en Ajustes. La medida
+queda en los datos del puente, no en el repositorio. En Ajustes también están
+las **teclas que el puente nunca pulsa** al teclear: de fábrica, Opción+X, que
+en DBeaver para Mac ejecuta el script.
 
 Después, en **Ajustes** del puente, marca la región del editor arrastrando
 sobre la captura y comprueba los atajos de tu cliente (por omisión, los de

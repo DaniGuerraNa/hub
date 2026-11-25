@@ -53,15 +53,32 @@ def test_seleccionar_actua_sobre_el_destino_que_se_le_da(registro):
 def test_crear_ventana_usa_la_ruta_del_slot(registro):
     """`-P -F` devuelve el índice: sin él no se puede navegar a lo recién creado."""
     tmux.nueva_ventana("work", "/tmp/demo", "investigación")
-    assert registro[-1] == [
+    assert registro[-1][:11] == [
         "new-window", "-P", "-F", "#{window_index}",
         "-a", "-t", "=work:{end}", "-c", "/tmp/demo", "-n", "investigación",
     ]
 
 
-def test_crear_ventana_con_comando_lo_pone_al_final(registro):
+def test_el_nombre_que_pone_el_hub_no_queda_fijado(registro):
+    """C-0479: `-n` apaga el renombrado automático y el nombre del hub pasaba
+    por uno puesto a mano. En la misma orden se vuelve a encender, con el
+    nombre como formato y escapado (`literal`)."""
+    tmux.nueva_ventana("work", "/tmp/demo", "a#b")
+    assert registro[-1][11:] == [
+        ";", "set-option", "-w", "-t", "=work:", "automatic-rename-format", "a##b",
+        ";", "set-option", "-w", "-t", "=work:", "automatic-rename", "on",
+    ]
+
+
+def test_el_nombre_que_escribe_el_dueno_queda_fijado(registro):
+    tmux.nueva_ventana("work", "/tmp/demo", "logs", a_mano=True)
+    assert ";" not in registro[-1] and registro[-1][-2:] == ["-n", "logs"]
+
+
+def test_crear_ventana_con_comando_lo_pone_detras_de_las_opciones(registro):
     tmux.nueva_ventana("work", "/tmp/demo", "agente", "claude 'hola'")
-    assert registro[-1][-1] == "claude 'hola'"
+    orden = registro[-1]
+    assert orden[orden.index(";") - 1] == "claude 'hola'"
 
 
 def test_renombrar_apunta_a_la_sesion_real(registro):

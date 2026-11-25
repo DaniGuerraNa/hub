@@ -143,7 +143,25 @@ def tramos_de(original: list[str], nuevo: list[str]) -> list[Tramo]:
     return salida
 
 
-def proponer(lectura: lecturas.Lectura, nuevo_texto: str, descripcion: str) -> Cambio:
+def comprobar_tecleable(tramos: list[Tramo], distribucion: hid.Distribucion | str = "mac-us",
+                        reservadas=()) -> None:
+    """Todos los tramos se pueden teclear con esta distribución y sin las reservadas,
+    o `hid.TextoIntraducible` con los caracteres que no: el cambio se escribe entero
+    o nada, nunca un tramo sí y el siguiente no."""
+    faltan: list[str] = []
+    por_reserva: dict[str, str] = {}
+    for t in tramos:
+        try:
+            hid.secuencia("\n".join(t.nuevas), distribucion, reservadas)
+        except hid.TextoIntraducible as e:
+            faltan += [c for c in e.caracteres if c not in faltan]
+            por_reserva.update(e.reservadas)
+    if faltan:
+        raise hid.TextoIntraducible(faltan, por_reserva)
+
+
+def proponer(lectura: lecturas.Lectura, nuevo_texto: str, descripcion: str,
+             distribucion: hid.Distribucion | str = "mac-us", reservadas=()) -> Cambio:
     ens = lecturas.ensamblar(lectura)
     if not ens.completo:
         raise ValueError("la lectura no está completa (páginas sin transcribir, huecos o conflictos)")
@@ -151,9 +169,9 @@ def proponer(lectura: lecturas.Lectura, nuevo_texto: str, descripcion: str) -> C
     tramos = tramos_de(ens.lineas, nuevo)
     if not tramos:
         raise ValueError("el texto propuesto es idéntico al leído: no hay nada que escribir")
-    # Fallar aquí, no a mitad de la escritura.
-    for t in tramos:
-        hid.secuencia("\n".join(t.nuevas))
+    # Fallar aquí, no a mitad de la escritura: con la distribución y las reservadas
+    # con que se va a teclear (la de Ajustes, que puede ser una medida).
+    comprobar_tecleable(tramos, distribucion, reservadas)
     base = lecturas.slug(descripcion, 30) or "cambio"
     c = Cambio(id=f"{base}-{uuid.uuid4().hex[:6]}", lectura=lectura.id, descripcion=descripcion,
                creado=time.time(), original=ens.lineas, nuevo=nuevo, tramos=tramos,
@@ -222,6 +240,10 @@ async def escribir(motor: Motor, c: Cambio, quien: str) -> Cambio:
     c.anotar("escribiendo", quien)
     c.guardar()
     try:
+        # Antes de la primera tecla, todos los tramos: la distribución o las reservadas
+        # pueden haber cambiado desde que se propuso, y un tramo que falla a mitad
+        # deja el editor a medias.
+        comprobar_tecleable(c.tramos, motor.distribucion(), motor.reservadas())
         await motor.aparcar_raton()
         hasta = pagina_hasta(lectura, c)
         t0 = time.monotonic()

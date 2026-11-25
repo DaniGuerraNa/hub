@@ -362,12 +362,17 @@ def _aparato(ajustes: dict, estado: dict | None, entrar: bool) -> list[Punto]:
         return [Punto(BIEN, "aparato", "el Mac simulado (para el JetKVM: Ajustes → Tipo «JetKVM»)")]
     if estado and "control" in estado:
         disp = estado.get("dispositivo") or {}
+        # Dormido no es un fallo: el aparato está y se despierta desde el panel (C-0477).
+        if disp.get("mac") == "reposo":
+            return [Punto(OJO, "JetKVM", f"conectado a {disp.get('url')}, con el Mac en reposo (sin imagen)",
+                          "«Despertar el Mac» en el panel lo saca del reposo"),
+                    punto_firmware(disp.get("firmware", ""))]
         if disp.get("conectado"):
             return [Punto(BIEN, "JetKVM", f"conectado a {disp.get('url')}, vídeo {disp.get('resolucion')}"),
                     punto_firmware(disp.get("firmware", ""))]
         motivo = estado.get("error_conexion") or disp.get("motivo") or "sin conexión"
         return [Punto(FALTA, "JetKVM", f"el puente no conecta: {motivo}",
-                      "mira el aviso del panel; «Reconectar el aparato» en Ajustes lo reintenta")]
+                      "mira el aviso del panel; su «Reconectar» lo reintenta")]
     clave = os.environ.get(d.get("clave_env") or "JETKVM_CLAVE", "")
     if not clave and config.entorno().exists():
         clave = _leer_entorno(config.entorno()).get(d.get("clave_env") or "JETKVM_CLAVE", "")

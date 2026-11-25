@@ -24,14 +24,19 @@ La relación es: `proyecto → N slots → 1 nota por slot, y N ventanas por slo
 
 Proyecto → slot → ventanas, una dentro de otra. Bajo cada slot están sus
 ventanas abiertas, cada una con su punto de estado: pulsa una para verla, doble
-clic para renombrarla, **×** para cerrarla y **«+ Ventana»** para abrir otra en
+clic para renombrarla, la **cruz** para cerrarla y **«+ Ventana»** para abrir otra en
 la carpeta del slot. Las ventanas que no son de ningún slot están al final, en
 «Sin organizar»; su **⋯** tiene «Ocultar» (deja de salir en la lista y sigue
 corriendo) y «Cerrar» (con confirmación). En el escritorio el árbol sustituye
 a las pestañas de encima de la terminal; con el raíl plegado, a pantalla
 completa o en el móvil vuelven las pestañas. En el móvil, el selector de arriba
-marca lo que estás viendo; si no está en la lista (una ventana oculta, por
-ejemplo), lo dice con «Viendo: …».
+—que es también el nombre de lo que estás viendo, en la barra de encima de la
+terminal— hace de árbol: una opción por ventana, «slot › ventana», agrupadas por
+proyecto; luego «Sin organizar» y, al final, los slots sin ventana abierta.
+Marca la ventana que estás viendo; si no está en la lista (una ventana oculta,
+por ejemplo), lo dice con «Viendo: …». Cada ventana se llama igual en el árbol,
+en las pestañas y en el selector: el nombre que le pusiste o, si no, el título
+de la conversación.
 
 Después de reiniciar el equipo, tmux puede devolver como `bash` las ventanas
 de todo lo que tenías abierto. Debajo de la lista, **«N shells sin usar desde
@@ -48,13 +53,13 @@ En la lista de la izquierda de Trabajo: **«+ Proyecto»** arriba, y **«+ Slot
 nuevo»** al final de cada proyecto. El slot nuevo se abre solo con Claude dentro
 y te lleva a su terminal. Los proyectos sin nada abierto no salen en la lista;
 para ellos está **«+ Slot en otro proyecto»**, al final. En el móvil la lista
-es el selector de arriba, y ahí están las mismas: **«+ Slot nuevo»** al final de
-cada proyecto y **«+ Slot en otro proyecto»** después.
+es el selector de arriba, y ahí hay una sola **«+ Slot nuevo…»**, al final: el
+proyecto se elige en el diálogo.
 
 ### Retomar una conversación
 
 Cerrar la terminal no borra la conversación: Claude Code la guarda entera. En la
-cabecera del slot, **«Conversaciones»** lista las de su carpeta, la última
+barra del slot, el **«⋯»** → **«Conversaciones anteriores»** lista las de su carpeta, la última
 arriba, con su título (o lo primero que pediste) y cuándo fueron.
 **«Retomar»** abre una ventana nueva del slot con esa conversación, tal como la
 dejaste. La que ya está abierta en una ventana dice «abierta ahora» y te lleva a
@@ -112,17 +117,48 @@ tmux.
 - Las pestañas de arriba son las ventanas: clic para cambiar, `Alt+0..9` para
   saltar, `+` para crear una en la ruta del slot, doble clic para renombrar, `×`
   para cerrar (con confirmación).
-- El nombre que pongas **manda** sobre el que Claude Code va reescribiendo. Para
-  volver al automático:
+- El nombre que pongas **manda** sobre el que Claude Code va reescribiendo, y
+  se ve también en el árbol. El que pone el hub al abrir una ventana (el del
+  slot) no: ahí manda el título de la conversación. Para volver al automático:
   `tmux set-window-option -t <sesión>:<n> automatic-rename on`
 - Cerrar la pestaña del navegador sólo te desata: los procesos siguen vivos,
   igual que un `detach`.
 - Si se cae la conexión, se reengancha sola.
-- **Dictar:** el botón «Dictar» (arriba, y en el móvil en la barra de teclas)
-  graba lo que dices, lo transcribe **en tu máquina** y lo deja escrito en la
+- **La barra de encima de la terminal** cabe en una línea. En el PC: el
+  nombre del slot y su ruta, la letra (`A−`/`A+`), **«Nota»**, el micrófono
+  con su flechita y el **«⋯»**. En el teléfono: el selector (el nombre), el
+  micrófono y el «⋯»; la letra y la nota van dentro del «⋯». En el «⋯»
+  están también «Conversaciones anteriores», «Reabrir al encender»,
+  «Pantalla completa», el reparto (Cómodo, Denso, Foco) y «Ajustar a tmux»,
+  con las columnas al pie. Cuando tmux tiene más columnas de las que caben
+  (se perderían letras al final de cada línea), sale un aviso sobre la
+  terminal, «Caben N de M columnas», con su botón **«Ajustar»**. Los
+  mensajes de la conexión y del dictado también flotan sobre la terminal;
+  tócalos para quitarlos.
+- **Dictar:** el **micrófono** (arriba, y en el móvil también en la barra de
+  teclas) graba lo que dices, lo transcribe **en tu máquina** y lo deja escrito en la
   terminal, sin enviarlo: lo lees y pulsas Enter. Sirve para explicarle algo
   largo a Claude Code sin teclearlo. El `/voice` de Claude Code no sirve aquí:
   usa el micrófono de la máquina donde corre `claude`, no el de tu navegador.
+  Mientras graba enseña un cuadrado de parar y los segundos; púlsalo otra
+  vez para terminar. Es el mismo botón en todo el hub (Tablero, Orquestador,
+  chat del secretario).
+  Pegada a él, la **flechita** elige qué Whisper lo transcribe (en el
+  teléfono, en el «⋯», «Modelo del dictado»): «Ligero» (small,
+  el de siempre), «Preciso» (turbo, en la GPU: la mitad de errores, sobre todo
+  con nombres y términos técnicos) o «Apagado» (suelta la memoria de la GPU
+  y cada frase se transcribe en la CPU, unos segundos más lenta). Dice qué hay
+  cargado y cuánta memoria de la GPU está en uso. Lo eliges tú y nada lo
+  cambia solo; sólo se ofrecen los modelos ya descargados. El mismo menú está
+  junto al micrófono del Tablero y en el chat del secretario, junto a
+  «Opciones». En el Orquestador no: lo que le dictas se transcribe por otro
+  camino.
+  El dictado conoce tus palabras: a Whisper se le da una lista de términos
+  técnicos y los nombres de tus proyectos, y así escribe «worktree» o
+  «Tailscale» en vez de algo que suena parecido. Para cambiarla,
+  `python -m hub.banco_dictado glosario --sembrar` la deja en
+  `voz/glosario.txt` (un término por línea); el mismo comando sin
+  `--sembrar` enseña la que se está usando. Sólo se usa al dictar en español.
   Necesita un transcriptor: si preparaste Reuniones, usa el suyo (Whisper);
   si no, la terminal te dice cómo tenerlo. Si no puede usar el micrófono te
   dice por qué (sin permiso, sin micrófono u ocupado por otra aplicación), y
@@ -145,7 +181,8 @@ Se recuerdan entre sesiones.
 | Denso | 12 | sí | sí |
 | Foco | 13 | no | no |
 
-Además `A−`/`A+` (9–22) y los bordes entre paneles se arrastran.
+Están en el «⋯» de la barra. Además `A−`/`A+` (9–22) y los bordes entre
+paneles se arrastran.
 
 ## Slots persistentes: recuperar el trabajo al reiniciar
 
@@ -167,9 +204,9 @@ cuando pulsas «Ya lo revisé».
 Un slot **persistente** se reabre cuando vuelves a encender el equipo: la
 portada te ofrece **«Reabrir tus slots persistentes»** con un botón **«Abrir N
 ventanas»**. Los slots nacen no persistentes; márcalo en los que quieras
-conservar: en **Trabajo**, en la cabecera del slot, pulsa **«↻ No persistente»**
-y pasa a **«↻ Persistente»**. En la lista de la izquierda, los persistentes
-llevan un **↻** junto al nombre. (También está la casilla al editar el slot, en
+conservar: en **Trabajo**, en el **«⋯»** de la barra del slot, enciende
+**«Reabrir al encender»**. Un persistente lleva un icono de encendido junto a
+su nombre, en la barra y en la lista de la izquierda. (También está la casilla al editar el slot, en
 la pantalla del proyecto.)
 
 Reabrir abre cada ventana **en su carpeta** y, en las que tenían Claude Code,

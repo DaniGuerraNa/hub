@@ -486,7 +486,7 @@ TOPES: dict[str, tuple[int, int]] = {
     "static/escenario-secretario.css": (8, 0),
     "static/talleres.css": (5, 0),
     "tablero.html": (5, 5),
-    "trabajo.html": (39, 4),
+    "trabajo.html": (35, 2),
 }
 
 ARCHIVOS_CON_TOPE = sorted([*(a for a in PLANTILLAS.rglob("*.html") if a.name != "_personaje.html"),

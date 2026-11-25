@@ -939,6 +939,9 @@ def _pestanas_de(con: sqlite3.Connection, session: str) -> dict[int, str]:
     ventanas, y lo que las distingue es lo que se lee en la pestaña —el nombre
     que él le puso a mano o, si no, el título que pinta Claude—. Se toma de la
     misma costura que la franja de pestañas para que los dos digan lo mismo.
+    Hasta C-0479 «a mano» incluía el nombre del slot que ponía el propio hub
+    al abrirla, y las pestañas volvían a llamarse como el slot; ahora lo
+    decide `tmux.etiqueta_de_ventana`.
     """
     from . import api
 

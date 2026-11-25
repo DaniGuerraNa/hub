@@ -86,7 +86,12 @@ class Dispositivo(abc.ABC):
 
     @abc.abstractmethod
     def estado(self) -> dict:
-        """Para la pantalla: conectado, resolución y lo que haga falta saber."""
+        """Para la pantalla: conectado, resolución y lo que haga falta saber.
+
+        Si lo sabe, `mac` (C-0477): «despierto», «reposo», «sin_usb» o None (no
+        se sabe), y `senal`: «ok», el error de la señal HDMI («no_signal»…) o
+        None. `mac` no cambia `conectado`: el Mac puede dormirse con la
+        conexión abierta, y entonces es lo único que lo dice."""
 
     # ── el sonido del Mac, para grabar una reunión (C-0461) ─────────────────
     @property

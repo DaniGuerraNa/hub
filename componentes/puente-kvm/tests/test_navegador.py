@@ -8,6 +8,7 @@ hace el guion se vea. Se salta si Playwright no tiene su Chromium instalado.
 
 import asyncio
 import contextlib
+import re
 import threading
 import time
 
@@ -235,6 +236,31 @@ def test_sin_pedir_permisos_y_el_teclado_espanol_se_eligen_en_ajustes(pagina):
     assert pagina.errores == []
 
 
+def test_una_medida_verificada_sale_en_ajustes_y_la_persona_la_usa_con_un_clic(pagina):
+    # C-0481: la verificación no la activa; la persona pulsa «Usar». Y en el panel,
+    # junto a «Pegar texto», sale con el mismo nombre.
+    from puente_kvm import teclados
+
+    from .ayuda import medida_verificada
+    b = medida_verificada()
+    nombre = teclados.nombre_visible(teclados.resumen(b))
+    assert re.fullmatch(r"Medida: Latinoamericano \(\d{1,2}-[a-z]{3}\)", nombre)
+    with en_marcha(Simulador(lineas=["x"])) as base:
+        pagina.goto(base + "/ajustes")
+        assert nombre in pagina.locator("#distribucion").inner_text()
+        assert pagina.locator("#reservadas").input_value() == "alt+x"
+        fila = pagina.locator("#teclados-medidos li", has_text=nombre)
+        assert "verificada" in fila.inner_text()
+        fila.locator("[data-usar-teclado]").click()
+        pagina.wait_for_selector("#teclados-medidos li:has-text('en uso')")
+        assert config.leer_ajustes()["perfil"]["distribucion"] == b["id"]
+        assert pagina.locator("#distribucion").input_value() == b["id"]
+        pagina.goto(base + "/panel")
+        opcion = pagina.locator("#mando-teclado option:checked")
+        assert opcion.inner_text() == nombre and opcion.get_attribute("value") == b["id"]
+    assert pagina.errores == []
+
+
 def test_la_persona_usa_el_mac_desde_la_pantalla_con_su_teclado(pagina):
     # Sin la web del JetKVM: un clic en «Usar el Mac desde aquí», otro en la
     # imagen, y lo tecleado llega al Mac. Un clic fuera lo suelta.
@@ -264,7 +290,7 @@ def test_el_teclado_del_mac_se_elige_junto_a_pegar_y_lo_pegado_llega_con_sus_ace
     p = contexto.new_page()
     errores = []
     p.on("pageerror", lambda e: errores.append(str(e)))
-    sim = Simulador(lineas=[""], distribucion="mac-es")  # el Mac, en español
+    sim = Simulador(lineas=[""], fuente="mac-es")  # el Mac, en español
     texto = "¿Qué tal? “Listo” — ñandú, pingüino"
     with en_marcha(sim) as base:
         p.goto(base + "/panel")
@@ -694,4 +720,94 @@ def test_sin_boton_que_valga_el_aviso_dice_el_comando_de_siempre(pagina, con_cla
         pagina.wait_for_selector("#aviso-codigo:not([hidden])")
         assert pagina.locator("[data-codigo='comando']").is_visible()
         assert not pagina.locator("#boton-reiniciar").is_visible()
+    assert pagina.errores == []
+
+
+# ── el Mac en reposo y Reconectar en el panel (C-0477) ───────────────────────
+# Una marca en `window` dice si la página se recargó: recargar cortaría el
+# mando y el directo, y el aviso tiene que irse solo.
+
+def test_con_el_mac_en_reposo_el_panel_lo_dice_y_despertarlo_quita_el_aviso_sin_recargar(pagina):
+    sim = Simulador(lineas=[""])
+    sim.dormido = True
+    with en_marcha(sim) as base:
+        pagina.goto(base + "/panel")
+        pagina.evaluate("window.__sinRecargar = 1")
+        aviso = pagina.locator("#aviso-conexion")
+        pagina.wait_for_function("!document.querySelector('#aviso-conexion').hidden")
+        assert aviso.locator("#aviso-conexion-titulo").text_content() == "El Mac está en reposo."
+        assert "Mac en reposo" in pagina.locator("#placa-aparato").text_content()
+        assert pagina.locator("#aviso-conexion-ajustes").is_hidden()
+        aviso.locator("[data-despertar]").click()
+        pagina.wait_for_function("document.querySelector('#aviso-conexion').hidden")
+        assert sim.despertado == 1
+        assert "Mac en reposo" not in pagina.locator("#placa-aparato").text_content()
+        assert pagina.evaluate("window.__sinRecargar") == 1
+    assert pagina.errores == []
+
+
+def test_reconectar_esta_en_el_panel_sin_ningun_fallo_y_no_recarga_la_pagina(pagina):
+    sim = Simulador(lineas=[""])
+    with en_marcha(sim) as base:
+        pagina.goto(base + "/panel")
+        pagina.evaluate("window.__sinRecargar = 1")
+        assert pagina.locator("#aviso-conexion").is_hidden()
+        boton = pagina.locator("#mando [data-reconectar]")
+        assert boton.is_visible() and boton.text_content() == "Reconectar"
+        assert "admite una sola sesión" in boton.get_attribute("title")
+        boton.click()
+        pagina.wait_for_function("document.querySelector('.fugaz')?.textContent.includes('Conectado')")
+        pagina.wait_for_timeout(1200)
+        assert pagina.evaluate("window.__sinRecargar") == 1
+    assert pagina.errores == []
+
+
+def test_el_error_de_conexion_se_pinta_como_texto_y_se_va_solo_cuando_el_aparato_vuelve(pagina):
+    apps: list = []
+    sim = Simulador(lineas=[""])
+    with en_marcha(sim, apps) as base:
+        p = apps[0].state.puente
+        sim.conectado = False
+        p.error_conexion = "el JetKVM responde <b>500</b> en /device"
+        pagina.goto(base + "/panel")
+        pagina.evaluate("window.__sinRecargar = 1")
+        pagina.wait_for_function("!document.querySelector('#aviso-conexion').hidden")
+        assert pagina.locator("#aviso-conexion-titulo").text_content() == "No hay conexión con el aparato."
+        assert pagina.locator("#aviso-conexion-texto").text_content() == "el JetKVM responde <b>500</b> en /device"
+        assert pagina.locator("#aviso-conexion b b").count() == 0
+        assert pagina.locator("#aviso-conexion-ajustes").is_visible()
+        sim.conectado = True  # vuelve (el Mac despertó, el aparato volvió)
+        pagina.wait_for_function("document.querySelector('#aviso-conexion').hidden", timeout=5000)
+        assert p.error_conexion == ""
+        assert pagina.evaluate("window.__sinRecargar") == 1
+    assert pagina.errores == []
+
+
+
+class SimuladorLento(Simulador):
+    """Conecta en segundos, como el aparato de verdad (saludo, pista, imagen)."""
+
+    async def conectar(self) -> None:
+        self.conectado = False
+        await asyncio.sleep(2.5)
+        self.conectado = True
+
+
+def test_mientras_reconecta_el_panel_dice_conectando_y_no_que_no_hay_conexion(pagina):
+    # Lo que vio el revisor: con el aviso pintado por el sondeo, reconectar sin
+    # ningún fallo enseñaba en rojo «No hay conexión con el aparato».
+    sim = SimuladorLento(lineas=[""])
+    with en_marcha(sim) as base:
+        pagina.goto(base + "/panel")
+        pagina.wait_for_function("document.querySelector('#aviso-conexion').hidden")
+        pagina.locator("#mando [data-reconectar]").click()
+        pagina.wait_for_function("!document.querySelector('#aviso-conexion').hidden")
+        assert pagina.locator("#aviso-conexion-titulo").text_content() == "Conectando con el JetKVM…"
+        assert "riesgo" not in pagina.locator("#aviso-conexion").get_attribute("class")
+        # Los dos «Reconectar» a la vez, apagados mientras tanto.
+        assert pagina.locator("[data-reconectar]:disabled").count() == 2
+        assert set(pagina.locator("[data-reconectar]").all_text_contents()) == {"Reconectando…"}
+        pagina.wait_for_function("document.querySelector('#aviso-conexion').hidden", timeout=8000)
+        assert pagina.locator("#mando [data-reconectar]").text_content() == "Reconectar"
+        assert pagina.locator("[data-reconectar]:disabled").count() == 0
     assert pagina.errores == []

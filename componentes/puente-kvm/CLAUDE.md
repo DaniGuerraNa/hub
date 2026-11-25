@@ -57,7 +57,7 @@ el control: lo que viste en una captura anterior puede haber cambiado. Mira la
 pantalla (`ver_pantalla`) antes de actuar sobre ella.
 
 - Algo largo que no es el editor (una hoja, una web, una rejilla): `recorrer_pantalla`, en una sola llamada.
-- Pantalla negra o sin imagen: el Mac puede estar en reposo, `despertar_mac()`.
+- Si `estado()` dice `mac: reposo` (o la pantalla está negra o sin imagen), el Mac duerme: `despertar_mac()`. Con `mac: sin_usb` el JetKVM no ve el Mac por USB y despertarlo no servirá: díselo a la persona.
 - Encender, apagar o poner horario al jiggler (que el Mac no se bloquee): `jiggler`, cuando te lo pida la persona.
 
 Si `estado()` trae `aviso_mcp`, tus herramientas son de antes de actualizar:
@@ -75,6 +75,7 @@ hagas tú: reabrir cierra esta sesión.
 | tablas, índices, plan, la huella | `consultar-catalogo` |
 | aplicar en el Mac un cambio hecho aquí | `proponer-cambio` |
 | aparato o cliente nuevo, algo raro al leer | `primera-conexion` |
+| lo tecleado sale cambiado, el Mac usa otra fuente | `calibrar-teclado` |
 
 Al empezar cada encargo, di qué skill vas a seguir y qué vas a necesitar de la
 persona (control, ejecutar una consulta, aprobar). Ella ve tus skills, tus

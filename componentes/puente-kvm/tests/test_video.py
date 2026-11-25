@@ -264,6 +264,14 @@ class FalsoAparte:
         threading.Thread(target=self.bucle.run_forever, daemon=True).start()
         self.url = asyncio.run_coroutine_threadsafe(self.falso.arrancar(), self.bucle).result(30)
 
+    def poner_usb(self, valor: str):
+        """El Mac se duerme o despierta solo, desde el hilo del falso (C-0477)."""
+        self.bucle.call_soon_threadsafe(self.falso.poner_usb, valor)
+
+    def poner_video(self, hay: bool):
+        """La pantalla del Mac se enciende o se apaga, desde el hilo del falso."""
+        self.bucle.call_soon_threadsafe(setattr, self.falso, "video", hay)
+
     def apagar(self):
         """El aparato se va (sin parar su hilo): `volver` lo arranca otra vez en su puerto."""
         asyncio.run_coroutine_threadsafe(self.falso.parar(), self.bucle).result(10)

@@ -497,3 +497,73 @@ def test_la_pantalla_dice_las_cifras_aparte_las_sin_respuesta_y_si_quedo_a_media
 def test_un_termino_que_se_queda_en_nada_al_normalizar_no_cuenta_como_acertado():
     assert banco._contiene("", "++") is False
     assert banco._contiene("lanza pytest ya", "pytest") is True
+
+
+# ── medir con el glosario del dictado (C-0036) ───────────────────────────────
+
+
+def test_medir_con_glosario_lo_manda_cuenta_las_inventadas_y_separa_las_frases_con_terminos(
+        whisper_falso, sembrado, monkeypatch):
+    from hub import registry
+    monkeypatch.setattr(registry, "nombres_activos", lambda: [])
+    _grabar({("pc", "a01"): "Abre la ventana ya.", ("pc", "a02"): "Corre los tests con pytest."})
+    pedidos = []
+    original = transcribir.pedir
+    monkeypatch.setattr(transcribir, "pedir", lambda e, p, *a, **k: pedidos.append(p) or original(e, p, *a, **k))
+    sin, con = banco.medir([{"modelo": "small"}, {"modelo": "small", "glosario": "hotwords"}])["configs"]
+    # La frase con «pytest» (que está en el glosario) va aparte de la que no lleva ninguno.
+    assert sin["con_glosario"]["frases"] == 1 and sin["sin_glosario"]["frases"] == 1
+    assert sin["totales"]["inserciones"] == 1        # «ya» no se dijo
+    assert sin["glosario"] is None and con["glosario"]["terminos"] == len(transcribir.GLOSARIO_BASE)
+    medidos = [p for p in pedidos if isinstance(p, dict) and "ruta" in p]
+    assert [p.get("glosario", {}).get("modo") for p in medidos] == [None, None, "hotwords", "hotwords"]
+    assert medidos[-1]["glosario"]["texto"] == transcribir.glosario()["texto"]
+    assert "texto" not in con["glosario"]            # en el resultado, la huella y no el texto
+
+
+def test_si_el_servidor_no_aplica_el_glosario_pedido_la_frase_no_cuenta(whisper_falso, sembrado, monkeypatch):
+    _grabar({("pc", "a01"): "Abre la ventana."})
+    original = transcribir.pedir
+
+    def sin_aplicarlo(e, p, *a, **k):
+        r = original(e, p, *a, **k)
+        if isinstance(r, dict) and "medidas" in r:
+            r["medidas"]["glosario"] = "no"   # como un servidor de antes, que no lo entiende
+        return r
+    monkeypatch.setattr(transcribir, "pedir", sin_aplicarlo)
+    (c,) = banco.medir([{"modelo": "small", "glosario": "prompt"}])["configs"]
+    assert c["totales"]["frases"] == 0 and c["totales"]["errores"] == 1
+    assert "se pidió «prompt»" in c["frases"][0]["error"]
+
+
+def test_un_glosario_desconocido_no_se_mide():
+    with pytest.raises(ValueError, match="glosario desconocido"):
+        banco._config({"modelo": "small", "glosario": "todo"})
+
+
+def test_los_dictados_largos_se_componen_de_las_frases_con_su_referencia_y_se_borran(tmp_path, monkeypatch):
+    """Los de ~50 s no destapaban lo que pasa a los 2,5 min (24-nov): se
+    componen los dos tamaños, con ffmpeg de verdad."""
+    import shutil
+    import subprocess
+    if not shutil.which("ffmpeg"):
+        pytest.skip("sin ffmpeg")
+    monkeypatch.setattr(banco, "LARGO_FRASES", 2)
+    monkeypatch.setattr(banco, "MUY_LARGO_FRASES", 4)
+    lista = []
+    for i in range(4):
+        nombre = f"pc-x{i}.wav"
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+                        str(tmp_path / nombre)], check=True)
+        lista.append({"frase": f"x{i}", "aparato": "pc", "categoria": "corta", "referencia": f"frase {i}.",
+                      "terminos": [], "archivo": nombre})
+    largos = banco._componer_largos(tmp_path, lista)
+    assert [(g["categoria"], g["referencia"]) for g in largos] == [
+        ("largo", "frase 0. frase 1."), ("largo", "frase 2. frase 3."),
+        ("muy largo", "frase 0. frase 1. frase 2. frase 3.")]
+    duracion = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                                     str(tmp_path / largos[2]["archivo"])], capture_output=True, text=True).stdout)
+    assert duracion == pytest.approx(4 * (1 + banco.LARGO_PAUSA_S), abs=0.3)
+    assert stat.S_IMODE((tmp_path / largos[0]["archivo"]).stat().st_mode) == 0o600
+    banco._borrar_largos(tmp_path)
+    assert not list(tmp_path.glob("largo-*.wav")) and (tmp_path / "pc-x0.wav").exists()

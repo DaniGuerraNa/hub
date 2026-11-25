@@ -32,7 +32,6 @@
   /* Un resumen largo empujaba la lista fuera de la pantalla: se lee dentro de
      su recuadro, y lo de abajo sigue a mano. */
   .resumen-tarea { max-height:14em; overflow:auto; }
-  button.grabando { border-color:var(--riesgo); color:var(--riesgo); }
   .bandeja { border-left:3px solid var(--espera); }
   .pregunta { white-space:pre-wrap; font-size:14.5px; line-height:1.5; margin:0 0 10px; }
   .pedido { white-space:pre-wrap; margin:0; line-height:1.5; }
@@ -120,8 +119,8 @@
               placeholder="Tu respuesta. Puedes dictarla."></textarea>
     <div class="acciones">
       <button class="boton principal">Responder</button>
-      <button type="button" class="boton" data-grabar="respuesta-texto"
-              data-grabar-estado="respuesta-audio" data-grabar-origen="respuesta-origen">Dictar</button>
+      {{ ui.microfono(titulo='Dictar la respuesta', datos={'grabar': 'respuesta-texto',
+                      'grabar-estado': 'respuesta-audio', 'grabar-origen': 'respuesta-origen'}) }}
       <span class="estado-audio" id="respuesta-audio"></span>
     </div>
   </form>
@@ -188,8 +187,7 @@
               placeholder="Opcional: qué quieres que tenga en cuenta al seguir (lo que viste, qué cambiar)."></textarea>
     <div class="acciones">
       <button class="boton principal">Reanudar</button>
-      <button type="button" class="boton" data-grabar="reanudar-nota"
-              data-grabar-estado="reanudar-audio">Dictar</button>
+      {{ ui.microfono(titulo='Dictar la nota', datos={'grabar': 'reanudar-nota', 'grabar-estado': 'reanudar-audio'}) }}
       <span class="estado-audio" id="reanudar-audio"></span>
       {% if o.viva and o.viva.id != d.id %}<span class="tenue" style="font-size:12px">Hay otra en curso: ésta vuelve a la cola y sigue al acabar aquélla.</span>{% endif %}
     </div>
@@ -291,8 +289,10 @@
               placeholder="Ej.: en mi-app revisa el estado; si faltan las pruebas, despliega en vps-test, genera el APK y déjamelo en Intercambio."></textarea>
     <div class="acciones">
       <button class="boton cta">Encolar</button>
-      <button type="button" class="boton" data-grabar="pedido"
-              data-grabar-estado="pedido-audio" data-grabar-origen="pedido-origen">Dictar</button>
+      {# Sin el modelo al lado: esto transcribe por el camino de los encargos,
+         no por /api/voz, y el menú diría un modelo que aquí no se usa (452). #}
+      {{ ui.microfono(titulo='Dictar la tarea', datos={'grabar': 'pedido',
+                      'grabar-estado': 'pedido-audio', 'grabar-origen': 'pedido-origen'}) }}
       <span class="estado-audio" id="pedido-audio">
         {% if o.viva %}Hay una en curso: ésta espera su turno.{% endif %}
       </span>

@@ -22,6 +22,7 @@ intentarlo en vez de descubrir un hueco tres días después.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import shlex
 import subprocess
@@ -248,7 +249,8 @@ def interprete_del_servidor() -> str | None:
     return _python_del_servidor(_ajustes())
 
 
-def _servidor(ruta: Path, python: str = "", idioma: str = "es", medidas: dict | None = None) -> str | None:
+def _servidor(ruta: Path, python: str = "", idioma: str = "es", medidas: dict | None = None,
+              con_glosario: dict | None = None) -> str | None:
     """El texto por el servidor con Whisper cargado, o None si no está (y
     entonces se arranca para la próxima: esta frase va por el camino de siempre).
 
@@ -263,9 +265,12 @@ def _servidor(ruta: Path, python: str = "", idioma: str = "es", medidas: dict | 
     if not enchufe.exists():
         _esperar_al_que_carga(carpeta, enchufe)
     if enchufe.exists():
-        # El español va como siempre, la ruta sola: un servidor de antes de
-        # C-0159 que siga cargado lo entiende.
+        # El español sin glosario va como siempre, la ruta sola: un servidor de
+        # antes de C-0159 que siga cargado lo entiende. Con glosario va como
+        # diccionario; uno de antes de C-0036 lo ignora y sus medidas lo dicen.
         pedido = str(ruta.resolve()) if idioma == "es" else {"ruta": str(ruta.resolve()), "idioma": idioma}
+        if con_glosario:
+            pedido = {"ruta": str(ruta.resolve()), "idioma": idioma, "glosario": con_glosario}
         respuesta = pedir(enchufe, pedido)
         if respuesta is None:
             enchufe.unlink(missing_ok=True)   # un socket huérfano de un servidor muerto
@@ -397,20 +402,336 @@ def calentar() -> str:
     python = interprete_del_servidor()
     if python is None or (not python and not por_omision()):
         return "no"
+    if eleccion() == APAGADO:
+        return "apagado"   # nada lo carga sin un gesto suyo (C-0313)
     carpeta = config.HUB_HOME / "voz"
     carpeta.mkdir(parents=True, exist_ok=True)
     enchufe = carpeta / "whisper.sock"
     if not cabe_el_socket(enchufe):
         return "no"
     if enchufe.exists() and _escucha(enchufe):
-        return "listo"
+        # Uno vivo con otro modelo que el elegido (lo dejó otro proceso) se
+        # sustituye: dos modelos a la vez en la GPU no caben siempre.
+        cargado = estado_servidor(enchufe)
+        if cargado is None or cargado.get("modelo") == eleccion():
+            return "listo"
+        try:
+            # Con la espera de siempre: si entra una frase, se la deja acabar.
+            apagar_servidor(enchufe)
+        except RuntimeError as exc:
+            print(f"[voz] no se pudo cambiar el Whisper cargado ({cargado.get('modelo')}): {exc}", flush=True)
+            return "listo"
     _arrancar_si_toca(enchufe, python)
     return "arrancando"
 
 
 def _arrancar_servidor(enchufe: Path, python: str = "") -> dict | None:
-    """El servidor del dictado, con el modelo y el tipo de siempre."""
-    return arrancar_servidor(enchufe, python=python)
+    """El servidor del dictado, con el modelo que eligió el dueño (C-0313).
+
+    🔴 El único sitio por el que arranca el del dictado: con «apagado» no
+    arranca nada, tampoco al calentar. `small` va como siempre (GPU si
+    puede); los demás piden la GPU sin caer a la CPU, porque turbo en la CPU
+    tardaría más que el camino frío y nadie lo sabría."""
+    modelo = eleccion()
+    if modelo == APAGADO:
+        return None
+    if modelo == MODELO_DE_SIEMPRE:
+        return arrancar_servidor(enchufe, python=python)
+    return arrancar_servidor(enchufe, python=python, modelo=modelo, dispositivo="cuda")
+
+
+# ── El modelo del dictado lo elige el dueño (C-0313, decisión 452) ─────────
+# Junto al micrófono: `small`, turbo o apagado. Nada lo cambia solo: ni la
+# carga sube de modelo ni el ocio cambia la elección (se apaga el proceso a
+# los 15 min, como siempre, y vuelve con el mismo modelo). Apagado no deja sin
+# dictado: cada frase va por el camino frío, `small` en la CPU.
+
+MODELO_DE_SIEMPRE = "small"
+#: Los que se ofrecen, en este orden. Medidos con el banco el 24-nov:
+#: turbo, la mitad de errores por ~25 ms más en la GPU.
+MODELOS_DICTADO = ("small", "large-v3-turbo")
+APAGADO = "apagado"
+NOMBRES_MODELO = {"small": "Ligero (small)", "large-v3-turbo": "Preciso (turbo, en la GPU)",
+                  APAGADO: "Apagado (por la CPU, más lento)"}
+#: Lo que se espera a que el modelo elegido quede cargado: turbo tarda ~2,4 s
+#: con el disco caliente; frío, bastante más.
+ESPERA_CARGA_S = 90
+#: Cuánto vale lo que se miró de qué modelos hay descargados.
+DISPONIBLES_VALE_S = 300
+_disponibles_cache: dict = {}
+
+
+def _carpeta_voz() -> Path:
+    from . import config
+
+    return config.HUB_HOME / "voz"
+
+
+def _enchufe_dictado() -> Path:
+    return _carpeta_voz() / "whisper.sock"
+
+
+def eleccion() -> str:
+    """El modelo que eligió el dueño, o `small` si nunca eligió (lo de antes)."""
+    import json
+
+    try:
+        modelo = json.loads((_carpeta_voz() / "eleccion.json").read_text(encoding="utf-8")).get("modelo")
+    except (OSError, ValueError, AttributeError):
+        return MODELO_DE_SIEMPRE
+    return modelo if modelo in MODELOS_DICTADO or modelo == APAGADO else MODELO_DE_SIEMPRE
+
+
+def _guardar_eleccion(modelo: str) -> None:
+    """En un json de `HUB_HOME/voz/` (600, escritura atómica): la web no
+    reescribe un yml que el dueño edita a mano."""
+    import json
+    import os
+
+    carpeta = _carpeta_voz()
+    carpeta.mkdir(parents=True, exist_ok=True)
+    tmp = carpeta / "eleccion.json.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"modelo": modelo}))
+    os.replace(tmp, carpeta / "eleccion.json")
+
+
+def _sin_selector() -> str:
+    """Por qué no se puede elegir el modelo, o «» si se puede."""
+    try:
+        python = interprete_del_servidor()
+    except SinTranscriptor:
+        python = None
+    if python is None:
+        return ("el dictado usa el transcriptor declarado en encargos.yml, que no es el del hub: "
+                "el modelo lo elige ese comando")
+    if not python and not por_omision():
+        return "no hay Whisper instalado: prepara Reuniones, que lo trae"
+    return ""
+
+
+def disponibles() -> dict:
+    """Qué modelos del dictado están ya descargados, `{modelo: bool}`, o {} si
+    no se pudo mirar. Pregunta al intérprete del servidor sin bajar nada; lo
+    guarda unos minutos, que lanzarlo cuesta ~0,3 s."""
+    import json
+    import time
+
+    from . import config
+
+    if _sin_selector():
+        return {}
+    python = interprete_del_servidor() or (por_omision() or [""])[0]
+    guardado = _disponibles_cache.get(python)
+    if guardado and time.monotonic() - guardado[0] < DISPONIBLES_VALE_S:
+        return dict(guardado[1])
+    try:
+        salida = subprocess.run(
+            [python, str(config.RAIZ_REPO / "scripts" / "transcribir-servidor.py"),
+             "--disponibles", *MODELOS_DICTADO],
+            capture_output=True, text=True, timeout=30, check=True).stdout
+        hay = {m: bool(v) for m, v in json.loads(salida.strip().splitlines()[-1]).items() if m in MODELOS_DICTADO}
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError) as exc:
+        print(f"[transcribir] no pude mirar qué modelos de Whisper hay: {exc}", flush=True)
+        return {}
+    _disponibles_cache[python] = (time.monotonic(), hay)
+    return dict(hay)
+
+
+# ── El glosario del dictado del dueño (C-0036, decisión 453) ─────────────
+# Lo que turbo aún falla son nombres propios y términos técnicos (24-nov:
+# Tailscale→Tilescale, Claude→Cloud, SQLite WAL→«modo Wild»). Se le dan a
+# Whisper en cada frase. Lo compone `glosario()`: el archivo del dueño o, si
+# no existe, esta base genérica, más los proyectos activos del registro
+# leídos en el momento. Sólo para el dictado del dueño: encargos, orquestador
+# y Telegram son voces de otras personas y transcriben sin él.
+
+#: Genérica: viaja al repo público, así que nada de nadie (test_producto_limpio).
+GLOSARIO_BASE = (
+    "Claude", "Claude Code", "Codex", "Fable", "Opus", "Sonnet", "Whisper", "hub", "secretario",
+    "orquestador", "slot", "tmux", "commit", "merge", "push", "pull request", "rebase", "worktree",
+    "branch", "main", "deploy", "endpoint", "middleware", "WebSocket", "frontend", "backend", "bug",
+    "test", "pytest", "Docker", "VPS", "logs", "SQLite", "WAL", "Tailscale", "GPU", "changelog",
+    "pyproject", "snapshotter", "lienzos", "kit", "Python", "JavaScript", "JSON", "YAML", "GitHub",
+)
+#: Cómo se le da a Whisper: «hotwords», «prompt» (initial_prompt) o None (sin
+#: glosario). Lo fija el banco de dictado, no una preferencia: se activa sólo
+#: lo que baja el WER sin subir las palabras inventadas ni empeorar las frases
+#: que no llevan ningún término del glosario ni las cortas.
+#: Medido el 24-nov con turbo en la GPU y el banco (`medir --largos`): en 40
+#: frases sueltas, sin glosario 5,6 % de WER y 1 palabra inventada, con él
+#: 4,3 % y 0, igual en los dos modos (en menos de 30 s van al mismo sitio del
+#: contexto, `get_prompt`). En un dictado de 2,5 min, `hotwords` se repite en
+#: cada tramo de 30 s y le quita sitio a lo dicho: 38,6 % y 42 palabras
+#: perdidas de 262; `prompt` sólo va al principio: 5,0 % y ninguna (sin
+#: glosario, 6,1 %). Uno de cada tres dictados pasa de 30 s.
+GLOSARIO_MODO: str | None = "prompt"
+GLOSARIO_MODOS = ("hotwords", "prompt")
+#: En caracteres: el hub no tiene el tokenizador, y faster-whisper recorta los
+#: `hotwords` en silencio a la mitad de su contexto. Se recorta la cola, que es
+#: lo menos del dueño (sus términos van primero, los proyectos después).
+TOPE_GLOSARIO = 500
+
+
+def ruta_glosario() -> Path:
+    return _carpeta_voz() / "glosario.txt"
+
+
+def glosario() -> dict:
+    """El glosario que lleva el dictado ahora mismo. No escribe nada.
+
+    `{texto, terminos, terminos_lista, recortado, huella, de: {origen,
+    proyectos}}`. El archivo (un término por línea, `#` comenta) sustituye a la
+    base entera: así se puede quitar uno que estorbe."""
+    import hashlib
+
+    from . import registry
+
+    try:
+        # `utf-8-sig`: un BOM de un editor no se cuela en el primer término.
+        lineas = ruta_glosario().read_text(encoding="utf-8-sig").splitlines()
+        propios = [l.strip() for l in lineas if l.strip() and not l.strip().startswith("#")]
+        origen = "archivo"
+    except FileNotFoundError:
+        propios, origen = list(GLOSARIO_BASE), "base"
+    except (OSError, UnicodeDecodeError) as exc:
+        # Editado a mano en otra codificación: el dictado sigue con la base, y se dice.
+        print(f"[voz] no pude leer {ruta_glosario().name} ({exc}): uso la lista de base", flush=True)
+        propios, origen = list(GLOSARIO_BASE), "base"
+    proyectos = registry.nombres_activos()
+    # La lista (su archivo o la base) primero y los proyectos detrás: el
+    # recorte va por la cola. Medido el 24-nov: con los proyectos delante, el
+    # recorte dejaba fuera los términos técnicos y el glosario no mejoraba
+    # nada (5,6 % → 5,8 %); lo que se dicta son sobre todo esos términos.
+    orden = [*propios, *proyectos]
+    vistos: set[str] = set()
+    elegidos: list[str] = []
+    largo = 0
+    recortado = False
+    for t in orden:
+        clave = t.casefold()
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        extra = len(t) + (2 if elegidos else 0)
+        if largo + extra + 1 > TOPE_GLOSARIO:   # +1, el punto final
+            recortado = True
+            break   # por la cola: lo de después es lo menos suyo
+        elegidos.append(t)
+        largo += extra
+    # Con su punto final: sin él, Whisper dejaba de puntuar el final de las
+    # frases (medido el 24-nov) y la tilde de una frase sin términos se perdía.
+    texto = ", ".join(elegidos) + ("." if elegidos else "")
+    return {"texto": texto, "terminos": len(elegidos), "terminos_lista": elegidos, "recortado": recortado,
+            "huella": hashlib.sha256(texto.encode()).hexdigest()[:8],
+            "de": {"origen": origen, "proyectos": len(proyectos)}}
+
+
+def sembrar_glosario() -> bool:
+    """Escribe la base en `voz/glosario.txt` (600) para editarla, si aún no
+    existe. Devuelve si la escribió."""
+    import os
+
+    ruta = ruta_glosario()
+    if ruta.exists():
+        return False
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(ruta, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("# Glosario del dictado: un término por línea. Este archivo sustituye a la lista\n"
+                "# de base; los proyectos activos se añaden solos. Tope: 500 caracteres en total.\n")
+        f.write("\n".join(GLOSARIO_BASE) + "\n")
+    return True
+
+
+def eleccion_dictado() -> dict:
+    """Sólo lo elegido, para el rótulo del menú cerrado: no lanza nada."""
+    return {"eleccion": eleccion(), "selector": not _sin_selector()}
+
+
+def estado_dictado(gpu: bool = False) -> dict:
+    """Lo que enseña el menú del modelo, junto al micrófono.
+
+    `cargado` es lo que dice el servidor que hay en memoria (None si no hay
+    ninguno o está ocupado con una frase). `gpu`, sólo si se pide: lanza
+    `nvidia-smi`. La memoria es la de toda la GPU, medida al momento: la que
+    ocupa cada modelo bajo WSL2 no la da el driver (regla 13)."""
+    from . import maquina
+
+    motivo = _sin_selector()
+    hay = disponibles() if not motivo else {}
+    estado = {
+        "eleccion": eleccion(),
+        "selector": not motivo,
+        "motivo": motivo,
+        "modelos": [{"modelo": m, "nombre": NOMBRES_MODELO[m], "disponible": bool(hay.get(m))}
+                    for m in MODELOS_DICTADO] + [{"modelo": APAGADO, "nombre": NOMBRES_MODELO[APAGADO],
+                                                  "disponible": not motivo}],
+        "cargado": estado_servidor(_enchufe_dictado()) if not motivo else None,
+    }
+    # Escucha y no contesta al estado: está con una frase. No es «ninguno en
+    # memoria» (regla 13).
+    estado["ocupado"] = bool(not motivo and estado["cargado"] is None and _escucha(_enchufe_dictado()))
+    if gpu:
+        medida = maquina.gpu_memoria()
+        estado["gpu"] = {"usada_mb": medida[0], "total_mb": medida[1]} if medida else None
+    return estado
+
+
+def _esperar_carga(enchufe: Path, huella: dict | None, espera: float = ESPERA_CARGA_S) -> bool:
+    """Si el servidor recién lanzado llega a escuchar antes de morir o de `espera`."""
+    import time
+
+    from . import procesos
+
+    limite = time.monotonic() + espera
+    while time.monotonic() < limite:
+        if _escucha(enchufe):
+            return True
+        if not procesos.vivo(huella):
+            return _escucha(enchufe)
+        time.sleep(0.1)
+    return False
+
+
+def elegir(modelo: str) -> dict:
+    """Cambia el modelo del dictado y devuelve `estado_dictado()` (C-0313).
+
+    🔴 Cambiar o apagar mata el servidor ANTES de contestar: soltar la memoria
+    de la GPU es que el proceso muera. Con un modelo, espera a que cargue: si
+    no carga (la GPU no está, no cabe), lanza `RuntimeError` y la elección
+    vuelve a la de antes, sin caer a la CPU a escondidas."""
+    if modelo not in MODELOS_DICTADO and modelo != APAGADO:
+        raise ValueError(f"modelo desconocido: {modelo!r}")
+    motivo = _sin_selector()
+    if motivo:
+        raise ValueError(motivo)
+    if modelo != APAGADO and not disponibles().get(modelo):
+        raise ValueError(f"{NOMBRES_MODELO[modelo]} no está descargado en esta máquina")
+    anterior = eleccion()
+    enchufe = _enchufe_dictado()
+    if modelo == anterior and modelo != APAGADO and (estado_servidor(enchufe) or {}).get("modelo") == modelo:
+        return estado_dictado()   # ya está: recargarlo serían segundos de GPU para nada
+    # 🔴 La elección se guarda ANTES de apagar: una frase que llegue en el hueco
+    # arranca ya el modelo nuevo, y no uno viejo que nadie volvería a ver (C-0313).
+    _guardar_eleccion(modelo)
+    try:
+        apagar_servidor(enchufe)
+    except RuntimeError:
+        _guardar_eleccion(anterior)
+        raise
+    if modelo != APAGADO:
+        huella = _arrancar_servidor(enchufe, interprete_del_servidor() or "")
+        # Sin huella puede ser que otro (esa frase) ya lo esté cargando: se le espera a él.
+        if not _esperar_carga(enchufe, huella or _huella_de(_marca(enchufe))):
+            _guardar_eleccion(anterior)
+            with contextlib.suppress(RuntimeError):
+                apagar_servidor(enchufe, ESPERA_ORDEN_S)
+            raise RuntimeError(f"no se pudo cargar {NOMBRES_MODELO[modelo]}: la elección sigue en "
+                               f"«{NOMBRES_MODELO[anterior]}». El motivo está en voz/servidor.log")
+        print(f"[voz] dictado con {modelo}", flush=True)
+    return estado_dictado()
 
 
 #: Lo que se acepta como modelo o tipo de cálculo: un nombre (`large-v3-turbo`,
@@ -586,7 +907,12 @@ def apagar_servidor(enchufe: Path, espera: float = ESPERA_SERVIDOR_S) -> bool:
             raise RuntimeError(f"el servidor de Whisper (pid {huella['pid']}) no se apagó con SIGTERM")
     # Muerto por una señal no borra su socket, y su marca ya no espera a nadie.
     enchufe.unlink(missing_ok=True)
-    marca.unlink(missing_ok=True)
+    # 🔴 La marca, sólo si es la de éste (o de nadie vivo): si entretanto otro
+    # empezó a cargar, es la suya, y sin ella un tercero lanzaría un segundo
+    # servidor que dejaría al primero huérfano en la GPU (C-0313).
+    otra = _huella_de(marca)
+    if otra is None or otra == huella or not procesos.vivo(otra):
+        marca.unlink(missing_ok=True)
     return habia
 
 
@@ -697,7 +1023,16 @@ def dictado(datos: bytes, nombre: str, idioma: str = "es", medidas: dict | None 
                          "para el inglés, usa el del hub (scripts/transcribir-whisper.py)")
     medidas = {} if medidas is None else medidas
     t0 = time.perf_counter()
-    rapido = None if python is None else _servidor(ruta, python, idioma, medidas)
+    # El glosario, sólo con nuestro guion (servidor o frío) y en español: otro
+    # transcriptor declarado no sabe de él (C-0036).
+    con_glosario = None
+    if GLOSARIO_MODO and python is not None and idioma == "es":
+        texto_glosario = glosario()["texto"]
+        if texto_glosario:
+            con_glosario = {"modo": GLOSARIO_MODO, "texto": texto_glosario}
+    # Con «apagado» ni se pregunta ni se arranca: por la CPU (C-0313).
+    rapido = (None if python is None or eleccion() == APAGADO
+              else _servidor(ruta, python, idioma, medidas, con_glosario))
     if rapido is not None:
         medidas["camino"] = "servidor"
         medidas.setdefault("ms_whisper", round((time.perf_counter() - t0) * 1000))
@@ -707,6 +1042,13 @@ def dictado(datos: bytes, nombre: str, idioma: str = "es", medidas: dict | None 
         medidas["camino"] = "declarado" if python is None else "frio"
     if rapido is None and idioma != "es":
         ajustes = {**ajustes, "transcripcion": {"comando": comando(ajustes) + ["--idioma", idioma]}}
+    if rapido is None and con_glosario:
+        # La misma frase sale igual por el camino frío: mismo glosario. Sin
+        # transcriptor, `transcribir` lo dirá con su error de siempre.
+        with contextlib.suppress(SinTranscriptor):
+            ajustes = {**ajustes, "transcripcion": {"comando": comando(ajustes) + [
+                f"--glosario-modo={con_glosario['modo']}", f"--glosario={con_glosario['texto']}"]}}
+            medidas["glosario"] = con_glosario["modo"]
     if rapido is not None:
         texto = _validar(rapido)
     else:
@@ -737,7 +1079,7 @@ def linea_de_medidas(medidas: dict) -> str:
     un campo nuevo con texto no llega al journal por descuido. Del texto vale
     el número de caracteres y nada más.
     """
-    claves = ("resultado", "origen", "camino", "modelo", "dispositivo", "ms_total",
+    claves = ("resultado", "origen", "camino", "modelo", "dispositivo", "glosario", "ms_total",
               "ms_whisper", "s_audio", "s_voz", "caracteres")
     partes = [f"{k}={medidas.get(k, '-')}" for k in claves]
     return "[voz] " + " ".join(p.replace("\n", " ") for p in partes)

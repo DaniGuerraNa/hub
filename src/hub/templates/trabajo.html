@@ -80,11 +80,12 @@
     /* 🔴 En el móvil el raíl NO se encoge: se sustituye. Darle «un tercio»
        sonaba razonable en el escritorio y en un teléfono son 287 px de 844
        —una pantalla es para trabajar, no para tener el índice a la vista—.
-       Queda el `select`, que ocupa una fila y abre el selector del sistema. */
-    .rail { flex:none; max-height:none; border-right:0; padding:8px 12px;
-            border-bottom:1px solid var(--borde); }
-    .rail .grupo { display:none; }
-    #ir-a { display:block; width:100%; margin:0; }
+       Queda el `select`, que abre el selector del sistema. Ocupaba una fila
+       propia (59 px) y ahora es el nombre en la barra de la sesión (C-0480),
+       así que del raíl no queda nada que pintar. */
+    .rail { display:none; }
+    #ir-a { display:block; flex:1 1 auto; min-width:0; width:auto; margin:0;
+            min-height:44px; padding-top:0; padding-bottom:0; }
     /* 🔴 Alto FIJO, no un mínimo. Por debajo de 860 px `base.html` pone el
        body en `display:block`, así que `body.completo` deja de sujetar la
        altura y un `min-height` con `flex:1` deja que el terminal crezca con su
@@ -92,6 +93,12 @@
        sea dos pantallas por debajo del pliegue. Con `60vh` el taller entero
        cabe en pantalla y media. */
     .centro { flex:none; height:60vh; }
+    /* La barra de la sesión en una línea: el selector, la marca, el
+       micrófono y el «⋯» (C-0480). */
+    .barra-term { padding:4px 8px; gap:4px; }
+    .barra-term .solo-pc, .barra-term .md-flecha,
+    .barra-term .nombre-sesion, .barra-term .ruta { display:none; }
+    .barra-term > .quien { flex:none; }
     .nota { flex:none; max-height:60vh; border-left:0;
             border-top:1px solid var(--borde); }
     .nota-texto { min-height:120px; }
@@ -100,8 +107,9 @@
    *
    * *«¿Podemos hacer que la terminal sea más grande o botón de full screen?»*
    * (2026-09-16, desde el teléfono). Dos capas, y la primera es la que siempre
-   * funciona: esconder lo que no es terminal. En el móvil eso son 154 px de
-   * 844 —el raíl de iconos, la cabecera y el `select`—; la segunda capa pide
+   * funciona: esconder lo que no es terminal. En el móvil eso es el raíl de
+   * iconos, la cabecera y la nota (el `select` ya no tiene fila propia: es el
+   * nombre en la barra de la sesión, C-0480); la segunda capa pide
    * pantalla completa al navegador, que además se lleva su propia barra de
    * direcciones, pero no está en todas partes (iOS no la da para un elemento
    * cualquiera) y por eso no puede ser la única.
@@ -113,11 +121,13 @@
    * (decisiones 202, 207, 208). Con las dos clases son (0,3,1) y gana por
    * especificidad, que no depende de dónde acabe escrito esto.
    *
-   * La barra de controles NO se esconde: es por donde se vuelve. */
+   * La barra de la sesión NO se esconde: es por donde se vuelve («⋯» →
+   * «Salir de la pantalla completa»), y con ella el selector. */
   /* `teclado-abierto` va junto a `terminal-sola` en todas estas reglas: cuando
-     sale el teclado quedan ~340 px de alto, y el raíl, la cabecera, el `select`
-     y la nota se comerían 251 de ellos. Mientras se escribe, lo único que hace
-     falta ver es lo que se escribe. */
+     sale el teclado quedan ~340 px de alto, y el raíl, la cabecera y la nota
+     se comerían buena parte (eran 251 px con el `select` en su fila, antes de
+     C-0480). Mientras se escribe, lo único que hace falta ver es lo que se
+     escribe. La regla de `.rail` sigue por el escritorio con teclado táctil. */
   body.completo.terminal-sola .rail-global, body.completo.teclado-abierto .rail-global,
   body.completo.terminal-sola .rail,        body.completo.teclado-abierto .rail,
   body.completo.terminal-sola .nota,        body.completo.teclado-abierto .nota,
@@ -134,6 +144,12 @@
   .teclas > button { flex-shrink:0; min-width:44px; min-height:36px; padding:0 10px;
                      border-radius:var(--r-boton); font-size:13px;
                      font-family: var(--mono, monospace); }
+  /* El micrófono de aquí lleva los segundos DENTRO del botón, no flotando
+     debajo como en la barra: la fila se desplaza de lado (`overflow-x`), así
+     que lo que sobresale se recortaba y le daba scroll vertical. Que el botón
+     se ensanche al grabar no mueve la terminal: la fila tiene su alto. */
+  .teclas > button.mic { width:auto; }
+  .teclas > .mic > .mic-seg { position:static; transform:none; padding:0; background:none; min-width:4ch; }
   @media (pointer: coarse) { .teclas { display:flex; } }
   #lienzo-terminal:fullscreen > .teclas { position:absolute; left:0; right:0; }
   /* Mientras se arrastra un archivo encima: que se vea dónde va a caer. */
@@ -210,10 +226,7 @@
   /* Si el slot es persistente (se reabre al volver a encender): en el raíl, sólo la marca; en la
      cabecera, el botón que la cambia. Apagado se ve tenue, no tachado: no es
      un error, es una elección. */
-  .marca-vuelve { color:var(--acento); margin-left:5px; font-size:var(--letra-1); }
-  .vuelve { white-space:nowrap; }
-  .vuelve:not(.on) { color:var(--texto-3); }
-  .vuelve.on { color:var(--acento); }
+  .marca-vuelve { color:var(--acento); margin-left:5px; display:inline-flex; vertical-align:-1px; }
   .proyecto:not(.plegado) .cuenta-slots { display:none; }
   /* La guía vertical dice «esto cuelga de lo de arriba» sin gastar una palabra. */
   .proyecto > .hijos { margin-left:16px; padding-left:8px; border-left:1px solid var(--borde); }
@@ -241,7 +254,7 @@
   .ventana-item.activa { background:var(--superficie2); color:var(--texto); }
   .cerrar-ventana { margin:0; visibility:hidden; }
   .fila-ventana:hover .cerrar-ventana, .cerrar-ventana:focus-within { visibility:visible; }
-  .cerrar-ventana button { padding:1px 7px; font-size:13px; color:var(--texto-3); }
+  .cerrar-ventana button { padding:3px 5px; color:var(--texto-3); }
   .nueva-ventana-slot { background:none; border:0; cursor:pointer; padding:3px 8px; font-size:11.5px;
     color:var(--texto-3); }
   .nueva-ventana-slot:hover { color:var(--acento); }
@@ -291,11 +304,7 @@
   .slot-vacio p { margin:0; }
   /* Conversaciones anteriores (decisión 290): una fila por conversación, el
      título arriba y cuándo debajo, como un menú. */
-  /* El resumen del menú es un icono de 30 px; éste lleva texto. */
-  .menu.conversaciones > summary { width:auto; height:auto; display:inline-flex; white-space:nowrap;
-    font-size:var(--letra-2); padding:4px 9px; color:var(--texto-2); }
-  .conversaciones > summary::-webkit-details-marker { display:none; }
-  .pop-conv { width:min(380px, 86vw); max-height:60vh; overflow-y:auto; }
+  .pop-conv { width:min(380px, 82vw); max-height:50vh; overflow-y:auto; }
   .pop-conv .conv { align-items:flex-start !important; justify-content:flex-start !important;
     text-align:left !important; padding:7px 10px; }
   .conv-lista { display:flex; flex-direction:column; gap:4px; }
@@ -354,19 +363,60 @@
   .pestana .cerrar { opacity:0; padding:0 2px; border-radius:3px; }
   .pestana:hover .cerrar { opacity:.55; }
   .pestana .cerrar:hover { opacity:1; color:var(--alerta); background:var(--elevado); }
-  .barra-term { display:flex; align-items:center; gap:6px; padding:7px 10px; border-bottom:1px solid var(--borde); flex-wrap:wrap; }
-  .barra-term button { padding:4px 9px; font-size:12px; }
+  /* ── La barra de la sesión, en una línea (C-0480) ────────────────────────
+     Eran cuatro líneas en el teléfono (191 px de 844, medido) y dos en el
+     PC: once controles en fila. Fuera queda lo que se toca trabajando, y lo
+     que se decide una vez va al «⋯». `nowrap` a propósito: una segunda línea
+     le quita filas a la terminal. Por lo mismo nada de aquí cambia de ancho
+     al grabar: los segundos del micrófono flotan (`base.html`). */
+  .barra-term { display:flex; align-items:center; gap:6px; padding:5px 10px;
+                border-bottom:1px solid var(--borde); flex-wrap:nowrap; min-width:0; }
+  .barra-term > .quien { display:flex; align-items:center; gap:8px; flex:1 1 auto; min-width:0; }
+  .barra-term .nombre-sesion { font-size:var(--letra-4); font-weight:500; white-space:nowrap; flex:none; }
+  .barra-term .ruta { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+                      font-size:var(--letra-2); color:var(--texto-3); }
+  .marca-persistente { color:var(--acento); display:inline-flex; flex:none; }
+  .marca-persistente[hidden] { display:none; }
+  /* La nota se ve pulsada mientras está a la vista. */
+  .barra-term > button[data-alternar-nota][aria-pressed="true"] { color:var(--texto-2); }
+  .barra-term > button[data-alternar-nota][aria-pressed="false"] { color:var(--texto-4); }
+  /* El «⋯» de la sesión: con todo dentro, que no se salga de la pantalla. */
+  .menu-sesion > .menu-pop { min-width:250px; max-height:75vh; overflow-y:auto; }
+  .menu-pop .fila-menu > .et { display:inline-flex; align-items:center; gap:7px; }
+  .menu-pop .nota-menu { margin:4px 10px 6px; font-size:var(--letra-2); }
+  /* Con el ratón no hay «Letra» ni «Nota» en el «⋯»: están fuera. Con el dedo,
+     al revés (el `@media` de abajo). */
+  @media (min-width: 721px) { .barra-term .solo-tel { display:none; } }
+  /* «Reabrir al encender»: un interruptor, que dice si está puesto sin leer. */
+  .interruptor { margin-left:auto; flex:none; position:relative; width:30px; height:18px;
+                 border-radius:var(--r-pildora); background:var(--superficie); border:1px solid var(--borde); }
+  .interruptor::after { content:''; position:absolute; top:2px; left:2px; width:12px; height:12px;
+                        border-radius:var(--r-pildora); background:var(--texto-3); transition:transform .15s; }
+  [aria-checked="true"] > .interruptor { background:var(--acento); border-color:var(--acento); }
+  [aria-checked="true"] > .interruptor::after { transform:translateX(12px); background:var(--acento-tinta); }
   /* El preset activo se marca con superficie y color, no con un contorno: es
-     como se marca lo activo en el raíl y en las pestañas. */
-  .barra-term button.on, .menu-pop button.on {
+     como se marca lo activo en el raíl y en las pestañas. El interruptor ya
+     dice su estado: teñir su fila lo diría dos veces. */
+  .menu-pop button.on:not([role="switch"]) {
     background:color-mix(in srgb, var(--acento) 16%, transparent); color:var(--acento); }
+  /* Lo que avisa, flotando sobre la esquina de arriba de la terminal. */
+  .avisos-term { position:absolute; top:6px; left:12px; right:12px; z-index:3; pointer-events:none;
+                 display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
+  .avisos-term > div { pointer-events:auto; max-width:100%; display:flex; align-items:center; gap:6px;
+                       padding:3px 10px; border-radius:var(--r-nav); background:var(--elevado);
+                       color:var(--texto-2); font-size:var(--letra-1); }
+  #estado { cursor:pointer; }
+  #estado:empty, #aviso-cols[hidden] { display:none; }
+  #aviso-cols { color:var(--espera); padding-right:3px; }
+  #aviso-cols > button { padding:2px 8px; font-size:var(--letra-1); }
   /* A− 14 A+ como un solo control: los tres pertenecen a la misma decisión y
      separados parecían tres botones sueltos entre otros tantos. */
   .grupo-fuente { display:flex; align-items:center; gap:2px; background:var(--superficie2);
                   border-radius:var(--r-boton); padding:1px 3px; }
-  .grupo-fuente button { padding:3px 7px; }
-  .grupo-fuente #fuente-val { min-width:18px; text-align:center; font-size:12px;
-                              font-variant-numeric:tabular-nums; }
+  /* `width:auto`: dentro del «⋯» heredaría el ancho entero de una fila de menú. */
+  .grupo-fuente button { padding:3px 7px; width:auto; justify-content:center; }
+  .grupo-fuente > [data-fuente-val] { min-width:18px; text-align:center; font-size:var(--letra-2);
+                                      font-variant-numeric:tabular-nums; }
   /* 🔴 El padding va DOS VECES, y no es un descuido. Medido con un Chrome
      headless sobre esta misma vista:
 
@@ -656,69 +706,18 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
        'cerrado':    'Sin ventana abierta',
      } %}
   <nav class="rail">
-    {# En el móvil el raíl entero se cambia por esto: un `select` nativo, que
-       abre el selector del sistema y se maneja con el pulgar. Medido en su
-       teléfono el 2026-09-16 — la lista ocupaba 287 px de una pantalla de 844,
-       un tercio, para no elegir nada la mayor parte del tiempo.
-
-       🔴 Las opciones salen del MISMO bucle que los enlaces de abajo, no de una
-       segunda consulta: dos fuentes para la misma lista se separan en cuanto
-       alguien toque una (es la primera regla de `CLAUDE.md` aplicada a una
-       plantilla). Lo único que no viaja es el botón «Lanzar» de un slot cerrado,
-       y no hace falta: el área central ya ofrece «Abrir una ventana aquí».
-
-       Depende de JavaScript, y aquí eso es gratis: sin JavaScript no hay
-       terminal, así que esta pantalla no existe.
-
-       Crear un slot también viaja (C-0011): sin él, en el teléfono no había
-       por dónde. Son las mismas opciones que los botones del raíl, con el
-       mismo `data-nuevo-slot`, y las abre `slot-nuevo.js` al elegirlas; con
-       `value=""` el selector no navega a ninguna parte. #}
     {% set en_uso = proyectos | selectattr('en_uso') | list %}
-    {# 🔴 La opción marcada es lo que se ve (C-0350). Si nada de la lista lo
-       es —una ventana oculta, un slot archivado, una sesión aún sin
-       muestrear—, el navegador marcaba la primera y el teléfono decía un slot
-       con la terminal de otra cosa debajo. Entonces va una primera opción que
-       dice qué se está mirando. #}
+    {% set sin_ventana = [] %}
+    {% for p in en_uso %}{% for s in p.slots if not s.ventanas %}{% set _ = sin_ventana.append((p, s)) %}{% endfor %}{% endfor %}
+    {# 🔴 La opción marcada es lo que se ve (C-0350), por sesión y ventana. Si
+       nada de la lista lo es —una ventana oculta, un slot archivado, una
+       sesión aún sin muestrear—, el navegador marcaba la primera y el
+       teléfono decía un sitio con la terminal de otra cosa debajo. Entonces
+       va una primera opción que dice qué se está mirando. #}
     {% set marca = namespace(hay=false) %}
-    {% for p in en_uso %}{% for s in p.slots %}{% if slot and s.id == slot.id %}{% set marca.hay = true %}{% endif %}{% endfor %}{% endfor %}
+    {% for p in en_uso %}{% for s in p.slots %}{% for v in s.ventanas %}{% if v.session == session and v.ventana == ventana %}{% set marca.hay = true %}{% endif %}{% endfor %}{% endfor %}{% endfor %}
+    {% for p, s in sin_ventana %}{% if slot and s.id == slot.id and not session %}{% set marca.hay = true %}{% endif %}{% endfor %}
     {% for v in sueltas %}{% if v.session == session and v.ventana == ventana and not slot %}{% set marca.hay = true %}{% endif %}{% endfor %}
-    <select id="ir-a" aria-label="Ir a un slot o ventana">
-      {# Con «crear» como única opción, elegirla no cambia nada y no llega el
-         `change`: va detrás de una que ya está elegida. #}
-      {% if not marca.hay and (slot or session) %}
-      <option value="" selected disabled>Viendo: {% if slot %}{{ slot.nombre }}{% else %}{{ session }}{% if ventana is not none %}:{{ ventana }} · sin slot{% endif %}{% endif %}</option>
-      {% elif not en_uso and not sueltas %}
-      <option value="" selected disabled>Nada abierto todavía</option>
-      {% endif %}
-      {% for p in en_uso %}
-      <optgroup label="{{ p.nombre }}">
-        {# Los que tienen ventana, primero: son a los que se va. #}
-        {% for s in (p.slots | rejectattr('estado', 'equalto', 'cerrado') | list)
-                    + (p.slots | selectattr('estado', 'equalto', 'cerrado') | list) %}
-        <option value="/trabajo?slot={{ s.id }}"
-                {% if slot and s.id == slot.id %}selected{% endif %}>
-          {{ s.nombre }}{% if s.estado == 'cerrado' %} · sin ventana{% endif %}</option>
-        {% endfor %}
-        {% if not p.slots %}
-        <option value="/proyecto/{{ p.id }}">{{ p.nombre }} · sin slots</option>
-        {% endif %}
-        <option value="" data-nuevo-slot="{{ p.id }}">+ Slot nuevo</option>
-      </optgroup>
-      {% endfor %}
-      {% if proyectos | rejectattr('en_uso') | list %}
-      <option value="" data-nuevo-slot="">{{ '+ Slot en otro proyecto' if en_uso else '+ Slot nuevo' }}</option>
-      {% endif %}
-      {% if sueltas %}
-      <optgroup label="Sin organizar">
-        {% for v in sueltas %}
-        <option value="/trabajo?session={{ v.session }}{% if v.ventana is not none %}&ventana={{ v.ventana }}{% endif %}"
-                {% if v.session == session and v.ventana == ventana and not slot %}selected{% endif %}>
-          {{ v.etiqueta }} · {{ v.session }}</option>
-        {% endfor %}
-      </optgroup>
-      {% endif %}
-    </select>
 
     {# Crear vive AQUÍ también, no sólo en Panorama: la primera persona que
        usó el hub sin que se lo enseñaran entró por Trabajo, no encontró cómo
@@ -764,7 +763,7 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
           <a class="item {{ 'activo' if slot and s.id == slot.id }}"
              href="/trabajo?slot={{ s.id }}">
             <span class="punto {{ s.estado }}" data-slot-punto="{{ s.id }}"
-                  title="{{ TITULOS_ESTADO.get(s.estado, '') }}"></span>{{ s.nombre }}{% if s.restaurar %}<span class="marca-vuelve" title="Persistente: se reabre cuando vuelves a encender el equipo">↻</span>{% endif %}
+                  title="{{ TITULOS_ESTADO.get(s.estado, '') }}"></span>{{ s.nombre }}{% if s.restaurar %}<span class="marca-vuelve" role="img" aria-label="Persistente: se reabre al encender" title="Persistente: se reabre cuando vuelves a encender el equipo">{{ ui.icono('encendido', 12) }}</span>{% endif %}
             <span class="sub mono">{{ s.ruta_corta or '—' }}</span>
           </a>
           {# Sus ventanas, colgadas de él: proyecto → slot → ventanas, «como
@@ -791,7 +790,7 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
                 <input type="hidden" name="servidor" value="{{ servidor or '' }}">
                 <input type="hidden" name="accion" value="cerrar_ventana">
                 <input type="hidden" name="destino" value="/trabajo?slot={{ s.id }}">
-                <button class="sutil" title="Cerrar esta ventana" aria-label="Cerrar esta ventana">×</button>
+                <button class="sutil" title="Cerrar esta ventana" aria-label="Cerrar esta ventana">{{ ui.icono('cerrar', 12) }}</button>
               </form>
             </div>
             {% endfor %}
@@ -960,52 +959,147 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
   {# Un `div` y no `main`: el `main` de la página es el de base.html (C-0347). #}
   <div class="centro">
     <div class="barra-term">
-      <strong style="font-size:14px;font-weight:500">{{ slot.nombre if slot else session or '—' }}</strong>
-      {% if slot and slot.ruta %}<span class="mono">{{ slot.ruta }}</span>{% endif %}
-      <span style="flex:1"></span>
-      {# Fuera se quedan las dos cosas que se tocan mientras se trabaja: el
-         tamaño de letra y la nota. Todo lo demás —los tres presets de reparto y
-         el «Ajustar»— se decide una vez y se olvida, así que vive bajo la
-         rueda. Siete botones en fila sobre el terminal eran siete cosas que
-         leer cada vez que se busca una. #}
-      <div class="grupo-fuente" title="Tamaño de letra del terminal">
-        <button id="menos" class="sutil" title="Reducir la letra" aria-label="Reducir la letra">A−</button>
-        <span id="fuente-val" class="tenue"></span>
-        <button id="mas" class="sutil" title="Aumentar la letra" aria-label="Aumentar la letra">A+</button>
+      {# En el móvil el raíl entero se cambia por esto: un `select` nativo, que
+         abre el selector del sistema y se maneja con el pulgar. Medido en su
+         teléfono el 2026-09-16 — la lista ocupaba 287 px de una pantalla de 844,
+         un tercio, para no elegir nada la mayor parte del tiempo.
+
+         🔴 Las opciones salen del MISMO bucle que los enlaces de abajo, no de una
+         segunda consulta: dos fuentes para la misma lista se separan en cuanto
+         alguien toque una (es la primera regla de `CLAUDE.md` aplicada a una
+         plantilla). Lo único que no viaja es el botón «Lanzar» de un slot cerrado,
+         y no hace falta: el área central ya ofrece «Abrir una ventana aquí».
+
+         Depende de JavaScript, y aquí eso es gratis: sin JavaScript no hay
+         terminal, así que esta pantalla no existe.
+
+         Crear un slot también viaja (C-0011), con UNA opción al final y no una
+         por proyecto (C-0479): con el `data-nuevo-slot` de los botones del
+         raíl, la abre `slot-nuevo.js` al elegirla, y con `value=""` el selector
+         no navega a ninguna parte.
+
+         🔴 Se eligen VENTANAS, como en el árbol, no slots (C-0479): en el
+         teléfono el árbol no está, y elegir un slot dejaba la ventana a la
+         franja de pestañas. Cada opción es «slot › ventana», con la misma
+         etiqueta que el árbol; los slots sin ventana van juntos al final, y
+         los proyectos sin slots no salen: aquí se va a trabajar, y sus ventanas
+         sueltas ya están en «Sin organizar».
+
+         Vivía en el raíl, en su propia fila: el nombre del slot salía tres
+         veces y la barra ocupaba cuatro líneas (C-0480). Ahora el selector
+         ES el nombre, en la barra de la sesión, y el raíl no se pinta en el
+         teléfono. Lo que calcula qué se marca (`en_uso`, `sin_ventana`,
+         `marca`) sigue arriba, junto a la lista que también lo usa. #}
+      <select id="ir-a" aria-label="Ir a una ventana o un slot">
+        {# Con «crear» como única opción, elegirla no cambia nada y no llega el
+           `change`: va detrás de una que ya está elegida. #}
+        {% if not marca.hay and (slot or session) %}
+        <option value="" selected disabled>Viendo: {% if slot %}{{ slot.nombre }}{% else %}{{ session }}{% if ventana is not none %}:{{ ventana }} · sin slot{% endif %}{% endif %}</option>
+        {% elif not en_uso and not sueltas %}
+        <option value="" selected disabled>Nada abierto todavía</option>
+        {% endif %}
+        {% for p in en_uso %}{% if p.slots | selectattr('ventanas') | list %}
+        <optgroup label="{{ p.nombre }}">
+          {% for s in p.slots %}{% for v in s.ventanas %}
+          <option value="/trabajo?session={{ v.session }}&ventana={{ v.ventana }}"
+                  data-sesion="{{ v.session }}" data-ventana="{{ v.ventana }}"
+                  {% if v.session == session and v.ventana == ventana %}selected{% endif %}>
+            {{ s.nombre }}{% if v.etiqueta != s.nombre %} › {{ v.etiqueta }}{% endif %}</option>
+          {% endfor %}{% endfor %}
+        </optgroup>
+        {% endif %}{% endfor %}
+        {% if sueltas %}
+        <optgroup label="Sin organizar">
+          {% for v in sueltas %}
+          <option value="/trabajo?session={{ v.session }}{% if v.ventana is not none %}&ventana={{ v.ventana }}{% endif %}"
+                  {% if v.ventana is not none %}data-sesion="{{ v.session }}" data-ventana="{{ v.ventana }}"{% endif %}
+                  {% if v.session == session and v.ventana == ventana and not slot %}selected{% endif %}>
+            {{ v.etiqueta }} · {{ v.session }}</option>
+          {% endfor %}
+        </optgroup>
+        {% endif %}
+        {% if sin_ventana %}
+        <optgroup label="Sin ventana abierta">
+          {% for p, s in sin_ventana %}
+          <option value="/trabajo?slot={{ s.id }}"
+                  {% if slot and s.id == slot.id and not session %}selected{% endif %}>
+            {{ s.nombre }} · {{ p.nombre }}</option>
+          {% endfor %}
+        </optgroup>
+        {% endif %}
+        {% if proyectos %}
+        <option value="" data-nuevo-slot="">+ Slot nuevo…</option>
+        {% endif %}
+      </select>
+      {# En el PC el nombre y su ruta; en el teléfono los dice el selector, y
+         de aquí sólo queda la marca de persistente. #}
+      <div class="quien">
+        <strong class="nombre-sesion">{{ slot.nombre if slot else session or '—' }}</strong>
+        {% if slot %}<span class="marca-persistente" data-marca-vuelve role="img" aria-label="Persistente: se reabre al encender"
+              title="Persistente: cuando vuelvas a encender el equipo, el hub te ofrece reabrir este slot"
+              {% if not slot.restaurar %}hidden{% endif %}>{{ ui.icono('encendido', 14) }}</span>{% endif %}
+        {% if slot and slot.ruta %}<span class="mono ruta">{{ slot.ruta }}</span>{% endif %}
       </div>
-      {# Si este slot es persistente: se ve y se cambia aquí, con un
-         clic, que es donde se está trabajando (decisión 289). #}
-      {% if slot %}
-      <button id="vuelve" type="button" class="sutil vuelve {{ 'on' if slot.restaurar }}"
-              data-slot="{{ slot.id }}" aria-pressed="{{ 'true' if slot.restaurar else 'false' }}"
-              title="Persistente: cuando vuelvas a encender el equipo, el hub te ofrece reabrir este slot con su conversación">↻ {{ 'Persistente' if slot.restaurar else 'No persistente' }}</button>
-      {# Las conversaciones de Claude que tuvo este slot. Cerrar la consola no
-         las borra —Claude Code las guarda enteras—, pero nada lo decía y se
-         perdía el hilo (decisión 290). #}
-      <details class="menu der conversaciones">
-        <summary class="sutil" title="Conversaciones de Claude en este slot, para retomarlas">Conversaciones</summary>
-        <div class="menu-pop pop-conv"><div data-conversaciones="{{ slot.id }}"></div></div>
-      </details>
-      {% endif %}
+      {# Fuera se quedan las dos cosas que se tocan mientras se trabaja: el
+         tamaño de letra y la nota. Lo que se decide una vez —el reparto,
+         ajustar a tmux, reabrir al encender, la pantalla completa— vive en el
+         «⋯». En el teléfono no caben: van también dentro, y por eso están dos
+         veces y se buscan por `data-*`, no por id. #}
+      <div class="grupo-fuente solo-pc" title="Tamaño de letra del terminal">
+        <button type="button" class="sutil" data-fuente-paso="-1" title="Reducir la letra" aria-label="Reducir la letra">A−</button>
+        <span class="tenue" data-fuente-val></span>
+        <button type="button" class="sutil" data-fuente-paso="1" title="Aumentar la letra" aria-label="Aumentar la letra">A+</button>
+      </div>
+      <button type="button" class="sutil solo-pc" data-alternar-nota aria-pressed="true"
+              title="Mostrar u ocultar la nota">{{ ui.icono('nota', 15) }}Nota</button>
       {# Dictar en vez de teclear (decisión 295). El `/voice` de Claude Code
          usa el micrófono de la máquina donde corre, y desde el navegador o el
-         móvil ese micrófono no es el tuyo. #}
-      <button type="button" class="sutil" data-dictar
-              title="Dictar: graba, se transcribe en tu máquina y el texto queda escrito en la terminal, sin enviarlo">Dictar</button>
-      <button id="alternar-nota" class="sutil" title="Mostrar u ocultar la nota">Nota</button>
-      <button id="pantalla-completa" class="sutil" aria-pressed="false"
-              title="Darle la pantalla entera al terminal">⤢</button>
-      {% call ui.menu_ajustes('Ajustes de la vista') %}
+         móvil ese micrófono no es el tuyo. El modelo, en la flecha de al lado;
+         en el teléfono, en el «⋯»: la flecha no llega a los 44 px del dedo. #}
+      {{ ui.microfono(datos={'dictar': ''}, modelo=true,
+                      pista='Dictar: graba, se transcribe en tu máquina y el texto queda escrito en la terminal, sin enviarlo') }}
+      {% call ui.menu('Más opciones de la sesión', 'der menu-sesion') %}
+        <div class="fila-menu solo-tel">
+          <span class="et">{{ ui.icono('letra', 15) }}Letra</span>
+          <div class="grupo-fuente">
+            <button type="button" class="sutil" data-fuente-paso="-1" title="Reducir la letra" aria-label="Reducir la letra">A−</button>
+            <span class="tenue" data-fuente-val></span>
+            <button type="button" class="sutil" data-fuente-paso="1" title="Aumentar la letra" aria-label="Aumentar la letra">A+</button>
+          </div>
+        </div>
+        <button type="button" class="solo-tel" data-alternar-nota aria-pressed="true"
+                title="Mostrar u ocultar la nota del slot">{{ ui.icono('nota', 15) }}Nota del slot</button>
+        {% if slot %}
+        {# Las conversaciones de Claude que tuvo este slot. Cerrar la consola no
+           las borra —Claude Code las guarda enteras—, pero nada lo decía y se
+           perdía el hilo (decisión 290). Un plegable y no otro menú: dentro
+           de éste, un menú se cerraría al abrirlo. #}
+        <details class="plegable-menu conversaciones">
+          <summary title="Conversaciones de Claude en este slot, para retomarlas">{{ ui.icono('historial', 15) }}Conversaciones anteriores</summary>
+          <div class="pop-conv"><div data-conversaciones="{{ slot.id }}"></div></div>
+        </details>
+        {# Si este slot es persistente (decisión 289): se cambia aquí, donde se
+           trabaja, y se ve junto al nombre. #}
+        <button id="vuelve" type="button" role="switch" class="{{ 'on' if slot.restaurar }}"
+                data-slot="{{ slot.id }}" aria-checked="{{ 'true' if slot.restaurar else 'false' }}"
+                title="Cuando vuelvas a encender el equipo, el hub te ofrece reabrir este slot con su conversación">{{ ui.icono('encendido', 15) }}Reabrir al encender<span class="interruptor" aria-hidden="true"></span></button>
+        {% endif %}
+        <button type="button" id="pantalla-completa" aria-pressed="false"
+                title="Darle la pantalla entera al terminal">{{ ui.icono('ampliar', 15) }}<span data-pantalla-texto>Pantalla completa</span></button>
+        <div class="separador solo-tel"></div>
+        <div class="solo-tel">{{ ui.modelo_dictado('seccion') }}</div>
+        <div class="separador"></div>
         <div class="rotulo-menu">Reparto de la pantalla</div>
         <button type="button" data-preset="comodo">Cómodo</button>
         <button type="button" data-preset="denso">Denso</button>
         <button type="button" data-preset="foco">Foco</button>
         <div class="separador"></div>
         <button type="button" id="ajustar"
-                title="Bajar la letra hasta ver todas las columnas de tmux">Ajustar a tmux</button>
+                title="Bajar la letra hasta ver todas las columnas de tmux">{{ ui.icono('ancho', 15) }}Ajustar a tmux</button>
+        {# «N col» lo leen las pruebas del navegador y lo escribe `medirDesfase`;
+           a la vista sólo sale el aviso de abajo, cuando no caben. #}
+        <p class="nota-menu tenue">Columnas: <span id="cols" class="tenue" title="columnas"></span></p>
       {% endcall %}
-      <span id="cols" class="tenue" title="columnas"></span>
-      <span id="estado" class="tenue"></span>
     </div>
     <div class="pestanas" id="ventanas"></div>
     {# Un slot sin ninguna ventana abierta. Antes este caso no existía porque se
@@ -1040,6 +1134,18 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
        quiera el navegador, y el terminal se coloca dentro, donde sí mandamos
        nosotros. #}
     <div id="lienzo-terminal"><div id="marco"></div>
+      {# Lo que avisa no se esconde en el «⋯» (C-0480): la conexión, el
+         dictado y los adjuntos (`#estado`), y las columnas que no caben.
+         Flotan, no ocupan fila: un alto que cambia le quita filas a la
+         terminal y redimensiona tmux cada vez que aparece o se va un aviso
+         (decisiones 90 y 93). Dentro del envoltorio, para que sigan a la
+         vista a pantalla completa. #}
+      <div class="avisos-term">
+        <div id="estado" role="status" title="Toca para quitarlo"></div>
+        <div id="aviso-cols" role="status" hidden>{{ ui.icono('aviso', 14) }}<span data-aviso-cols></span>
+          <button type="button" class="sutil" data-ajustar-cols
+                  title="Bajar la letra hasta ver todas las columnas de tmux">Ajustar</button></div>
+      </div>
       {# Las teclas que un teclado de móvil no tiene, y lo que en el
          escritorio se hace arrastrando: adjuntar una imagen. Dentro del
          envoltorio para que siga ahí a pantalla completa. Sólo en pantallas
@@ -1054,8 +1160,8 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
         <button type="button" data-tecla="izquierda" aria-label="Izquierda">←</button>
         <button type="button" data-tecla="derecha" aria-label="Derecha">→</button>
         <button type="button" data-tecla="enter">Enter</button>
-        <button type="button" id="adjuntar" title="Adjuntar una imagen: se escribe su ruta">Imagen</button>
-        <button type="button" data-dictar title="Dictar: se escribe en la terminal sin enviarlo">Dictar</button>
+        <button type="button" id="adjuntar" title="Adjuntar una imagen: se escribe su ruta">{{ ui.icono('imagen', 15) }}Imagen</button>
+        {{ ui.microfono(datos={'dictar': ''}, clase='', pista='Dictar: se escribe en la terminal sin enviarlo') }}
         <input type="file" id="adjuntar-archivo" accept="image/*" hidden>
       </div>
     </div>
@@ -1329,6 +1435,32 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
   // ningún tmux, o puede que este slot no tenga ventana abierta —que tiene su
   // propio bloque arriba, con el botón de abrirla—.
   const SLOT_VACIO = document.querySelector('.slot-vacio') !== null;
+  /* El selector del teléfono (C-0479), enganchado ANTES de salir sin sesión:
+   * en un slot sin ventana el script acababa aquí y elegir otro sitio en el
+   * selector no hacía nada. Ahora es el nombre de la barra (C-0480) y es la
+   * única forma de moverse en el teléfono. Una ventana de la sesión que ya se
+   * ve cambia sin recargar, como en el árbol: recargar cortaría el terminal.
+   * Lo demás navega. `irA` es una función declarada más abajo: existe ya. */
+  const selectorMovil = document.getElementById('ir-a');
+  if (selectorMovil) {
+    selectorMovil.addEventListener('change', () => {
+      const opcion = selectorMovil.selectedOptions && selectorMovil.selectedOptions[0];
+      if (SESION && opcion && opcion.dataset && opcion.dataset.sesion === SESION
+          && opcion.dataset.ventana !== undefined) {
+        irA(Number(opcion.dataset.ventana));
+        return;
+      }
+      if (selectorMovil.value) location.href = selectorMovil.value;
+    });
+  }
+  /* `#estado` flota sobre la terminal (C-0480): lo que ya se leyó se quita
+   * tocándolo. Antes del `return` de «sin sesión»: ahí también dice algo
+   * («este slot no tiene ventana abierta»). Un enlace dentro («ábrela en
+   * Acceso») sigue llevando a su sitio. */
+  const pildoraEstado = document.getElementById('estado');
+  if (pildoraEstado) pildoraEstado.addEventListener('click', (e) => {
+    if (!(e.target && e.target.closest && e.target.closest('a'))) pildoraEstado.textContent = '';
+  });
   if (!SESION) {
     document.getElementById('estado').textContent =
       SLOT_VACIO ? 'este slot no tiene ventana abierta' : 'sin sesiones de tmux';
@@ -1341,20 +1473,32 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
   };
 
   const taller = document.getElementById('taller');
-  /* El selector de móvil. Navega y ya: no hay estado que mantener, porque la
-   * página que carga vuelve a pintar el `selected` que toca desde el servidor. */
-  /* `selectorMovil` y no `irA`: ya hay una `function irA(indice)` más abajo que
-   * salta de ventana, y un `const` con ese nombre rompe el script ENTERO con un
-   * SyntaxError — sin terminal y sin ningún síntoma en el HTTP 200. Lo cazó el
-   * arnés de la regla 11 al primer intento. */
-  const selectorMovil = document.getElementById('ir-a');
-  if (selectorMovil) {
-    selectorMovil.addEventListener('change', () => {
-      if (selectorMovil.value) location.href = selectorMovil.value;
-    });
+  /* El selector de móvil (`selectorMovil`, arriba) sí tiene estado que
+   * mantener (C-0479): al cambiar de ventana sin recargar, o desde la franja,
+   * `irA` marca su opción —también como `defaultSelected`, que es a la que
+   * vuelve `slot-nuevo.js`—; si no, el selector seguía diciendo la ventana de
+   * antes (C-0350).
+   *
+   * `selectorMovil` y no `irA`: ya hay una `function irA(indice)` más abajo
+   * que salta de ventana, y un `const` con ese nombre rompe el script ENTERO
+   * con un SyntaxError — sin terminal y sin ningún síntoma en el HTTP 200. Lo
+   * cazó el arnés de la regla 11 al primer intento. */
+  function marcarEnSelector(indice) {
+    if (!selectorMovil) return;
+    const opciones = Array.from(selectorMovil.options);
+    const suya = opciones.find(o => o.dataset && o.dataset.sesion === SESION
+      && String(o.dataset.ventana) === String(indice));
+    // Una ventana que la lista no tiene (recién abierta, sin muestrear) no
+    // se marca: mejor la de antes que otra cualquiera.
+    if (!suya) return;
+    opciones.forEach(o => { o.defaultSelected = false; o.selected = false; });
+    suya.defaultSelected = true;
+    suya.selected = true;
   }
 
   const estado = document.getElementById('estado');
+  // Cerrar el «⋯» tras elegir algo cuyo efecto se ve detrás: abierto lo tapa.
+  const cerrarMenus = () => document.querySelectorAll('details.menu[open]').forEach(m => { m.open = false; });
 
   // Estado de la conexión declarado ARRIBA a propósito: `reajustar()` lo lee, y
   // se llama durante la configuración inicial. Declararlo más abajo lo dejaba en
@@ -1656,11 +1800,14 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
    * las decisiones 90 y 93, y su síntoma son letras que no están. */
   const botonPantalla = document.getElementById('pantalla-completa');
 
+  const textoPantalla = botonPantalla.querySelector('[data-pantalla-texto]');
   function pintarBotonPantalla() {
     const a_solas = document.body.classList.contains('terminal-sola');
     botonPantalla.setAttribute('aria-pressed', String(a_solas));
     botonPantalla.title = a_solas
       ? 'Devolver el raíl y la cabecera' : 'Darle la pantalla entera al terminal';
+    // Es una fila del «⋯» (C-0480): dice lo que hará al pulsarla.
+    if (textoPantalla) textoPantalla.textContent = a_solas ? 'Salir de la pantalla completa' : 'Pantalla completa';
     reajustar();
   }
 
@@ -1682,6 +1829,7 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
     } else if (document.fullscreenElement) {
       document.exitFullscreen?.().catch(() => {});
     }
+    cerrarMenus();
     pintarBotonPantalla();
   });
 
@@ -1773,7 +1921,7 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ filas: term.rows, columnas: term.cols }));
       }
-      document.getElementById('fuente-val').textContent = term.options.fontSize;
+      document.querySelectorAll('[data-fuente-val]').forEach(v => { v.textContent = term.options.fontSize; });
       medirDesfase();
     }));
   }
@@ -1824,6 +1972,18 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
     return { real, teorica, deriva: (real - teorica) * term.cols };
   }
 
+  /* El aviso a la vista sólo cuando tmux tiene MÁS columnas de las que
+   * caben (C-0480): es cuando se pierden letras, y «Ajustar» lo arregla. Con
+   * menos, no se pierde nada; la cifra sigue en el «⋯». */
+  const avisoCols = document.getElementById('aviso-cols');
+  function avisarColumnas(caben, suyas, porque) {
+    if (!avisoCols) return;
+    const pierde = !!suyas && suyas > caben;
+    avisoCols.hidden = !pierde;
+    if (!pierde) return;
+    avisoCols.querySelector('[data-aviso-cols]').textContent = `Caben ${caben} de ${suyas} columnas`;
+    avisoCols.title = porque;
+  }
   async function medirDesfase() {
     const marca = document.getElementById('cols');
     if (!marca) return;
@@ -1833,7 +1993,11 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
       const vs = await r.json();
       const v = Array.isArray(vs) ? vs.find(x => x.indice === activa) : null;
       const suyas = v && v.ancho;
-      if (!suyas) { marca.textContent = `${term.cols} col`; marca.className = 'tenue'; return; }
+      if (!suyas) {
+        marca.textContent = `${term.cols} col`; marca.className = 'tenue';
+        avisarColumnas(term.cols, null, '');
+        return;
+      }
       anchoTmux = suyas;
       const desfase = suyas - term.cols;
       const d = derivaDeCelda();
@@ -1846,6 +2010,7 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
         + (d ? `\n\nglifo ${d.real.toFixed(3)}px · celda de xterm ${d.teorica.toFixed(3)}px`
              + `\nderiva al final de la línea: ${d.deriva.toFixed(1)}px`
              + ` (${(d.deriva / d.teorica).toFixed(2)} caracteres)` : '');
+      avisarColumnas(term.cols, suyas, marca.title);
     } catch (e) {}
   }
 
@@ -1920,9 +2085,15 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
 
   document.querySelectorAll('[data-preset]').forEach(b =>
     b.onclick = () => aplicarPreset(b.dataset.preset));
-  document.getElementById('mas').onclick = () => fuente(term.options.fontSize + 1);
-  document.getElementById('ajustar').onclick = ajustarAlAncho;
-  document.getElementById('menos').onclick = () => fuente(term.options.fontSize - 1);
+  /* Letra y nota están dos veces (C-0480): fuera en el PC y dentro del «⋯»
+   * en el teléfono. Por eso se buscan por `data-*` y no por id. */
+  document.querySelectorAll('[data-fuente-paso]').forEach(b =>
+    b.addEventListener('click', () => fuente(term.options.fontSize + Number(b.dataset.fuentePaso || 0))));
+  document.getElementById('ajustar').onclick = () => { cerrarMenus(); ajustarAlAncho(); };
+  if (avisoCols) avisoCols.querySelector('[data-ajustar-cols]').addEventListener('click', ajustarAlAncho);
+  /* «Reabrir al encender» es un interruptor del «⋯»; lo que se ve sin abrir
+   * nada es la marca junto al nombre (C-0480). Antes era un botón de la barra
+   * que decía con palabras si lo era o no. */
   const vuelve = document.getElementById('vuelve');
   if (vuelve) vuelve.addEventListener('click', async () => {
     const quiere = !vuelve.classList.contains('on');
@@ -1933,21 +2104,21 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
       const d = await r.json();
       if (!d.ok) throw new Error(d.error || 'no se guardó');
       vuelve.classList.toggle('on', d.restaurar);
-      vuelve.setAttribute('aria-pressed', String(d.restaurar));
-      vuelve.textContent = d.restaurar ? '↻ Persistente' : '↻ No persistente';
+      vuelve.setAttribute('aria-checked', String(d.restaurar));
+      document.querySelectorAll('[data-marca-vuelve]').forEach(m => { m.hidden = !d.restaurar; });
     } catch (e) {
       estado.textContent = 'no se pudo cambiar: ' + e.message;
     }
   });
 
-  const botonNota = document.getElementById('alternar-nota');
+  const botonesNota = document.querySelectorAll('[data-alternar-nota]');
   function alternarNota(oculta) {
     oculta = taller.classList.toggle('sin-nota', oculta);
     guardado.set('sinNota', oculta);
-    botonNota.setAttribute('aria-pressed', String(!oculta));
+    botonesNota.forEach(b => b.setAttribute('aria-pressed', String(!oculta)));
     reajustar();
   }
-  botonNota.addEventListener('click', () => alternarNota());
+  botonesNota.forEach(b => b.addEventListener('click', () => { cerrarMenus(); alternarNota(); }));
   document.getElementById('plegar-lado').addEventListener('click', () => alternarNota(true));
   document.getElementById('desplegar-lado').addEventListener('click', () => alternarNota(false));
 
@@ -1980,6 +2151,7 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
 
   aplicarPreset(guardado.get('preset', 'comodo'), false);
   if (guardado.get('sinNota', false)) taller.classList.add('sin-nota');
+  botonesNota.forEach(b => b.setAttribute('aria-pressed', String(!taller.classList.contains('sin-nota'))));
   addEventListener('resize', reajustar);
 
   /* Y además se vigila el hueco del terminal.
@@ -2074,11 +2246,10 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
    * por qué no hay micrófono, reintentar la subida y calentar el Whisper. Aquí
    * se quedan sus textos, sus restricciones (`llano`) y qué hace con el texto. */
   let toma = null;
+  /* Los dos micrófonos (la barra y la de teclas) dicen lo mismo, y con
+   * `HubGrabar.marcar`: reescribir su texto borraba el icono (C-0480). */
   const botonesDictar = document.querySelectorAll('[data-dictar]');
-  const marcarDictado = (grabando) => botonesDictar.forEach(b => {
-    b.classList.toggle('on', grabando);
-    b.textContent = grabando ? 'Parar' : 'Dictar';
-  });
+  const marcarDictado = (laToma) => botonesDictar.forEach(b => HubGrabar.marcar(b, laToma));
   async function transcribirDictado(audio) {
     estado.textContent = 'transcribiendo…';
     // Quién dicta, para medir cada voz por separado (C-0246).
@@ -2119,11 +2290,11 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
       abriendo = false;
     }
     toma = esta;
-    marcarDictado(true);
-    estado.textContent = 'grabando… pulsa «Parar» para terminar';
+    marcarDictado(esta);
+    estado.textContent = 'grabando… pulsa el micrófono otra vez para terminar';
     const audio = await esta.terminado;
     if (toma === esta) toma = null;
-    marcarDictado(false);
+    marcarDictado(null);
     if (audio) transcribirDictado(audio);
     else estado.textContent = 'no se grabó nada';
   }
@@ -2430,6 +2601,7 @@ if (document.documentElement.dataset.barra === 'plegada') document.getElementByI
     enfocar(indice);
     pintarVentanas();
     marcarEnRail(indice);
+    marcarEnSelector(indice);
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ accion: 'ventana', indice }));
     }

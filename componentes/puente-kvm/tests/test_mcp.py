@@ -96,6 +96,18 @@ def test_estado_no_le_da_la_huella_base_ni_la_url_y_dice_que_no_hay_conexion(est
         assert fuera not in e
 
 
+def test_si_el_mac_duerme_claude_lo_sabe_por_el_estado(monkeypatch):
+    # C-0477: sin `mac`, tenía que adivinarlo por una pantalla negra.
+    dormido = json.loads(json.dumps(ESTADO_DE_LA_PANTALLA))
+    dormido["dispositivo"].update(tipo="jetkvm", conectado=True, mac="reposo", senal="no_signal")
+
+    async def llamar(metodo, ruta, cuerpo=None, timeout=60):
+        return dormido
+    monkeypatch.setattr(mcp_servidor, "_llamar", llamar)
+    d = asyncio.run(mcp_servidor.estado())["dispositivo"]
+    assert (d["mac"], d["senal"]) == ("reposo", "no_signal")
+
+
 def test_las_herramientas_le_devuelven_json_compacto_una_sola_vez_y_con_sus_acentos(estado_de_la_pantalla):
     salida = asyncio.run(mcp_servidor.mcp.call_tool("estado", {}))
     assert len(salida) == 1 and salida[0].type == "text"  # sin una copia estructurada al lado

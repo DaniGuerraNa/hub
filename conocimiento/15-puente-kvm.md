@@ -104,6 +104,16 @@ En la pantalla del puente, bajo la imagen del Mac:
   imagen. Si el puente conectó con el Mac dormido (sin imagen), al despertarlo
   la conexión vuelve sola. Un Mac apagado no se enciende así. Claude también
   puede despertarlo (`despertar_mac`), pero sólo con el control.
+- **Saber si el Mac está en reposo**: el JetKVM se lo dice al puente en el
+  momento (por el USB), así que la placa de arriba pone «Mac en reposo» y el
+  panel enseña «El Mac está en reposo» con «Despertar el Mac». El aviso se va
+  solo, sin recargar, en cuanto vuelve la imagen (despiertes el Mac desde aquí
+  o tocando su teclado). Si el JetKVM no ve el Mac por USB, también lo dice:
+  sin USB no llegan ni el teclado ni la señal de despertar.
+- **«Reconectar»**, junto a «Despertar el Mac»: vuelve a conectar con el
+  JetKVM si se perdió la conexión. Cierra su web si alguien la tiene abierta
+  (el aparato admite una sola sesión) y el control vuelve a ti. No deja con
+  Claude haciendo una tarea ni con una reunión grabándose.
 - **«Jiggler»** lo enciende y lo apaga: el JetKVM mueve el ratón 1 a 3 píxeles
   cuando nadie lo toca, para que el Mac no se bloquee ni te ponga «ausente».
   El botón pone «Frecuente, cada 30 s»; Claude puede ponerle horario si se lo

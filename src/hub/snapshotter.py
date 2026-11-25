@@ -214,8 +214,15 @@ def capturar(con: sqlite3.Connection, atribuidor: Atribuidor) -> int | None:
             "SELECT pane_id, slot_id FROM binding WHERE server_pid=?", (pid,)
         )
     }
+    # El nombre de la ventana sale de la misma puerta que la pestaña
+    # (`tmux.etiqueta_de_ventana`, C-0479): antes sólo el título, así que lo
+    # que el dueño renombraba se perdía en el árbol al recargar. 🔴 Transitorio:
+    # el nombre de su sesión y el de su slot, que el hub ponía con `-n` a las
+    # ventanas abiertas antes de C-0479, no cuentan como suyos.
+    nombre_de_slot = {fila["id"]: fila["nombre"]
+                      for fila in con.execute("SELECT id, nombre FROM slot")}
     filas = [
-        (p, tmux.inferir_etiqueta(p["titulo"], p["cwd"], p["comando"]),
+        (p, _etiqueta(p, {p["session"], nombre_de_slot.get(bindings.get(p["pane_id"]))}),
          atribuidor.atribuir(p["cwd"]), bindings.get(p["pane_id"]))
         for p in paneles
     ]
@@ -248,6 +255,14 @@ def capturar(con: sqlite3.Connection, atribuidor: Atribuidor) -> int | None:
 
     podar(con)
     return snapshot_id
+
+
+def _etiqueta(panel: dict, dados: set) -> str:
+    """La etiqueta del panel. Un panel de los tests o de un tmux viejo sin
+    nombre de ventana sale con su título, como antes."""
+    return tmux.etiqueta_de_ventana(
+        panel.get("nombre_ventana") or "", bool(panel.get("a_mano")),
+        panel["titulo"], panel["cwd"], panel["comando"], dados)
 
 
 def _ocupado(panel: dict) -> int:
