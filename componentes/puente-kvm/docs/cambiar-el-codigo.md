@@ -19,6 +19,15 @@ puente, y casi ninguna cambia el código.
   carpeta personal de nadie.
 - Español en el código, comentarios que explican el porqué.
 
+- **Las mediciones de uso (`mediciones.py`) son una lista cerrada.** Nunca
+  añadas a `mediciones.ESQUEMA` una clave de texto libre (un nombre, una ruta,
+  un motivo escrito, lo tecleado, una coordenada): si hace falta distinguir
+  casos, una lista cerrada de palabras. Sólo `mediciones.py` lee y escribe
+  `PUENTE_HOME/mediciones/`; lo que pasa muchas veces por segundo suma en
+  `mediciones.SUMAS`, nunca escribe una línea. Una herramienta nueva del
+  MCP va también en `mediciones.HERRAMIENTAS` (lo comprueba una prueba), y la
+  prueba canario de `tests/test_mediciones.py` tiene que seguir pasando.
+
 ## Los permisos de la sesión de Claude
 
 - `.claude/settings.json`: lo que se permite y lo que se niega, los hooks y el

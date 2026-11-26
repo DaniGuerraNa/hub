@@ -95,6 +95,20 @@
     <button type="button" data-reconectar>Reconectar el aparato</button>
   </div>
 </form>
+<section class="tarjeta" style="margin-top:16px" aria-labelledby="ajustes-mediciones">
+  <h2 id="ajustes-mediciones">Mediciones de uso</h2>
+  <label class="fila"><input type="checkbox" id="mediciones-activas" {{ 'checked' if mediciones.activas }}> Guardar mediciones de uso</label>
+  <p class="sub" style="margin:6px 0 0">Guarda <b>tiempos, cuántas veces pasa cada cosa y si salió bien o mal</b>: cuánto tarda cada herramienta de Claude,
+    cuánto tarda la imagen del Mac en cambiar, por qué vuelve el control. <b>No guarda</b> lo que se escribe ni lo que se lee en el Mac,
+    ni nombres, ni la pantalla. Se queda en este equipo (los últimos 30 días) y no sale nada solo.
+    Vienen encendidas; desmárcala y no se guarda nada más.</p>
+  <p class="sub" id="mediciones-resumen" style="margin:10px 0 0">{{ mediciones.texto }}</p>
+  <div class="fila" style="margin-top:10px">
+    <button type="button" data-mediciones-preparar>Preparar para enviar</button>
+    <button type="button" class="peligro" data-mediciones-borrar>Borrar mediciones</button>
+  </div>
+  <p class="sub" style="margin:6px 0 0">«Preparar para enviar» descarga un .zip con las mediciones en texto: ábrelo y míralo antes de mandarlo por donde quieras.</p>
+</section>
 <section class="tarjeta" style="margin-top:16px" aria-labelledby="ajustes-fallo">
   <h2 id="ajustes-fallo">¿Algo falla, o se te ocurre una mejora?</h2>
   <p class="sub">Cuéntalo desde el hub: en su pantalla del Puente KVM, «Avisar de un fallo del puente». Lo que mandes ahí es

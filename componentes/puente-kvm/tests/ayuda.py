@@ -83,7 +83,7 @@ def mcp_contra(c: TestClient, monkeypatch) -> None:
 
     def respuesta(r):
         if r.status_code >= 400:
-            raise mcp_servidor.ErrorPuente(str(r.json().get("detail")))
+            raise mcp_servidor.ErrorPuente(str(r.json().get("detail")), estado=r.status_code)
         return r
 
     async def llamar(metodo, ruta, cuerpo=None, timeout=60):
@@ -94,6 +94,9 @@ def mcp_contra(c: TestClient, monkeypatch) -> None:
 
     monkeypatch.setattr(mcp_servidor, "_llamar", llamar)
     monkeypatch.setattr(mcp_servidor, "_bajar", bajar)
+    # La medición de cada herramienta (C-0483), en el acto: suelta, en una
+    # prueba la cancelaría el final de `asyncio.run` antes de salir.
+    monkeypatch.setattr(mcp_servidor, "_enviar", lambda cuerpo: c.post("/api/mediciones/herramienta", json=cuerpo))
 
 
 # ── el teclado del Mac (C-0481) ─────────────────────────────────────────────

@@ -49,4 +49,6 @@ rellenándolo.
    `CREATE OR ALTER`) y apúntalo.
 8. Cierra la pestaña de pruebas **sin guardar**.
 
-Termina con un resumen de lo medido y lo que quedó pendiente.
+Termina con un resumen de lo medido y lo que quedó pendiente, y recuérdale
+que deje encendidas Ajustes → «Mediciones de uso» (vienen así) y que, tras
+unos días de uso, pulse «Preparar para enviar» y mande el .zip.

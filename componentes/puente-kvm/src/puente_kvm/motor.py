@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 
 from PIL import Image, ImageChops, ImageStat
 
-from . import config, hid, teclados
+from . import config, hid, mediciones, teclados
 from .control import Bitacora, Control
 from .dispositivo import Dispositivo
 
@@ -165,7 +165,15 @@ class Recorrido:
 
 
 class PantallaInesperada(RuntimeError):
-    """La pantalla no está como hace falta para teclear sin riesgo: no se teclea."""
+    """La pantalla no está como hace falta para teclear sin riesgo: no se teclea.
+
+    `clase` dice cuál, en la lista de las mediciones (`mediciones.FALLOS_CAMBIO`):
+    «dialogo», «inestable», «pagina_distinta» u «otro». El texto es para la
+    persona y para Claude; la clase, para contar sin guardar el texto."""
+
+    def __init__(self, *args, clase: str = "otro"):
+        super().__init__(*args)
+        self.clase = clase
 
 
 @dataclass
@@ -273,21 +281,37 @@ class Motor:
         alto) se mira y se devuelve sólo esa parte; sin ella, la región del
         editor (o la pantalla entera, con `recortar=False`).
         """
-        limite = time.monotonic() + (self.tope_estable if tope is None else tope)
+        inicio = time.monotonic()
+        tope = self.tope_estable if tope is None else tope
+        limite = inicio + tope
         previa = None
+        # Para las mediciones (C-0483), sólo lo que ya se calcula: cuántas
+        # capturas y la menor diferencia entre dos seguidas.
+        capturas, dif_min = 0, None
         while True:
             img = await self.captura()
+            capturas += 1
             if zona:
                 x, y, w, h = zona
                 img = img.crop((x, y, x + w, y + h))
             elif recortar:
                 img = self.recortar(img)
-            if previa is not None and diferencia_local(img, previa) < CUADRO_CAMBIADO:
-                return img, True
+            if previa is not None:
+                dif = diferencia_local(img, previa)
+                dif_min = dif if dif_min is None else min(dif_min, dif)
+                if dif < CUADRO_CAMBIADO:
+                    self._medir_espera(inicio, True, capturas, dif_min, tope)
+                    return img, True
             if time.monotonic() > limite:
+                self._medir_espera(inicio, False, capturas, dif_min, tope)
                 return img, False
             previa = img
             await asyncio.sleep(intervalo)
+
+    @staticmethod
+    def _medir_espera(inicio: float, quieta: bool, capturas: int, dif_min: float | None, tope: float) -> None:
+        mediciones.apuntar("espera", ms=round((time.monotonic() - inicio) * 1000), quieta=quieta, capturas=capturas,
+                           dif_min=None if dif_min is None else round(dif_min, 4), tope_ms=round(tope * 1000))
 
     # ── esperar a ver lo pulsado (C-0485) ──────────────────────────────────
     def retardo_video(self) -> float:
@@ -371,7 +395,8 @@ class Motor:
             await asyncio.sleep(min(intervalo, max(0.0, limite - time.monotonic())))
 
     async def tras(self, accion: Callable[[], Awaitable[object]], zona: tuple[int, int, int, int] | None = None,
-                   recortar: bool = True, cuadros: int | None = None, tope: float | None = None) -> Visto:
+                   recortar: bool = True, cuadros: int | None = None, tope: float | None = None,
+                   clase: str = "otra") -> Visto:
         """Hace `accion()` y devuelve la pantalla cuando ya se ve lo que hizo.
 
         «Antes» es la asentada (`asentada`), para que lo pulsado antes no
@@ -380,8 +405,14 @@ class Motor:
         tiene que seguir cambiada una vez quieta (un parpadeo no es un diálogo
         abierto). Si en el tope no cambió, `cambio` es False y la imagen es la
         de después del tope, ya quieta si se pudo: lo que hay.
+
+        `clase` es qué acción era, para las mediciones («inicio», «pagina»,
+        «rueda», «dialogo» u «otra»): lo que tarda el vídeo puede no ser lo
+        mismo al abrir un diálogo que al pasar de página.
         """
+        t0 = time.monotonic()
         antes, antes_quieta = await self.asentada(zona=zona, recortar=recortar)
+        ms_antes = round((time.monotonic() - t0) * 1000)
         await accion()
         inicio = time.monotonic()
         tope = self.tope_cambio() if tope is None else tope
@@ -398,14 +429,20 @@ class Motor:
             # Con cuadros, quieta y aún cambiada; sin ellos (otra página), basta
             # que siga cambiada: si no se queda quieta, lo dice `quieta`.
             if self._cambio(antes, img, cuadros) and (quieta or cuadros is None):
-                return self._visto(Visto(img, quieta, True, tardo, antes_quieta), zona, recortar, tope)
+                return self._visto(Visto(img, quieta, True, tardo, antes_quieta), zona, recortar, tope,
+                                   (clase, t0, ms_antes))
             if time.monotonic() >= limite:
                 break
         self.esperas_sin_cambio += 1
         img, quieta = await self.esperar_estable(recortar=recortar, zona=zona)
-        return self._visto(Visto(img, quieta, False, None, antes_quieta), zona, recortar, tope)
+        return self._visto(Visto(img, quieta, False, None, antes_quieta), zona, recortar, tope,
+                           (clase, t0, ms_antes))
 
-    def _visto(self, v: Visto, zona, recortar: bool, tope: float) -> Visto:
+    def _visto(self, v: Visto, zona, recortar: bool, tope: float, medir: tuple[str, float, int]) -> Visto:
+        clase, t0, ms_antes = medir
+        mediciones.apuntar("tras", ms_cambio=None if v.tardo is None else round(v.tardo * 1000), cambio=v.cambio,
+                           quieta=v.quieta, antes_quieta=v.antes_quieta, tope_ms=round(tope * 1000),
+                           ms=round((time.monotonic() - t0) * 1000), ms_antes=ms_antes, clase=clase)
         if v.quieta:
             self._asentada[self._clave(zona, recortar)] = v.img
         if v.tardo is not None:
@@ -421,7 +458,7 @@ class Motor:
         return v
 
     async def paginas(self, avanzar, zona: tuple[int, int, int, int] | None = None, tope: int = 400,
-                      inicio=None):
+                      inicio=None, clase: str = "pagina"):
         """La pantalla página a página: la primera y otra tras cada `avanzar()`,
         cada una ya quieta, hasta que avanzar no cambia nada (el final) o van `tope`.
 
@@ -435,11 +472,11 @@ class Motor:
         if inicio is None:
             img, quieta = await self.asentada(zona=zona)
         else:
-            v = await self.tras(inicio, zona=zona)
+            v = await self.tras(inicio, zona=zona, clase="inicio")
             img, quieta = v.img, v.quieta
         yield img, quieta
         for _ in range(tope - 1):
-            v = await self.tras(avanzar, zona=zona)
+            v = await self.tras(avanzar, zona=zona, clase=clase)
             if not v.cambio:
                 return
             yield v.img, v.quieta
@@ -461,7 +498,7 @@ class Motor:
             await self.aparcar_raton()  # el puntero taparía lo que hay debajo
 
         await self.aparcar_raton()
-        async for img, _ in self.paginas(avanzar, zona=zona, tope=tope):
+        async for img, _ in self.paginas(avanzar, zona=zona, tope=tope, clase="rueda"):
             if r.paginas:
                 s = await asyncio.to_thread(desplazamiento, r.paginas[-1], img)
                 r.subio.append(s)
@@ -480,6 +517,7 @@ class Motor:
         retardo = self.perfil.get("retardo_tecla_ms", 12) / 1000
         self.control.comprobar()
         self._entrada()
+        mediciones.SUMAS.sumar("pulsaciones")
         try:
             await self.dispositivo.informe_teclado(p.modificadores, [p.tecla])
             await asyncio.sleep(retardo)
@@ -510,10 +548,14 @@ class Motor:
         choque = next((p for p in pulsaciones if p in prohibidas), None)
         if choque is not None:
             raise ValueError(f"{choque} está reservada en Ajustes (perfil.reservadas): no pulso nada")
-        for i, p in enumerate(pulsaciones):
-            await self._pulsar(p)
-            if i % 50 == 0:
-                self.progreso = f"tecleando {i}/{len(pulsaciones)}"
+        t0 = time.monotonic()
+        try:
+            for i, p in enumerate(pulsaciones):
+                await self._pulsar(p)
+                if i % 50 == 0:
+                    self.progreso = f"tecleando {i}/{len(pulsaciones)}"
+        finally:
+            mediciones.SUMAS.sumar("ms_tecleando", (time.monotonic() - t0) * 1000)
         return len(pulsaciones)
 
     async def teclear(self, texto: str, apuntar: bool = True,
@@ -534,6 +576,7 @@ class Motor:
     async def mover(self, x: int, y: int) -> None:
         self.control.comprobar()
         self._entrada()
+        mediciones.SUMAS.sumar("movimientos")
         await self.dispositivo.raton(x, y, 0)
         self._entrada()
 
@@ -541,6 +584,7 @@ class Motor:
         bits = {"izquierdo": 1, "derecho": 2, "centro": 4}[boton]
         self.control.comprobar()
         self._entrada()
+        mediciones.SUMAS.sumar("clics")
         try:
             await self.dispositivo.raton(x, y, 0)
             for _ in range(2 if doble else 1):
@@ -561,6 +605,7 @@ class Motor:
             await self.mover(x, y)
             await asyncio.sleep(0.06)
         self._entrada()
+        mediciones.SUMAS.sumar("ruedas")
         await self.dispositivo.rueda(-pasos if self.perfil.get("invertir_rueda") else pasos)
         self._entrada()
         if apuntar:
@@ -582,19 +627,19 @@ class Motor:
         """
         atajo = self.perfil["ir_a_linea"]
         visto = await self.tras(lambda: self.atajo(atajo, apuntar=False), recortar=False,
-                                cuadros=CUADROS_DIALOGO)
+                                cuadros=CUADROS_DIALOGO, clase="dialogo")
         if not visto.antes_quieta:
             self.bitacora.apuntar("error", f"ir a la línea {n}: la pantalla no estaba quieta antes de {atajo}")
             raise PantallaInesperada(
                 f"antes de pulsar {atajo} para ir a la línea {n} la pantalla no estaba quieta: no sé "
                 "si lo que apareció es el diálogo, así que no tecleo el número. ¿Algo se mueve encima "
-                "del editor, o el vídeo llega más tarde que «Retraso del vídeo» (Ajustes)?")
+                "del editor, o el vídeo llega más tarde que «Retraso del vídeo» (Ajustes)?", clase="dialogo")
         if not visto.cambio:
             self.bitacora.apuntar("error", f"ir a la línea {n}: {atajo} no abrió nada en la pantalla")
             raise PantallaInesperada(
                 f"pulsé {atajo} para ir a la línea {n} y no se abrió nada en la pantalla: no tecleo "
                 "el número, que iría al documento. ¿Es ése el atajo de este programa (Ajustes) y "
-                "tiene el foco el editor?")
+                "tiene el foco el editor?", clase="dialogo")
         await self.teclear(str(n), apuntar=False)
         await self.atajo("enter", apuntar=False)
         await asyncio.sleep(0.15)

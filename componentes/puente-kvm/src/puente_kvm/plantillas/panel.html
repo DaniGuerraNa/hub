@@ -60,8 +60,10 @@
       <div class="rotulo">Quién tiene el Mac</div>
       <div class="control-estado" id="control-estado">…</div>
       <p class="sub" id="control-ayuda" style="margin-bottom:12px"></p>
+      {# C-0489: lo pinta el sondeo (app.js) mientras dure el permiso de esta concesión. #}
+      <p class="sub" id="control-correcciones" style="margin-bottom:12px" hidden></p>
       <div class="pila">
-        <button class="cta grande" data-control="dar" id="boton-dar">Dar el control a Claude</button>
+        <button class="cta grande" data-control="dar" id="boton-dar" data-tope-lineas="{{ tope_lineas }}" data-tope-caracteres="{{ tope_caracteres }}">Dar el control a Claude</button>
         <button class="grande" data-control="retomar" id="boton-retomar">Retomar el Mac</button>
       </div>
       <p class="tarea" id="tarea"></p>

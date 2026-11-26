@@ -5,6 +5,7 @@
 - `comprobar`: qué falta en este equipo para que funcione, y cómo arreglarlo.
 - `diagnostico`: un informe sin secretos ni contenido del trabajo, para mandar.
 - `ocupado`: sale con 3 (y dice por qué) si el puente en marcha no se debe reiniciar ahora.
+- `mediciones resumir <zip>`: lo que dice un paquete de mediciones de uso (C-0483), legible.
 - `version`: la versión del código.
 """
 
@@ -12,7 +13,8 @@ from __future__ import annotations
 
 import sys
 
-USO = "uso: puente-kvm [web|mcp|comprobar [--sin-entrar]|diagnostico|ocupado|version]"
+USO = ("uso: puente-kvm [web|mcp|comprobar [--sin-entrar]|diagnostico|ocupado|version"
+       "|mediciones resumir <zip>]")
 
 
 def main() -> None:
@@ -47,6 +49,18 @@ def main() -> None:
         from .comprobar import orden_ocupado
 
         sys.exit(orden_ocupado())
+    elif orden == "mediciones":
+        if len(resto) != 2 or resto[0] != "resumir":
+            sys.exit("uso: puente-kvm mediciones resumir <zip>")
+        import zipfile
+        from pathlib import Path
+
+        from .mediciones import resumir
+
+        try:
+            print(resumir(Path(resto[1])), end="")
+        except (OSError, ValueError, zipfile.BadZipFile) as e:  # un .zip que no está o no es un .zip: se dice, sin traza
+            sys.exit(f"no puedo leer {resto[1]}: {e}")
     elif orden in ("version", "--version"):
         from . import config
 

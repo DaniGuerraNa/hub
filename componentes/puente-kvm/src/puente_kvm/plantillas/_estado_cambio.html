@@ -1,7 +1,10 @@
-{% if c.estado == 'propuesto' %}<span class="placa espera">espera tu aprobación</span>
+{% set acabado = permiso_acabado(c, permiso_vigente) %}
+{% if c.estado == 'propuesto' or acabado %}<span class="placa espera">espera tu aprobación</span>
 {% elif c.estado == 'aprobado' %}<span class="placa accion">aprobado</span>
 {% elif c.estado == 'escribiendo' %}<span class="placa accion">escribiendo</span>
 {% elif c.estado == 'escrito' %}<span class="placa espera">escrito, sin guardar</span>
 {% elif c.estado == 'verificado' %}<span class="placa ok">verificado</span>
 {% elif c.estado == 'rechazado' %}<span class="placa">rechazado</span>
 {% else %}<span class="placa riesgo">{{ c.estado }}</span>{% endif %}
+{% if c.aprobado_por == 'correcciones' and c.estado not in ('propuesto', 'rechazado') and not acabado %}<span class="placa accion" title="No te lo pidió: entraba en tu permiso de correcciones pequeñas de este encargo">aprobado por tu permiso</span>
+{% if c.sin_verificar %}<span class="placa espera" title="La lectura de la que parte no se verificó con la huella de la base">sobre una lectura sin verificar</span>{% endif %}{% endif %}

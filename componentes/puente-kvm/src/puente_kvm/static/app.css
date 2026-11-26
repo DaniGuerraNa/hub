@@ -229,6 +229,8 @@ pre.consulta { background: var(--lienzo); padding: 10px; border-radius: var(--r-
   padding: 20px; width: min(460px, calc(100vw - 32px)); box-shadow: 0 18px 50px rgba(0,0,0,.5); }
 .dialogo p { margin: 0 0 16px; color: var(--texto-2); }
 .dialogo .fila { justify-content: flex-end; }
+.dialogo .dialogo-casilla { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 16px; color: var(--texto-2); }
+.dialogo .dialogo-casilla input { margin-top: 3px; flex: none; }
 .fugaz { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--elevado);
   color: var(--texto); padding: 10px 16px; border-radius: var(--r-input); z-index: 60; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
 .fugaz.riesgo { background: #4a2219; }

@@ -31,6 +31,8 @@ import queue
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from . import mediciones
+
 # La versión de aiortc cuya cola privada se leyó (`rtcrtpreceiver.py`, 1.16.0).
 AIORTC_FIJADA = "1.16."
 # Cuántas tramas espera cada suscriptor como mucho: a 30 por segundo, medio
@@ -92,6 +94,7 @@ class Suscripcion:
         if self._cola.full():
             self._vaciar()
             self.descartes += 1
+            mediciones.SUMAS.sumar("descartes")
             self.esperando_clave = True
             if not trama.clave:
                 return
@@ -136,6 +139,7 @@ class Derivacion:
     def alimentar(self, datos: bytes, marca: int) -> None:
         """Una trama recién llegada del aparato. 🔴 Corre dentro de aiortc, antes de
         decodificarla: no puede lanzar ni esperar (lo envuelve `enganchar`)."""
+        mediciones.SUMAS.sumar("tramas")  # una suma en memoria: se vuelca cada minuto
         tipos = set()
         for nal in unidades(datos):
             tipo = nal[0] & 0x1F

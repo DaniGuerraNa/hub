@@ -207,6 +207,10 @@ AJUSTES_POR_OMISION = {
     # saltar_permisos: Claude Code sin pedir permiso para sus herramientas
     # (--dangerously-skip-permissions). Apagado de fábrica; lo enciende la persona.
     "claude": {"modelo": MODELO_POR_OMISION, "saltar_permisos": False},
+    # Mediciones de uso sin contenido (C-0483, `mediciones.py`): encendidas de
+    # fábrica, con su frase en Ajustes; se quedan en este equipo hasta que la
+    # persona las prepare para mandarlas.
+    "mediciones": {"activas": True},
 }
 
 _cerrojo = threading.Lock()

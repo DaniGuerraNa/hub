@@ -129,7 +129,8 @@ orden y lo que hay que vigilar.
 7. **Huella** de un objeto real pequeño (skill, paso 7). Apunta: la consulta que
    funcionó y la variante que coincide.
 8. **Escritura de prueba** en la pestaña de prueba: Claude propone un cambio
-   pequeño sobre la lectura del paso 6, tú lo apruebas, se escribe. Mira cada
+   pequeño sobre la lectura del paso 6, tú lo apruebas, se escribe (sin la
+   casilla de correcciones pequeñas: aquí se prueba la aprobación). Mira cada
    tramo en el Mac. **No guardes.** Apunta: si quedó exacto y cuánto tardó la
    comprobación previa (bitácora: «las páginas 1–N son las leídas (x s)»). Y
    si `ver_tramo` le llegó a Claude recortado a lo que cambió o entero: con el
@@ -179,6 +180,15 @@ orden y lo que hay que vigilar.
 
 ## Qué mandar de vuelta
 
+- **Las mediciones de uso**, tras **unos días usándolo** (C-0483). Vienen
+  encendidas: pídele a la persona que las deje así (Ajustes → «Mediciones de
+  uso») y que, pasados unos días de trabajo normal, pulse **«Preparar para
+  enviar»** y mande el .zip. Puede abrirlo antes: son números, sí/no y
+  palabras de una lista cerrada, sin nada de lo que se escribe o se lee (README,
+  «Mediciones de uso»). Se lee con `puente-kvm mediciones resumir <zip>`: con
+  eso se decide si «Retraso del vídeo» sobra o falta (el reparto de lo que
+  tarda el cambio tras pulsar), qué herramienta cuesta más y por qué vuelve el
+  control.
 - El informe de **`diagnostico`** (la orden de arriba): lleva versiones,
   firmware, estados, tiempos y los últimos errores, **sin** la contraseña, sin
   lo tecleado y sin nombres de objetos (lo entrecomillado sale como «…»).
@@ -213,8 +223,8 @@ orden y lo que hay que vigilar.
 - **El vídeo llega tarde** (1–2 s medidos con el aparato, 25-nov): justo
   después de pulsar, la pantalla quieta puede ser la de antes. El puente espera
   a ver el cambio (C-0485) con «Retraso del vídeo» de tope. Lo que tarda de
-  verdad cada cambio lo guarda el puente (las últimas 50), pero aún no se
-  enseña en ningún sitio (C-0483).
+  verdad cada cambio lo guardan las mediciones de uso (C-0483): el resumen da
+  su reparto y cuántas esperas acabaron en el tope.
 - **Cosas que se mueven encima del editor** (notificaciones, el salvapantallas,
   el cursor del ratón): una página capturada moviéndose queda marcada, y el
   puente no escribe sobre una pantalla que no se queda quieta.
@@ -248,6 +258,17 @@ orden y lo que hay que vigilar.
   del Esc devolvería el control antes de tiempo, también hacia el lado seguro,
   pero partiría el encargo). Apunta lo que veas.
 - **Parar** (arriba a la derecha) corta en el acto lo que esté haciendo Claude.
+- **Correcciones pequeñas** (C-0489): con la casilla del diálogo «Dar el control»,
+  lo que conserva parte del documento y cabe en 20 líneas y 1 500 caracteres en
+  todo el encargo se aprueba solo. Los topes son una política, no una medición:
+  se revisan con lo que digan las mediciones de uso. Admite lecturas sin
+  verificar (la documentación nunca tiene huella), con su marca en la placa y la
+  bitácora: ahí el diff se calcula contra lo transcrito, y lo que se leyó mal lo
+  arrastra. Para probarlo: pídele dos o tres correcciones de una línea en la
+  pestaña de prueba con la casilla marcada, mira que salen aprobadas solas, que
+  el panel dice «lleva N de 20 líneas» y que al acabar la bitácora dice
+  «Claude escribió N correcciones sin pedirte». Luego una que no quepa (reescribir
+  un párrafo largo): tiene que esperar tu aprobación. Apunta lo que veas.
 
 ## Al terminar las pruebas
 

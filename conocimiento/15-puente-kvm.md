@@ -58,6 +58,19 @@ Esc, vuelve al empezar el encargo siguiente. Si el puente no recibe los avisos
 de la terminal de Claude, devuelve el control tras cada lectura o escritura,
 como antes.
 
+**Correcciones pequeñas sin aprobar cada una.** En el diálogo de «Dar el
+control a Claude» hay una casilla, desmarcada siempre: con ella, durante ese
+encargo, las correcciones que quepan en 20 líneas y 1 500 caracteres **en
+total** se escriben sin tu clic (un documento nuevo, o quitar más de la mitad
+de uno, nunca).
+El panel dice cuánto lleva, el cambio lleva la placa «aprobado por tu permiso»
+y, al volver el control, la bitácora dice cuántas escribió sin pedirte:
+revísalas antes de guardar.
+
+**Mediciones de uso** (Ajustes): tiempos, cuántas veces y si salió bien o mal,
+sin texto, nombres ni capturas; 30 días en tu máquina. «Preparar para enviar»
+da un .zip para mandarlo tú; el hub nunca lo pide ni lo recibe.
+
 **El retraso del vídeo.** El vídeo del JetKVM llega 1-2 s tarde. Tras cada
 tecla, el puente espera a **ver** el cambio antes de capturar, hasta el
 **Retraso del vídeo** de Ajustes (3000 ms de fábrica). Si una lectura avisa de

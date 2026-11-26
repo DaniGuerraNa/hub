@@ -373,6 +373,43 @@ def test_copiar_diagnostico_deja_en_el_portapapeles_el_informe_sin_la_direccion(
     assert errores == []
 
 
+def test_las_mediciones_se_descargan_se_apagan_y_se_borran_desde_ajustes(navegador, tmp_path):
+    # C-0483: el .zip lo descarga la persona (un blob, con el Origin de esta web);
+    # la casilla se guarda sola; borrar pregunta con el diálogo del puente.
+    import io
+    import zipfile
+
+    from puente_kvm import mediciones
+    contexto = navegador.new_context(viewport={"width": 1280, "height": 860}, accept_downloads=True)
+    p = contexto.new_page()
+    errores = []
+    p.on("pageerror", lambda e: errores.append(str(e)))
+    with en_marcha(Simulador(lineas=["x"])) as base:
+        p.goto(base + "/ajustes")
+        assert p.locator("#mediciones-activas").is_checked()
+        assert "No guarda" in p.locator("#ajustes-mediciones + label + p").inner_text()
+        assert p.locator("#mediciones-resumen").inner_text().startswith("Guardadas: 1 día, ")
+        with p.expect_download() as descarga:
+            p.click("[data-mediciones-preparar]")
+        d = descarga.value
+        assert re.fullmatch(r"mediciones-puente-\d{4}-\d{2}-\d{2}\.zip", d.suggested_filename)
+        destino = tmp_path / d.suggested_filename
+        d.save_as(destino)
+        assert "LEEME.txt" in zipfile.ZipFile(io.BytesIO(destino.read_bytes())).namelist()
+        p.uncheck("#mediciones-activas")
+        p.wait_for_function("document.querySelector('.fugaz')?.textContent.includes('apagadas')")
+        assert config.leer_ajustes()["mediciones"]["activas"] is False
+        p.click("[data-mediciones-borrar]")
+        p.click(".dialogo [data-no]")  # cancelar no borra
+        assert mediciones.estado()["dias"] == 1
+        p.click("[data-mediciones-borrar]")
+        p.click(".dialogo [data-si]")
+        p.wait_for_function("document.querySelector('#mediciones-resumen').textContent.startsWith('Aún no hay')")
+        assert mediciones.estado()["dias"] == 0
+    contexto.close()
+    assert errores == []
+
+
 def test_un_clic_en_el_mac_le_quita_el_teclado_a_la_terminal_de_claude(pagina, con_claude_falso):
     # Hablando con Claude y con el Mac en uso a la vez: el clic en la imagen
     # no movía el foco (el mousedown se cancela para no arrastrarla) y lo
@@ -834,4 +871,46 @@ def test_entre_dos_tareas_del_encargo_la_pantalla_dice_que_claude_sigue_con_el_c
         pagina.wait_for_function("document.querySelector('#control-ayuda').textContent"
                                  ".startsWith('Claude terminó: el Mac vuelve a ti para revisar y guardar.')")
         assert pagina.locator("#control-estado").inner_text() == "Tú tienes el Mac"
+    assert pagina.errores == []
+
+
+def test_dar_el_control_lleva_la_casilla_de_correcciones_desmarcada_cada_vez(pagina):
+    """C-0489: el permiso de correcciones pequeñas sólo nace de esta casilla, que
+    sale desmarcada siempre (no se recuerda de una vez a otra). Y quien llama a
+    `confirmar` sin casilla sigue recibiendo un booleano."""
+    with en_marcha(Simulador(lineas=["x"])) as base:
+        pagina.goto(base + "/panel")
+        pagina.click("#boton-dar")
+        casilla = pagina.locator(".dialogo [data-casilla]")
+        assert casilla.is_visible() and not casilla.is_checked()
+        assert "Correcciones pequeñas sin pedirte aprobación" in pagina.locator(".dialogo").inner_text()
+        casilla.check()
+        pagina.click(".dialogo [data-si]")
+        pagina.wait_for_function("!document.querySelector('#control-correcciones').hidden")
+        assert pagina.locator("#control-correcciones").inner_text() == \
+            "Correcciones pequeñas sin pedirte: lleva 0 de 20 líneas."
+        assert httpx.get(base + "/api/estado", timeout=5).json()["control"]["correcciones"]["lineas"] == 0
+
+        pagina.click("#boton-retomar")
+        pagina.wait_for_function("document.querySelector('#control-correcciones').hidden")
+        pagina.click("#boton-dar")
+        assert not pagina.locator(".dialogo [data-casilla]").is_checked()
+        pagina.click(".dialogo [data-si]")
+        pagina.wait_for_function("document.querySelector('#control-estado').textContent === 'Claude tiene el control'")
+        assert "correcciones" not in httpx.get(base + "/api/estado", timeout=5).json()["control"]
+        assert pagina.locator("#control-correcciones").is_hidden()
+
+        # Sin casilla, un booleano; con ella, cancelar sigue siendo false.
+        def responder(llamada: str, boton: str):
+            # Sin esperar la promesa desde aquí: el diálogo se contesta con un clic.
+            pagina.evaluate("(l) => { window.__r = undefined; eval(l).then((v) => { window.__r = v; }); }", llamada)
+            casillas = pagina.locator(".dialogo [data-casilla]").count()
+            pagina.click(".dialogo " + boton)
+            pagina.wait_for_function("window.__r !== undefined")
+            return pagina.evaluate("window.__r"), casillas
+
+        assert responder("PuenteUI.confirmar('¿Seguro?')", "[data-si]") == (True, 0)
+        assert responder("PuenteUI.confirmar('¿Seguro?', { casilla: 'algo' })", "[data-no]") == (False, 1)
+        assert responder("PuenteUI.confirmar('¿Seguro?', { casilla: 'algo' })", "[data-si]") == \
+            ({"casilla": False}, 1)
     assert pagina.errores == []

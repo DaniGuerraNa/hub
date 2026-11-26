@@ -7,7 +7,11 @@ de línea de los de arriba no se muevan mientras se escribe.
 
 Las puertas, en orden, y ninguna se salta:
 1. **Aprobación en la pantalla.** Claude propone; la persona mira el diff y
-   pulsa «Aprobar». Claude no puede aprobar.
+   pulsa «Aprobar». Claude no puede aprobar. La única excepción la da la
+   persona (C-0489): al dar el control puede marcar «correcciones pequeñas», y
+   mientras dure esa concesión un cambio que conserva parte del original y cabe
+   en su presupuesto queda aprobado por ese permiso (`cabe`, `aprobar`). Si la
+   concesión acaba antes de escribirlo, vuelve a esperar su sí (`escribible`).
 2. **Todo el texto se puede teclear.** Si un carácter no tiene tecla en la
    distribución, no se escribe ni el primer tramo.
 3. **El documento es el que se leyó, hasta el tramo más bajo.** Antes de
@@ -39,9 +43,9 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import hid, huellas, lecturas
+from . import hid, huellas, lecturas, mediciones
 from .config import hogar
-from .control import SinControl
+from .control import Permiso, SinControl
 from .motor import Motor, PantallaInesperada, caja_cambiada, diferencia_local
 
 # La pantalla «es la misma» que la primera página leída si ningún cuadro
@@ -87,6 +91,11 @@ class Cambio:
     sin_verificar: bool = False
     # Cómo calcula la base la huella, si se supo al verificar lo guardado.
     variante: dict | None = None
+    # Quién lo aprobó: «persona» (su clic) o «correcciones» (su permiso de
+    # correcciones pequeñas, C-0489), y la concesión de ese permiso. Un
+    # cambio.json de antes no los trae y carga con los de por omisión.
+    aprobado_por: str = "persona"
+    permiso: str | None = None
 
     @property
     def carpeta(self) -> Path:
@@ -99,8 +108,8 @@ class Cambio:
         tmp.replace(self.carpeta / "cambio.json")
         (self.carpeta / "nuevo.txt").write_text("\n".join(self.nuevo) + "\n")
 
-    def anotar(self, que: str, quien: str) -> None:
-        self.historial.append({"t": time.time(), "que": que, "quien": quien})
+    def anotar(self, que: str, quien: str, **extra) -> None:
+        self.historial.append({"t": time.time(), "que": que, "quien": quien, **extra})
 
     def png(self, tramo: int) -> Path:
         return self.carpeta / f"tramo-{tramo:02d}.png"
@@ -183,12 +192,91 @@ def proponer(lectura: lecturas.Lectura, nuevo_texto: str, descripcion: str,
     return c
 
 
-def aprobar(c: Cambio) -> None:
-    if c.estado != "propuesto":
+# ── correcciones pequeñas (C-0489) ──────────────────────────────────────────
+def medida(c: Cambio) -> tuple[int, int]:
+    """(líneas, caracteres) que mueve el cambio: lo que quita más lo que pone, tramo a
+    tramo. Reemplazar una línea cuenta 2: se lee la de antes y se teclea la nueva."""
+    lineas = sum(len(t.antes) + len(t.nuevas) for t in c.tramos)
+    caracteres = sum(len(x) for t in c.tramos for x in t.antes + t.nuevas)
+    return lineas, caracteres
+
+
+def cabe(c: Cambio, permiso: Permiso) -> str | None:
+    """None si el cambio es una corrección pequeña que cabe en lo que le queda al
+    permiso; si no, el motivo, para decírselo a la persona.
+
+    Pequeña es corregir lo que hay: escribir un documento de cero o reemplazarlo
+    entero sigue siendo de su aprobación, quepa o no en el presupuesto."""
+    if not any(x.strip() for x in c.original):
+        return "el documento leído está vacío: escribir uno de cero lo aprueba la persona"
+    sm = difflib.SequenceMatcher(None, c.original, c.nuevo, autojunk=False)
+    # Una línea en blanco que sobrevive no es conservar el documento.
+    if not any(tag == "equal" and any(x.strip() for x in c.original[i1:i2])
+               for tag, i1, i2, _, _ in sm.get_opcodes()):
+        return "no conserva ninguna línea del original: reescribirlo entero lo aprueba la persona"
+    # Relativa al documento, no sólo al presupuesto: cambiar 9 de 10 líneas cabe en
+    # 20 líneas y conserva una, pero ya no es corregir lo que hay.
+    con_texto = sum(1 for x in c.original if x.strip())
+    quitadas = sum(len(t.antes) for t in c.tramos)
+    if quitadas * 2 > con_texto:
+        return (f"quita {quitadas} de las {con_texto} líneas con texto del original: rehacer más de "
+                "la mitad lo aprueba la persona")
+    return permiso.cabe(*medida(c))
+
+
+def aprobar(c: Cambio, permiso: Permiso | None = None) -> None:
+    """La única transición a «aprobado». Sin permiso, el clic de la persona; con él,
+    sólo si `cabe`, y lo gasta en el mismo paso: no hay aprobado por permiso sin
+    descontarlo del presupuesto.
+
+    La persona también aprueba uno que aprobó su permiso de correcciones: es lo
+    que le queda por hacer cuando la concesión acabó (`permiso_acabado`), y su
+    sí ya no depende de ninguna concesión."""
+    de_su_permiso = permiso is None and c.estado == "aprobado" and c.aprobado_por == "correcciones"
+    if c.estado != "propuesto" and not de_su_permiso:
         raise ValueError(f"sólo se aprueba un cambio propuesto (está {c.estado})")
+    if permiso is None:
+        c.aprobado_por, c.permiso = "persona", None
+        c.anotar("aprobado", "persona")
+    else:
+        motivo = cabe(c, permiso)
+        if motivo:
+            raise ValueError(f"no cabe en el permiso de correcciones pequeñas ({motivo})")
+        permiso.gastar(*medida(c), c.id)
+        c.aprobado_por, c.permiso = "correcciones", permiso.id
+        # `quien` sigue en claude | persona | puente (la plantilla lo usa como clase).
+        c.anotar("aprobado por tu permiso de correcciones pequeñas", "puente", permiso=True)
     c.estado, c.aprobado_en = "aprobado", time.time()
-    c.anotar("aprobado", "persona")
     c.guardar()
+
+
+def permiso_acabado(c: Cambio, permiso: Permiso | None) -> bool:
+    """Lo aprobó un permiso de correcciones cuya concesión ya acabó (`permiso` es
+    el vigente, o None): espera otra vez la aprobación de la persona. Sólo lo
+    dice; lo devuelve a «propuesto» `escribible`, y aprobarlo lo puede ella."""
+    return (c.estado == "aprobado" and c.aprobado_por == "correcciones"
+            and (permiso is None or permiso.id != c.permiso))
+
+
+def escribible(c: Cambio, permiso: Permiso | None) -> None:
+    """Se puede escribir ya, o ValueError. Es LA comprobación, la usan la API y
+    `escribir`: dos copias acabarían diciendo cosas distintas.
+
+    Un cambio aprobado por un permiso de correcciones se escribe sólo mientras
+    dure esa concesión (`permiso` es el vigente, o None). Si acabó —la persona
+    retomó el Mac, pulsó Parar, Claude terminó su turno, caducó, o se lo dio
+    otra vez, con o sin la casilla— vuelve a esperar su aprobación: el permiso
+    era para aquel rato, no para siempre."""
+    if c.estado != "aprobado":
+        raise ValueError(f"el cambio está {c.estado}: sólo se escribe uno aprobado por la persona")
+    if permiso_acabado(c, permiso):
+        c.estado, c.aprobado_en = "propuesto", None
+        c.aprobado_por, c.permiso = "persona", None
+        c.anotar("el permiso de correcciones pequeñas con que se aprobó ya acabó: vuelve a esperar "
+                 "tu aprobación", "puente")
+        c.guardar()
+        raise ValueError("el permiso de correcciones pequeñas con que se aprobó ya acabó: el cambio vuelve "
+                         "a esperar la aprobación de la persona")
 
 
 def rechazar(c: Cambio) -> None:
@@ -220,28 +308,29 @@ async def comprobar_paginas(motor: Motor, lectura: lecturas.Lectura, hasta: int)
         # que con el vídeo llegando tarde era la de antes (C-0485): comparada con
         # la leída, fallaba en falso. Que no cambie (ya estaba arriba) no es fallo:
         # lo dice la comparación de abajo.
-        visto = await motor.tras(lambda: motor.atajo(atajo, apuntar=False))
+        visto = await motor.tras(lambda: motor.atajo(atajo, apuntar=False), clase="inicio" if n == 1 else "pagina")
         ahora, quieta = visto.img, visto.quieta
         if not quieta:
             raise PantallaInesperada(
                 f"la pantalla no se queda quieta (página {n}): no comparo ni escribo sobre algo "
-                "que se mueve. ¿Hay algo animándose encima del editor?")
+                "que se mueve. ¿Hay algo animándose encima del editor?", clase="inestable")
         if diferencia_local(ahora, Image.open(lectura.png(n))) > MISMA_PANTALLA:
             pg = lectura.paginas[n - 1]
             lineas = f" (líneas {pg.primera}–{pg.ultima})" if pg.primera else ""
             raise PantallaInesperada(
                 f"la página {n}{lineas} no es la que se leyó: ¿otra ventana al frente, otro "
                 "documento, o el texto cambió después de leerlo? No escribo nada; si cambió, "
-                "hay que leerlo de nuevo.")
+                "hay que leerlo de nuevo.", clase="pagina_distinta")
 
 
-async def escribir(motor: Motor, c: Cambio, quien: str) -> Cambio:
-    if c.estado != "aprobado":
-        raise ValueError("el cambio no está aprobado: lo aprueba la persona en la pantalla del puente")
+async def escribir(motor: Motor, c: Cambio, quien: str, permiso: Permiso | None = None) -> Cambio:
+    """`permiso`: el de correcciones vigente al empezar (`Control.permiso_vigente`)."""
+    escribible(c, permiso)
     lectura = lecturas.cargar(c.lectura)
     c.estado, c.error = "escribiendo", ""
     c.anotar("escribiendo", quien)
     c.guardar()
+    inicio, fallo = time.monotonic(), "ninguno"
     try:
         # Antes de la primera tecla, todos los tramos: la distribución o las reservadas
         # pueden haber cambiado desde que se propuso, y un tramo que falla a mitad
@@ -281,15 +370,25 @@ async def escribir(motor: Motor, c: Cambio, quien: str) -> Cambio:
     except SinControl as e:
         c.estado, c.error = "fallido", f"cortado: {e}"
         c.anotar("cortado", quien)
+        fallo = "sin_control"
     except PantallaInesperada as e:
         c.estado, c.error = "fallido", str(e)
         c.anotar(f"no escrito: {c.error}", quien)
         motor.bitacora.apuntar("error", c.error, cambio=c.id)
+        fallo = e.clase if e.clase in mediciones.FALLOS_CAMBIO else "otro"
     except Exception as e:
         c.estado, c.error = "fallido", f"{type(e).__name__}: {e}"
         c.anotar(f"falló: {c.error}", quien)
         motor.bitacora.apuntar("error", c.error, cambio=c.id)
+        fallo = "intraducible" if isinstance(e, hid.TextoIntraducible) else "otro"
     c.guardar()
+    # Cuántos tramos, cuántos llegaron a escribirse y por qué paró: nunca el texto.
+    mediciones.apuntar("cambio", evento="escritura", tramos=len(c.tramos),
+                       escritos=sum(t.estado == "escrito" for t in c.tramos), ok=c.estado == "escrito", fallo=fallo,
+                       ms=round((time.monotonic() - inicio) * 1000),
+                       capturas_inestables=sum(bool(t.captura_inestable) for t in c.tramos),
+                       sin_verificar=bool(c.sin_verificar), quien=quien if quien in ("claude", "persona") else None,
+                       por=c.aprobado_por if c.aprobado_por in ("persona", "correcciones") else None)
     return c
 
 

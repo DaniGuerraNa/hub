@@ -40,21 +40,26 @@
     setTimeout(() => { d.remove(); if (avisoFugaz === d) avisoFugaz = null; }, riesgo ? 7000 : 2600);
   }
 
+  // Con `casilla` (su texto), una casilla debajo, desmarcada siempre: devuelve
+  // false si se cancela o { casilla: true|false } si se acepta. Sin ella, un
+  // booleano, como siempre lo ha devuelto.
   function confirmar(texto, opciones) {
     const o = opciones || {};
     return new Promise((resolver) => {
       const velo = document.createElement('div');
       velo.className = 'velo';
       velo.innerHTML = '<div class="dialogo" role="dialog" aria-modal="true"><p></p>' +
+        (o.casilla ? '<label class="casilla dialogo-casilla"><input type="checkbox" data-casilla><span></span></label>' : '') +
         '<div class="fila"><button data-no>Cancelar</button><button data-si></button></div></div>';
       $('p', velo).textContent = texto;
+      if (o.casilla) $('.dialogo-casilla > span', velo).textContent = o.casilla;
       const si = $('[data-si]', velo);
       si.textContent = o.si || 'Sí';
       si.className = o.peligro ? 'peligro' : 'cta';
       const cerrar = (v) => { velo.remove(); document.removeEventListener('keydown', tecla); resolver(v); };
       const tecla = (e) => { if (e.key === 'Escape') cerrar(false); };
       $('[data-no]', velo).onclick = () => cerrar(false);
-      si.onclick = () => cerrar(true);
+      si.onclick = () => cerrar(o.casilla ? { casilla: $('[data-casilla]', velo).checked } : true);
       velo.onclick = (e) => { if (e.target === velo) cerrar(false); };
       document.addEventListener('keydown', tecla);
       document.body.appendChild(velo);
@@ -261,6 +266,12 @@
       $('#control-ayuda').textContent = ayuda;
       $('#boton-dar').hidden = modo === 'claude';
       $('#boton-retomar').hidden = modo !== 'claude';
+    }
+    const co = $('#control-correcciones');
+    if (co) {
+      const p = modo === 'claude' && e.control.correcciones;
+      co.hidden = !p;
+      if (p) co.textContent = 'Correcciones pequeñas sin pedirte: lleva ' + p.lineas + ' de ' + p.tope_lineas + ' líneas.';
     }
     const sigue = $('#escrito-claude-sigue');
     if (sigue) sigue.hidden = modo !== 'claude';
@@ -513,11 +524,22 @@
     const d = b.dataset;
 
     if (d.control) {
+      const cuerpo = { accion: d.control };
       if (d.control === 'dar') {
-        const ok = await confirmar('¿Le das el control del Mac a Claude? No lo uses mientras tanto: lo que teclee irá a la ventana que esté al frente.', { si: 'Dar el control' });
-        if (!ok) return;
+        // C-0489: la casilla, desmarcada cada vez y sin recordarse. Es la única
+        // puerta del permiso: leer y escribir también dan el control, sin él.
+        // Los topes, de `control.py` por el botón: escritos aquí, se desfasarían.
+        const miles = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        const r = await confirmar('¿Le das el control del Mac a Claude? No lo uses mientras tanto: lo que teclee irá a la ventana que esté al frente.', {
+          si: 'Dar el control',
+          casilla: 'Correcciones pequeñas sin pedirte aprobación durante este encargo (hasta '
+            + miles(d.topeLineas) + ' líneas y ' + miles(d.topeCaracteres)
+            + ' caracteres en total; un documento nuevo o reescrito entero, siempre con tu aprobación)',
+        });
+        if (!r) return;
+        if (r.casilla) cuerpo.correcciones = true;
       }
-      await accion(() => api('/api/control', { accion: d.control }),
+      await accion(() => api('/api/control', cuerpo),
         d.control === 'parar' ? 'Parado' : d.control === 'dar' ? 'Claude tiene el control' : 'Vuelves a tener el Mac');
       sondear();
       return;
@@ -544,6 +566,38 @@
         pintarJiggler(r.jiggler && r.jiggler.encendido, r.texto, true);
         fugaz(encender ? 'Jiggler encendido (' + r.texto + '). Lo hace el JetKVM: sigue aunque cierres el puente.' : 'Jiggler apagado.');
       } catch (e) { /* ya lo dijo accion */ } finally { b.disabled = false; }
+      return;
+    }
+    // Las mediciones de uso (C-0483): el .zip lo descarga la persona, y sólo ella
+    // (la petición lleva el Origin de esta web: sin él, el puente no lo da).
+    if ('medicionesPreparar' in d) {
+      b.disabled = true;
+      try {
+        const r = await fetch('/api/mediciones/preparar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const nombre = ((r.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/) || [])[1] || 'mediciones-puente.zip';
+        const url = URL.createObjectURL(await r.blob());
+        const enlace = document.createElement('a');
+        enlace.href = url;
+        enlace.download = nombre;
+        document.body.appendChild(enlace);
+        enlace.click();
+        enlace.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        fugaz('Descargado ' + nombre + ': ábrelo y míralo antes de mandarlo.');
+      } catch (e) {
+        fugaz('No pude prepararlas: ' + e.message, true);
+      } finally { b.disabled = false; }
+      return;
+    }
+    if ('medicionesBorrar' in d) {
+      const ok = await confirmar('¿Borras todas las mediciones de uso guardadas en este equipo? No se puede deshacer.', { si: 'Borrar', peligro: true });
+      if (!ok) return;
+      try {
+        const r = await accion(() => api('/api/mediciones/borrar', {}), 'Mediciones borradas');
+        const resumen = $('#mediciones-resumen');
+        if (resumen) resumen.textContent = r.texto;
+      } catch (e) { /* ya lo dijo accion */ }
       return;
     }
     if ('copiarDiagnostico' in d) {
@@ -1187,6 +1241,19 @@
       if (r.error_conexion) fugaz('No conecta: ' + r.error_conexion, true);
       setTimeout(() => location.reload(), 800);
     });
+    // Fuera del formulario: se guarda al marcarla, sin «Guardar ajustes», y se
+    // puede apagar aunque haya una tarea en marcha.
+    const casillaMediciones = $('#mediciones-activas');
+    if (casillaMediciones) {
+      casillaMediciones.addEventListener('change', async () => {
+        const activas = casillaMediciones.checked;
+        try {
+          const r = await accion(() => api('/api/ajustes', { mediciones: { activas } }),
+            activas ? 'Mediciones de uso encendidas' : 'Mediciones de uso apagadas: no se guarda nada más');
+          if (r.mediciones) $('#mediciones-resumen').textContent = r.mediciones.texto;
+        } catch (e) { casillaMediciones.checked = !activas; }
+      });
+    }
     // Una medida verificada se activa aquí, con un clic de la persona: nunca sola al verificarse.
     for (const b of $$('[data-usar-teclado]', document)) {
       b.addEventListener('click', async () => {

@@ -15,6 +15,44 @@ cruzar.
 
 ## Sin publicar
 
+## 0.15.0 — 2026-11-25
+
+El Puente KVM puede escribir correcciones pequeñas sin una aprobación por
+cada una, y guarda mediciones de uso (sin nada de lo que escribes ni lees)
+que puedes mandar a quien te ayuda con él.
+
+### Qué tienes que hacer
+
+- Actualiza. Si usas el Puente KVM, en su pantalla, «Reabrir la conversación
+  de Claude» para que lea sus instrucciones nuevas.
+
+### Nuevo
+
+- **Puente KVM: correcciones pequeñas sin pedirte aprobación.** Al pulsar «Dar
+  el control a Claude», el diálogo trae una casilla (desmarcada siempre):
+  durante ese encargo, lo que quepa en **20 líneas y 1 500 caracteres en
+  total** se escribe sin tu clic. Un documento nuevo, o un cambio que quite
+  más de la mitad del documento, sigue esperando tu aprobación. La pantalla dice cuánto lleva, cada cambio así
+  lleva la placa «aprobado por tu permiso», y al volver el control te dice
+  cuántas correcciones escribió sin pedirte. Guardar sigue siendo tuyo.
+- **Puente KVM: «Mediciones de uso», en Ajustes.** Guarda cuánto tarda cada
+  cosa, cuántas veces pasa y si salió bien o mal: nunca lo que escribes, lo que
+  se lee, nombres de documentos ni la pantalla. Se queda en tu máquina (30
+  días). «Preparar para enviar» te da un .zip que puedes abrir y mirar antes de
+  mandarlo por donde quieras; «Borrar mediciones» lo vacía.
+
+### Qué cambia en lo que ya usabas
+
+- **Puente KVM: una escritura larga ya no se corta a los 30 minutos.** Claude
+  Code corta cualquier herramienta que pase 30 minutos sin contestar, y
+  escribir un documento de casi 2 000 líneas tarda más. Ahora la herramienta
+  contesta «sigue en marcha» a los 10 minutos, el puente acaba la escritura
+  solo y el control vuelve a ti al terminar. Si se te cortó una, el documento
+  quedó a medias y sin guardar: vuelve al archivo guardado y pide repetirla.
+- **Puente KVM: las mediciones vienen encendidas.** Si no las quieres, apágalas
+  en Ajustes → «Mediciones de uso»; nada sale de tu máquina sin que tú lo
+  mandes.
+
 ## 0.14.1 — 2026-11-25
 
 ### Qué tienes que hacer

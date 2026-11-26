@@ -15,8 +15,12 @@
     {% if c.sin_verificar and c.estado in ('propuesto', 'aprobado') %}
       <p class="aviso riesgo" style="margin:0 0 14px">Ojo: la lectura de la que parte está <b>sin verificar</b> con la huella de la base. Los tramos se calcularon contra lo transcrito, y si se leyó mal algún carácter el cambio lo arrastra. Lo seguro es verificar la lectura antes de aprobar.</p>
     {% endif %}
-    {% if c.estado == 'propuesto' %}
+    {% set acabado = permiso_acabado(c, permiso_vigente) %}
+    {% if c.estado == 'propuesto' or acabado %}
       <h2>Revisa y decide</h2>
+      {% if acabado %}
+        <p class="sub" id="permiso-acabado">Lo aprobó tu <b>permiso de correcciones pequeñas</b>, pero aquel encargo ya acabó (el Mac volvió a ti o diste el control otra vez): para escribirlo hace falta tu aprobación.</p>
+      {% endif %}
       <p class="sub">Claude propone escribir {{ 'este tramo' if c.tramos|length == 1 else 'estos ' ~ (c.tramos|length) ~ ' tramos' }} en el editor del Mac. Nada se escribe hasta que lo apruebes, y aun aprobado, <b>nada se guarda en la base</b>: eso lo haces tú en el Mac.</p>
       <div class="fila">
         <button class="cta" data-aprobar>Aprobar</button>
@@ -24,8 +28,14 @@
       </div>
     {% elif c.estado == 'aprobado' %}
       <h2>Aprobado: listo para escribir</h2>
+      {% if c.aprobado_por == 'correcciones' %}
+        <p class="sub" id="aprobado-por-permiso">No te lo pidió: entraba en tu <b>permiso de correcciones pequeñas</b> de este encargo, y Claude lo escribirá sin preguntarte. Si no lo quieres, recházalo; al devolverte el Mac, revísalo antes de guardar.</p>
+      {% endif %}
       <p class="sub">Claude puede escribirlo ahora, o puedes lanzarlo tú. Antes de teclear, el puente comprueba que la pantalla es la del documento que se leyó.</p>
-      <button class="cta" data-escribir>Escribir en el Mac ahora</button>
+      <div class="fila">
+        <button class="cta" data-escribir>Escribir en el Mac ahora</button>
+        {% if c.aprobado_por == 'correcciones' %}<button data-rechazar>Rechazar</button>{% endif %}
+      </div>
     {% elif c.estado == 'escribiendo' %}
       <h2>Escribiendo…</h2>
       <p class="sub" id="progreso">No toques el Mac. Si algo va mal, pulsa <b>Parar</b> arriba.</p>
@@ -89,7 +99,7 @@
   <section class="tarjeta">
     <h2>Historial</h2>
     <ul class="bitacora">
-      {% for h in c.historial|reverse %}<li class="{{ h.quien }}"><span class="hora" data-t="{{ h.t }}"></span><span><span class="tipo">{{ h.quien }}</span> · {{ h.que }}</span></li>{% endfor %}
+      {% for h in c.historial|reverse %}<li class="{{ h.quien }}"><span class="hora" data-t="{{ h.t }}"></span><span><span class="tipo">{{ h.quien }}</span> · {{ h.que }}{% if h.permiso %} <span class="placa accion">aprobado por tu permiso</span>{% endif %}</span></li>{% endfor %}
     </ul>
   </section>
 </div>

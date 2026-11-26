@@ -39,6 +39,7 @@ import time
 import aiohttp
 from PIL import Image
 
+from . import mediciones
 from . import video as video_directo
 from .dispositivo import AparatoNoDisponible, Dispositivo
 
@@ -99,6 +100,9 @@ class JetKVM(Dispositivo):
         # rpc; sin saberlo, None. Valen para esta conexión y no para otra.
         self.usb: str | None = None
         self.senal: str | None = None
+        # Mientras el propio puente cierra la conexión: lo que se corta entonces
+        # no es un corte (las mediciones, C-0483).
+        self._cerrando = False
 
     # ── conexión ────────────────────────────────────────────────────────────
     async def conectar(self) -> None:
@@ -160,6 +164,8 @@ class JetKVM(Dispositivo):
         @pc.on("connectionstatechange")
         async def _estado():
             if pc.connectionState in ("failed", "closed"):
+                if self.conectado:
+                    self._corte("conexion")
                 self.conectado, self._sin_video = False, False
                 self.usb = self.senal = None
                 self.motivo = f"conexión {pc.connectionState}"
@@ -175,6 +181,8 @@ class JetKVM(Dispositivo):
                 if not f.done():  # la que llega tarde: quien preguntaba ya dejó de esperar
                     f.set_result(j)
             elif j.get("method") == "otherSessionConnected":
+                if self.conectado:
+                    self._corte("otra_sesion")
                 self.conectado, self._sin_video = False, False
                 self.usb = self.senal = None
                 self.motivo = "otra sesión abrió el JetKVM (¿su web en un navegador?): el puente quedó fuera"
@@ -272,6 +280,13 @@ class JetKVM(Dispositivo):
             raise AparatoNoDisponible("conectado, pero no llega vídeo (¿el Mac está dormido, apagado o sin HDMI?)")
         self.conectado, self.motivo = True, ""
 
+    def _corte(self, motivo: str) -> None:
+        """La conexión, que estaba bien, se cortó sin que nadie la cerrara: se cuenta."""
+        if self._cerrando:
+            return
+        mediciones.SUMAS.sumar("cortes")
+        mediciones.apuntar("conexion", evento="corte", motivo=motivo, aparato="jetkvm")
+
     def _sin_video_directo(self, motivo: str) -> None:
         """El directo del navegador vuelve a las imágenes; las capturas siguen igual."""
         self._derivado = False
@@ -303,8 +318,11 @@ class JetKVM(Dispositivo):
             try:
                 trama = await track.recv()
             except Exception as e:  # la pista terminó: se dice en el estado
+                if self.conectado:
+                    self._corte("video")
                 self.conectado, self.motivo = False, f"el vídeo se cortó ({type(e).__name__})"
                 return
+            mediciones.SUMAS.sumar("fotogramas")  # en memoria: nada se escribe por fotograma
             self._trama, self._trama_t = trama, time.time()
             self.ancho, self.alto = trama.width, trama.height
             if self._sin_video:  # estaba dormido al conectar y ya despertó: lo demás estaba listo
@@ -334,6 +352,13 @@ class JetKVM(Dispositivo):
         return await asyncio.wait_for(f, tope)
 
     async def cerrar(self) -> None:
+        self._cerrando = True
+        try:
+            await self._cerrar()
+        finally:
+            self._cerrando = False
+
+    async def _cerrar(self) -> None:
         for t in self._tareas:
             t.cancel()
         self._tareas = []

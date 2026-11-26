@@ -16,6 +16,7 @@ import functools
 import io
 import json
 import os
+import time
 from pathlib import Path
 
 import httpx
@@ -52,10 +53,24 @@ def herramienta(f):
     TypedDict), FastMCP anunciaría un esquema de objeto y rechazaría el texto
     («Input should be a valid dictionary», visto con 1.30.0). Así no mira la
     anotación.
+
+    También mide cada llamada (C-0483): cuánto tardó, si salió bien o la clase
+    de su error, y cuántas imágenes devolvió. Nada de lo que entra o sale: sólo
+    el nombre de la herramienta y números. Medir no puede romper la herramienta:
+    lo manda aparte (`_medir`) y cualquier fallo se lo traga.
     """
     @functools.wraps(f)
     async def envuelta(*args, **kwargs):
-        r = await f(*args, **kwargs)
+        t0 = time.monotonic()
+        error = "ninguno"
+        r = None
+        try:
+            r = await f(*args, **kwargs)
+        except BaseException as e:
+            error = clase_de_error(e)
+            raise
+        finally:
+            _medir(f.__name__, t0, error, r)
         if isinstance(r, dict):
             return json.dumps(r, ensure_ascii=False, separators=(",", ":"), default=str)
         return r
@@ -65,7 +80,71 @@ def herramienta(f):
 
 
 class ErrorPuente(RuntimeError):
-    pass
+    """Lo que dice el servicio cuando no hace algo. `estado`: su código HTTP, o
+    None si no llegó a contestar (o lo rechazó la propia herramienta)."""
+
+    def __init__(self, texto: str, estado: int | None = None):
+        super().__init__(texto)
+        self.estado = estado
+
+
+# La clase de cada error, para las mediciones: por el código que da `app.fallo`.
+_POR_ESTADO = {423: "sin_control", 409: "ocupado", 422: "intraducible", 503: "aparato", 400: "peticion",
+               404: "no_existe", 403: "prohibido", 500: "servicio"}
+
+
+def clase_de_error(e: BaseException) -> str:
+    if isinstance(e, ErrorPuente):
+        if e.estado is not None:
+            return _POR_ESTADO.get(e.estado, "servicio" if e.estado >= 500 else "otro")
+        return "sin_servicio" if isinstance(e.__cause__, httpx.ConnectError) else "local"
+    if isinstance(e, (httpx.TimeoutException, asyncio.TimeoutError)):
+        return "tiempo"
+    return "otro"
+
+
+# Las mediciones en camino: una tarea suelta sin referencia la puede recoger el
+# recolector antes de que acabe.
+_midiendo: set[asyncio.Task] = set()
+
+
+def _medir(nombre: str, t0: float, error: str, resultado) -> None:
+    """Le manda al servicio lo que tardó esta herramienta, sin esperar la respuesta.
+
+    El hueco entre una herramienta y la siguiente (lo que piensa Claude) lo
+    calcula el servicio, que sabe cuándo llegó cada una y cuándo el mensaje."""
+    try:
+        imagenes, octetos = 0, 0
+        for parte in resultado if isinstance(resultado, list) else []:
+            if isinstance(parte, Image):
+                imagenes += 1
+                octetos += len(parte.data or b"")
+        _enviar({"nombre": nombre, "ms": round((time.monotonic() - t0) * 1000), "ok": error == "ninguno",
+                 "error": error, "imagenes": imagenes, "kb": round(octetos / 1024)})
+    except Exception:  # medir no rompe una herramienta
+        pass
+
+
+def _enviar(cuerpo: dict) -> None:
+    tarea = asyncio.get_running_loop().create_task(_mandar_medicion(cuerpo))
+    _midiendo.add(tarea)
+    tarea.add_done_callback(_midiendo.discard)
+
+
+async def _mandar_medicion(cuerpo: dict) -> None:
+    try:
+        async with httpx.AsyncClient(base_url=URL, timeout=1) as c:
+            await c.post("/api/mediciones/herramienta", json=cuerpo)
+    except Exception:
+        pass
+
+
+def _error_de(r: httpx.Response) -> ErrorPuente:
+    try:
+        detalle = r.json().get("detail")
+    except Exception:
+        detalle = r.text
+    return ErrorPuente(str(detalle), estado=r.status_code)
 
 
 async def _llamar(metodo: str, ruta: str, cuerpo: dict | None = None, timeout: float = 60) -> dict:
@@ -75,11 +154,7 @@ async def _llamar(metodo: str, ruta: str, cuerpo: dict | None = None, timeout: f
         except httpx.ConnectError as e:
             raise ErrorPuente(f"el servicio del puente no responde en {URL}: ¿está arrancado?") from e
     if r.status_code >= 400:
-        try:
-            detalle = r.json().get("detail")
-        except Exception:
-            detalle = r.text
-        raise ErrorPuente(str(detalle))
+        raise _error_de(r)
     return r.json()
 
 
@@ -90,11 +165,7 @@ async def _bajar(ruta: str) -> PILImage.Image:
         except httpx.ConnectError as e:
             raise ErrorPuente(f"el servicio del puente no responde en {URL}: ¿está arrancado?") from e
     if r.status_code >= 400:
-        try:
-            detalle = r.json().get("detail")
-        except Exception:
-            detalle = r.text
-        raise ErrorPuente(str(detalle))
+        raise _error_de(r)
     return PILImage.open(io.BytesIO(r.content)).convert("RGB")
 
 
@@ -430,14 +501,30 @@ async def comprobar_teclado(medida: str, huellas: str) -> dict:
 
 
 # ── leer un documento largo ─────────────────────────────────────────────────
-async def _esperar_tarea(tope: float) -> None:
-    fin = asyncio.get_event_loop().time() + tope
-    while asyncio.get_event_loop().time() < fin:
+# Cuánto espera una herramienta a que acabe su tarea antes de contestar «sigue en
+# marcha» (C-0490). Claude Code corta cualquier herramienta a los 30 min sin
+# respuesta: una escritura de 1.920 líneas llegó a la 1.038 y la herramienta se
+# cortó. La tarea es del servicio y sigue sola; el control vuelve a la persona
+# cuando acaba (C-0488), así que contestar antes no corta nada.
+ESPERA_MAX_S = 10 * 60
+
+
+async def _esperar_tarea(tope: float = ESPERA_MAX_S) -> dict | None:
+    """None si la tarea acabó; si no, en el tope, qué hace y su progreso."""
+    fin = asyncio.get_event_loop().time() + min(tope, ESPERA_MAX_S)
+    while True:
         e = await _llamar("GET", "/api/estado")
         if not e.get("tarea"):
-            return
+            return None
+        if asyncio.get_event_loop().time() >= fin:
+            return {"tarea": e.get("tarea"), "progreso": e.get("progreso") or ""}
         await asyncio.sleep(1)
-    raise ErrorPuente("la tarea sigue en marcha; consulta estado() más tarde")
+
+
+def _sigue(en_marcha: dict, consultar: str) -> str:
+    return (f"Sigue en marcha ({en_marcha['tarea']}{', ' + en_marcha['progreso'] if en_marcha['progreso'] else ''}): "
+            f"el puente la termina solo. {consultar} para ver cómo va, o termina tu turno: el control "
+            "vuelve a la persona cuando acabe, no antes. Dile que no toque el Mac hasta entonces.")
 
 
 @herramienta
@@ -458,7 +545,10 @@ async def leer_documento(nombre: str, x: int = 0, y: int = 0, ancho: int = 0, al
     if x or y or ancho or alto:
         cuerpo.update(x=x, y=y, ancho=ancho, alto=alto)
     r = await _llamar("POST", "/api/lecturas", cuerpo)
-    await _esperar_tarea(1800)
+    en_marcha = await _esperar_tarea()
+    if en_marcha:
+        return {"id": r["id"], "estado": "capturando",
+                "siguiente": _sigue(en_marcha, f"estado_lectura('{r['id']}')")}
     res = await _llamar("GET", f"/api/lecturas/{r['id']}")
     res.pop("paginas_detalle", None)
     # Una vuelta por página, no dos (C-0474): cada vuelta vuelve a leer de la
@@ -552,6 +642,13 @@ async def proponer_cambio(lectura: str, descripcion: str, ruta: str = "", texto:
     El puente calcula los tramos que cambian y la persona los revisa y aprueba en su
     pantalla. Hasta que lo apruebe, escribir_cambio no hace nada. Parte siempre del
     archivo ensamblado de una lectura verificada.
+
+    Si al darte el control marcó «correcciones pequeñas», un cambio que conserva parte
+    del original y cabe en lo que queda del permiso (20 líneas y 1 500 caracteres en
+    todo el encargo) vuelve ya aprobado (`aprobado_por: "correcciones"`): escríbelo y
+    dile qué corregiste. Si `cabe` trae un motivo, no cabe: díselo y espera su
+    aprobación. Junta todas las correcciones en un solo cambio y nunca lo partas para
+    que quepa.
     """
     if ruta:
         texto = _leer_propuesta(ruta)
@@ -572,16 +669,25 @@ async def estado_cambio(cambio: str) -> dict:
 async def escribir_cambio(cambio: str) -> dict:
     """Escribe en el editor del Mac un cambio YA APROBADO por la persona, tramo a tramo.
 
+    Uno aprobado por su permiso de correcciones pequeñas sólo se escribe mientras
+    sigas con ese mismo control: si lo retomó, pulsó Parar, terminaste tu turno o
+    se lo dio otra vez, con o sin la casilla, el cambio vuelve a esperar su
+    aprobación y no se escribe.
     Antes comprueba que la pantalla es la del documento leído; si no, no escribe nada.
     No guarda: al terminar, dile a la persona que lo revise y lo guarde o ejecute ella, y
     termina tu turno (hasta entonces el control sigue contigo, para otro cambio si hace falta).
+    Una escritura larga no cabe en una llamada: a los 10 min contesta con el estado y
+    `siguiente` dice que sigue en marcha; el puente la acaba solo. Puedes consultar
+    estado_cambio o terminar tu turno: el control vuelve a la persona al acabar.
     """
     await _llamar("POST", f"/api/cambios/{cambio}/escribir", {})
-    await _esperar_tarea(1800)
+    en_marcha = await _esperar_tarea()
     r = await _llamar("GET", f"/api/cambios/{cambio}")
     for t in r["tramos"]:
         t.pop("antes", None)
         t.pop("nuevas", None)
+    if en_marcha:
+        r["siguiente"] = _sigue(en_marcha, f"estado_cambio('{cambio}')")
     return r
 
 

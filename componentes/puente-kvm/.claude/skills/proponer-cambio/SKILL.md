@@ -9,8 +9,23 @@ description: Lleva un cambio hecho aquí de vuelta al editor del Mac — propues
 apruebe el cambio en el puente y que te dé el control. **Guardar o ejecutar en el
 Mac nunca es tuyo.**
 
+**Correcciones pequeñas.** Si al darte el control marcó «correcciones pequeñas»
+(`estado()` lo dice en `control.correcciones`), un cambio que conserva parte del
+documento y cabe en lo que queda (20 líneas y 1 500 caracteres en todo el encargo,
+contando lo que quitas más lo que pones) vuelve de `proponer_cambio` ya aprobado
+(`aprobado_por: "correcciones"`): escríbelo sin pedirle nada y dile qué corregiste.
+- **Todas las correcciones del encargo en UN cambio.** El presupuesto es para el
+  encargo entero, no por cambio.
+- Si `cabe` no es null, no cabe: díselo con ese motivo y espera su aprobación,
+  como siempre. **Nunca partas un cambio para que quepa**, ni lo rehagas más
+  pequeño a trozos: eso es saltarse su aprobación.
+- Un documento nuevo, o uno reescrito entero, nunca entra: lo aprueba ella.
+- El permiso dura lo que dura ese control: si lo retoma, pulsa Parar, terminas
+  tu turno o se lo dio otra vez, con o sin la casilla, lo que aún no escribiste
+  vuelve a esperar su sí.
+
 Herramientas, en una sola búsqueda:
-`select:mcp__puente-kvm__proponer_cambio,mcp__puente-kvm__estado_cambio,mcp__puente-kvm__escribir_cambio,mcp__puente-kvm__ver_tramo`.
+`select:mcp__puente-kvm__estado,mcp__puente-kvm__proponer_cambio,mcp__puente-kvm__estado_cambio,mcp__puente-kvm__escribir_cambio,mcp__puente-kvm__ver_tramo`.
 
 1. **Parte de una lectura verificada** (`leer-documento`). Sin huella que
    coincida, el diff se calcula contra una copia que puede no ser la real: dilo
@@ -31,13 +46,16 @@ Herramientas, en una sola búsqueda:
    tramo, y que lo tiene para revisar en el puente (le sale un aviso con
    «Revisar»).
 4. **Espera** a que lo apruebe (`estado_cambio`). Si lo rechaza, pregunta qué
-   ajustar.
+   ajustar. (Con el permiso de correcciones y el cambio ya aprobado, sigue.)
 5. Con el cambio aprobado, pide el control y `escribir_cambio(cambio)`. Antes de
    escribir, el puente comprueba que la pantalla es la del documento leído; si
    falla, no escribe nada: cuéntale por qué y qué hacer (normalmente, volver al
    documento, o leerlo de nuevo si cambió).
-   Una escritura larga puede tardar mucho: puedes terminar tu turno mientras
-   sigue, y el control vuelve a la persona **cuando acaba**, no antes. Dile
+   Una escritura larga puede tardar mucho: `escribir_cambio` contesta a los
+   10 min con «Sigue en marcha» (Claude Code corta una herramienta a los 30) y el
+   puente la acaba solo. Consulta `estado_cambio` o termina tu turno: el control
+   vuelve a la persona **cuando acaba**, no antes. No toques la configuración del
+   puente ni de Claude Code para alargar esperas. Dile
    que no toque el Mac hasta entonces (Parar sí la corta en el acto).
 6. Revisa cada tramo con `ver_tramo`: llega sólo la franja que cambió al
    escribirlo (lo demás está igual que antes de teclear); si necesitas el

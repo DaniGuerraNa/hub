@@ -131,6 +131,20 @@ Todo se hace en **una sola pantalla: http://127.0.0.1:8794**.
    abre el diff. Nada se escribe hasta que lo apruebas, y nada se guarda en la
    base hasta que lo guardas tú en el Mac. Tras guardar, la huella confirma que
    quedó exactamente lo acordado.
+   - **Correcciones pequeñas sin una aprobación por cada una.** Al dar el
+     control, el diálogo trae una casilla (desmarcada siempre): «Correcciones
+     pequeñas sin pedirte aprobación durante este encargo». Con ella, lo que
+     conserva parte del documento y cabe en **20 líneas y 1 500 caracteres en
+     total** (sumando todos los cambios del encargo, lo que quita más lo que
+     pone) queda aprobado solo, con la placa «aprobado por tu permiso» y su
+     línea en la bitácora; el panel dice cuánto lleva. Un documento nuevo o
+     reescrito entero, o lo que se pase, sigue esperando tu aprobación. El
+     permiso acaba con ese control: al retomarlo, Parar, al terminar Claude su
+     turno, tras 10 minutos sin que Claude haga nada o al dárselo otra vez, con
+     o sin la casilla; lo aprobado y aún sin escribir vuelve a esperar tu sí.
+     Al devolverte el Mac, la bitácora dice cuántas escribió sin pedírtelo:
+     **revísalas antes de guardar** (no hay «Deshacer» del puente: Cmd+Z en el
+     Mac, y las capturas de cada tramo).
 
 ## Preparar el Mac (una vez)
 
@@ -199,6 +213,29 @@ falla, `uv run --frozen puente-kvm diagnostico` deja un informe sin secretos
 ni contenido del trabajo para mandar. Desde un espacio de trabajo fuera del
 código (`PUENTE_TRABAJO`), las órdenes van con
 `uv run --directory "${PUENTE_CODIGO:-.}" --frozen puente-kvm …`.
+
+## Mediciones de uso
+
+Para mejorar las esperas y las herramientas con el aparato de verdad, el
+puente apunta **cuánto tarda cada cosa y cuántas veces pasa**: lo que tarda
+cada herramienta de Claude y lo que piensa entre una y otra, cuánto tarda la
+imagen del Mac en cambiar tras pulsar, por qué vuelve el control, si una
+escritura falló y por qué, quién aprobó cada cambio (tú o tu permiso de
+correcciones pequeñas) y cuántas líneas y caracteres mueve, los fotogramas por
+segundo y los cortes del vídeo.
+Sólo números, sí/no y palabras de una lista cerrada: **nunca** lo que se
+escribe ni lo que se lee en el Mac, ni nombres (de lecturas, cambios, objetos),
+ni rutas, ni posiciones en la pantalla, ni imágenes. Las horas van en segundos
+desde que arrancó el puente.
+
+- **Dónde:** `PUENTE_HOME/mediciones/AAAA-MM-DD.jsonl`, un archivo por día;
+  los de más de 30 días se borran al arrancar. No sale nada de este equipo.
+- **Cómo se manda:** Ajustes → «Mediciones de uso» → **«Preparar para
+  enviar»** descarga un .zip (texto JSON y un `LEEME.txt`) que puedes abrir y
+  mirar antes de mandarlo por donde quieras. Quien lo recibe lo lee con
+  `uv run --frozen puente-kvm mediciones resumir <zip>`.
+- **Cómo se apaga:** la casilla de esa misma sección (viene encendida). «Borrar
+  mediciones» borra lo guardado.
 
 ## Probar
 

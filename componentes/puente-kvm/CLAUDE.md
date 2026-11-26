@@ -33,7 +33,10 @@ por la interfaz gráfica. Las herramientas son las del servidor MCP
    `ALTER`, ni pulsar «Ejecutar». Escribes en el editor; guardar es de la persona.
 4. **Lo que escribes de vuelta pasa por `proponer_cambio`** y lo aprueba la
    persona en su pantalla. No lo teclees a mano con `teclear` para saltarte la
-   aprobación.
+   aprobación. La única excepción la da ella: si al darte el control marcó
+   «correcciones pequeñas», lo que cabe en ese permiso vuelve ya aprobado (skill
+   `proponer-cambio`). **Partir un cambio para que quepa no vale**: todas las
+   correcciones van en uno, y si no cabe, espera su aprobación.
 5. **Una cifra que no se puede defender no se da.** Una transcripción es exacta
    sólo si la huella de la base coincide (`comprobar_huella`). «Se ve bien» no
    es exacta.
