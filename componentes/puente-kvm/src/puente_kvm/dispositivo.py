@@ -32,6 +32,10 @@ class Dispositivo(abc.ABC):
     #: Quién apunta en la bitácora lo que el aparato tiene que contar sin que
     #: nadie le pregunte (que el vídeo directo se apagó, por ejemplo).
     avisar: Callable[[str], None] | None = None
+    #: Cuánto tarda, como mucho, el vídeo en enseñar una tecla, en segundos
+    #: (C-0485). None: el del perfil («Retraso del vídeo» en Ajustes), que es
+    #: lo que vale para el JetKVM; un aparato que lo sabe de cierto lo pone.
+    retardo_video_s: float | None = None
 
     @abc.abstractmethod
     async def conectar(self) -> None: ...

@@ -6,6 +6,10 @@ le ha dado el control **en la pantalla del puente**, y lo pierde al pulsar
 «Parar» o al reiniciar el servicio: arranca siempre sin control, a
 propósito: un reinicio no puede dejar a Claude con el teclado del Mac.
 
+Cuando el puente se lo devuelve a la persona (Claude acabó el encargo, cambió
+el aparato…) lo hace por `Puente.devolver_control`, que lo apunta en la
+bitácora: aquí no hay otra puerta para eso (C-0486).
+
 Cada acción queda en la bitácora (JSONL), con captura si cambió la pantalla.
 """
 
@@ -47,11 +51,6 @@ class Control:
         if self.modo == CLAUDE and time.time() - self.ultima_accion > INACTIVIDAD_S:
             self.modo, self.desde = LIBRE, time.time()
             self.motivo = f"volvió a la persona tras {INACTIVIDAD_S // 60} min sin que Claude hiciera nada"
-
-    def devolver(self, motivo: str) -> None:
-        """Al acabar una tarea entera: lo siguiente es de la persona (revisar, guardar)."""
-        if self.modo == CLAUDE:
-            self.modo, self.desde, self.motivo = LIBRE, time.time(), motivo
 
     def retomar(self, motivo: str = "retomado en la pantalla") -> None:
         # No hace falta avisar a nadie: lo que esté en marcha comprueba el

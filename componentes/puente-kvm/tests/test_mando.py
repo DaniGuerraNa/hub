@@ -50,14 +50,57 @@ def test_otra_web_no_puede_usar_el_mac():
                 ws.receive_text()
 
 
-def test_con_el_control_de_claude_no_llega_nada_y_se_dice_por_que(entorno):
+def test_usar_el_mac_con_el_control_de_claude_se_lo_quita_y_lo_tecleado_llega(entorno):
+    """🔴 C-0484: quien pulsa «Usar el Mac desde aquí» quiere usarlo ya; antes
+    tenía que buscar «Retomar» y todo lo que hacía se perdía con un aviso."""
     c, sim = entorno
-    antes = list(sim.editor.lineas)
+    sim.editor.lineas, sim.editor.cursor = [""], (0, 0)
     c.post("/api/control", json={"accion": "dar"}, headers=PERSONA)
     with c.websocket_connect("/ws/mando", headers=PERSONA) as ws:
+        assert "Le quitaste el control a Claude" in ws.receive_json()["aviso"]
+        pulsar(ws, H, O)
+        ws.send_text(json.dumps({"t": "soltar"}))
+    assert sim.editor.lineas == ["ho"]
+    estado = c.get("/api/estado").json()["control"]
+    assert estado["modo"] == "libre" and "usar el Mac desde aquí" in estado["motivo"]
+    assert any(e["detalle"] == "la persona retoma el Mac al usarlo desde aquí" and e["quien"] == "persona"
+               for e in c.app.state.puente.bitacora.ultimas())
+
+
+def test_lo_que_claude_tenia_en_marcha_se_corta_en_su_siguiente_tecla(entorno):
+    c, _ = entorno
+    p = c.app.state.puente
+    c.post("/api/control", json={"accion": "dar"}, headers=PERSONA)
+    with c.websocket_connect("/ws/mando", headers=PERSONA) as ws:
+        ws.receive_json()
+    from puente_kvm.control import SinControl
+    with pytest.raises(SinControl):
+        p.control.comprobar()
+
+
+def test_con_una_tarea_acabando_lo_de_la_persona_espera_sin_cerrarse(entorno):
+    c, sim = entorno
+    sim.editor.lineas, sim.editor.cursor = [""], (0, 0)
+    p = c.app.state.puente
+    p.motor.tarea = "lectura de prueba"
+    with c.websocket_connect("/ws/mando", headers=PERSONA) as ws:
+        pulsar(ws, H)
+        assert "termina «lectura de prueba»" in ws.receive_json()["espera"]
+        pulsar(ws, H)  # se avisa una vez, no en cada movimiento
+        p.motor.tarea = None
+        pulsar(ws, O)
+        ws.send_text(json.dumps({"t": "soltar"}))
+    assert sim.editor.lineas == ["o"]
+
+
+def test_si_claude_recibe_el_control_con_esto_abierto_no_llega_nada(entorno):
+    c, sim = entorno
+    antes = list(sim.editor.lineas)
+    with c.websocket_connect("/ws/mando", headers=PERSONA) as ws:
+        c.post("/api/control", json={"accion": "dar"}, headers=PERSONA)
         pulsar(ws, H)
         respuesta = ws.receive_json()
-    assert "Claude tiene el Mac" in respuesta["no"]
+    assert "Le diste el control a Claude" in respuesta["no"]
     assert sim.editor.lineas == antes
 
 

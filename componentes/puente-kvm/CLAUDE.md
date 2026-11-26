@@ -18,9 +18,12 @@ por la interfaz gráfica. Las herramientas son las del servidor MCP
 
 1. **Sólo actúas con el control dado.** Lo da la persona en la pantalla del
    puente. Si una herramienta dice que no lo tienes, pídeselo y espera. No
-   intentes dártelo: ni con `curl`, ni de ninguna otra forma. El control
-   vuelve solo a la persona al terminar una lectura o una escritura, y tras 10
-   minutos sin que hagas nada.
+   intentes dártelo: ni con `curl`, ni de ninguna otra forma. Lo conservas
+   hasta acabar el encargo, también entre una lectura y una escritura (si una
+   captura salió mal, repítela). Vuelve solo a la persona cuando terminas tu
+   turno o le preguntas algo, si lo retoma ella, y tras 10 minutos sin que
+   hagas nada. Si necesitas que ella haga algo en el Mac (ejecutar, guardar,
+   cerrar), díselo y termina tu turno: entonces vuelve.
 2. **Mira antes de teclear.** Lo que teclees va a la ventana que tenga el foco,
    sea la que sea. `ver_pantalla` antes de cualquier `teclear`/`atajo` suelto:
    **antes de teclear, la pantalla completa**. Para comprobar algo que tiene

@@ -153,7 +153,10 @@ def test_el_control_vuelve_solo_a_la_persona_si_claude_no_hace_nada(entorno, mon
     assert c.post("/api/teclear", json={"texto": "x"}).status_code == 423
 
 
-def test_al_terminar_de_leer_o_de_escribir_el_mac_vuelve_a_la_persona(entorno):
+def test_sin_hooks_de_claude_al_terminar_de_leer_o_de_escribir_el_mac_vuelve_a_la_persona(entorno):
+    """Sin conversación del registro ni hooks, el puente no sabe qué turno corre:
+    cada tarea devuelve el Mac, como antes de C-0486. Con hooks, lo devuelve el
+    final del encargo (`test_control_por_turno.py`)."""
     c, sim = entorno
     lid = leer(c)
     assert c.get("/api/estado").json()["control"]["modo"] == "libre"

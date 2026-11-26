@@ -32,7 +32,8 @@ URL = os.environ.get("PUENTE_URL", f"http://127.0.0.1:{os.environ.get('PUENTE_PU
 mcp = FastMCP(
     "puente-kvm",
     instructions=("Manejas un Mac ajeno por un JetKVM: sólo con el control que te da la persona en el "
-                  "puente (si no lo tienes, pídeselo y espera), y nunca guardes ni ejecutes en el Mac."),
+                  "puente (si no lo tienes, pídeselo y espera), y nunca guardes ni ejecutes en el Mac. "
+                  "Lo conservas hasta acabar el encargo; vuelve a ella cuando terminas tu turno."),
 )
 
 
@@ -126,7 +127,7 @@ PARA_CLAUDE = {
                     "aviso", "ultimo_fotograma_s", "nota", "mac", "senal"),
     "tarea": None, "progreso": None, "error_conexion": None, "jiggler_texto": None, "mando": None,
     "lecturas": ("id", "nombre", "estado", "error", "paginas", "transcritas", "lineas", "conflictos", "huecos",
-                 "pendientes", "completo", "verificada", "errores_por_pagina", "inestables"),
+                 "pendientes", "completo", "verificada", "errores_por_pagina", "inestables", "aviso"),
     "cambios": None,
 }
 
@@ -409,9 +410,9 @@ async def probar_teclado(medida: str, motor: str = "SQL Server") -> dict:
     de lo que llega al editor, en filas de 8–10 caracteres. motor: "SQL Server" o "PostgreSQL".
 
     En una pestaña vacía del programa donde la persona escribe sus consultas (el que sea),
-    y con el control, que al acabar vuelve a ella.
-    NO la ejecutes: la ejecuta ella. Después lee la rejilla de resultados (n, largo, huella) y pásasela a
-    comprobar_teclado. Cada ronda sólo lleva lo que falta por verificar.
+    y con el control. NO la ejecutes: pídele que la ejecute y termina tu turno, que es
+    cuando el control vuelve a ella. Después lee la rejilla de resultados (n, largo,
+    huella) y pásasela a comprobar_teclado. Cada ronda sólo lleva lo que falta por verificar.
     """
     return await _llamar("POST", "/api/teclado/probar", {"medida": medida, "motor": motor}, timeout=600)
 
@@ -471,6 +472,9 @@ async def leer_documento(nombre: str, x: int = 0, y: int = 0, ancho: int = 0, al
         res["siguiente"] += (f" Ojo: las páginas {res['inestables']} se capturaron con la pantalla aún "
                              "moviéndose y pueden estar a medio pintar: míralas antes de transcribirlas, y "
                              "si lo están, dilo y vuelve a leer el documento.")
+    if res.get("aviso"):
+        res["siguiente"] += (f" Ojo: {res['aviso']}. Díselo a la persona (Ajustes → «Retraso del vídeo»); "
+                             "si la última página no llega al final del documento, vuelve a leerlo tras subirlo.")
     return res
 
 
@@ -569,7 +573,8 @@ async def escribir_cambio(cambio: str) -> dict:
     """Escribe en el editor del Mac un cambio YA APROBADO por la persona, tramo a tramo.
 
     Antes comprueba que la pantalla es la del documento leído; si no, no escribe nada.
-    No guarda: al terminar, dile a la persona que lo revise y lo guarde o ejecute ella.
+    No guarda: al terminar, dile a la persona que lo revise y lo guarde o ejecute ella, y
+    termina tu turno (hasta entonces el control sigue contigo, para otro cambio si hace falta).
     """
     await _llamar("POST", f"/api/cambios/{cambio}/escribir", {})
     await _esperar_tarea(1800)

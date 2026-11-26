@@ -411,6 +411,7 @@ def _espacio(estado: dict | None = None) -> list[Punto]:
     if not medido:
         puntos.append(Punto(OJO, "entorno del Mac", "sin medir (no hay trabajo/entorno.md)",
                             "sigue docs/pruebas-con-el-aparato.md con el aparato delante"))
+    puntos.append(punto_hooks(esp))
     try:
         servidor = json.loads((config.CODIGO / ".mcp.json").read_text())["mcpServers"]["puente-kvm"]
         orden = shutil.which(servidor["command"], path=_ruta_usuario())
@@ -419,6 +420,45 @@ def _espacio(estado: dict | None = None) -> list[Punto]:
     except (OSError, KeyError, json.JSONDecodeError) as e:
         puntos.append(Punto(FALTA, "herramientas de Claude (.mcp.json)", f"no se puede leer: {e}"))
     return puntos
+
+
+# Los hooks de Claude Code con que el puente sabe cuándo acaba un encargo (C-0486).
+HOOKS_DEL_TURNO = ("UserPromptSubmit", "Stop", "SessionEnd")
+
+
+def punto_hooks(esp: Path) -> Punto:
+    """Que la sesión de Claude le cuente al puente cuándo empieza y acaba cada encargo.
+
+    Los lee del settings del proyecto y del local del espacio, que son las
+    fuentes que carga la sesión (`--setting-sources project,local`). Sin ellos
+    el puente funciona, pero no sabe qué turno corre: devuelve el control tras
+    cada lectura o escritura, y un encargo de varios tramos se queda en el primero.
+    """
+    tienen: set[str] = set()
+    for nombre in ("settings.json", "settings.local.json"):
+        try:
+            hooks = json.loads((esp / ".claude" / nombre).read_text()).get("hooks") or {}
+        except (OSError, json.JSONDecodeError, AttributeError):
+            continue
+        for evento in HOOKS_DEL_TURNO:
+            grupos = hooks.get(evento) if isinstance(hooks, dict) else None
+            for g in grupos if isinstance(grupos, list) else []:
+                for h in (g.get("hooks") or []) if isinstance(g, dict) else []:
+                    if isinstance(h, dict) and "/api/claude/actividad" in str(h.get("command", "")):
+                        tienen.add(evento)
+    faltan = [e for e in HOOKS_DEL_TURNO if e not in tienen]
+    if not faltan:
+        return Punto(BIEN, "hooks de Claude", "cuentan al puente cuándo empieza y acaba cada encargo")
+    if esp.resolve() == config.CODIGO.resolve():
+        arreglo = "recupera el .claude/settings.json del código: `git checkout .claude/settings.json`"
+    else:
+        arreglo = ("deja .claude/settings.json como enlace al del código del puente: si no lo es, bórralo y se "
+                   "vuelve a enlazar al abrir la conversación")
+    lista = faltan[0] if len(faltan) == 1 else ", ".join(faltan[:-1]) + " y " + faltan[-1]
+    return Punto(OJO, "hooks de Claude", f"faltan {lista} hacia el puente en "
+                 f"{_casa(esp / '.claude')}: el puente no sabe cuándo acaba Claude un encargo, y el control "
+                 "vuelve a ti tras cada lectura o escritura (un encargo de varios tramos se queda en el primero)",
+                 arreglo)
 
 
 def puntos(entrar: bool = True) -> list[Punto]:
@@ -556,7 +596,8 @@ def informe(publico: bool = False) -> str:
         f"- Perfil: {p.get('nombre')}; inicio {p.get('inicio_documento')}, fin {p.get('fin_documento')}, "
         f"página {p.get('pagina_abajo')}, ir a línea {p.get('ir_a_linea')}, fin de línea {p.get('fin_de_linea')}",
         f"- Región del editor: {p.get('region_editor')}; ratón aparcado en {p.get('aparcar_raton')}; "
-        f"pausa entre teclas {p.get('retardo_tecla_ms')} ms; distribución {p.get('distribucion')}",
+        f"pausa entre teclas {p.get('retardo_tecla_ms')} ms; retraso del vídeo {p.get('retardo_video_ms')} ms; "
+        f"distribución {p.get('distribucion')}",
     ]
     estado = _preguntar_al_puente()
     if estado and "control" in estado:

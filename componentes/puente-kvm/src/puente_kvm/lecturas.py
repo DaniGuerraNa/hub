@@ -64,6 +64,9 @@ class Lectura:
     # La parte de la pantalla que se capturó (x, y, ancho, alto), cuando no es
     # la región del editor del perfil: la ventana de un texto plano (C-0482).
     zona: list[int] | None = None
+    # El vídeo tardó en enseñar alguna página cerca del tope de Ajustes (C-0485):
+    # con un poco más, la lectura habría acabado antes de tiempo. "" si no.
+    aviso: str = ""
 
     # ── disco ───────────────────────────────────────────────────────────────
     @property
@@ -139,15 +142,20 @@ async def capturar(motor: Motor, lectura: Lectura,
     try:
         motor.bitacora.apuntar("lectura", f"empiezo a capturar «{lectura.nombre}»", lectura=lectura.id)
         await motor.aparcar_raton()
-        await motor.atajo(p["inicio_documento"])
         lectura.paginas = []
+
+        async def inicio():
+            await motor.atajo(p["inicio_documento"])
 
         async def avanzar():
             motor.progreso = f"página {len(lectura.paginas)}"
             await motor.atajo(p["pagina_abajo"], apuntar=False)
 
+        # Ir al principio también espera a VER el cambio (C-0485): con el vídeo
+        # llegando tarde, la primera pantalla quieta tras pulsarlo era la de
+        # antes, y la primera página salía sin las líneas de arriba.
         # Una de más: con MAX_PAGINAS justas, la siguiente dice si era el final.
-        async for img, quieta in motor.paginas(avanzar, zona=zona, tope=MAX_PAGINAS + 1):
+        async for img, quieta in motor.paginas(avanzar, zona=zona, tope=MAX_PAGINAS + 1, inicio=inicio):
             n = len(lectura.paginas) + 1
             if n > MAX_PAGINAS:
                 raise RuntimeError(f"más de {MAX_PAGINAS} páginas: ¿Av Pág no avanza en este programa?")
@@ -156,6 +164,8 @@ async def capturar(motor: Motor, lectura: Lectura,
             _avisar_si_inestable(motor, lectura, n, quieta)
             lectura.guardar()
         lectura.estado = "capturada"
+        # Claude no lee la bitácora: que el aviso le llegue con la lectura.
+        lectura.aviso = motor.aviso_retraso
         motor.bitacora.apuntar("lectura", f"«{lectura.nombre}»: {len(lectura.paginas)} páginas",
                                lectura=lectura.id)
     except SinControl as e:
@@ -305,5 +315,6 @@ def resumen(lectura: Lectura) -> dict:
         # Páginas capturadas sin que la pantalla se quedara quieta: pueden estar a
         # medio pintar, y una transcripción de eso parece buena y no lo es.
         "inestables": [p.n for p in lectura.paginas if p.inestable],
+        "aviso": lectura.aviso,
         "archivo": str(lectura.carpeta / "ensamblado.txt"),
     }

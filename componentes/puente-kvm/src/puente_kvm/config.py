@@ -161,6 +161,11 @@ PERFIL_POR_OMISION = {
     # (U.S.) y `∑` (Español - ISO) (C-0481).
     "reservadas": ["alt+x"],
     "retardo_tecla_ms": 12,
+    # Cuánto puede tardar el vídeo del aparato en enseñar una tecla (C-0485): el
+    # del JetKVM llegó 1–2 s tarde, y 3 s dejan margen. Es un tope fijo (nada lo
+    # baja solo): tras pulsar, el puente espera a VER el cambio hasta este tope
+    # más un margen, y por eso sólo cuesta entero al final de un documento.
+    "retardo_video_ms": 3000,
     "aparcar_raton": [1900, 1066],  # donde el puntero no tapa el texto
     # Con el desplazamiento natural de macOS la rueda va al revés: lo marca la
     # persona en Ajustes y el puente la invierte, para que «baja» siga bajando.

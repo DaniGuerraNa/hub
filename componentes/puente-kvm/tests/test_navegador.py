@@ -811,3 +811,27 @@ def test_mientras_reconecta_el_panel_dice_conectando_y_no_que_no_hay_conexion(pa
         assert pagina.locator("#mando [data-reconectar]").text_content() == "Reconectar"
         assert pagina.locator("[data-reconectar]:disabled").count() == 0
     assert pagina.errores == []
+
+
+def test_entre_dos_tareas_del_encargo_la_pantalla_dice_que_claude_sigue_con_el_control(pagina):
+    """C-0486: acabada una lectura o un tramo, el Mac aún no es de la persona. Que
+    la pantalla no la deje corregir pensando que ya es suyo; y al acabar, que lo diga."""
+    from puente_kvm import conversaciones
+
+    conv = conversaciones.nueva("Encargo", "")
+    conversaciones.marcar_abierta(conv.id)
+    with en_marcha(Simulador(lineas=["x"])) as base:
+        def hook(evento):
+            httpx.post(base + "/api/claude/actividad", json={"hook_event_name": evento, "session_id": conv.id},
+                       timeout=5)
+        pagina.goto(base + "/panel")
+        httpx.post(base + "/api/control", json={"accion": "dar"}, headers={"Origin": base}, timeout=5)
+        hook("UserPromptSubmit")
+        pagina.wait_for_function("document.querySelector('#control-ayuda').textContent"
+                                 ".includes('Claude sigue con el control hasta que termine el encargo')")
+        assert pagina.locator("#control-estado").inner_text() == "Claude tiene el control"
+        hook("Stop")
+        pagina.wait_for_function("document.querySelector('#control-ayuda').textContent"
+                                 ".startsWith('Claude terminó: el Mac vuelve a ti para revisar y guardar.')")
+        assert pagina.locator("#control-estado").inner_text() == "Tú tienes el Mac"
+    assert pagina.errores == []

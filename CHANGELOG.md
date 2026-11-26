@@ -15,6 +15,44 @@ cruzar.
 
 ## Sin publicar
 
+## 0.14.0 — 2026-11-25
+
+El Puente KVM deja que Claude termine un encargo entero sin perder el control,
+espera a que el vídeo del JetKVM se ponga al día antes de leer, y «Usar el Mac
+desde aquí» le quita el control a Claude.
+
+### Qué tienes que hacer
+
+- Actualiza. Si usas el Puente KVM, en su pantalla, «Reabrir la conversación
+  de Claude» para que lea sus instrucciones nuevas.
+
+### Nuevo
+
+- **Puente KVM, Ajustes → «Retraso del vídeo (ms)»**, junto a «Pausa entre
+  teclas» (3000 de fábrica). El vídeo del JetKVM llega 1-2 s tarde; tras cada
+  tecla, el puente espera hasta ese tiempo a **ver** el cambio. Si una lectura
+  avisa de que tardó cerca del tope, súbelo.
+
+### Qué cambia en lo que ya usabas
+
+- **Puente KVM: el control dura todo el encargo.** Antes volvía a ti al
+  terminar cada lectura o escritura, y un encargo de dos párrafos se quedaba en
+  el primero. Ahora vuelve cuando Claude termina su turno o te pregunta algo,
+  y también con Parar, «Retomar el Mac», a los 10 minutos sin actividad o al
+  cerrarse Claude Code. Si lo interrumpes con Esc, vuelve con tu mensaje
+  siguiente. La pantalla dice «Claude sigue con el control hasta que termine
+  el encargo»: no toques el Mac hasta que vuelva.
+- **Puente KVM: «Usar el Mac desde aquí» le quita el control a Claude**, sin
+  pulsar antes «Retomar el Mac». Lo que Claude estuviera haciendo se corta en
+  su siguiente tecla.
+- **Puente KVM: leer ya no da la primera página vieja.** Antes, con el vídeo
+  retrasado, la primera página podía salir de antes de subir al principio
+  (faltaban las primeras líneas) y una lectura podía cortarse antes del final.
+  Leer tarda unos 3 s más al terminar.
+- **Puente KVM: la calibración del teclado explica «Latinoamericano ISO»**: el
+  tipo de teclado que el Mac le asigne al JetKVM da igual mientras no cambie
+  después de calibrar.
+
 ## 0.13.0 — 2026-11-25
 
 La calibración del teclado del Puente KVM ya no pide DBeaver ni ningún

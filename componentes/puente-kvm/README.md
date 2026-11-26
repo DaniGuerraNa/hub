@@ -61,12 +61,19 @@ Todo se hace en **una sola pantalla: http://127.0.0.1:8794**.
      la lleva el puente en `PUENTE_HOME/conversaciones.json`.
 2. **A la izquierda, el puente.** Deja el SP abierto en el cliente del Mac y
    pulsa **«Dar el control a Claude»**; mientras, no toques el Mac. **Parar**
-   (arriba) corta en el acto. Al terminar cada lectura o escritura, el control
-   vuelve solo a ti.
+   (arriba) corta en el acto. Claude lo conserva hasta acabar el encargo,
+   también entre una lectura y una escritura (un cambio en dos párrafos, una
+   captura que repetir), y vuelve solo a ti cuando termina, cuando te pregunta
+   algo o a los 10 minutos sin que haga nada; el panel lo dice. Si el puente no
+   sabe cuándo acaba (sin los hooks de Claude: `comprobar --sin-entrar` lo
+   avisa), vuelve tras cada lectura o escritura.
    - **Para usar el Mac tú, sin la web del JetKVM** (que admite una sola
      sesión y desconectaría el puente): **«Usar el Mac desde aquí»**, bajo la
      imagen. Desde ahí, tu teclado y tu ratón van al Mac; un clic fuera de la
-     imagen o «Dejar de usar» lo suelta. Con el JetKVM, la imagen es **su vídeo
+     imagen o «Dejar de usar» lo suelta. Si Claude tenía el control, pulsarlo
+     **se lo quita** (no hace falta «Retomar el Mac» antes): lo que estuviera
+     haciendo se corta en su siguiente tecla; mientras acaba, lo que hagas no
+     llega al Mac, y te lo avisa. Con el JetKVM, la imagen es **su vídeo
      tal cual**, como en su web: el puente no lo recomprime y el navegador lo
      pinta a los fotogramas que mande el aparato. Con el Mac simulado, o si el
      navegador no sabe decodificarlo, va por imágenes (unas 11 por segundo
@@ -260,3 +267,7 @@ conectado a uno real. En la primera prueba hay que medir:
 8. Cuánto tarda la comprobación antes de escribir, por página.
 9. Lo fluido que va el directo con su vídeo de verdad (`/panel?medir=1`,
    paso 12 de `docs/pruebas-con-el-aparato.md`).
+10. Si «Retraso del vídeo» (Ajustes, 3000 ms de fábrica) basta: tras cada
+   tecla, el puente espera a **ver** el cambio y no a la primera pantalla
+   quieta, porque el vídeo del aparato llegó 1–2 s tarde (25-nov) y una
+   lectura salió con la primera página de antes de ir al principio (C-0485).

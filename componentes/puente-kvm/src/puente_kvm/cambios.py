@@ -213,12 +213,15 @@ def pagina_hasta(lectura: lecturas.Lectura, c: Cambio) -> int:
 async def comprobar_paginas(motor: Motor, lectura: lecturas.Lectura, hasta: int) -> None:
     """Recorre el documento como al leerlo y compara cada página con su captura."""
     perfil = motor.perfil
-    await motor.atajo(perfil["inicio_documento"], apuntar=False)
     for n in range(1, hasta + 1):
         motor.progreso = f"comprobando la página {n} de {hasta} antes de escribir"
-        if n > 1:
-            await motor.atajo(perfil["pagina_abajo"], apuntar=False)
-        ahora, quieta = await motor.esperar_estable()
+        atajo = perfil["inicio_documento"] if n == 1 else perfil["pagina_abajo"]
+        # Con `tras`, la página es la de después de pulsar, no la primera quieta,
+        # que con el vídeo llegando tarde era la de antes (C-0485): comparada con
+        # la leída, fallaba en falso. Que no cambie (ya estaba arriba) no es fallo:
+        # lo dice la comparación de abajo.
+        visto = await motor.tras(lambda: motor.atajo(atajo, apuntar=False))
+        ahora, quieta = visto.img, visto.quieta
         if not quieta:
             raise PantallaInesperada(
                 f"la pantalla no se queda quieta (página {n}): no comparo ni escribo sobre algo "
@@ -261,7 +264,11 @@ async def escribir(motor: Motor, c: Cambio, quien: str) -> Cambio:
             t.estado = "escrito"
             await motor.aparcar_raton()
             await motor.ir_a_linea(max(1, t.desde))
-            img, quieta = await motor.esperar_estable()
+            # Asentada: esperar el retraso del vídeo desde el Enter de «Ir a la
+            # línea» (C-0485). Con `tras(ir_a_linea)` el cambio que se vería
+            # primero es el diálogo abriéndose, y la captura podía salir con él
+            # aún encima; o, si el cursor ya estaba en esa línea, nada que ver.
+            img, quieta = await motor.asentada()
             img.save(c.png(t.i))
             t.captura_inestable = not quieta
             t.franja = _franja_sin_cortar(motor, c, antes, img, fila)

@@ -39,7 +39,10 @@ rellenándolo.
    **fin de línea**. Los de fábrica son los de DBeaver: si escribe sus
    consultas en otro programa, corrígelos en Ajustes con lo que midas aquí.
 6. **Lectura.** `leer_documento` de esa pestaña de prueba y transcríbela: debe
-   salir idéntica a lo tecleado. Apunta cuántas líneas caben por página.
+   salir idéntica a lo tecleado. Apunta cuántas líneas caben por página. Si la
+   primera página no empieza en la línea 1, la última no llega al final, o el
+   resultado trae «tardó … cerca del tope», el vídeo llega más tarde de lo que
+   dice Ajustes → **Retraso del vídeo**: que la persona lo suba y repite.
 7. **Huella.** En un objeto real pequeño: compara la huella de la base con la
    de su lectura (`comprobar_huella`). Si no coincide nunca, mira si el editor
    enseña una cabecera distinta de la que guarda la base (`CREATE` frente a

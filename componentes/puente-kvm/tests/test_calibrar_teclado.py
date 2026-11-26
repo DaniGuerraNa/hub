@@ -318,7 +318,8 @@ def test_calibrar_un_mac_con_una_fuente_que_el_puente_no_tiene_de_punta_a_punta(
             except mcp_servidor.ErrorPuente as e:
                 assert "nada por verificar" in str(e)
                 break
-            # Teclear la consulta devuelve el Mac a la persona, que es quien la ejecuta.
+            # Teclear la consulta devuelve el Mac a la persona, que es quien la ejecuta
+            # (sin hooks de Claude: con ellos, lo devuelve el Stop de su turno, C-0486).
             assert c.get("/api/estado").json()["control"]["modo"] == "libre"
             resultado = asyncio.run(mcp_servidor.comprobar_teclado(
                 medida["id"], rejilla(ejecutar_como_sql_server(sim.editor.lineas))))
@@ -420,7 +421,7 @@ def test_la_consulta_no_lleva_lo_que_necesita_una_tecla_reservada():
     assert not any("≈" in p for _, _, p in teclados.consulta(b, reservadas=["alt+x"])[1]["filas"])
 
 
-def test_si_probar_falla_a_mitad_el_control_vuelve_y_la_ronda_no_se_apunta(monkeypatch):
+def test_sin_hooks_si_probar_falla_a_mitad_el_control_vuelve_y_la_ronda_no_se_apunta(monkeypatch):
     from puente_kvm.motor import Motor
     b = teclados.guardar(teclados.construir(lineas_del_sondeo("mac-es"), "Español medido"))
     with puente_simulado() as (c, _):

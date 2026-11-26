@@ -335,6 +335,9 @@ def huella_sqlserver(lineas: list[str]) -> str:
 
 class Simulador(Dispositivo):
     tipo = "simulador"
+    # Pinta al recibir cada informe: su «vídeo» va al día, y la demo y las
+    # pruebas no esperan los 3 s del perfil tras cada tecla.
+    retardo_video_s = 0.0
 
     def __init__(self, lineas: list[str] | None = None, fuente: str | hid.Distribucion = "mac-us"):
         self._mono = _fuente(FUENTE_MONO, TAM_FUENTE)

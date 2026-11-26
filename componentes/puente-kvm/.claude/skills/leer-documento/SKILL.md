@@ -23,8 +23,16 @@ Herramientas, en una sola búsqueda:
 ## 1. Capturar
 
 `leer_documento(nombre)` con el nombre del objeto (`usp_ConciliarMovimientos`).
-Va al principio, baja con Av Pág y guarda cada página. Al terminar, el control
-vuelve solo a la persona: díselo («ya puedes usar el Mac»). Cada página es la
+Va al principio, baja con Av Pág y guarda cada página. Al terminar **sigues
+con el control**: si la lectura salió mal (páginas a medio pintar, un diálogo
+encima), repítela; si el encargo sigue con una escritura, también es tuyo.
+Vuelve a la persona cuando terminas tu turno.
+No hace falta dejar la vista arriba ni comprobar la pantalla antes: tras cada
+tecla el puente espera a **ver** el cambio (el vídeo del aparato llega 1–2 s
+tarde), no a la primera pantalla quieta. Si el resultado dice que la pantalla
+tardó **cerca del tope**, díselo a la persona: que suba **Retraso del vídeo**
+en Ajustes; y si la última página no llega al final del documento, vuelve a
+leerlo después. Cada página es la
 región del editor de Ajustes; para leer otra ventana (el texto plano del
 sondeo del teclado), pásale su zona: `leer_documento(nombre, x, y, ancho, alto)`.
 

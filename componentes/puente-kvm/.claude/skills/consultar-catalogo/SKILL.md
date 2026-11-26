@@ -21,7 +21,9 @@ Herramientas, en una sola búsqueda:
    (por omisión DBeaver en Mac: **Cmd+]** abre un script SQL nuevo).
 2. Pestaña nueva, y `teclear` la consulta. **No pulses ejecutar.**
 3. Dile a la persona: «He dejado esta consulta en una pestaña nueva: <qué trae>.
-   Revísala y ejecútala tú (Cmd+Enter)». Espera a que te diga que ya está.
+   Revísala y ejecútala tú (Cmd+Enter)». Espera a que te diga que ya está, y
+   **termina tu turno**: el control vuelve a ella al acabarlo (un `teclear`
+   suelto no es una tarea y no lo devuelve), y sin él no puede ejecutarla tranquila.
 4. Lee el resultado:
    - **Pocas filas:** `ver_pantalla(x, y, ancho, alto)` con la zona de la
      rejilla, que llega a tamaño real (la pantalla entera llega reducida).

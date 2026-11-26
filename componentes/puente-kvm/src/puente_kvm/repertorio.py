@@ -171,6 +171,16 @@ def conocimiento() -> dict:
 # ── actividad ───────────────────────────────────────────────────────────────
 # Lo único de la actividad que sobrevive a reiniciar el puente (C-0470).
 ESTADOS_GUARDADOS = ("trabajando", "esperando")
+# El `session_id` de un hook: un UUID, como los que da el puente a sus
+# conversaciones (`conversaciones.UUID`). Otra cosa no se guarda.
+_SESION = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+MAX_ABIERTOS = 20
+
+
+def _sesion(valor) -> str | None:
+    return valor if isinstance(valor, str) and _SESION.fullmatch(valor) else None
 
 
 class Actividad:
@@ -180,9 +190,21 @@ class Actividad:
         self.skill: str | None = None
         self.herramienta: str | None = None
         self.t = 0.0
+        # De qué conversación de Claude Code es el último hook, y cuál tiene un
+        # turno abierto: su `UserPromptSubmit` llegó y su `Stop` todavía no
+        # (C-0486). Con eso el puente sabe si Claude sigue con un encargo y le
+        # deja el control entre una lectura y una escritura. Los hooks están en
+        # el settings del proyecto y también los mandan las sesiones de
+        # desarrollo: quien decide mira que sea la conversación abierta.
+        # Por sesión (lo encontró el revisor): con una sola casilla, el mensaje de
+        # una sesión de desarrollo pisaba el turno cortado de la conversación y
+        # la red del Esc no saltaba. Sesión → hora de su último hook.
+        self.sesion: str | None = None
+        self.abiertos: dict[str, float] = {}
         # Dónde se dejan el estado y su hora (C-0470): la conversación de Claude
         # vive en tmux y sobrevive al reinicio del puente, y el puente nuevo, sin
-        # esto, no sabría si Claude está a medias. Sólo eso: la skill y la
+        # esto, no sabría si Claude está a medias. Sólo eso (y de qué
+        # conversación es, C-0486): la skill y la
         # herramienta llevan rutas y nombres del trabajo. None: en memoria y ya.
         self.ruta = ruta
 
@@ -191,15 +213,25 @@ class Actividad:
         entrada = (hook.get("tool_input") or {}) if isinstance(hook.get("tool_input"), dict) else {}
         nombre = hook.get("tool_name", "")
         self.t = time.time()
+        self.sesion = _sesion(hook.get("session_id"))
         resumen = None
         if evento == "UserPromptSubmit":
             self.estado, self.skill, self.herramienta = "trabajando", None, None
+            if self.sesion:
+                self.abiertos[self.sesion] = self.t
+                # Las de desarrollo que nunca mandan su `Stop` no crecen sin fin.
+                for vieja in sorted(self.abiertos, key=self.abiertos.get)[:-MAX_ABIERTOS]:
+                    del self.abiertos[vieja]
             resumen = "empieza a trabajar en tu mensaje"
-        elif evento == "Stop":
+        elif evento in ("Stop", "SessionEnd"):
             self.estado, self.herramienta = "esperando", None
-            resumen = "terminó: espera tu mensaje"
+            if self.sesion:
+                self.abiertos.pop(self.sesion, None)
+            resumen = "terminó: espera tu mensaje" if evento == "Stop" else "se cerró la conversación"
         elif evento == "PreToolUse":
             self.estado = "trabajando"
+            if self.sesion in self.abiertos:
+                self.abiertos[self.sesion] = self.t
             if nombre == "Skill":
                 self.skill = str(entrada.get("skill") or entrada.get("command") or "?").lstrip("/")
                 resumen = f"usa la skill {self.skill}"
@@ -230,6 +262,7 @@ class Actividad:
         mensaje. El que se cerró para abrirlo no manda su `Stop`, y sin esto la
         placa se quedaba en «trabajando»."""
         self.estado, self.skill, self.herramienta = "esperando", None, None
+        self.abiertos.clear()
         self.t = time.time()
         self._guardar()
 
@@ -246,6 +279,10 @@ class Actividad:
         if estado not in ESTADOS_GUARDADOS:
             return False
         self.estado, self.t = estado, t
+        self.sesion = _sesion(datos.get("sesion"))
+        abiertos = datos.get("abiertos")
+        self.abiertos = {k: float(v) for k, v in abiertos.items()
+                         if _sesion(k) and isinstance(v, (int, float))} if isinstance(abiertos, dict) else {}
         return True
 
     def _guardar(self) -> None:
@@ -254,7 +291,9 @@ class Actividad:
         # Por un temporal: el puente que arranca puede leerlo a la vez.
         tmp = self.ruta.with_suffix(".tmp")
         try:
-            tmp.write_text(json.dumps({"estado": self.estado, "t": self.t}))
+            # La conversación es un UUID, sin nada del trabajo.
+            tmp.write_text(json.dumps({"estado": self.estado, "t": self.t, "sesion": self.sesion,
+                                       "abiertos": self.abiertos}))
             tmp.replace(self.ruta)
         except OSError as e:  # no es motivo para perder el hook: se dice y se sigue
             print(f"[actividad] no pude guardar el estado de Claude en {self.ruta}: {e}", flush=True)

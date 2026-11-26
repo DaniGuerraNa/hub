@@ -41,7 +41,7 @@ from . import (cambios, comprobar, config, conversaciones, hid, huellas, jiggler
                reunion, teclados, terminal)
 from .control import Bitacora, Control, SinControl
 from .dispositivo import AparatoNoDisponible, Dispositivo
-from .motor import Motor, Ocupado, PantallaInesperada
+from .motor import RETARDO_VIDEO_MAX_MS, Motor, Ocupado, PantallaInesperada
 
 AQUI = Path(__file__).parent
 plantillas = Jinja2Templates(directory=AQUI / "plantillas")
@@ -200,10 +200,87 @@ class Puente:
         self.bitacora.apuntar("aviso", texto, quien="puente")
 
     def devolver_control(self, motivo: str) -> None:
-        """El control dado vale para el aparato al que se dio, no para otro."""
+        """La única puerta por la que el puente le devuelve el Mac a la persona, con
+        su línea en la bitácora. Sólo con el control dado a Claude: nunca se lo da,
+        y un PARADO sigue parado."""
         if self.control.modo == "claude":
             self.control.retomar(motivo)
             self.bitacora.apuntar("control", motivo, quien="puente")
+
+    # ── cuándo vuelve el Mac: al acabar el encargo, no cada tarea (C-0486) ──
+    def turno_en_curso(self) -> bool:
+        """Claude está con un encargo de la conversación abierta: llegó su
+        `UserPromptSubmit` y aún no su `Stop`. Sin conversación del registro, o
+        con hooks de otra sesión, no se sabe, y «no sé» no cuenta como sí."""
+        conv = conversaciones.actual()
+        return conv is not None and conv.id in self.actividad.abiertos
+
+    def conversacion_reabierta(self, motivo: str) -> None:
+        """Claude Code se abrió de nuevo (o se cambió de conversación): el que se
+        cerró no manda su `Stop`, y un control dado para su encargo no vale
+        para el siguiente (lo encontró el revisor de C-0486)."""
+        self.devolver_control(motivo)
+        self.actividad.recien_abierta()
+
+    def al_acabar_tarea(self, motivo: str) -> None:
+        """Acabó una lectura, una escritura o la consulta de prueba del teclado.
+
+        Si el puente sabe qué turno corre, el control sigue con Claude: un
+        encargo de dos párrafos se quedaba en el primero porque escribir lo
+        devolvía, y una captura mala ya no se podía repetir (C-0486). Lo
+        devuelve el `Stop` de ese turno (`fin_de_turno`), Parar, «Usar el Mac
+        desde aquí» o los 10 min sin hacer nada. Si no lo sabe (sin hooks, una
+        conversación sin registro), vuelve como siempre, tras cada tarea."""
+        try:
+            sigue = self.turno_en_curso()
+        except Exception:  # un registro ilegible no puede dejar el control dado
+            sigue = False
+        if not sigue:
+            self.devolver_control(motivo)
+        elif self.control.modo == "claude":
+            hecho = motivo.split(":")[0]
+            self.bitacora.apuntar("control", f"{hecho}; Claude sigue con el control hasta que termine el encargo",
+                                  quien="puente")
+
+    def fin_de_turno(self, hook: dict) -> None:
+        """Lo que dicen los hooks de Claude Code sobre el control. Se llama ANTES de
+        `actividad.registrar`: la red del Esc mira el turno anterior.
+
+        Sólo cuentan los de la conversación abierta: el settings del proyecto
+        también lo cargan las sesiones de desarrollo. 🔴 Sólo devuelve
+        (`devolver_control`): nunca da el control ni saca de PARADO.
+        """
+        evento = hook.get("hook_event_name")
+        herramienta = str(hook.get("tool_name") or "") if evento == "PreToolUse" else ""
+        pregunta = herramienta == "AskUserQuestion"
+        del_mac = herramienta.removeprefix("mcp__puente-kvm__") in repertorio.NECESITA_CONTROL \
+            and herramienta.startswith("mcp__puente-kvm__")
+        if evento not in ("Stop", "SessionEnd", "UserPromptSubmit") and not pregunta and not del_mac:
+            return  # cada herramienta manda su hook: sin leer el registro para nada
+        if self.control.modo != "claude":
+            return
+        try:
+            conv = conversaciones.actual()
+        except Exception:
+            conv = None
+        if conv is None:
+            return  # no se sabe cuál es la del puente: cada tarea devuelve, como antes
+        if hook.get("session_id") != conv.id:
+            # Otra sesión de Claude con el MCP del puente (una de desarrollo) iba a
+            # tocar el Mac con el control dado para el encargo de la conversación:
+            # con el control por turno, ese rato ya no es una tarea, es un turno.
+            if del_mac:
+                self.devolver_control("otra sesión de Claude iba a tocar el Mac: el control vuelve a ti")
+            return
+        if evento in ("Stop", "SessionEnd"):
+            self.devolver_control("Claude terminó: el Mac vuelve a ti para revisar y guardar")
+        elif pregunta:
+            self.devolver_control("Claude te pregunta algo: el Mac vuelve a ti")
+        elif evento == "UserPromptSubmit" and conv.id in self.actividad.abiertos \
+                and self.control.desde < self.actividad.abiertos[conv.id]:
+            # Un Esc corta el turno sin `Stop`: el mensaje siguiente lo delata. Si
+            # la persona dio el control después del corte, lo dio para esto.
+            self.devolver_control("el encargo anterior se cortó sin terminar: el Mac vuelve a ti")
 
     def en_segundo_plano(self, coro) -> None:
         t = asyncio.create_task(coro)
@@ -621,9 +698,10 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                                               distribucion=teclados.distribucion_del_borrador(b))
                 finally:
                     # Lo siguiente es de la persona, haya salido entera o no: ejecutarla, o
-                    # borrar lo que quedó a medias. Claude nunca ejecuta.
-                    p.control.devolver("terminó de teclear la consulta de prueba del teclado: el Mac vuelve a "
-                                       "ti para ejecutarla")
+                    # borrar lo que quedó a medias. Claude nunca ejecuta: se lo pide y
+                    # acaba su turno, y su `Stop` le devuelve el Mac (C-0486).
+                    p.al_acabar_tarea("terminó de teclear la consulta de prueba del teclado: el Mac vuelve a "
+                                      "ti para ejecutarla")
                 # Sólo ahora: unas huellas de una consulta que no se tecleó entera no valen.
                 teclados.empezar_ronda(b, ronda)
                 teclados.guardar(b)
@@ -736,8 +814,9 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             try:
                 async with p.motor.ocupar(f"leer «{nombre}»"):
                     await lecturas.capturar(p.motor, l, zona=zona)
-                # Transcribir no toca el Mac: no hay por qué seguir con el teclado tomado.
-                p.control.devolver("terminó de capturar: el Mac vuelve a ti")
+                # Si el encargo sigue (otra lectura si la captura salió mal, una
+                # escritura), el control sigue con Claude hasta su `Stop` (C-0486).
+                p.al_acabar_tarea("terminó de capturar: el Mac vuelve a ti")
             except Ocupado as e:
                 l.estado, l.error = "error", str(e)
                 l.guardar()
@@ -912,8 +991,9 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             try:
                 async with p.motor.ocupar(f"escribir «{c.descripcion}»"):
                     await cambios.escribir(p.motor, c, quien)
-                # Lo siguiente es revisar y guardar, y eso lo hace la persona en el Mac.
-                p.control.devolver("terminó de escribir: el Mac vuelve a ti para revisar y guardar")
+                # Revisar y guardar es de la persona, pero al acabar el encargo: con
+                # dos párrafos, el segundo también es de Claude (C-0486).
+                p.al_acabar_tarea("terminó de escribir: el Mac vuelve a ti para revisar y guardar")
             except Ocupado as e:
                 c.estado, c.error = "fallido", str(e)
                 c.guardar()
@@ -969,6 +1049,9 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             nuevos["perfil"]["region_editor"] = r
             nuevos["perfil"]["aparcar_raton"] = [int(v) for v in nuevos["perfil"]["aparcar_raton"]]
             nuevos["perfil"]["retardo_tecla_ms"] = max(2, min(int(nuevos["perfil"]["retardo_tecla_ms"]), 200))
+            # En el perfil y no en el aparato: cambiarlo en «dispositivo» lo reconectaría (C-0485).
+            nuevos["perfil"]["retardo_video_ms"] = max(0, min(int(nuevos["perfil"].get(
+                "retardo_video_ms", config.PERFIL_POR_OMISION["retardo_video_ms"])), RETARDO_VIDEO_MAX_MS))
             nuevos["perfil"]["invertir_rueda"] = nuevos["perfil"].get("invertir_rueda") is True
             config.guardar_ajustes(nuevos)
         except Exception as e:
@@ -1151,10 +1234,12 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         # La mandan los hooks de Claude Code (sin Origin). Sólo se guarda el resumen.
         de_claude(req)
         datos = await cuerpo(req)
+        p = puente(req)
         if datos.get("hook_event_name") == "UserPromptSubmit":
             # Su `session_id` es el de la conversación del puente: se usó ahora.
             conversaciones.tocar(datos.get("session_id"))
-        return puente(req).actividad.registrar(datos)
+        p.fin_de_turno(datos)  # antes de registrar: necesita el turno anterior
+        return p.actividad.registrar(datos)
 
     @app.get("/api/claude/actividad")
     async def api_ver_actividad(req: Request):
@@ -1208,7 +1293,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         except Exception as e:
             raise fallo(e) from e
         # Recién abierta, Claude espera: el que se cerró no manda su `Stop`.
-        p.actividad.recien_abierta()
+        p.conversacion_reabierta("se cambió de conversación con Claude: el control vuelve a la persona")
 
     @app.get("/api/conversaciones")
     async def api_conversaciones():
@@ -1277,9 +1362,14 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
     async def ws_mando(ws: WebSocket):
         """La persona usa el Mac desde la pantalla del puente: su ratón y su teclado.
 
-        Mismas puertas que la terminal (nombre y origen de esta web). Sólo vale
-        cuando Claude NO tiene el control ni hay una tarea en marcha: dos manos
-        en el mismo teclado escriben basura. 🔴 Lo tecleado no se guarda en
+        Mismas puertas que la terminal (nombre y origen de esta web). Abrirlo es
+        retomar el Mac (C-0484): sólo lo abre un clic de la persona en «Usar el
+        Mac desde aquí», y quien pulsa eso quiere usarlo ya, no buscar antes
+        «Retomar». Lo que Claude tuviera en marcha se corta en su siguiente
+        tecla (`Control.comprobar`); hasta entonces lo de la persona espera
+        (dos manos en el mismo teclado escriben basura): lo de la persona no
+        llega al Mac y se le avisa una vez. Si Claude recibe el
+        control con esto abierto, no llega nada. 🔴 Lo tecleado no se guarda en
         ningún sitio (puede ser una contraseña del Mac): la bitácora sólo dice
         cuánto rato se usó.
         """
@@ -1290,7 +1380,15 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         p: Puente = ws.app.state.puente
         p.mandos += 1
         teclas: list[int] = []
-        estado = {"mods": 0, "botones": 0, "x": 0, "y": 0, "desde": 0.0}
+        estado = {"mods": 0, "botones": 0, "x": 0, "y": 0, "desde": 0.0, "esperando": False}
+        p.control.estado()  # que caduque antes, si toca: no se retoma lo que ya volvió
+        if p.control.modo == "claude":
+            p.control.retomar("retomado al usar el Mac desde aquí")
+            p.bitacora.apuntar("control", "la persona retoma el Mac al usarlo desde aquí", quien="persona")
+            with contextlib.suppress(Exception):
+                await p.dispositivo.informe_teclado(0, [])  # una tecla de Claude a medias, arriba
+            await ws.send_json({"aviso": "Le quitaste el control a Claude: el Mac es tuyo."
+                                + (" Lo que estaba haciendo se corta ya." if p.motor.tarea else "")})
 
         async def soltar() -> None:
             if not (teclas or estado["mods"] or estado["botones"]):
@@ -1322,12 +1420,19 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                 except (ValueError, AttributeError):
                     continue
                 p.control.estado()  # que caduque el control de Claude si toca
-                if p.control.modo == "claude" or p.motor.tarea:
+                if p.control.modo == "claude":
                     await soltar()
-                    await ws.send_json({"no": "Claude tiene el Mac ahora: retómalo para usarlo tú."
-                                        if p.control.modo == "claude" else
-                                        f"Hay una tarea en marcha ({p.motor.tarea}): espera o pulsa Parar."})
+                    await ws.send_json({"no": "Le diste el control a Claude: lo que hagas aquí no llega al Mac."})
                     continue
+                if p.motor.tarea:
+                    # Sin cerrar: la tarea se corta en su siguiente tecla, o acaba.
+                    await soltar()
+                    if not estado["esperando"]:
+                        estado["esperando"] = True
+                        await ws.send_json({"espera": f"Espera un momento: termina «{p.motor.tarea}». "
+                                            "Lo que hagas mientras tanto no llega al Mac."})
+                    continue
+                estado["esperando"] = False
                 if not estado["desde"]:
                     estado["desde"] = time.time()
                 p.mando_hasta = time.time() + 3
@@ -1475,7 +1580,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         try:
             if await asyncio.to_thread(terminal.asegurar_sesion):
                 # La abrió ahora el puente: Claude acaba de arrancar y espera su primer mensaje.
-                ws.app.state.puente.actividad.recien_abierta()
+                ws.app.state.puente.conversacion_reabierta("Claude Code se volvió a abrir: el control vuelve a ti")
         except Exception as e:
             await ws.send_text(f"\r\n[no se pudo abrir Claude Code: {e}]\r\n")
             await ws.close()

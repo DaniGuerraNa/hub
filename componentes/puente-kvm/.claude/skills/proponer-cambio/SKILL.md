@@ -15,6 +15,13 @@ Herramientas, en una sola búsqueda:
 1. **Parte de una lectura verificada** (`leer-documento`). Sin huella que
    coincida, el diff se calcula contra una copia que puede no ser la real: dilo
    y pide verificarla antes.
+
+   **Un encargo es UN cambio con todos sus tramos**: si te piden tocar dos
+   párrafos (o diez), van todos en la misma propuesta, y el puente los escribe
+   de abajo arriba. Si después hace falta un segundo cambio sobre el mismo
+   documento, antes **vuelve a leerlo** (skill `leer-documento`): el segundo compara
+   la pantalla con las capturas de su lectura, y tras escribir el primero ya no
+   casan. Puedes, porque el control sigue dado hasta que acabas el encargo.
 2. **Edita la copia** `trabajo/<objeto>.sql`. Cambios mínimos: cada línea que
    cambia es un tramo que se teclea, y teclear es lento y es donde se rompe.
    Nada de reformatear lo que no cambias. Todo carácter tiene que poderse
@@ -33,6 +40,8 @@ Herramientas, en una sola búsqueda:
    escribirlo (lo demás está igual que antes de teclear); si necesitas el
    resto, `entera=True`. Si alguno no quedó como debía, dilo con precisión
    (tramo, línea, qué se ve).
-7. Pídele que lo revise en el Mac y **lo guarde o ejecute ella**. Después, la
+7. Pídele que lo revise en el Mac y **lo guarde o ejecute ella**, y termina tu
+   turno: el control sigue contigo mientras trabajas, y vuelve a ella cuando
+   acabas (no antes: no le pidas que corrija a mitad). Después, la
    huella (consulta en el puente o `consultar-catalogo`) → el puente dice si lo
    guardado es exactamente lo acordado. Hasta entonces, el cambio no está hecho.

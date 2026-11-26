@@ -48,6 +48,21 @@ Dar el control a Claude, pararlo y aprobar un cambio se hace **en la pantalla
 del puente**, no desde el hub. El hub no le manda nada: sólo le pregunta cómo
 está, y de lo que contesta no enseña lo que se ha leído del Mac.
 
+**Cuándo vuelve el control.** Una vez dado, Claude lo conserva durante **todo
+el encargo** (una lectura, repetirla si salió mal, varios cambios seguidos) y
+vuelve a ti cuando termina su turno o te pregunta algo. También vuelve con
+«Parar», «Retomar el Mac», a los 10 minutos sin que Claude haga nada y al
+pulsar **«Usar el Mac desde aquí»**, que se lo quita al momento (lo que
+estuviera haciendo se corta en su siguiente tecla). Si interrumpes a Claude con
+Esc, vuelve al empezar el encargo siguiente. Si el puente no recibe los avisos
+de la terminal de Claude, devuelve el control tras cada lectura o escritura,
+como antes.
+
+**El retraso del vídeo.** El vídeo del JetKVM llega 1-2 s tarde. Tras cada
+tecla, el puente espera a **ver** el cambio antes de capturar, hasta el
+**Retraso del vídeo** de Ajustes (3000 ms de fábrica). Si una lectura avisa de
+que tardó cerca del tope, súbelo.
+
 La terminal de Claude del puente vive en una sesión de tmux, `puente-claude`,
 y por eso sale en **Trabajo** como cualquier otra. En **Talleres** no sale:
 el puente lanza Claude desde una `bash`, y Talleres sólo enseña las sesiones
@@ -146,6 +161,10 @@ En la pantalla del puente, bajo la imagen del Mac:
   de verdad llegó. En Ajustes están también las **teclas que el puente nunca
   pulsa** al teclear (de fábrica Opción+X, que en DBeaver ejecuta el script;
   en VS Code conviene añadir `alt+z, shift+alt+a, shift+alt+f, shift+alt+i`).
+  «Latinoamericano ISO» son dos cosas: «Latinoamericano» es la fuente que se
+  mide; ISO es la forma de tu teclado físico, y no cuenta, porque para el Mac
+  el JetKVM es otro teclado. Si al conectarlo el Mac pregunta qué tipo de
+  teclado es, contesta lo que quieras, pero no lo cambies después de calibrar.
 
 ## Grabar una reunión del Mac
 

@@ -31,6 +31,8 @@
       <p class="sub" id="progreso">No toques el Mac. Si algo va mal, pulsa <b>Parar</b> arriba.</p>
     {% elif c.estado == 'escrito' %}
       <h2>Escrito en el editor. Ahora te toca a ti</h2>
+      {# C-0486: escrito no es que el Mac ya sea suyo; lo pinta en vivo el sondeo (app.js). #}
+      <p class="sub" id="escrito-claude-sigue" {% if estado.control.modo != 'claude' %}hidden{% endif %}><b>Todavía no:</b> Claude sigue con el control hasta que termine el encargo (puede quedarle otro cambio). Espera a que te devuelva el Mac para revisar y guardar.</p>
       <ol class="sub" style="padding-left:18px">
         <li>Revisa en el Mac los tramos (abajo tienes la captura de cada uno tras escribirlo).</li>
         <li>Guarda o ejecuta el procedimiento en el cliente.</li>

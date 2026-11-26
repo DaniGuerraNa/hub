@@ -34,6 +34,17 @@ confunden `´` `'` `’`, `^` `ˆ`, `~` `˜`: justo la comilla que rompe un SQL.
 huella la calcula el propio Mac con lo que de verdad llegó, y sale en
 hexadecimal, que no se confunde al leerlo.
 
+**«Latinoamericano ISO», ANSI o ISO**, por si la persona lo pregunta: son dos
+cosas. «Latinoamericano» es la fuente de entrada del Mac (la que se mide aquí).
+ISO es la forma de SU teclado físico (con `< >` junto a Mayús), y no cuenta:
+para el Mac, el JetKVM es otro teclado USB, y macOS guarda el tipo (ANSI, ISO)
+de cada teclado por separado. Si al conectarlo el Mac pregunta qué teclado es,
+vale cualquier respuesta: según cuál, dos teclas cambian de sitio (la de junto
+al 1 y la de junto a Mayús), y la medida pulsa las dos y apunta lo que salga.
+La condición es **no cambiar después el tipo del teclado del JetKVM**; si se
+cambia, se vuelve a medir. (Lo de «elige ANSI» de la documentación vale sólo para las distribuciones de
+serie, «U.S.» y «Español - ISO», que no se miden.)
+
 Antes de empezar, dile a la persona qué vas a hacer y qué necesitarás de ella:
 el control, abrir un TextEdit vacío, después una pestaña vacía donde escribe
 sus consultas, ejecutar una consulta de sólo lectura cuando se lo pidas, y
@@ -102,8 +113,8 @@ ese programa: díselo a la persona.
   saltada o repetida al transcribir): corrígela con `resolver_linea`;
 - uno hecho con el Bloq Mayús puesto, o con las comillas inteligentes
   encendidas: que la persona lo arregle, **cierre ese documento sin guardar y
-  abra uno nuevo** (no lo borres tú: el control ya volvió a ella y el foco
-  puede estar en otra ventana), y vuelve al paso 1;
+  abra uno nuevo** (no lo borres tú: el foco puede estar en otra ventana; pídeselo
+  y termina tu turno, que es cuando el Mac vuelve a ella), y vuelve al paso 1;
 - uno en el que la fila de números no da cifras (la francesa del Mac): ese
   teclado no se puede medir así; díselo.
 
@@ -137,8 +148,9 @@ que en él el puente seguirá tecleando mal los paréntesis y las comillas.
 
 ## 6. La persona la ejecuta
 
-Al acabar de teclearla, el control vuelve solo a la persona: dile que la
-ejecute ella, como ejecuta siempre en su programa. **No la ejecutes tú.** Si el cliente pide valores para parámetros o da un
+Al acabar de teclearla, dile a la persona que la ejecute ella, como ejecuta
+siempre en su programa, y **termina tu turno**: es entonces cuando el control
+vuelve a ella (lo conservas mientras sigas trabajando). **No la ejecutes tú.** Si el cliente pide valores para parámetros o da un
 error de sintaxis, que cancele: mira la consulta en pantalla (`ver_pantalla`),
 busca el carácter que salió distinto, corrige su línea del sondeo con
 `resolver_linea` y vuelve a medir.

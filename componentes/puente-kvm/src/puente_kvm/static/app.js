@@ -147,7 +147,7 @@
   // ── estado en la cabecera (todas las páginas) ────────────────────────────
   const TEXTO_CONTROL = {
     libre: ['Tú tienes el Mac', 'Claude no puede tocar nada. Dale el control cuando no lo estés usando.'],
-    claude: ['Claude tiene el control', 'No uses el Mac mientras tanto: lo que teclee va a la ventana que esté al frente.'],
+    claude: ['Claude tiene el control', 'Lo tiene hasta que termine el encargo, también entre una lectura y una escritura. No uses el Mac mientras tanto: lo que teclee va a la ventana que esté al frente. Para usarlo tú, «Usar el Mac desde aquí» se lo quita.'],
     parado: ['Parado', 'Se cortó lo que estuviera haciendo. Claude no puede tocar nada hasta que le des el control otra vez.'],
   };
   let ultimoEstado = null;
@@ -245,13 +245,25 @@
       ce.textContent = TEXTO_CONTROL[modo][0];
       ce.className = 'control-estado ' + modo;
       let ayuda = TEXTO_CONTROL[modo][1];
+      // Entre una tarea y la siguiente del mismo encargo (C-0486): la lectura o el
+      // tramo acabó, pero el Mac aún no es suyo. Que no se ponga a corregir.
+      if (modo === 'claude' && !e.tarea && (e.claude || {}).estado === 'trabajando') {
+        ayuda = 'Claude sigue con el control hasta que termine el encargo: no toques el Mac todavía, aunque ya haya acabado una lectura o un tramo. Te lo devuelve al terminar o si te pregunta algo; para usarlo antes, «Usar el Mac desde aquí» se lo quita.';
+      }
       if (modo === 'claude' && e.control.caduca) ayuda += ' Si no hace nada, vuelve a ti a las ' + hora(e.control.caduca).slice(0, 5) + '.';
-      if (modo === 'libre' && e.control.motivo && e.control.motivo.startsWith('volvió')) ayuda = 'El control ' + e.control.motivo + '.';
-      if (modo === 'libre' && e.control.motivo && e.control.motivo.startsWith('terminó')) ayuda = 'Claude ' + e.control.motivo + '.';
+      const motivo = modo === 'libre' ? e.control.motivo || '' : '';
+      if (motivo.startsWith('volvió')) ayuda = 'El control ' + motivo + '.';
+      // Sin hooks de Claude, cada tarea lo devuelve al acabar («terminó de escribir: …»).
+      if (motivo.startsWith('terminó')) ayuda = 'Claude ' + motivo + '.';
+      // El final del encargo, una pregunta de Claude o un encargo cortado con Esc.
+      if (motivo.startsWith('Claude ')) ayuda = motivo + '.';
+      if (motivo.startsWith('el encargo anterior')) ayuda = 'El' + motivo.slice(2) + '.';
       $('#control-ayuda').textContent = ayuda;
       $('#boton-dar').hidden = modo === 'claude';
       $('#boton-retomar').hidden = modo !== 'claude';
     }
+    const sigue = $('#escrito-claude-sigue');
+    if (sigue) sigue.hidden = modo !== 'claude';
     const t = $('#tarea');
     if (t) t.textContent = e.tarea ? '⏵ ' + e.tarea + (e.progreso ? ' · ' + e.progreso : '') : '';
     pintarClaude(e.claude || {});
@@ -957,6 +969,9 @@
       v.onmessage = (m) => {
         let d = {}; try { d = JSON.parse(m.data); } catch (e) { return; }
         if (d.no) parar(d.no);
+        // Al abrir, si Claude tenía el control, el puente lo retoma (C-0484).
+        if (d.aviso) { fugaz(d.aviso); sondear(); }
+        if (d.espera) fugaz(d.espera);
         // Lo que no es ASCII depende de la fuente de entrada del Mac: si no es
         // la elegida, sale otro carácter y sólo ella lo ve (C-0466).
         if (d.hecho === 'pegar' && pegadoConAcentos) {
@@ -1164,7 +1179,7 @@
         const [seccion, clave] = campo.name.split('.');
         let v = campo.type === 'checkbox' ? campo.checked : campo.value;
         if (clave === 'region_editor' || clave === 'aparcar_raton') v = v.split(',').map((x) => Number(x.trim()));
-        if (clave === 'retardo_tecla_ms') v = Number(v);
+        if (clave === 'retardo_tecla_ms' || clave === 'retardo_video_ms') v = Number(v);
         if (clave === 'reservadas') v = v.split(',').map((x) => x.trim()).filter(Boolean);
         (datos[seccion] = datos[seccion] || {})[clave] = v;
       }

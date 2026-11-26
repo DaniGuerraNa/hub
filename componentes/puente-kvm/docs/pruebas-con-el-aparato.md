@@ -74,6 +74,10 @@ orden y lo que hay que vigilar.
 0. **Antes, con el simulador (10 minutos).** Con el aparato «Simulador» en
    Ajustes, pídele a Claude que lea el procedimiento de muestra. Así ves cómo
    va el control, la lectura, la huella y un cambio sin riesgo para nadie.
+   El control no vuelve tras cada lectura o escritura sino cuando Claude acaba
+   el encargo (C-0486): pídele un cambio en dos párrafos y mira que escribe los
+   dos con un solo «Dar el control», que el panel dice entre medias que Claude
+   sigue con él, y que al acabar vuelve a ti.
    Apunta: nada; es para conocer las pantallas.
 1. **Conectar.** Cierra la web del JetKVM en tu navegador (admite una sola
    sesión: si la abres después, el puente queda fuera). En Ajustes: tipo
@@ -92,7 +96,8 @@ orden y lo que hay que vigilar.
    USB nuevo, macOS puede abrir el **asistente de configuración del teclado**
    («pulsa la tecla a la derecha de Mayús izquierda»): si aparece, ciérralo o
    elige **ANSI**. Con ISO, `` ` `` y `~` (en «U.S.») o `< >` (en «Español -
-   ISO») salen en otra tecla. Comprueba que la fuente de entrada activa es la
+   ISO») salen en otra tecla. Con una medida (la latinoamericana, por ejemplo) da
+   igual lo que elijas, pero no lo cambies después de medir: se mediría otra vez. Comprueba que la fuente de entrada activa es la
    que elegiste en Ajustes → Teclado (**«U.S.»** o **«Español - ISO»**; también
    se cambia junto a «Pegar texto») y que **Bloq Mayús está apagado**. Pega un
    texto con acentos («¿Qué tal? Ñandú, “canción” —ya»): si sale con símbolos
@@ -107,6 +112,13 @@ orden y lo que hay que vigilar.
 6. **Lectura de la pestaña de prueba** (skill, paso 6). Mira si alguna página
    sale marcada «la pantalla se movía». Apunta: líneas por página, y los
    segundos por página (salen en el informe de `diagnostico`).
+   **Si una lectura sale vieja** —la primera página no empieza en la línea 1,
+   la última no llega al final, o la bitácora dice «la pantalla tardó … cerca
+   del tope»—, el vídeo llega más tarde de lo que dice Ajustes → **Retraso del
+   vídeo** (3000 ms de fábrica; lo medido el 25-nov fueron 1–2 s): súbelo de
+   1000 en 1000 y vuelve a leer. Tras cada tecla, el puente espera a ver el
+   cambio hasta ese tiempo más 1 s; sólo lo gasta entero cuando no cambia nada
+   (al final del documento), así que subirlo apenas alarga la lectura.
    Después, en una hoja o una web larga, pídele que la recorra con
    **`recorrer_pantalla`** (la zona de las celdas, desde arriba): ¿llega al
    final y dice cuánto subió cada página? Si dice «no sé cuánto subió», el
@@ -198,6 +210,11 @@ orden y lo que hay que vigilar.
   (su forma está leída del código, no medida).
 - **Versión del firmware**: fuera de 0.5.9–0.5.11 puede funcionar, pero nadie
   la ha leído.
+- **El vídeo llega tarde** (1–2 s medidos con el aparato, 25-nov): justo
+  después de pulsar, la pantalla quieta puede ser la de antes. El puente espera
+  a ver el cambio (C-0485) con «Retraso del vídeo» de tope. Lo que tarda de
+  verdad cada cambio lo guarda el puente (las últimas 50), pero aún no se
+  enseña en ningún sitio (C-0483).
 - **Cosas que se mueven encima del editor** (notificaciones, el salvapantallas,
   el cursor del ratón): una página capturada moviéndose queda marcada, y el
   puente no escribe sobre una pantalla que no se queda quieta.
@@ -211,6 +228,22 @@ orden y lo que hay que vigilar.
   lo evitaría; cambiarlo es tocar el sistema de la persona: pregúntale antes.
 - **`comprobar` sin `--sin-entrar`** cierra la web del JetKVM si está abierta en
   un navegador (ver arriba).
+- **Cuándo vuelve el control** lo dicen los hooks de Claude Code (C-0486): su
+  final de turno, una pregunta suya, y el mensaje siguiente a un encargo cortado
+  con Esc (que no manda final de turno). Con Claude Code de verdad sólo se ha
+  razonado, no visto: que el final de turno llegue con el id de la conversación
+  abierta, y qué pasa tras un `/clear` (si cambia ese id, el puente deja de
+  reconocerla y el control vuelve tras cada tarea, como sin hooks). Si Claude
+  se queda quieto con el control, vuelve a los 10 minutos, o con «Usar el Mac
+  desde aquí». También vuelve al cerrarse la conversación (`SessionEnd`) o al
+  reabrir Claude Code desde el puente, y si **otra** sesión de Claude con el MCP
+  del puente va a teclear o hacer clic. Sin ver aún con Claude Code real: que
+  `SessionEnd` llegue con el id de la conversación; que los subagentes manden el
+  id de su conversación (si no, una herramienta suya que toque el Mac le
+  quitaría el control: hacia el lado seguro); y si un mensaje escrito mientras
+  Claude trabaja dispara `UserPromptSubmit` a mitad de turno (entonces la red
+  del Esc devolvería el control antes de tiempo, también hacia el lado seguro,
+  pero partiría el encargo). Apunta lo que veas.
 - **Parar** (arriba a la derecha) corta en el acto lo que esté haciendo Claude.
 
 ## Al terminar las pruebas

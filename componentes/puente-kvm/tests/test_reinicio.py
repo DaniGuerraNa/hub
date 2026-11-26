@@ -17,6 +17,7 @@ import json
 import sys
 import threading
 import time
+import uuid
 
 import httpx
 import pytest
@@ -373,14 +374,18 @@ def test_lo_guardado_de_una_conversacion_que_ya_no_vive_no_cuenta():
         assert c.get("/api/estado").json()["claude"]["estado"] == "sin noticias"
 
 
-def test_de_la_actividad_solo_se_guardan_el_estado_y_la_hora():
-    """La skill y la herramienta llevan rutas y nombres del trabajo: no salen de la memoria."""
+def test_de_la_actividad_solo_se_guardan_el_estado_la_hora_y_de_que_conversacion_es():
+    """La skill y la herramienta llevan rutas y nombres del trabajo: no salen de la
+    memoria. La conversación (un UUID) sí, para saber qué turno corre (C-0486)."""
+    sesion = str(uuid.uuid4())
     with puente_simulado(lineas=3) as (c, _):
         c.post("/api/claude/actividad", json={"hook_event_name": "PreToolUse", "tool_name": "Read",
+                                              "session_id": sesion,
                                               "tool_input": {"file_path": "/x/trabajo/usp_Secreto.sql"}})
         texto = (config.hogar() / "actividad.json").read_text()
-    assert set(json.loads(texto)) == {"estado", "t"} and json.loads(texto)["estado"] == "trabajando"
-    assert "usp_Secreto" not in texto
+    assert set(json.loads(texto)) == {"estado", "t", "sesion", "abiertos"}
+    assert json.loads(texto)["estado"] == "trabajando" and json.loads(texto)["sesion"] == sesion
+    assert "usp_Secreto" not in texto and "Read" not in texto
 
 
 # ── al pararlo ──────────────────────────────────────────────────────────────

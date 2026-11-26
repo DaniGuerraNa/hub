@@ -46,6 +46,9 @@
     <p class="sub" style="margin:6px 0 0">Separadas por comas. En DBeaver para Mac, <code>alt+x</code> (Opción+X) ejecuta el script: un carácter que la necesite (<code>≈</code>, <code>∑</code>) no se teclea.</p>
     <label for="retardo">Pausa entre teclas (ms)</label>
     <input id="retardo" name="perfil.retardo_tecla_ms" type="number" min="2" max="200" value="{{ ajustes.perfil.retardo_tecla_ms }}">
+    <label for="retardo_video">Retraso del vídeo (ms)</label>
+    <input id="retardo_video" name="perfil.retardo_video_ms" type="number" min="0" max="10000" step="100" value="{{ ajustes.perfil.retardo_video_ms }}">
+    <p class="sub" style="margin:6px 0 0">Lo que tarda, como mucho, la imagen del Mac en enseñar una tecla. Tras pulsar, el puente espera a ver el cambio hasta este tiempo; si se queda corto, una lectura puede salir con una página de antes o acabar antes de tiempo. La bitácora avisa si se acerca.</p>
     <label class="fila" style="margin-top:12px"><input type="checkbox" id="invertir_rueda" name="perfil.invertir_rueda" {{ 'checked' if ajustes.perfil.invertir_rueda }}> Invertir la rueda del ratón</label>
     <p class="sub" style="margin:6px 0 0">Márcala si en el Mac la rueda va al revés (pasa con el «desplazamiento natural» de macOS). Vale para Claude y para cuando usas el Mac desde aquí.</p>
 

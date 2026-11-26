@@ -3,6 +3,19 @@
 Todo lo que toca el Mac pasa por aquí, y aquí se comprueba el control antes
 de cada informe al aparato —no una vez por tarea—: si la persona pulsa
 «Parar» a mitad de un tecleo, la tecla siguiente ya no sale.
+
+Esperar (C-0485, decisión 456 del hub): el vídeo del JetKVM llega 1–2 s tarde (medido
+con el aparato). Una pantalla quieta justo después de pulsar puede ser la de
+ANTES de la tecla: dos capturas iguales seguidas no dicen que ya llegó. Así
+que ninguna espera tras una acción se fía de una pantalla quieta:
+- `tras(accion)` toma el «antes» asentado, hace la acción y espera a VER el
+  cambio (`esperar_cambio`); sólo entonces, a que se quede quieta. Si en el
+  tope no cambió nada, eso es lo que se sabe: el final, o «ya estaba ahí».
+- `asentada()` es el «antes»: la última pantalla asentada o, si hubo entradas
+  desde entonces, la que hay tras esperar el retraso del vídeo desde la última.
+- El retraso es un tope fijo del perfil («Retraso del vídeo», 3000 ms): nada
+  lo baja solo. Lo que tarda de verdad cada cambio queda en `tardanzas`, y si
+  se acerca al tope, la bitácora lo dice para que se suba en Ajustes.
 """
 
 from __future__ import annotations
@@ -10,6 +23,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from collections import deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from PIL import Image, ImageChops, ImageStat
@@ -109,6 +124,10 @@ class Ocupado(RuntimeError):
 # Dos capturas tan parecidas son la misma página: avanzar ya no mueve nada.
 IGUAL = 0.002
 
+# «Retraso del vídeo» en Ajustes no pasa de esto: con más, el final de cada
+# lectura costaría más de diez segundos y algo va mal en el aparato.
+RETARDO_VIDEO_MAX_MS = 10_000
+
 
 def desplazamiento(antes: Image.Image, despues: Image.Image) -> int | None:
     """Cuántos píxeles subió el contenido de una zona entre dos capturas; None si no se reconoce.
@@ -149,6 +168,36 @@ class PantallaInesperada(RuntimeError):
     """La pantalla no está como hace falta para teclear sin riesgo: no se teclea."""
 
 
+@dataclass
+class Visto:
+    """Lo que se vio tras una acción (`Motor.tras`)."""
+    img: Image.Image
+    # Dos capturas seguidas coincidieron: no está a medio pintar.
+    quieta: bool
+    # Se vio cambiar respecto de lo de antes de la acción, y siguió cambiada.
+    cambio: bool
+    # Segundos desde el final de la acción hasta ver el primer cambio; None si no cambió.
+    tardo: float | None
+    # El «antes» con el que se comparó estaba quieto. Si no (el vídeo llegó más
+    # tarde que «Retraso del vídeo», un aviso de macOS entrando), lo que acaba
+    # de pintarse puede pasar por obra de la acción.
+    antes_quieta: bool = True
+
+
+# Lo que, además del retraso del vídeo, puede tardar el programa del Mac en
+# reaccionar (abrir un diálogo, pintar la página siguiente). Sin medir con un
+# cliente real: el simulador reacciona en el acto.
+MARGEN_CAMBIO = 1.0
+
+# Si lo que tarda un cambio pasa de esta fracción del tope, el retraso del
+# vídeo está cerca de quedarse corto: con un poco más, «no cambió» sería falso
+# (una lectura acabaría antes de tiempo).
+CERCA_DEL_TOPE = 0.8
+
+# Cuántos ejemplos de lo que tarda el vídeo se guardan (`Motor.tardanzas`).
+TARDANZAS = 50
+
+
 class Motor:
     def __init__(self, dispositivo: Dispositivo, control: Control, bitacora: Bitacora, perfil: dict):
         self.dispositivo = dispositivo
@@ -160,6 +209,23 @@ class Motor:
         self.progreso: str = ""
         # Cuánto se espera, como mucho, a que la pantalla se quede quieta.
         self.tope_estable = 4.0
+        # Cuándo salió la última entrada al Mac (tecla, ratón o rueda), en
+        # `time.monotonic()`: hasta `retardo_video()` después, el vídeo puede no
+        # enseñarla aún.
+        self._ultima_entrada = 0.0
+        # La última pantalla asentada por zona: ya refleja todo lo pulsado.
+        # Cualquier entrada la borra (`_entrada`).
+        self._asentada: dict[tuple, Image.Image] = {}
+        #: Lo que tardó en verse cada cambio tras una acción, en segundos: los
+        #: últimos `TARDANZAS`. Es el retraso real del vídeo más lo que tarde el
+        #: programa; con él se mide si el tope de Ajustes sobra o se queda corto.
+        self.tardanzas: deque[float] = deque(maxlen=TARDANZAS)
+        #: Cuántas esperas tras una acción acabaron en el tope sin ver cambio
+        #: (el final de un documento, o algo que ya estaba ahí).
+        self.esperas_sin_cambio = 0
+        #: El aviso de «cerca del tope» de la tarea en marcha, o "". Uno solo por
+        #: tarea: en una lectura de 400 páginas, uno por página taparía la bitácora.
+        self.aviso_retraso = ""
 
     # ── una tarea a la vez ──────────────────────────────────────────────────
     @contextlib.asynccontextmanager
@@ -168,6 +234,10 @@ class Motor:
             raise Ocupado(f"ya estoy con: {self.tarea}")
         async with self._cerrojo:
             self.tarea, self.progreso = tarea, ""
+            # Entre una tarea y otra la persona puede haber usado el Mac desde
+            # su pantalla (eso no pasa por aquí): lo asentado ya no vale.
+            self._asentada.clear()
+            self.aviso_retraso = ""
             try:
                 yield
             finally:
@@ -211,23 +281,160 @@ class Motor:
             previa = img
             await asyncio.sleep(intervalo)
 
-    async def paginas(self, avanzar, zona: tuple[int, int, int, int] | None = None, tope: int = 400):
-        """La pantalla página a página: la de ahora y otra tras cada `avanzar()`,
+    # ── esperar a ver lo pulsado (C-0485) ──────────────────────────────────
+    def retardo_video(self) -> float:
+        """Cuánto puede tardar el vídeo en enseñar una entrada, en segundos.
+
+        El del aparato si lo sabe (el simulador: 0); si no, el del perfil
+        («Retraso del vídeo», 3000 ms por omisión: lo medido fueron 1–2 s)."""
+        propio = getattr(self.dispositivo, "retardo_video_s", None)
+        if propio is not None:
+            return max(0.0, float(propio))
+        ms = self.perfil.get("retardo_video_ms", config.PERFIL_POR_OMISION["retardo_video_ms"])
+        return max(0, min(int(ms), RETARDO_VIDEO_MAX_MS)) / 1000
+
+    def _entrada(self) -> None:
+        """Una entrada al Mac: lo asentado deja de valer y el reloj del retraso vuelve a empezar."""
+        self._ultima_entrada = time.monotonic()
+        self._asentada.clear()
+
+    @staticmethod
+    def _clave(zona: tuple[int, int, int, int] | None, recortar: bool) -> tuple:
+        return ("zona", *zona) if zona else ("editor" if recortar else "pantalla",)
+
+    async def asentada(self, zona: tuple[int, int, int, int] | None = None,
+                       recortar: bool = True) -> tuple[Image.Image, bool]:
+        """La pantalla con todo lo pulsado ya a la vista, y si está quieta.
+
+        Si ya hay una asentada de esa zona y no se ha pulsado nada desde
+        entonces, ésa. Si no, espera lo que falte hasta `retardo_video()`
+        después de la última entrada —la de Claude o la de la persona antes de
+        dar el control— y luego a que se quede quieta. Sin esto, el «antes» de
+        `tras` podía ser de antes de lo tecleado, y lo tecleado llegando tarde
+        parecía el diálogo de «Ir a la línea» abriéndose.
+        """
+        clave = self._clave(zona, recortar)
+        if clave in self._asentada:
+            return self._asentada[clave], True
+        retardo = self.retardo_video()
+        falta = max(self._ultima_entrada + retardo - time.monotonic(),
+                    # Lo que la persona pulsó desde su pantalla no pasa por aquí:
+                    # sólo se sabe que fue antes de darle el control a Claude.
+                    self.control.desde + retardo - time.time())
+        if falta > 0:
+            await asyncio.sleep(falta)
+        img, quieta = await self.esperar_estable(recortar=recortar, zona=zona)
+        if quieta:
+            self._asentada[clave] = img
+        return img, quieta
+
+    def _cambio(self, antes: Image.Image, img: Image.Image, cuadros: int | None) -> bool:
+        if cuadros is None:
+            return diferencia(antes, img) >= IGUAL
+        return cuadros_cambiados(antes, img) >= cuadros
+
+    def _ver(self, img: Image.Image, zona: tuple[int, int, int, int] | None, recortar: bool) -> Image.Image:
+        if zona:
+            x, y, w, h = zona
+            return img.crop((x, y, x + w, y + h))
+        return self.recortar(img) if recortar else img
+
+    def tope_cambio(self) -> float:
+        """Cuánto se espera, como mucho, a ver el cambio de una acción."""
+        return self.retardo_video() + MARGEN_CAMBIO
+
+    async def esperar_cambio(self, antes: Image.Image, cuadros: int | None = None, tope: float | None = None,
+                             intervalo: float = 0.1, zona: tuple[int, int, int, int] | None = None,
+                             recortar: bool = False) -> Image.Image | None:
+        """La primera captura que difiere de `antes`, o None si en `tope` no llega ninguna.
+
+        Sin `cuadros`, «difiere» es otra página (`diferencia` ≥ `IGUAL`); con
+        ellos, que aparezca algo de al menos tantos cuadros (`cuadros_cambiados`):
+        un diálogo, no el reloj de la barra de menús. No espera a que se quede
+        quieta: eso es de `tras`. El tope, por omisión, `tope_cambio()`.
+        """
+        limite = time.monotonic() + (self.tope_cambio() if tope is None else tope)
+        while True:
+            img = self._ver(await self.captura(), zona, recortar)
+            if self._cambio(antes, img, cuadros):
+                return img
+            if time.monotonic() >= limite:
+                return None
+            await asyncio.sleep(min(intervalo, max(0.0, limite - time.monotonic())))
+
+    async def tras(self, accion: Callable[[], Awaitable[object]], zona: tuple[int, int, int, int] | None = None,
+                   recortar: bool = True, cuadros: int | None = None, tope: float | None = None) -> Visto:
+        """Hace `accion()` y devuelve la pantalla cuando ya se ve lo que hizo.
+
+        «Antes» es la asentada (`asentada`), para que lo pulsado antes no
+        parezca obra de esta acción. Después se espera a ver un cambio
+        (`esperar_cambio`) y a que se quede quieta; con `cuadros`, además,
+        tiene que seguir cambiada una vez quieta (un parpadeo no es un diálogo
+        abierto). Si en el tope no cambió, `cambio` es False y la imagen es la
+        de después del tope, ya quieta si se pudo: lo que hay.
+        """
+        antes, antes_quieta = await self.asentada(zona=zona, recortar=recortar)
+        await accion()
+        inicio = time.monotonic()
+        tope = self.tope_cambio() if tope is None else tope
+        limite = inicio + tope
+        tardo = None
+        while True:
+            img = await self.esperar_cambio(antes, cuadros, tope=max(0.0, limite - time.monotonic()),
+                                            zona=zona, recortar=recortar)
+            if img is None:
+                break
+            if tardo is None:
+                tardo = time.monotonic() - inicio
+            img, quieta = await self.esperar_estable(recortar=recortar, zona=zona)
+            # Con cuadros, quieta y aún cambiada; sin ellos (otra página), basta
+            # que siga cambiada: si no se queda quieta, lo dice `quieta`.
+            if self._cambio(antes, img, cuadros) and (quieta or cuadros is None):
+                return self._visto(Visto(img, quieta, True, tardo, antes_quieta), zona, recortar, tope)
+            if time.monotonic() >= limite:
+                break
+        self.esperas_sin_cambio += 1
+        img, quieta = await self.esperar_estable(recortar=recortar, zona=zona)
+        return self._visto(Visto(img, quieta, False, None, antes_quieta), zona, recortar, tope)
+
+    def _visto(self, v: Visto, zona, recortar: bool, tope: float) -> Visto:
+        if v.quieta:
+            self._asentada[self._clave(zona, recortar)] = v.img
+        if v.tardo is not None:
+            self.tardanzas.append(v.tardo)
+            # Contra el retraso, no contra el tope: `asentada` da por hecho que el
+            # vídeo no llega más tarde que eso (lo encontró el revisor).
+            retraso = self.retardo_video()
+            if retraso and v.tardo > CERCA_DEL_TOPE * retraso and not self.aviso_retraso:
+                self.aviso_retraso = (
+                    f"la pantalla tardó {v.tardo:.1f} s en cambiar, cerca del «Retraso del vídeo» de {retraso:.1f} s: "
+                    "sube «Retraso del vídeo» en Ajustes, o una lectura puede acabar antes de tiempo")
+                self.bitacora.apuntar("aviso", self.aviso_retraso)
+        return v
+
+    async def paginas(self, avanzar, zona: tuple[int, int, int, int] | None = None, tope: int = 400,
+                      inicio=None):
+        """La pantalla página a página: la primera y otra tras cada `avanzar()`,
         cada una ya quieta, hasta que avanzar no cambia nada (el final) o van `tope`.
 
-        Lo comparten la lectura de un documento (Av Pág, en la región del
-        editor) y el recorrido de una zona cualquiera (la rueda). Quien recibe
-        menos de `tope` sabe que llegó al final.
+        La primera es la que deja `inicio()` (ir al principio) si se da, o la de
+        ahora. Cada una pasa por `tras`: con el vídeo llegando tarde, la página
+        de después de pulsar no es la primera que se queda quieta, sino la
+        primera que cambia. Lo comparten la lectura de un documento (Av Pág, en
+        la región del editor) y el recorrido de una zona cualquiera (la rueda).
+        Quien recibe menos de `tope` sabe que llegó al final.
         """
-        previa, quieta = await self.esperar_estable(zona=zona)
-        yield previa, quieta
+        if inicio is None:
+            img, quieta = await self.asentada(zona=zona)
+        else:
+            v = await self.tras(inicio, zona=zona)
+            img, quieta = v.img, v.quieta
+        yield img, quieta
         for _ in range(tope - 1):
-            await avanzar()
-            img, quieta = await self.esperar_estable(zona=zona)
-            if diferencia(img, previa) < IGUAL:
+            v = await self.tras(avanzar, zona=zona)
+            if not v.cambio:
                 return
-            yield img, quieta
-            previa = img
+            yield v.img, v.quieta
 
     async def recorrer(self, zona: tuple[int, int, int, int], pasos: int = 5, tope: int = 10) -> Recorrido:
         """Baja una zona con la rueda hasta su final (o `tope` páginas) y la captura en cada parada.
@@ -260,27 +467,17 @@ class Motor:
                               + ("" if r.final else ", sin llegar al final"))
         return r
 
-    async def esperar_cambio(self, antes: Image.Image, cuadros: int, tope: float = 2.0,
-                             intervalo: float = 0.1) -> Image.Image | None:
-        """Espera a que en la pantalla entera aparezca algo de al menos `cuadros`
-        cuadros respecto de `antes`, y a que se quede quieto. None si no aparece."""
-        limite = time.monotonic() + tope
-        while time.monotonic() <= limite:
-            img = await self.captura()
-            if cuadros_cambiados(antes, img) >= cuadros:
-                quieta, estable = await self.esperar_estable(recortar=False, tope=1.5)
-                if estable and cuadros_cambiados(antes, quieta) >= cuadros:
-                    return quieta
-            await asyncio.sleep(intervalo)
-        return None
-
     # ── teclado ─────────────────────────────────────────────────────────────
     async def _pulsar(self, p: hid.Pulsacion) -> None:
         retardo = self.perfil.get("retardo_tecla_ms", 12) / 1000
         self.control.comprobar()
-        await self.dispositivo.informe_teclado(p.modificadores, [p.tecla])
-        await asyncio.sleep(retardo)
-        await self.dispositivo.informe_teclado(0, [])
+        self._entrada()
+        try:
+            await self.dispositivo.informe_teclado(p.modificadores, [p.tecla])
+            await asyncio.sleep(retardo)
+            await self.dispositivo.informe_teclado(0, [])
+        finally:
+            self._entrada()
         await asyncio.sleep(retardo)
 
     async def atajo(self, atajo: str, veces: int = 1, apuntar: bool = True) -> None:
@@ -328,17 +525,23 @@ class Motor:
     # ── ratón ───────────────────────────────────────────────────────────────
     async def mover(self, x: int, y: int) -> None:
         self.control.comprobar()
+        self._entrada()
         await self.dispositivo.raton(x, y, 0)
+        self._entrada()
 
     async def clic(self, x: int, y: int, boton: str = "izquierdo", doble: bool = False) -> None:
         bits = {"izquierdo": 1, "derecho": 2, "centro": 4}[boton]
         self.control.comprobar()
-        await self.dispositivo.raton(x, y, 0)
-        for _ in range(2 if doble else 1):
-            await self.dispositivo.raton(x, y, bits)
-            await asyncio.sleep(0.04)
+        self._entrada()
+        try:
             await self.dispositivo.raton(x, y, 0)
-            await asyncio.sleep(0.06)
+            for _ in range(2 if doble else 1):
+                await self.dispositivo.raton(x, y, bits)
+                await asyncio.sleep(0.04)
+                await self.dispositivo.raton(x, y, 0)
+                await asyncio.sleep(0.06)
+        finally:
+            self._entrada()
         self.bitacora.apuntar("clic", f"{boton}{' doble' if doble else ''} en ({x}, {y})")
 
     async def rueda(self, pasos: int, x: int | None = None, y: int | None = None, apuntar: bool = True) -> None:
@@ -349,7 +552,9 @@ class Motor:
         if x is not None and y is not None:
             await self.mover(x, y)
             await asyncio.sleep(0.06)
+        self._entrada()
         await self.dispositivo.rueda(-pasos if self.perfil.get("invertir_rueda") else pasos)
+        self._entrada()
         if apuntar:
             self.bitacora.apuntar("rueda", f"{pasos:+d}" + (f" en ({x}, {y})" if x is not None and y is not None else ""))
 
@@ -362,12 +567,21 @@ class Motor:
         """Abre «Ir a la línea», comprueba EN PANTALLA que se abrió y teclea el número.
 
         Con una espera fija, si el diálogo no llegaba a abrirse, el número y el
-        Enter acababan dentro del documento.
+        Enter acababan dentro del documento. Y con el vídeo llegando tarde, el
+        «antes» tiene que ser ya con lo tecleado a la vista (`tras` lo toma
+        asentado): si no, lo tecleado en el tramo anterior apareciendo tarde
+        pasaba por el diálogo abriéndose.
         """
         atajo = self.perfil["ir_a_linea"]
-        antes = await self.captura()
-        await self.atajo(atajo, apuntar=False)
-        if await self.esperar_cambio(antes, CUADROS_DIALOGO) is None:
+        visto = await self.tras(lambda: self.atajo(atajo, apuntar=False), recortar=False,
+                                cuadros=CUADROS_DIALOGO)
+        if not visto.antes_quieta:
+            self.bitacora.apuntar("error", f"ir a la línea {n}: la pantalla no estaba quieta antes de {atajo}")
+            raise PantallaInesperada(
+                f"antes de pulsar {atajo} para ir a la línea {n} la pantalla no estaba quieta: no sé "
+                "si lo que apareció es el diálogo, así que no tecleo el número. ¿Algo se mueve encima "
+                "del editor, o el vídeo llega más tarde que «Retraso del vídeo» (Ajustes)?")
+        if not visto.cambio:
             self.bitacora.apuntar("error", f"ir a la línea {n}: {atajo} no abrió nada en la pantalla")
             raise PantallaInesperada(
                 f"pulsé {atajo} para ir a la línea {n} y no se abrió nada en la pantalla: no tecleo "
