@@ -61,8 +61,11 @@ class Lectura:
     huella_referencia: str = ""
     variante: dict | None = None
     verificada: bool = False
-    # La parte de la pantalla que se capturó (x, y, ancho, alto), cuando no es
-    # la región del editor del perfil: la ventana de un texto plano (C-0482).
+    # La parte de la pantalla que se capturó (x, y, ancho, alto). Desde C-0491
+    # (decisión 460) se guarda siempre, también cuando es la región del editor
+    # de Ajustes: el cambio que nazca de esta lectura se comprueba y se escribe
+    # en ella, aunque luego cambie esa región. None = una lectura de antes, que
+    # se leyó en la región de Ajustes de entonces y se trata como la de ahora.
     zona: list[int] | None = None
     # El vídeo tardó en enseñar alguna página cerca del tope de Ajustes (C-0485):
     # con un poco más, la lectura habría acabado antes de tiempo. "" si no.
@@ -135,10 +138,11 @@ async def capturar(motor: Motor, lectura: Lectura,
     """Recorre el documento con Av Pág desde el principio y guarda cada página.
 
     Sin `zona`, cada página es la región del editor del perfil; con ella, esa
-    parte de la pantalla (la ventana de otro programa).
+    parte de la pantalla (la ventana de otro programa). La que sea queda en
+    `lectura.zona` (decisión 460).
     """
     p = motor.perfil
-    lectura.zona = list(zona) if zona else None
+    lectura.zona = [int(v) for v in (zona or p["region_editor"])]
     try:
         motor.bitacora.apuntar("lectura", f"empiezo a capturar «{lectura.nombre}»", lectura=lectura.id)
         await motor.aparcar_raton()
@@ -176,6 +180,21 @@ async def capturar(motor: Motor, lectura: Lectura,
         motor.bitacora.apuntar("error", lectura.error, lectura=lectura.id)
     lectura.guardar()
     return lectura
+
+
+def describir_zona(zona: list[int] | None, perfil: dict) -> dict:
+    """La zona para la persona y para Claude: dónde, y si es la región de Ajustes.
+
+    Fuera de esa región los atajos siguen siendo los del programa de Ajustes
+    (`perfil.nombre`), que en otra ventana pueden hacer otra cosa (decisión 460):
+    por eso se dice siempre cuál es."""
+    region = [int(v) for v in perfil["region_editor"]]
+    zona = [int(v) for v in zona] if zona else region
+    x, y, w, h = zona
+    de_ajustes = zona == region
+    texto = (f"la región del editor de Ajustes ({x}, {y}, {w}×{h})" if de_ajustes
+             else f"otra ventana: la zona ({x}, {y}, {w}×{h}), no la región del editor de Ajustes")
+    return {"zona": zona, "de_ajustes": de_ajustes, "texto": texto}
 
 
 def _avisar_si_inestable(motor: Motor, lectura: Lectura, n: int, quieta: bool) -> None:
@@ -316,5 +335,7 @@ def resumen(lectura: Lectura) -> dict:
         # medio pintar, y una transcripción de eso parece buena y no lo es.
         "inestables": [p.n for p in lectura.paginas if p.inestable],
         "aviso": lectura.aviso,
+        # Dónde se capturó (x, y, ancho, alto); None, una lectura de antes de C-0491.
+        "zona": lectura.zona,
         "archivo": str(lectura.carpeta / "ensamblado.txt"),
     }

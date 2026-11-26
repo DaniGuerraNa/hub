@@ -6,7 +6,8 @@
     <div>
       <h1>{{ c.descripcion }}</h1>
       <p class="sub" style="margin:0">Sobre la lectura <a href="/lecturas/{{ c.lectura }}">{{ c.lectura }}</a> · {{ c.tramos|length }} {{ 'tramo' if c.tramos|length == 1 else 'tramos' }} ·
-        {{ c.original|length }} → {{ c.nuevo|length }} líneas</p>
+        {{ c.original|length }} → {{ c.nuevo|length }} líneas{% if zona %} · se escribe en <span id="zona-cambio">{{ zona.texto }}</span>{% endif %}</p>
+      {% if zona and not zona.de_ajustes %}<p class="sub" id="zona-ajena" style="margin:6px 0 0">Los atajos con que se escribe son los de {{ estado.perfil.nombre }} (Ajustes): en otra ventana pueden hacer otra cosa. Por eso esto lo apruebas tú, aunque Claude tenga el permiso de correcciones pequeñas.</p>{% endif %}
     </div>
     <div>{% include "_estado_cambio.html" %}</div>
   </div>

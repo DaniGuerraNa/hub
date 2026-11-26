@@ -132,8 +132,10 @@ Todo se hace en **una sola pantalla: http://127.0.0.1:8794**.
    base hasta que lo guardas tú en el Mac. Tras guardar, la huella confirma que
    quedó exactamente lo acordado.
    - **Correcciones pequeñas sin una aprobación por cada una.** Al dar el
-     control, el diálogo trae una casilla (desmarcada siempre): «Correcciones
-     pequeñas sin pedirte aprobación durante este encargo». Con ella, lo que
+     control, el diálogo trae una casilla: «Correcciones pequeñas sin pedirte
+     aprobación durante este encargo». Sale desmarcada, o marcada si así lo
+     dejaste en **Ajustes → Permisos de Claude**; siempre la ves antes de
+     aceptar, y «Trabajo delicado: pregúntame todo» las desmarca todas. Con ella, lo que
      conserva parte del documento y cabe en **20 líneas y 1 500 caracteres en
      total** (sumando todos los cambios del encargo, lo que quita más lo que
      pone) queda aprobado solo, con la placa «aprobado por tu permiso» y su
@@ -145,6 +147,14 @@ Todo se hace en **una sola pantalla: http://127.0.0.1:8794**.
      Al devolverte el Mac, la bitácora dice cuántas escribió sin pedírtelo:
      **revísalas antes de guardar** (no hay «Deshacer» del puente: Cmd+Z en el
      Mac, y las capturas de cada tramo).
+     «Leer» y «Escribir» dan el control sin ningún permiso, marque lo que
+     marque Ajustes. Y sólo vale en la región del editor de Ajustes: si Claude
+     leyó otra ventana (te dice cuál, y la página de la lectura también), lo que
+     escriba allí lo apruebas tú, porque los atajos son los de tu cliente de
+     Ajustes y en otro programa pueden hacer otra cosa.
+   - **Lo que no entra en ningún permiso:** ejecutar nada en el Mac, guardar
+     archivos, escribir un documento de cero sin tu aprobación y pasar de los
+     topes.
 
 ## Preparar el Mac (una vez)
 
@@ -174,7 +184,11 @@ en DBeaver para Mac ejecuta el script.
 
 Después, en **Ajustes** del puente, marca la región del editor arrastrando
 sobre la captura y comprueba los atajos de tu cliente (por omisión, los de
-DBeaver: Cmd+L para ir a una línea).
+DBeaver: Cmd+L para ir a una línea). Claude puede leer otra ventana dándole
+su zona, sin tocar Ajustes, y un cambio sobre esa lectura se escribe ahí; pero
+con estos atajos, que en otro programa (VS Code, por ejemplo) pueden no ser los
+suyos. En **Ajustes → Permisos de Claude** eliges qué sale marcado al darle el
+control y, al lado, «Sin pedir permisos» de Claude Code.
 
 ## Arrancar y conectar
 

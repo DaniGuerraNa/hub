@@ -23,6 +23,18 @@ contando lo que quitas más lo que pones) vuelve de `proponer_cambio` ya aprobad
 - El permiso dura lo que dura ese control: si lo retoma, pulsa Parar, terminas
   tu turno o se lo dio otra vez, con o sin la casilla, lo que aún no escribiste
   vuelve a esperar su sí.
+- **Sólo en la región del editor de Ajustes.** Si la lectura se hizo en otra
+  zona (otra ventana), el cambio nunca entra en el permiso, aunque quepa: lo
+  aprueba ella. Si la persona marcó «Trabajo delicado», no hay permiso: todo
+  espera su aprobación.
+
+**Otra ventana que la de Ajustes.** El cambio se escribe en la zona de su
+lectura, pero con los **atajos del programa calibrado en Ajustes** (ir al
+principio, Av Pág, «Ir a la línea», fin de línea). En otro programa pueden hacer
+otra cosa: en VS Code, `Cmd+L` no es «Ir a la línea» (selecciona la línea). No
+escribas allí sin avisarle antes de qué atajos se van a pulsar y de que pueden
+no servir; si no casan, el puente no escribe, pero dile qué esperar. Notas y el
+navegador no tienen números de línea: no entran en lectura → cambio.
 
 Herramientas, en una sola búsqueda:
 `select:mcp__puente-kvm__estado,mcp__puente-kvm__proponer_cambio,mcp__puente-kvm__estado_cambio,mcp__puente-kvm__escribir_cambio,mcp__puente-kvm__ver_tramo`.

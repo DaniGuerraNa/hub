@@ -181,3 +181,96 @@ def test_si_un_tramo_ya_no_se_puede_teclear_no_se_escribe_ningun_otro(entorno):
     assert cambio["estado"] == "fallido" and "≈" in cambio["error"]
     assert sim.editor.lineas == antes
     assert sim.pulsaciones == pulsaciones  # ni una tecla: tampoco los atajos de comprobar las páginas
+
+
+# ── la zona de la lectura (C-0491, decisión 460) ────────────────────────────
+# Una zona que no es la región del editor de Ajustes (300, 98, 1620×952): otra
+# ventana. Recorta el editor del simulador, así que se lee igual de bien.
+OTRA_ZONA = [300, 98, 1500, 900]
+
+
+def leida_en_zona(c, sim, zona=OTRA_ZONA) -> str:
+    x, y, w, h = zona
+    assert c.post("/api/control", json={"accion": "dar"}, headers=PERSONA).status_code == 200
+    r = c.post("/api/lecturas", json={"nombre": "en otra ventana", "x": x, "y": y, "ancho": w, "alto": h})
+    assert r.status_code == 200, r.text
+    esperar(c)
+    lid = r.json()["id"]
+    transcribir_como_oraculo(c, sim, lid)
+    assert c.post(f"/api/lecturas/{lid}/huella", json={"referencia": sim.estado()["huella_base"]}).json()["verificada"]
+    return lid
+
+
+def test_una_lectura_hecha_en_otra_zona_se_escribe_en_esa_zona(entorno):
+    """Antes se comparaba y se recortaba con la región de Ajustes: una lectura
+    con zona no casaba nunca («no es la que se leyó») y no se podía escribir."""
+    c, sim = entorno
+    lid = leida_en_zona(c, sim)
+    assert lecturas.cargar(lid).zona == OTRA_ZONA
+    nuevo = list(sim.editor.guardado)
+    nuevo[40] = nuevo[40] + " -- revisado"
+    cid = proponer_y_aprobar(c, lid, nuevo)
+    cambio = escribir(c, cid)
+    assert cambio["estado"] == "escrito", cambio["error"]
+    assert sim.editor.lineas[40] == nuevo[40]
+    # La captura de cada tramo es de la zona de la lectura, como sus páginas.
+    from PIL import Image
+    assert Image.open(cambios.cargar(cid).png(1)).size == tuple(OTRA_ZONA[2:])
+
+
+def test_una_lectura_antigua_sin_zona_se_escribe_en_la_region_de_ajustes(entorno):
+    c, sim = entorno
+    lid = leida_y_verificada(c, sim)
+    l = lecturas.cargar(lid)
+    l.zona = None  # como la guardaba el puente antes de C-0491
+    l.guardar()
+    nuevo = list(sim.editor.guardado)
+    nuevo[10] = nuevo[10] + " -- revisado"
+    cid = proponer_y_aprobar(c, lid, nuevo)
+    assert escribir(c, cid)["estado"] == "escrito"
+    assert sim.editor.lineas[10] == nuevo[10]
+
+
+def test_con_la_region_de_ajustes_cambiada_una_lectura_antigua_no_se_escribe(entorno):
+    # Sin zona guardada, la región es la de Ajustes de ahora: si ya no es la que
+    # se usó al leer, las páginas no casan y no se teclea nada.
+    c, sim = entorno
+    lid = leida_y_verificada(c, sim)
+    l = lecturas.cargar(lid)
+    l.zona = None
+    l.guardar()
+    nuevo = list(sim.editor.guardado)
+    nuevo[10] = nuevo[10] + " -- revisado"
+    cid = proponer_y_aprobar(c, lid, nuevo)
+    r = c.post("/api/ajustes", json={"perfil": {"region_editor": OTRA_ZONA}}, headers=PERSONA)
+    assert r.status_code == 200, r.text
+    antes = list(sim.editor.lineas)
+    cambio = escribir(c, cid)
+    assert cambio["estado"] == "fallido" and "no es la que se leyó" in cambio["error"]
+    assert sim.editor.lineas == antes
+
+
+def test_el_estado_ensena_la_zona_de_la_tarea_en_marcha_de_su_lectura_o_de_su_cambio(entorno):
+    """Sin estado nuevo: sale de la lectura que se captura o de la del cambio que se
+    escribe. Sin tarea, ninguna."""
+    c, sim = entorno
+    p = c.app.state.puente
+    assert c.get("/api/estado").json()["zona_tarea"] is None
+    l = lecturas.nueva("capturando en otra ventana")
+    l.zona = OTRA_ZONA
+    l.guardar()
+    p.motor.tarea = "leer «capturando en otra ventana»"
+    try:
+        z = c.get("/api/estado").json()["zona_tarea"]
+        assert z["zona"] == OTRA_ZONA and z["de_ajustes"] is False and "otra ventana" in z["texto"]
+        l.estado = "capturada"
+        l.guardar()
+        assert c.get("/api/estado").json()["zona_tarea"] is None
+        cambio = cambios.Cambio(id="escribiendo-000001", lectura=l.id, descripcion="d", creado=0.0,
+                                original=["a"], nuevo=["b"], tramos=cambios.tramos_de(["a"], ["b"]),
+                                estado="escribiendo")
+        cambio.guardar()
+        assert c.get("/api/estado").json()["zona_tarea"]["zona"] == OTRA_ZONA
+    finally:
+        p.motor.tarea = None
+    assert c.get("/api/estado").json()["zona_tarea"] is None

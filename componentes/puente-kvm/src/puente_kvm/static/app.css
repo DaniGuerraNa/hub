@@ -231,6 +231,9 @@ pre.consulta { background: var(--lienzo); padding: 10px; border-radius: var(--r-
 .dialogo .fila { justify-content: flex-end; }
 .dialogo .dialogo-casilla { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 16px; color: var(--texto-2); }
 .dialogo .dialogo-casilla input { margin-top: 3px; flex: none; }
+.dialogo .dialogo-casilla + .dialogo-casilla { margin-top: -6px; }
+/* «Trabajo delicado» marcada: las demás se ven apagadas, no sólo bloqueadas (C-0491). */
+.dialogo .dialogo-casilla:has(input:disabled) { opacity: .55; }
 .fugaz { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--elevado);
   color: var(--texto); padding: 10px 16px; border-radius: var(--r-input); z-index: 60; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
 .fugaz.riesgo { background: #4a2219; }

@@ -43,6 +43,12 @@ PARADO = "parado"  # alguien pulsó Parar: lo que estuviera en marcha se corta
 TOPE_LINEAS = 20
 TOPE_CARACTERES = 1500
 
+# Los permisos que la persona puede dar con el control (C-0491, decisión 460, que
+# amplía la 458). Lista cerrada: un nombre que no está aquí no se concede, se
+# rechaza. Lo que no entra en ninguno —ejecutar o guardar en el Mac, escribir un
+# documento de cero, pasar de los topes— no es un permiso que falte: no se da.
+PERMISOS = ("correcciones",)
+
 
 class SinControl(RuntimeError):
     """Claude no tiene el control del Mac ahora mismo."""
@@ -52,9 +58,10 @@ class SinControl(RuntimeError):
 class Permiso:
     """El permiso de correcciones pequeñas de UNA concesión del control.
 
-    Nace sólo de la casilla del diálogo «Dar el control» y no se guarda en
-    ningún sitio: un reinicio lo pierde, como pierde el control. Si sigue
-    valiendo lo dice `Control.permiso_vigente`, no este objeto."""
+    Nace sólo de la casilla del diálogo «Dar el control» (marcada o no por
+    omisión según Ajustes, decisión 460) y no se guarda en ningún sitio: un
+    reinicio lo pierde, como pierde el control. Si sigue valiendo lo dice
+    `Control.permiso_vigente`, no este objeto."""
 
     id: str
     tope_lineas: int = TOPE_LINEAS
@@ -98,12 +105,17 @@ class Control:
     concesion: str = ""
     permiso: Permiso | None = None
 
-    def dar(self, correcciones: bool = False) -> None:
+    def dar(self, permisos: frozenset[str] = frozenset()) -> None:
+        """Da el control con `permisos` (de `PERMISOS`). Sin ellos, ninguno: los
+        valores por omisión de Ajustes sólo marcan las casillas del diálogo."""
+        desconocidos = set(permisos) - set(PERMISOS)
+        if desconocidos:
+            raise ValueError(f"permiso desconocido: {', '.join(sorted(desconocidos))}")
         self.modo, self.desde, self.motivo = CLAUDE, time.time(), "dado en la pantalla"
         self.ultima_accion = time.time()
         self.concesion = uuid.uuid4().hex[:12]
         # Sin casilla, ningún permiso: el de una concesión anterior no pasa a ésta.
-        self.permiso = Permiso(self.concesion) if correcciones else None
+        self.permiso = Permiso(self.concesion) if "correcciones" in permisos else None
 
     def permiso_vigente(self) -> Permiso | None:
         """El permiso de correcciones pequeñas, si sigue valiendo.

@@ -15,6 +15,35 @@ cruzar.
 
 ## Sin publicar
 
+## 0.16.0 — 2026-11-26
+
+El Puente KVM escribe en la misma ventana en la que leyó, sin mover la región
+del editor en cada trabajo, y tiene un apartado de permisos para elegir qué
+hace Claude sin preguntarte.
+
+### Qué tienes que hacer
+
+- Actualiza. Si usas el Puente KVM, en su pantalla, «Reabrir la conversación
+  de Claude» para que lea sus instrucciones nuevas.
+
+### Nuevo
+
+- **Puente KVM: «Permisos de Claude», en Ajustes.** Eliges qué casillas salen
+  ya marcadas al dar el control (hoy, las correcciones pequeñas sin
+  aprobación). En el diálogo se ven siempre y las puedes quitar para ese
+  encargo, y **«Trabajo delicado: pregúntame todo»** las desmarca todas.
+  Ejecutar nada en el Mac, guardar o escribir un documento nuevo sin tu
+  aprobación no entran nunca.
+
+### Qué cambia en lo que ya usabas
+
+- **Puente KVM: el cambio se escribe en la zona que se leyó.** Antes, una
+  lectura hecha en otra ventana no se podía escribir y había que mover la
+  región del editor en Ajustes. Ahora cada lectura recuerda su zona, y la
+  pantalla la recuadra mientras trabaja. Lo escrito fuera de la región de
+  Ajustes siempre espera tu aprobación: los atajos son los del programa que
+  calibraste.
+
 ## 0.15.0 — 2026-11-25
 
 El Puente KVM puede escribir correcciones pequeñas sin una aprobación por

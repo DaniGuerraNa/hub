@@ -458,5 +458,6 @@ def test_leer_documento_con_zona_captura_esa_ventana_y_una_zona_fuera_de_pantall
         c.post("/api/control", json={"accion": "dar"}, headers=PERSONA)
         r = asyncio.run(mcp_servidor.leer_documento("procedimiento"))
         x, y, w, h = config.leer_ajustes()["perfil"]["region_editor"]
-        assert lecturas.cargar(r["id"]).zona is None
+        # Desde C-0491 la zona se guarda siempre, también la de Ajustes (decisión 460).
+        assert lecturas.cargar(r["id"]).zona == [x, y, w, h]
         assert Image.open(lecturas.cargar(r["id"]).png(1)).size == (w, h)

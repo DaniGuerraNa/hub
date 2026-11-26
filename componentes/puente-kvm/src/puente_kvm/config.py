@@ -211,9 +211,21 @@ AJUSTES_POR_OMISION = {
     # fábrica, con su frase en Ajustes; se quedan en este equipo hasta que la
     # persona las prepare para mandarlas.
     "mediciones": {"activas": True},
+    # Qué casillas salen marcadas en el diálogo «Dar el control» (C-0491, decisión
+    # 460): sólo eso. El permiso lo da la persona al aceptar el diálogo, nunca este
+    # ajuste: dar el control sin diálogo («Leer», «Escribir») no lleva ninguno. Las
+    # claves son las de `control.PERMISOS`, lista cerrada.
+    "permisos": {"correcciones": False},
 }
 
 _cerrojo = threading.Lock()
+
+
+def permisos_por_omision(ajustes: dict) -> dict[str, bool]:
+    """Los de `ajustes["permisos"]`, sólo con sus claves y sólo un verdadero de verdad:
+    un ajustes.json escrito a mano no puede marcar por omisión otra cosa."""
+    guardados = ajustes.get("permisos") or {}
+    return {n: guardados.get(n) is True for n in AJUSTES_POR_OMISION["permisos"]}
 
 
 def leer_ajustes() -> dict:

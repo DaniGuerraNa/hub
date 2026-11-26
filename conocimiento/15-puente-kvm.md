@@ -59,10 +59,21 @@ de la terminal de Claude, devuelve el control tras cada lectura o escritura,
 como antes.
 
 **Correcciones pequeñas sin aprobar cada una.** En el diálogo de «Dar el
-control a Claude» hay una casilla, desmarcada siempre: con ella, durante ese
-encargo, las correcciones que quepan en 20 líneas y 1 500 caracteres **en
-total** se escriben sin tu clic (un documento nuevo, o quitar más de la mitad
-de uno, nunca).
+control a Claude» hay una casilla: con ella, durante ese encargo, las
+correcciones que quepan en 20 líneas y 1 500 caracteres **en total** se
+escriben sin tu clic (un documento nuevo, o quitar más de la mitad de uno,
+nunca; tampoco lo escrito en otra ventana que la región del editor de Ajustes,
+porque los atajos son los del programa calibrado). Si sale marcada o no lo
+eliges en Ajustes → **«Permisos de Claude»**; la casilla **«Trabajo delicado:
+pregúntame todo»** las desmarca todas para ese encargo. «Leer» y «Escribir»
+desde la pantalla del puente dan el control sin permisos.
+
+**La ventana en la que trabaja Claude.** Claude puede leer cualquier ventana
+dándole su zona, y el cambio se escribe en la misma zona que se leyó: no hace
+falta mover la región del editor en Ajustes para cada trabajo. El panel
+recuadra la zona de la tarea en marcha. Escribir por partes necesita números
+de línea y los atajos del programa calibrado: Notas y el navegador se pueden
+leer, pero no editar por partes.
 El panel dice cuánto lleva, el cambio lleva la placa «aprobado por tu permiso»
 y, al volver el control, la bitácora dice cuántas escribió sin pedirte:
 revísalas antes de guardar.

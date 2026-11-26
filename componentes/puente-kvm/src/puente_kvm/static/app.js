@@ -40,26 +40,46 @@
     setTimeout(() => { d.remove(); if (avisoFugaz === d) avisoFugaz = null; }, riesgo ? 7000 : 2600);
   }
 
-  // Con `casilla` (su texto), una casilla debajo, desmarcada siempre: devuelve
-  // false si se cancela o { casilla: true|false } si se acepta. Sin ella, un
-  // booleano, como siempre lo ha devuelto.
+  // Con `casillas` ([{ id, texto, marcada, exclusiva }]), una casilla por cada una,
+  // siempre visibles y marcadas según `marcada`: devuelve false si se cancela o
+  // { casillas: { id: true|false } } si se acepta. Una `exclusiva` («Trabajo
+  // delicado») al marcarse desmarca y deshabilita las demás; al desmarcarse,
+  // vuelven como salieron. Sin casillas, un booleano, como siempre lo ha devuelto.
   function confirmar(texto, opciones) {
     const o = opciones || {};
+    const lista = o.casillas || [];
     return new Promise((resolver) => {
       const velo = document.createElement('div');
       velo.className = 'velo';
       velo.innerHTML = '<div class="dialogo" role="dialog" aria-modal="true"><p></p>' +
-        (o.casilla ? '<label class="casilla dialogo-casilla"><input type="checkbox" data-casilla><span></span></label>' : '') +
+        lista.map(() => '<label class="casilla dialogo-casilla"><input type="checkbox" data-casilla><span></span></label>').join('') +
         '<div class="fila"><button data-no>Cancelar</button><button data-si></button></div></div>';
       $('p', velo).textContent = texto;
-      if (o.casilla) $('.dialogo-casilla > span', velo).textContent = o.casilla;
+      const cajas = $$('[data-casilla]', velo);
+      const textos = $$('.dialogo-casilla > span', velo);
+      lista.forEach((c, i) => {
+        cajas[i].dataset.casilla = c.id;
+        cajas[i].checked = !!c.marcada;
+        textos[i].textContent = c.texto;
+      });
+      const exclusiva = cajas.find((x, i) => lista[i].exclusiva);
+      if (exclusiva) {
+        exclusiva.addEventListener('change', () => {
+          cajas.forEach((x, i) => {
+            if (x === exclusiva) return;
+            x.disabled = exclusiva.checked;
+            x.checked = exclusiva.checked ? false : !!lista[i].marcada;
+          });
+        });
+      }
       const si = $('[data-si]', velo);
       si.textContent = o.si || 'Sí';
       si.className = o.peligro ? 'peligro' : 'cta';
       const cerrar = (v) => { velo.remove(); document.removeEventListener('keydown', tecla); resolver(v); };
       const tecla = (e) => { if (e.key === 'Escape') cerrar(false); };
       $('[data-no]', velo).onclick = () => cerrar(false);
-      si.onclick = () => cerrar(o.casilla ? { casilla: $('[data-casilla]', velo).checked } : true);
+      si.onclick = () => cerrar(lista.length
+        ? { casillas: Object.fromEntries(cajas.map((x) => [x.dataset.casilla, x.checked])) } : true);
       velo.onclick = (e) => { if (e.target === velo) cerrar(false); };
       document.addEventListener('keydown', tecla);
       document.body.appendChild(velo);
@@ -210,6 +230,7 @@
     if (aparato) aparato.hidden = !!titulo;
   }
 
+  let zonaPintada = '';
   function pintarEstado(e) {
     ultimoEstado = e;
     const modo = e.control.modo;
@@ -276,7 +297,15 @@
     const sigue = $('#escrito-claude-sigue');
     if (sigue) sigue.hidden = modo !== 'claude';
     const t = $('#tarea');
-    if (t) t.textContent = e.tarea ? '⏵ ' + e.tarea + (e.progreso ? ' · ' + e.progreso : '') : '';
+    // Dónde trabaja (decisión 460): en otra ventana que la región de Ajustes, que se vea.
+    const zt = e.tarea && e.zona_tarea;
+    if (t) t.textContent = e.tarea ? '⏵ ' + e.tarea + (e.progreso ? ' · ' + e.progreso : '')
+      + (zt ? ' · en ' + zt.texto : '') : '';
+    const claveZona = zt ? zt.zona.join(',') : '';
+    if (claveZona !== zonaPintada) {
+      zonaPintada = claveZona;
+      if (window.PuenteRegion) window.PuenteRegion();
+    }
     pintarClaude(e.claude || {});
     pintarConversacion(e);
     if (window.PuenteReunion && e.reunion) window.PuenteReunion(e.reunion);
@@ -526,18 +555,28 @@
     if (d.control) {
       const cuerpo = { accion: d.control };
       if (d.control === 'dar') {
-        // C-0489: la casilla, desmarcada cada vez y sin recordarse. Es la única
-        // puerta del permiso: leer y escribir también dan el control, sin él.
+        // C-0489 y decisión 460: las casillas son la única puerta de los permisos
+        // (leer y escribir también dan el control, sin ninguno). Salen marcadas
+        // según Ajustes, a la vista; lo que se manda es lo que quede marcado, y
+        // el servidor nunca pone los de por omisión por su cuenta.
         // Los topes, de `control.py` por el botón: escritos aquí, se desfasarían.
         const miles = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        let omision = {};
+        try { omision = JSON.parse(d.permisos || '{}'); } catch (e) { omision = {}; }
+        if (ultimoEstado && ultimoEstado.permisos_por_omision) omision = ultimoEstado.permisos_por_omision;
         const r = await confirmar('¿Le das el control del Mac a Claude? No lo uses mientras tanto: lo que teclee irá a la ventana que esté al frente.', {
           si: 'Dar el control',
-          casilla: 'Correcciones pequeñas sin pedirte aprobación durante este encargo (hasta '
-            + miles(d.topeLineas) + ' líneas y ' + miles(d.topeCaracteres)
-            + ' caracteres en total; un documento nuevo o reescrito entero, siempre con tu aprobación)',
+          casillas: [
+            { id: 'correcciones', marcada: omision.correcciones === true,
+              texto: 'Correcciones pequeñas sin pedirte aprobación durante este encargo (hasta '
+                + miles(d.topeLineas) + ' líneas y ' + miles(d.topeCaracteres)
+                + ' caracteres en total, en la región del editor; un documento nuevo o reescrito entero, siempre con tu aprobación)' },
+            { id: 'delicado', exclusiva: true, texto: 'Trabajo delicado: pregúntame todo' },
+          ],
         });
         if (!r) return;
-        if (r.casilla) cuerpo.correcciones = true;
+        cuerpo.permisos = r.casillas.delicado ? []
+          : Object.keys(r.casillas).filter((k) => k !== 'delicado' && r.casillas[k]);
       }
       await accion(() => api('/api/control', cuerpo),
         d.control === 'parar' ? 'Parado' : d.control === 'dar' ? 'Claude tiene el control' : 'Vuelves a tener el Mac');
@@ -1317,7 +1356,9 @@
     // Sin aparato, el directo es un fotograma que lo dice: la región encima sólo confunde.
     const repintar = () => {
       $('#region', pantalla).hidden = !casilla.checked || pantalla.dataset.conectado !== 'si';
-      pintarRegion(pantalla, window.PERFIL && window.PERFIL.region_editor);
+      // Con una tarea en marcha, su zona (la de su lectura); si no, la de Ajustes.
+      const zt = ultimoEstado && ultimoEstado.tarea && ultimoEstado.zona_tarea;
+      pintarRegion(pantalla, zt ? zt.zona : window.PERFIL && window.PERFIL.region_editor);
     };
     window.PuenteRegion = repintar;
     $('#directo').addEventListener('load', repintar);

@@ -71,3 +71,24 @@ def test_la_copia_se_da_por_exacta_solo_si_la_huella_coincide():
 def test_el_identificador_conserva_las_letras_con_tilde_sin_la_tilde():
     assert lecturas.nueva("Conciliación año").id.startswith("conciliacion-ano-")
     assert lecturas.slug("Revisión 2") == "revision-2"
+
+
+def test_la_zona_de_la_lectura_se_guarda_siempre_tambien_la_de_ajustes():
+    """C-0491 (decisión 460): el cambio que nazca de ella se escribe en esa zona,
+    así que no puede quedar en None «porque era la de siempre»."""
+    from .ayuda import leer, puente_simulado
+
+    with puente_simulado(lineas=40) as (c, _):
+        lid = leer(c)
+        region = c.app.state.puente.ajustes["perfil"]["region_editor"]
+        assert lecturas.cargar(lid).zona == region
+        assert c.get(f"/api/lecturas/{lid}").json()["zona"] == region
+        assert "leída en <span id=\"zona-lectura\">la región del editor de Ajustes" in c.get(f"/lecturas/{lid}").text
+
+
+def test_describir_la_zona_dice_si_es_la_region_de_ajustes():
+    perfil = {"region_editor": [300, 98, 1620, 952]}
+    assert lecturas.describir_zona(None, perfil)["de_ajustes"] is True
+    otra = lecturas.describir_zona([40, 60, 700, 500], perfil)
+    assert otra == {"zona": [40, 60, 700, 500], "de_ajustes": False,
+                    "texto": "otra ventana: la zona (40, 60, 700×500), no la región del editor de Ajustes"}

@@ -537,9 +537,11 @@ async def leer_documento(nombre: str, x: int = 0, y: int = 0, ancho: int = 0, al
     cada una es independiente.
 
     Sin zona, cada página es la región del editor de Ajustes. Para otra ventana (el texto
-    plano del sondeo del teclado), su zona en píxeles REALES del Mac (x, y, ancho, alto,
-    las cuatro): sólo el texto, sin la barra de menús ni otras ventanas, que se mueven y
-    no dejan ver dónde acaba.
+    plano del sondeo del teclado, o el editor que esté usando la persona), su zona en
+    píxeles REALES del Mac (x, y, ancho, alto, las cuatro): sólo el texto, sin la barra de
+    menús ni otras ventanas, que se mueven y no dejan ver dónde acaba. Dile a la persona
+    qué zona usas. La lectura la guarda (`zona`) y un cambio sobre ella se escribe ahí; fuera
+    de la región de Ajustes, el permiso de correcciones pequeñas no lo aprueba.
     """
     cuerpo = {"nombre": nombre}
     if x or y or ancho or alto:
@@ -648,7 +650,8 @@ async def proponer_cambio(lectura: str, descripcion: str, ruta: str = "", texto:
     todo el encargo) vuelve ya aprobado (`aprobado_por: "correcciones"`): escríbelo y
     dile qué corregiste. Si `cabe` trae un motivo, no cabe: díselo y espera su
     aprobación. Junta todas las correcciones en un solo cambio y nunca lo partas para
-    que quepa.
+    que quepa. Si la lectura se hizo en otra ventana que la región de Ajustes, no cabe:
+    se escribe con los atajos del programa de Ajustes y lo aprueba la persona.
     """
     if ruta:
         texto = _leer_propuesta(ruta)

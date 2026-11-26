@@ -874,33 +874,54 @@ def test_entre_dos_tareas_del_encargo_la_pantalla_dice_que_claude_sigue_con_el_c
     assert pagina.errores == []
 
 
-def test_dar_el_control_lleva_la_casilla_de_correcciones_desmarcada_cada_vez(pagina):
-    """C-0489: el permiso de correcciones pequeñas sólo nace de esta casilla, que
-    sale desmarcada siempre (no se recuerda de una vez a otra). Y quien llama a
-    `confirmar` sin casilla sigue recibiendo un booleano."""
+def test_dar_el_control_saca_las_casillas_marcadas_segun_ajustes(pagina):
+    """C-0491 (decisión 460): las casillas salen como diga Ajustes → Permisos de
+    Claude, siempre a la vista; lo que se manda es lo que quede marcado. Y quien
+    llama a `confirmar` sin casillas sigue recibiendo un booleano."""
     with en_marcha(Simulador(lineas=["x"])) as base:
         pagina.goto(base + "/panel")
         pagina.click("#boton-dar")
-        casilla = pagina.locator(".dialogo [data-casilla]")
-        assert casilla.is_visible() and not casilla.is_checked()
-        assert "Correcciones pequeñas sin pedirte aprobación" in pagina.locator(".dialogo").inner_text()
-        casilla.check()
+        correcciones = pagina.locator('.dialogo [data-casilla="correcciones"]')
+        delicado = pagina.locator('.dialogo [data-casilla="delicado"]')
+        # De fábrica, desmarcada; «Trabajo delicado», también y a la vista.
+        assert correcciones.is_visible() and not correcciones.is_checked()
+        assert delicado.is_visible() and not delicado.is_checked()
+        texto = pagina.locator(".dialogo").inner_text()
+        assert "Correcciones pequeñas sin pedirte aprobación" in texto and "Trabajo delicado: pregúntame todo" in texto
+        pagina.click(".dialogo [data-no]")
+
+        # Marcada en Ajustes: sale marcada, y aceptar la concede.
+        pagina.goto(base + "/ajustes")
+        assert not pagina.locator("#permiso-correcciones").is_checked()
+        assert "ejecutar nada en el Mac" in pagina.locator("#permisos-nunca").inner_text()
+        pagina.check("#permiso-correcciones")
+        # Guardar recarga Ajustes a los 800 ms: irse antes cortaba esa recarga.
+        with pagina.expect_navigation():
+            pagina.click("button[type=submit]")
+        assert config.leer_ajustes()["permisos"] == {"correcciones": True}
+        pagina.goto(base + "/panel")
+        pagina.click("#boton-dar")
+        assert pagina.locator('.dialogo [data-casilla="correcciones"]').is_checked()
         pagina.click(".dialogo [data-si]")
         pagina.wait_for_function("!document.querySelector('#control-correcciones').hidden")
         assert pagina.locator("#control-correcciones").inner_text() == \
             "Correcciones pequeñas sin pedirte: lleva 0 de 20 líneas."
         assert httpx.get(base + "/api/estado", timeout=5).json()["control"]["correcciones"]["lineas"] == 0
 
+        # Desmarcarla en el diálogo la quita esa vez, sin tocar Ajustes.
         pagina.click("#boton-retomar")
         pagina.wait_for_function("document.querySelector('#control-correcciones').hidden")
         pagina.click("#boton-dar")
-        assert not pagina.locator(".dialogo [data-casilla]").is_checked()
+        pagina.locator('.dialogo [data-casilla="correcciones"]').uncheck()
         pagina.click(".dialogo [data-si]")
         pagina.wait_for_function("document.querySelector('#control-estado').textContent === 'Claude tiene el control'")
         assert "correcciones" not in httpx.get(base + "/api/estado", timeout=5).json()["control"]
         assert pagina.locator("#control-correcciones").is_hidden()
+        assert config.leer_ajustes()["permisos"] == {"correcciones": True}
+        detalle = httpx.get(base + "/api/bitacora", timeout=5).json()[-1]["detalle"]
+        assert detalle == "la persona da el control a Claude, sin permisos"
 
-        # Sin casilla, un booleano; con ella, cancelar sigue siendo false.
+        # Sin casillas, un booleano; con ellas, cancelar sigue siendo false.
         def responder(llamada: str, boton: str):
             # Sin esperar la promesa desde aquí: el diálogo se contesta con un clic.
             pagina.evaluate("(l) => { window.__r = undefined; eval(l).then((v) => { window.__r = v; }); }", llamada)
@@ -909,8 +930,65 @@ def test_dar_el_control_lleva_la_casilla_de_correcciones_desmarcada_cada_vez(pag
             pagina.wait_for_function("window.__r !== undefined")
             return pagina.evaluate("window.__r"), casillas
 
+        dos = "PuenteUI.confirmar('¿Seguro?', { casillas: [{ id: 'a', texto: 'A', marcada: true }, { id: 'b', texto: 'B' }] })"
         assert responder("PuenteUI.confirmar('¿Seguro?')", "[data-si]") == (True, 0)
-        assert responder("PuenteUI.confirmar('¿Seguro?', { casilla: 'algo' })", "[data-no]") == (False, 1)
-        assert responder("PuenteUI.confirmar('¿Seguro?', { casilla: 'algo' })", "[data-si]") == \
-            ({"casilla": False}, 1)
+        assert responder(dos, "[data-no]") == (False, 2)
+        assert responder(dos, "[data-si]") == ({"casillas": {"a": True, "b": False}}, 2)
+    assert pagina.errores == []
+
+
+def test_trabajo_delicado_desmarca_todas_las_casillas_y_da_el_control_sin_permisos(pagina):
+    config.guardar_ajustes({**config.leer_ajustes(), "permisos": {"correcciones": True}})
+    with en_marcha(Simulador(lineas=["x"])) as base:
+        pagina.goto(base + "/panel")
+        pagina.click("#boton-dar")
+        correcciones = pagina.locator('.dialogo [data-casilla="correcciones"]')
+        assert correcciones.is_checked() and correcciones.is_enabled()
+        pagina.locator('.dialogo [data-casilla="delicado"]').check()
+        assert not correcciones.is_checked() and correcciones.is_disabled()
+        # Quitarla las devuelve como salieron; volver a marcarla las apaga otra vez.
+        pagina.locator('.dialogo [data-casilla="delicado"]').uncheck()
+        assert correcciones.is_checked() and correcciones.is_enabled()
+        pagina.locator('.dialogo [data-casilla="delicado"]').check()
+        peticiones = []
+        pagina.on("request", lambda r: r.url.endswith("/api/control") and peticiones.append(r.post_data_json))
+        pagina.click(".dialogo [data-si]")
+        pagina.wait_for_function("document.querySelector('#control-estado').textContent === 'Claude tiene el control'")
+        assert peticiones == [{"accion": "dar", "permisos": []}]
+        assert "correcciones" not in httpx.get(base + "/api/estado", timeout=5).json()["control"]
+        assert pagina.locator("#control-correcciones").is_hidden()
+        assert httpx.get(base + "/api/bitacora", timeout=5).json()[-1]["detalle"].endswith("sin permisos")
+    assert pagina.errores == []
+
+
+def test_con_una_tarea_en_otra_ventana_el_panel_marca_su_zona_y_lo_dice(pagina):
+    """C-0491 (decisión 460): mientras se lee o se escribe en otra ventana, el
+    recuadro del panel rodea esa zona, no la región de Ajustes, y la tarea dice dónde."""
+    from puente_kvm import lecturas
+
+    apps = []
+    with en_marcha(Simulador(lineas=muestras.procedimiento(80)), apps) as base:
+        pagina.goto(base + "/panel")
+        pagina.wait_for_timeout(700)
+
+        def ancho_relativo() -> float:
+            return pagina.evaluate("document.querySelector('#region').getBoundingClientRect().width"
+                                   " / document.querySelector('#marco-mac .superficie:not([hidden])')"
+                                   ".getBoundingClientRect().width")
+
+        assert ancho_relativo() == pytest.approx(1620 / 1920, abs=0.01)
+        l = lecturas.nueva("en otra ventana")
+        l.zona = [300, 98, 1200, 700]
+        l.guardar()
+        motor = apps[0].state.puente.motor
+        motor.tarea = "leer «en otra ventana»"
+        try:
+            pagina.wait_for_function("document.querySelector('#tarea').textContent.includes('otra ventana')",
+                                     timeout=10000)
+            assert "en otra ventana: la zona (300, 98, 1200×700)" in pagina.locator("#tarea").inner_text()
+            assert ancho_relativo() == pytest.approx(1200 / 1920, abs=0.01)
+        finally:
+            motor.tarea = None
+        pagina.wait_for_function("document.querySelector('#tarea').textContent === ''", timeout=10000)
+        assert ancho_relativo() == pytest.approx(1620 / 1920, abs=0.01)
     assert pagina.errores == []

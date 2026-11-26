@@ -215,3 +215,42 @@ def test_la_rueda_lleva_antes_el_puntero_a_donde_tiene_que_girar(entorno):
     assert r.status_code == 200, r.text
     assert sim.puntero == (700, 500)
     assert any(e["tipo"] == "rueda" and "(700, 500)" in e["detalle"] for e in bitacora(c))
+
+
+def test_los_permisos_por_omision_de_ajustes_piden_origin_y_solo_llevan_sus_claves(entorno):
+    """C-0491 (decisión 460): sin el Origin de la pantalla, nada; un permiso que no
+    está en la lista cerrada, 400; y sólo un verdadero de verdad lo marca."""
+    c, _ = entorno
+    assert config.leer_ajustes()["permisos"] == {"correcciones": False}
+    assert c.post("/api/ajustes", json={"permisos": {"correcciones": True}}).status_code == 403
+    assert c.post("/api/ajustes", json={"permisos": {"correcciones": True}},
+                  headers={"Origin": "http://otra.web"}).status_code == 403
+    assert config.leer_ajustes()["permisos"] == {"correcciones": False}
+    r = c.post("/api/ajustes", json={"permisos": {"correcciones": True, "ejecutar": True}}, headers=PERSONA)
+    assert r.status_code == 400 and "correcciones" in r.text
+    assert c.post("/api/ajustes", json={"permisos": ["correcciones"]}, headers=PERSONA).status_code == 400
+    c.post("/api/ajustes", json={"permisos": {"correcciones": "true"}}, headers=PERSONA)
+    assert config.leer_ajustes()["permisos"] == {"correcciones": False}
+    assert c.post("/api/ajustes", json={"permisos": {"correcciones": True}}, headers=PERSONA).status_code == 200
+    assert config.leer_ajustes()["permisos"] == {"correcciones": True}
+    assert 'id="permiso-correcciones" name="permisos.correcciones" checked' in c.get("/ajustes").text
+
+
+def test_unos_ajustes_de_antes_sin_permisos_se_leen_con_todo_desmarcado(entorno):
+    import json
+
+    c, _ = entorno
+    ruta = config.hogar() / "ajustes.json"
+    datos = json.loads(ruta.read_text())
+    datos.pop("permisos", None)
+    ruta.write_text(json.dumps(datos))
+    assert config.leer_ajustes()["permisos"] == {"correcciones": False}
+    assert c.get("/ajustes").status_code == 200
+    # Y guardarlos otra vez no se los salta.
+    assert c.post("/api/ajustes", json={"claude": {"modelo": "claude-opus-5-5"}}, headers=PERSONA).status_code == 200
+    assert config.leer_ajustes()["permisos"] == {"correcciones": False}
+
+
+def test_la_lista_de_permisos_de_ajustes_es_la_de_control(entorno):
+    from puente_kvm import control
+    assert tuple(config.AJUSTES_POR_OMISION["permisos"]) == control.PERMISOS

@@ -39,7 +39,7 @@ from starlette.background import BackgroundTask
 
 from . import (cambios, comprobar, config, conversaciones, hid, huellas, jiggler, lecturas, mediciones, reinicio,
                repertorio, reunion, teclados, terminal)
-from .control import TOPE_CARACTERES, TOPE_LINEAS, Bitacora, Control, Permiso, SinControl
+from .control import PERMISOS, TOPE_CARACTERES, TOPE_LINEAS, Bitacora, Control, Permiso, SinControl
 from .dispositivo import AparatoNoDisponible, Dispositivo
 from .motor import RETARDO_VIDEO_MAX_MS, Motor, Ocupado, PantallaInesperada
 
@@ -336,8 +336,14 @@ class Puente:
         """Aprobar con su línea en la bitácora, por los dos caminos: el clic de la
         persona y su permiso de correcciones pequeñas (C-0489). Es también el único
         sitio que mide la aprobación (C-0483): cuánto tardó en decidirse (una
-        duración, no una hora), quién la dio y cuánto mueve; conteos, nunca texto."""
-        cambios.aprobar(c, permiso)
+        duración, no una hora), quién la dio y cuánto mueve; conteos, nunca texto.
+
+        Con permiso, la zona de su lectura frente a la región de Ajustes de ahora
+        (decisión 460): aquí y no en quien llama, para que ningún camino la salte."""
+        if permiso is None:
+            cambios.aprobar(c)
+        else:
+            cambios.aprobar(c, permiso, lecturas.cargar(c.lectura).zona, self.ajustes["perfil"])
         lineas, caracteres = cambios.medida(c)
         mediciones.apuntar("cambio", evento="aprobado", tramos=len(c.tramos),
                            ms=round(max(0.0, time.time() - c.creado) * 1000), por=c.aprobado_por,
@@ -672,7 +678,10 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                       cambios=[c for c in cambios.todos()[:20]],
                       teclados_disponibles=teclados.disponibles(),
                       # Los del permiso de correcciones (C-0489), para la casilla de «Dar el control».
-                      tope_lineas=TOPE_LINEAS, tope_caracteres=TOPE_CARACTERES)
+                      tope_lineas=TOPE_LINEAS, tope_caracteres=TOPE_CARACTERES,
+                      # Cómo salen marcadas sus casillas (decisión 460): el diálogo lo
+                      # vuelve a mirar en /api/estado, por si se cambió en Ajustes.
+                      permisos_por_omision=config.permisos_por_omision(puente(req).ajustes))
 
     @app.get("/lecturas/{id_}", response_class=HTMLResponse)
     async def ver_lectura(req: Request, id_: str):
@@ -682,6 +691,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             raise HTTPException(404, "no existe esa lectura") from e
         ens = lecturas.ensamblar(l)
         return pagina(req, "lectura.html", titulo=l.nombre, l=l, r=lecturas.resumen(l), ens=ens,
+                      zona=lecturas.describir_zona(l.zona, puente(req).ajustes["perfil"]),
                       textos={p.n: l.transcripcion(p.n) for p in l.paginas},
                       consultas=huellas.CONSULTAS,
                       cambios=[c for c in cambios.todos() if c.lectura == l.id])
@@ -692,7 +702,11 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             c = cambios.cargar(id_)
         except Exception as e:
             raise HTTPException(404, "no existe ese cambio") from e
-        return pagina(req, "cambio.html", titulo=c.descripcion, c=c)
+        try:
+            zona = lecturas.describir_zona(lecturas.cargar(c.lectura).zona, puente(req).ajustes["perfil"])
+        except Exception:  # sin su lectura, la página se ve igual, sin decir dónde
+            zona = None
+        return pagina(req, "cambio.html", titulo=c.descripcion, c=c, zona=zona)
 
     @app.get("/claude", response_class=HTMLResponse)
     async def ver_claude(req: Request):
@@ -709,7 +723,9 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         return pagina(req, "ajustes.html", titulo="Ajustes", ajustes=p.ajustes,
                       clave_puesta=bool(os.environ.get(clave_env)),
                       teclados_disponibles=teclados.disponibles(), medidas=teclados.medidas(),
-                      modelos=config.MODELOS, mediciones=mediciones.estado())
+                      modelos=config.MODELOS, mediciones=mediciones.estado(),
+                      permisos_por_omision=config.permisos_por_omision(p.ajustes),
+                      tope_lineas=TOPE_LINEAS, tope_caracteres=TOPE_CARACTERES)
 
     # ── estado y pantalla ───────────────────────────────────────────────────
     def estado(p: Puente) -> dict:
@@ -755,13 +771,29 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
                 # El `claude` que abriría el puente con SU PATH (no el de una shell).
                 "claude_code": terminal.claude_code()}
 
+    def zona_de_la_tarea(p: Puente, todas: list[lecturas.Lectura], todos: list[cambios.Cambio]) -> dict | None:
+        """Dónde trabaja la tarea en marcha (decisión 460), de lo que ya está en disco:
+        la lectura que se captura o la del cambio que se escribe. Sin estado nuevo."""
+        if not p.motor.tarea:
+            return None
+        lectura = next((l for l in todas if l.estado == "capturando"), None)
+        if lectura is None:
+            cambio = next((c for c in todos if c.estado == "escribiendo"), None)
+            lectura = next((l for l in todas if cambio and l.id == cambio.lectura), None)
+        if lectura is None:
+            return None
+        return lecturas.describir_zona(lectura.zona, p.ajustes["perfil"])
+
     @app.get("/api/estado")
     async def api_estado(req: Request):
         p = puente(req)
+        todas, todos = lecturas.todas(), cambios.todos()
         return {**estado(p),
-                "lecturas": [lecturas.resumen(l) for l in lecturas.todas()[:10]],
+                "zona_tarea": zona_de_la_tarea(p, todas, todos),
+                "permisos_por_omision": config.permisos_por_omision(p.ajustes),
+                "lecturas": [lecturas.resumen(l) for l in todas[:10]],
                 "cambios": [{"id": c.id, "descripcion": c.descripcion, "estado": c.estado,
-                             "tramos": len(c.tramos)} for c in cambios.todos()[:10]]}
+                             "tramos": len(c.tramos)} for c in todos[:10]]}
 
     @app.get("/api/bitacora")
     async def api_bitacora(req: Request, desde: int = 0):
@@ -839,23 +871,41 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         return StreamingResponse(fotogramas(), media_type="multipart/x-mixed-replace; boundary=fotograma")
 
     # ── control (la persona) ────────────────────────────────────────────────
+    def _permisos_pedidos(datos: dict) -> frozenset[str]:
+        """Los permisos que trae «dar», de la lista cerrada `control.PERMISOS`.
+
+        `permisos: [...]` es lo que manda el diálogo (decisión 460); `correcciones:
+        true`, la forma de la 458, sigue valiendo. Los valores por omisión de Ajustes
+        no se aplican aquí nunca: los marca el diálogo y la persona los ve antes de
+        aceptar. Así «Leer» o «Escribir», que dan el control sin diálogo, no dan
+        ningún permiso aunque Ajustes los tenga marcados."""
+        pedidos = datos.get("permisos", [])
+        if not isinstance(pedidos, list) or not all(isinstance(n, str) for n in pedidos):
+            raise HTTPException(400, "«permisos» va como una lista de nombres, p. ej. [\"correcciones\"]")
+        desconocidos = sorted(set(pedidos) - set(PERMISOS))
+        if desconocidos:
+            raise HTTPException(400, f"permiso desconocido: {', '.join(desconocidos)} "
+                                     f"(los que hay: {', '.join(PERMISOS)})")
+        # Sólo un verdadero de verdad: «false» o «no» como texto no dan el permiso.
+        return frozenset(pedidos) | ({"correcciones"} if datos.get("correcciones") is True else set())
+
     @app.post("/api/control")
     async def api_control(req: Request):
         de_la_persona(req)
         p = puente(req)
         datos = await cuerpo(req)
         accion = datos.get("accion")
-        # Sólo un verdadero de verdad: «false» o «no» como texto no dan el permiso.
-        correcciones = accion == "dar" and datos.get("correcciones") is True
-        tenia, desde = p.control.estado()["modo"], p.control.desde
         if accion not in ("dar", "retomar", "parar"):
             raise HTTPException(400, "acción desconocida")
+        permisos = _permisos_pedidos(datos) if accion == "dar" else frozenset()
+        correcciones = "correcciones" in permisos
+        tenia, desde = p.control.estado()["modo"], p.control.desde
         resumen = p.resumen_correcciones(p.control.permiso_vigente()) if accion in ("retomar", "parar") else None
         # Un control dado ahora es para lo que viene, y uno quitado ya no se
         # devuelve: la devolución que esperaba a la tarea anterior (C-0488) sobra.
         p.olvidar_pendiente()
         if accion == "dar":
-            p.control.dar(correcciones=correcciones)
+            p.control.dar(permisos)
         elif accion == "retomar":
             p.control.retomar()
         else:
@@ -863,7 +913,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         p.bitacora.apuntar("control", {"dar": "la persona da el control a Claude"
                                        + (f", con correcciones pequeñas sin pedirle aprobación (hasta "
                                           f"{TOPE_LINEAS} líneas y {TOPE_CARACTERES} caracteres)"
-                                          if correcciones else ""),
+                                          if correcciones else ", sin permisos"),
                                        "retomar": "la persona retoma el Mac",
                                        "parar": "PARAR"}[accion], quien="persona")
         if resumen:
@@ -1214,7 +1264,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             mediciones.apuntar("cambio", evento="propuesta", tramos=len(c.tramos), ok=True, fallo="ninguno",
                                sin_verificar=bool(c.sin_verificar), lineas=lineas, caracteres=caracteres)
             permiso = p.control.permiso_vigente()
-            motivo = cambios.cabe(c, permiso) if permiso else None
+            motivo = cambios.cabe(c, permiso, l.zona, p.ajustes["perfil"]) if permiso else None
             if permiso and motivo is None:
                 p.aprobar_cambio(c, permiso)
                 aviso = ("Aprobado por su permiso de correcciones pequeñas: escríbelo (escribir_cambio) y "
@@ -1295,7 +1345,7 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
         try:
             c = cambios.cargar(id_)
             # Primero si se puede escribir (400) y luego el control (423), como siempre.
-            cambios.escribible(c, p.control.permiso_vigente())
+            cambios.escribible(c, p.control.permiso_vigente(), p.motor.perfil)
             p.control.comprobar()
             if p.motor.tarea:
                 raise Ocupado(f"ya estoy con: {p.motor.tarea}")
@@ -1358,8 +1408,15 @@ def crear_app(dispositivo: Dispositivo | None = None, hosts: set[str] | None = N
             raise HTTPException(409, "se está grabando una reunión: pulsa «Salí de la reunión» antes de cambiar el aparato")
         try:
             nuevos = config.leer_ajustes()
-            for seccion in ("dispositivo", "perfil", "claude", "mediciones"):
+            permisos = datos.get("permisos", {})
+            if (not isinstance(permisos, dict) or set(permisos) - set(PERMISOS)
+                    or any(not isinstance(v, bool) for v in permisos.values())):
+                raise ValueError(f"«permisos» sólo lleva {', '.join(PERMISOS)}, como verdadero o falso")
+            for seccion in ("dispositivo", "perfil", "claude", "mediciones", "permisos"):
                 nuevos[seccion].update(datos.get(seccion, {}))
+            # Los que salen marcados al dar el control (decisión 460): claves cerradas
+            # y sólo un verdadero de verdad, como «Sin pedir permisos».
+            nuevos["permisos"] = {n: nuevos["permisos"].get(n) is True for n in PERMISOS}
             # Sólo esa clave, y verdadero o falso: lo de más no se guarda.
             nuevos["mediciones"] = {"activas": nuevos["mediciones"].get("activas", True) is not False}
             config.validar_modelo(nuevos["claude"]["modelo"])

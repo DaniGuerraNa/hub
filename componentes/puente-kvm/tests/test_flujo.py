@@ -209,8 +209,8 @@ def test_ver_tramo_ensena_solo_las_filas_que_cambiaron_y_fuera_de_ellas_todo_que
         vistas = []
         capturar = cambios._vista
 
-        async def vista(motor, cambio):
-            img = await capturar(motor, cambio)
+        async def vista(motor, cambio, zona):
+            img = await capturar(motor, cambio, zona)
             vistas.append(img)
             return img
         monkeypatch.setattr(cambios, "_vista", vista)
@@ -347,8 +347,8 @@ def test_un_cursor_que_parpadea_entre_las_dos_capturas_no_se_ensena_como_lo_que_
         mcp_contra(c, monkeypatch)
         capturar = cambios._vista
 
-        async def con_cursor(motor, cambio):
-            img = await capturar(motor, cambio)
+        async def con_cursor(motor, cambio, zona):
+            img = await capturar(motor, cambio, zona)
             ImageDraw.Draw(img).rectangle([600, 400, 601, 421], fill="#000")  # 2×22, como el del simulador
             return img
         monkeypatch.setattr(cambios, "_vista", con_cursor)

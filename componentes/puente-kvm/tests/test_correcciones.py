@@ -12,6 +12,7 @@ cambio grande en pequeños no sirve porque el presupuesto es de la concesión.
 import asyncio
 import json
 import time
+import types
 
 import pytest
 
@@ -104,7 +105,7 @@ def test_la_casilla_de_la_pantalla_dice_los_topes_de_control_py(entorno):
     assert f'data-tope-lineas="{control.TOPE_LINEAS}"' in boton
     assert f'data-tope-caracteres="{control.TOPE_CARACTERES}"' in boton
     js = (Path(control.__file__).parent / "static" / "app.js").read_text()
-    casilla = js[js.index("casilla: 'Correcciones pequeñas"):][:300]
+    casilla = js[js.index("texto: 'Correcciones pequeñas"):][:300]
     assert "d.topeLineas" in casilla and "d.topeCaracteres" in casilla
     assert not re.search(r"\b(20|1 ?500)\b", casilla)
 
@@ -257,10 +258,10 @@ def test_escribir_comprueba_la_concesion_por_su_cuenta():
     c = cambios.Cambio(id="prueba-abc123", lectura="l", descripcion="d", creado=time.time(),
                        original=original, nuevo=nuevo, tramos=cambios.tramos_de(original, nuevo))
     permiso = Permiso("concesion-1")
-    cambios.aprobar(c, permiso)
+    cambios.aprobar(c, permiso, perfil=PERFIL)
     assert c.estado == "aprobado" and c.permiso == "concesion-1" and permiso.escritos == [c.id]
     with pytest.raises(ValueError, match="ya acabó"):
-        asyncio.run(cambios.escribir(None, c, "claude", None))
+        asyncio.run(cambios.escribir(types.SimpleNamespace(perfil=PERFIL), c, "claude", None))
     assert cambios.cargar(c.id).estado == "propuesto"
 
 
@@ -293,6 +294,10 @@ def test_diez_cambios_de_tres_lineas_los_primeros_caben_y_el_que_se_pasa_espera(
     assert c.get("/api/estado").json()["control"]["correcciones"]["lineas"] == TOPE_LINEAS
 
 
+# Un perfil con la región de Ajustes de fábrica: sin él, aprobar por el permiso no puede.
+PERFIL = {"nombre": "DBeaver (Mac)", "region_editor": [300, 98, 1620, 952]}
+
+
 def _cambio(original: list[str], nuevo: list[str]) -> cambios.Cambio:
     return cambios.Cambio(id="x", lectura="l", descripcion="d", creado=0.0, original=original, nuevo=nuevo,
                           tramos=cambios.tramos_de(original, nuevo))
@@ -306,8 +311,17 @@ def test_reemplazar_el_documento_entero_o_escribir_uno_de_cero_no_cabe():
     assert cambios.cabe(_cambio([""], ["nuevo"]), p).startswith("el documento leído está vacío")
     assert cambios.cabe(_cambio(["uno", "dos"], ["uno", "dos!"]), p) is None
     with pytest.raises(ValueError, match="no cabe"):
-        cambios.aprobar(_cambio(["uno"], ["dos"]), p)
+        cambios.aprobar(_cambio(["uno"], ["dos"]), p, perfil=PERFIL)
     assert p.lineas == 0 and p.escritos == []
+
+
+def test_aprobar_por_el_permiso_sin_el_perfil_de_ahora_no_aprueba():
+    """Lo encontró el revisor de C-0491: sin perfil, `fuera_de_ajustes` no puede decir
+    que no, y un `aprobar` futuro se saltaría la región sin avisar."""
+    p, c = Permiso("c"), _cambio(["uno", "dos"], ["uno", "dos!"])
+    with pytest.raises(ValueError, match="necesita el perfil"):
+        cambios.aprobar(c, p)
+    assert c.estado == "propuesto" and p.lineas == 0
 
 
 def test_quitar_mas_de_la_mitad_del_documento_no_cabe_aunque_quepa_en_el_presupuesto():
@@ -344,10 +358,10 @@ def test_un_cambio_guardado_antes_carga_aprobado_por_la_persona(hogar_aparte):
 
 def test_cada_dar_es_una_concesion_nueva():
     ctl = Control()
-    ctl.dar(correcciones=True)
+    ctl.dar(frozenset({"correcciones"}))
     primero = ctl.permiso_vigente()
     assert primero is not None
-    ctl.dar(correcciones=True)
+    ctl.dar(frozenset({"correcciones"}))
     assert ctl.permiso_vigente() is not primero and ctl.permiso_vigente().id != primero.id
     ctl.dar()
     assert ctl.permiso_vigente() is None
@@ -437,3 +451,103 @@ def test_las_puertas_que_devuelven_el_mac_no_dan_el_control_ni_el_permiso():
         fuente = inspect.getsource(metodo)
         assert ".dar(" not in fuente and ".parar(" not in fuente
         assert not re.search(r"control\.(modo|permiso|concesion)\s*=[^=]", fuente)
+
+
+# ── los permisos por su nombre y la zona de la lectura (C-0491, decisión 460) ─
+def test_dar_con_permisos_por_nombre_o_con_la_forma_antigua_concede_lo_mismo(entorno):
+    c, _ = entorno
+    e = c.post("/api/control", json={"accion": "dar", "permisos": ["correcciones"]}, headers=PERSONA).json()
+    assert e["correcciones"]["lineas"] == 0
+    assert "con correcciones pequeñas" in bitacora(c, "control")[-1]["detalle"]
+    # La de la 458 sigue valiendo.
+    assert "correcciones" in dar(c, correcciones=True)
+    # Una lista vacía es «Trabajo delicado»: el control, sin ningún permiso, y lo dice.
+    e = c.post("/api/control", json={"accion": "dar", "permisos": []}, headers=PERSONA).json()
+    assert e["modo"] == "claude" and "correcciones" not in e
+    assert bitacora(c, "control")[-1]["detalle"] == "la persona da el control a Claude, sin permisos"
+
+
+@pytest.mark.parametrize("cuerpo", [{"permisos": ["ejecutar"]}, {"permisos": ["correcciones", "guardar"]},
+                                    {"permisos": "correcciones"}, {"permisos": [True]}])
+def test_un_permiso_que_no_esta_en_la_lista_cerrada_da_400_y_no_da_el_control(entorno, cuerpo):
+    c, _ = entorno
+    r = c.post("/api/control", json={"accion": "dar", **cuerpo}, headers=PERSONA)
+    assert r.status_code == 400
+    assert c.get("/api/estado").json()["control"]["modo"] == "libre"
+    with pytest.raises(ValueError, match="permiso desconocido"):
+        Control().dar(frozenset({"ejecutar"}))
+
+
+def test_el_servidor_no_aplica_los_permisos_por_omision_de_ajustes(entorno):
+    """Los de Ajustes sólo marcan las casillas del diálogo. «Leer» y «Escribir» dan
+    el control sin diálogo, y no pueden llevarse un permiso que nadie vio."""
+    c, _ = entorno
+    assert c.post("/api/ajustes", json={"permisos": {"correcciones": True}}, headers=PERSONA).status_code == 200
+    assert c.get("/api/estado").json()["permisos_por_omision"] == {"correcciones": True}
+    e = c.post("/api/control", json={"accion": "dar"}, headers=PERSONA).json()
+    assert e["modo"] == "claude" and "correcciones" not in e
+    assert bitacora(c, "control")[-1]["detalle"].endswith("sin permisos")
+
+
+def test_fuera_de_la_region_de_ajustes_cabe_da_su_motivo_y_no_aprueba():
+    p = Permiso("c")
+    perfil = {"nombre": "DBeaver (Mac)", "region_editor": [300, 98, 1620, 952]}
+    c = _cambio(["uno", "dos"], ["uno", "dos!"])
+    motivo = cambios.cabe(c, p, [40, 60, 700, 500], perfil)
+    assert motivo == ("se escribe en otra ventana que la del editor de Ajustes, con los atajos de "
+                      "DBeaver (Mac): lo aprueba la persona")
+    with pytest.raises(ValueError, match="otra ventana"):
+        cambios.aprobar(c, p, [40, 60, 700, 500], perfil)
+    assert p.lineas == 0 and c.estado == "propuesto"
+    # En la región de Ajustes, o una lectura de antes sin zona, cabe como siempre.
+    assert cambios.cabe(c, p, [300, 98, 1620, 952], perfil) is None
+    assert cambios.cabe(c, p, None, perfil) is None
+    # Y la persona lo aprueba igual.
+    cambios.aprobar(c)
+    assert c.estado == "aprobado" and c.aprobado_por == "persona"
+
+
+def test_una_lectura_hecha_en_otra_ventana_espera_a_la_persona_aunque_haya_permiso(entorno):
+    c, sim = entorno
+    dar(c, correcciones=True)
+    p = c.app.state.puente
+    p.turno_en_curso = lambda: True
+    try:
+        r = c.post("/api/lecturas", json={"nombre": "en otra ventana", "x": 300, "y": 98, "ancho": 1500, "alto": 900})
+        assert r.status_code == 200, r.text
+        esperar(c)
+    finally:
+        del p.turno_en_curso
+    lid = r.json()["id"]
+    transcribir_como_oraculo(c, sim, lid)
+    r = proponer(c, lid, con_una_linea(sim, 20))
+    assert r["estado"] == "propuesto" and r["aprobado_por"] is None
+    assert r["cabe"].startswith("se escribe en otra ventana") and "No cabe en su permiso" in r["aviso"]
+    assert c.get("/api/estado").json()["control"]["correcciones"]["lineas"] == 0
+    pagina = c.get(f"/cambios/{r['id']}").text
+    assert 'id="zona-ajena"' in pagina and "otra ventana: la zona (300, 98, 1500×900)" in pagina
+    assert c.post(f"/api/cambios/{r['id']}/aprobar", headers=PERSONA).status_code == 200
+
+
+def test_si_la_region_de_ajustes_cambia_tras_aprobarlo_el_permiso_ya_no_lo_escribe(entorno):
+    """Lo encontró el revisor de C-0491: aprobado por el permiso con la lectura en la
+    región de Ajustes, la persona mueve la región antes de escribirlo. Los atajos
+    pueden ser ya de otro programa: vuelve a esperar su aprobación (decisión 460)."""
+    c, sim = entorno
+    dar(c, correcciones=True)
+    lid = leer_con_el_control_dado(c, sim)
+    r = proponer(c, lid, con_una_linea(sim, 20))
+    assert r["estado"] == "aprobado" and r["aprobado_por"] == "correcciones"
+    region = c.app.state.puente.ajustes["perfil"]["region_editor"]
+    otra = [region[0] + 10, region[1], region[2] - 10, region[3]]
+    assert c.post("/api/ajustes", json={"perfil": {"region_editor": otra}}, headers=PERSONA).status_code == 200
+    e = c.post(f"/api/cambios/{r['id']}/escribir")
+    assert e.status_code == 400 and "la región del editor cambió después de aprobarlo" in e.text
+    assert cambios.cargar(r["id"]).estado == "propuesto"
+
+
+def test_un_permiso_por_omision_que_no_es_verdadero_o_falso_da_400(entorno):
+    c, _ = entorno
+    r = c.post("/api/ajustes", json={"permisos": {"correcciones": "true"}}, headers=PERSONA)
+    assert r.status_code == 400
+    assert c.get("/api/estado").json()["permisos_por_omision"] == {"correcciones": False}

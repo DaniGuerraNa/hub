@@ -5,7 +5,7 @@
   <div class="fila" style="justify-content: space-between; align-items:flex-start">
     <div>
       <h1>{{ l.nombre }}</h1>
-      <p class="sub" style="margin:0">Lectura <code>{{ l.id }}</code></p>
+      <p class="sub" style="margin:0">Lectura <code>{{ l.id }}</code> · leída en <span id="zona-lectura">{{ zona.texto }}</span></p>
     </div>
     <div class="fila">
       <a class="boton" href="/api/lecturas/{{ l.id }}/texto" download="{{ l.nombre }}.sql">Descargar la copia</a>

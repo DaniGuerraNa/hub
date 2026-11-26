@@ -49,7 +49,7 @@
     <label for="retardo_video">Retraso del vídeo (ms)</label>
     <input id="retardo_video" name="perfil.retardo_video_ms" type="number" min="0" max="10000" step="100" value="{{ ajustes.perfil.retardo_video_ms }}">
     <p class="sub" style="margin:6px 0 0">Lo que tarda, como mucho, la imagen del Mac en enseñar una tecla. Tras pulsar, el puente espera a ver el cambio hasta este tiempo; si se queda corto, una lectura puede salir con una página de antes o acabar antes de tiempo. La bitácora avisa si se acerca.</p>
-    <label class="fila" style="margin-top:12px"><input type="checkbox" id="invertir_rueda" name="perfil.invertir_rueda" {{ 'checked' if ajustes.perfil.invertir_rueda }}> Invertir la rueda del ratón</label>
+    <label class="casilla" style="margin-top:12px"><input type="checkbox" id="invertir_rueda" name="perfil.invertir_rueda" {{ 'checked' if ajustes.perfil.invertir_rueda }}> Invertir la rueda del ratón</label>
     <p class="sub" style="margin:6px 0 0">Márcala si en el Mac la rueda va al revés (pasa con el «desplazamiento natural» de macOS). Vale para Claude y para cuando usas el Mac desde aquí.</p>
 
     <h2 style="margin-top:20px">Claude Code</h2>
@@ -59,9 +59,18 @@
     </select>
     <p class="sub" style="margin:6px 0 0">Se aplica a la siguiente conversación nueva o retomada; la abierta sigue con el suyo hasta que la reabras.
       Va por su nombre exacto, nunca por un alias. Fable 5.2 necesita Claude Code 2.1.322 o posterior. «El de mi Claude Code» no le pasa ninguno: usa el que tengas configurado.</p>
-    <label class="fila" style="margin-top:12px"><input type="checkbox" id="saltar_permisos" name="claude.saltar_permisos" {{ 'checked' if ajustes.claude.saltar_permisos }}> Sin pedir permisos</label>
+
+    {# C-0491, decisión 460: lo que Claude hace sin preguntarte, en un solo sitio. #}
+    <h2 style="margin-top:20px" id="ajustes-permisos">Permisos de Claude</h2>
+    <p class="sub" style="margin:0">Lo que Claude puede hacer sin preguntarte cada vez.</p>
+    <label class="casilla" style="margin-top:12px"><input type="checkbox" id="permiso-correcciones" name="permisos.correcciones" {{ 'checked' if permisos_por_omision.correcciones }}> Correcciones pequeñas sin pedirte aprobación (marcada por omisión al dar el control)</label>
+    <p class="sub" style="margin:6px 0 0">Con esta casilla marcada, el diálogo «Dar el control» sale con las correcciones pequeñas ya marcadas; la ves y la puedes desmarcar antes de aceptar, y «Trabajo delicado» las quita todas.
+      Mientras tenga el control, Claude escribe sin tu clic un cambio que corrige lo que hay, hasta <b>{{ tope_lineas }} líneas y {{ '{:,}'.format(tope_caracteres).replace(',', ' ') }} caracteres en total</b> en ese encargo, sólo en la región del editor marcada abajo. Lo demás espera tu aprobación, como siempre.
+      «Leer» y «Escribir» dan el control sin este permiso.</p>
+    <label class="casilla" style="margin-top:12px"><input type="checkbox" id="saltar_permisos" name="claude.saltar_permisos" {{ 'checked' if ajustes.claude.saltar_permisos }}> Sin pedir permisos (Claude Code)</label>
     <p class="sub" style="margin:6px 0 0">Claude Code usa sus herramientas en este equipo (leer y escribir archivos, órdenes de terminal) sin preguntarte cada vez: <code>--dangerously-skip-permissions</code>.
       Tampoco te pregunta antes de cada clic o tecla en el Mac: lo que lo frena es el control, que sólo tiene cuando se lo das aquí. Se aplica a la siguiente conversación nueva o retomada; la primera vez Claude Code te pide confirmarlo.</p>
+    <p class="aviso" id="permisos-nunca" style="margin:12px 0 0"><b>Lo que no entra en ningún permiso:</b> ejecutar nada en el Mac, guardar archivos, escribir un documento de cero sin tu aprobación y pasar de los topes. Escribir en otra ventana que la región del editor también lo apruebas tú, y Notas o el navegador, sin números de línea, se leen pero no se editan por partes.</p>
   </section>
 
   <section class="tarjeta">
@@ -97,7 +106,7 @@
 </form>
 <section class="tarjeta" style="margin-top:16px" aria-labelledby="ajustes-mediciones">
   <h2 id="ajustes-mediciones">Mediciones de uso</h2>
-  <label class="fila"><input type="checkbox" id="mediciones-activas" {{ 'checked' if mediciones.activas }}> Guardar mediciones de uso</label>
+  <label class="casilla"><input type="checkbox" id="mediciones-activas" {{ 'checked' if mediciones.activas }}> Guardar mediciones de uso</label>
   <p class="sub" style="margin:6px 0 0">Guarda <b>tiempos, cuántas veces pasa cada cosa y si salió bien o mal</b>: cuánto tarda cada herramienta de Claude,
     cuánto tarda la imagen del Mac en cambiar, por qué vuelve el control. <b>No guarda</b> lo que se escribe ni lo que se lee en el Mac,
     ni nombres, ni la pantalla. Se queda en este equipo (los últimos 30 días) y no sale nada solo.

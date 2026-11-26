@@ -265,8 +265,9 @@ class Motor:
     async def captura(self) -> Image.Image:
         return await self.dispositivo.captura()
 
-    def recortar(self, img: Image.Image) -> Image.Image:
-        x, y, w, h = self.perfil["region_editor"]
+    def recortar(self, img: Image.Image, zona: tuple[int, int, int, int] | None = None) -> Image.Image:
+        """La región del editor de Ajustes, o `zona` si se da (la de una lectura, C-0491)."""
+        x, y, w, h = zona or self.perfil["region_editor"]
         return img.crop((x, y, x + w, y + h))
 
     async def esperar_estable(self, recortar: bool = True, tope: float | None = None,
@@ -291,11 +292,8 @@ class Motor:
         while True:
             img = await self.captura()
             capturas += 1
-            if zona:
-                x, y, w, h = zona
-                img = img.crop((x, y, x + w, y + h))
-            elif recortar:
-                img = self.recortar(img)
+            if zona or recortar:
+                img = self.recortar(img, zona)
             if previa is not None:
                 dif = diferencia_local(img, previa)
                 dif_min = dif if dif_min is None else min(dif_min, dif)
@@ -366,10 +364,7 @@ class Motor:
         return cuadros_cambiados(antes, img) >= cuadros
 
     def _ver(self, img: Image.Image, zona: tuple[int, int, int, int] | None, recortar: bool) -> Image.Image:
-        if zona:
-            x, y, w, h = zona
-            return img.crop((x, y, x + w, y + h))
-        return self.recortar(img) if recortar else img
+        return self.recortar(img, zona) if zona or recortar else img
 
     def tope_cambio(self) -> float:
         """Cuánto se espera, como mucho, a ver el cambio de una acción."""

@@ -32,9 +32,18 @@ tecla el puente espera a **ver** el cambio (el vídeo del aparato llega 1–2 s
 tarde), no a la primera pantalla quieta. Si el resultado dice que la pantalla
 tardó **cerca del tope**, díselo a la persona: que suba **Retraso del vídeo**
 en Ajustes; y si la última página no llega al final del documento, vuelve a
-leerlo después. Cada página es la
-región del editor de Ajustes; para leer otra ventana (el texto plano del
-sondeo del teclado), pásale su zona: `leer_documento(nombre, x, y, ancho, alto)`.
+leerlo después.
+
+**Dónde se lee.** Sin zona, cada página es la región del editor de Ajustes.
+Para cualquier otra ventana (el texto plano del sondeo del teclado, o el editor
+que la persona tenga abierto en otro sitio), pásale su zona en píxeles reales
+del Mac: `leer_documento(nombre, x, y, ancho, alto)`, sólo el texto, sin barras
+ni otras ventanas. Elegirla no pide permiso: leer no es escribir. **Dile a la
+persona qué zona usas** («leo la ventana de la derecha, x…, y…»); la página de
+la lectura y el panel la enseñan, y la lectura la guarda (`zona`): un cambio
+sobre ella se escribe en esa misma zona. Notas y el navegador no tienen números
+de línea: ahí se puede leer (o recorrer la pantalla), pero no sirve para
+proponer un cambio después.
 
 ## 2. Transcribir — en paralelo
 

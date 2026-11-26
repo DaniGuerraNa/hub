@@ -12,12 +12,15 @@ Las puertas, en orden, y ninguna se salta:
    mientras dure esa concesión un cambio que conserva parte del original y cabe
    en su presupuesto queda aprobado por ese permiso (`cabe`, `aprobar`). Si la
    concesión acaba antes de escribirlo, vuelve a esperar su sí (`escribible`).
+   Y sólo en la región del editor de Ajustes (decisión 460): en otra ventana
+   los atajos del programa de Ajustes pueden hacer otra cosa.
 2. **Todo el texto se puede teclear.** Si un carácter no tiene tecla en la
    distribución, no se escribe ni el primer tramo.
 3. **El documento es el que se leyó, hasta el tramo más bajo.** Antes de
    escribir se recorre el documento desde el principio, página a página como
    al leerlo, y cada página se compara con su captura de la lectura, hasta la
-   que contiene la línea más baja que se va a tocar. Si el foco está en otra
+   que contiene la línea más baja que se va a tocar, **en la zona donde se
+   leyó** (`Lectura.zona`, decisión 460). Si el foco está en otra
    ventana, o alguien cambió el texto por encima de esa línea (los números de
    los tramos ya no valdrían), no casa y no se escribe nada. Lo que cambie
    por debajo no mueve ningún número; eso lo dirá la huella al final.
@@ -201,12 +204,31 @@ def medida(c: Cambio) -> tuple[int, int]:
     return lineas, caracteres
 
 
-def cabe(c: Cambio, permiso: Permiso) -> str | None:
+def fuera_de_ajustes(zona: list[int] | None, perfil: dict | None) -> str | None:
+    """None si la lectura se hizo en la región del editor de Ajustes (o es de antes de
+    guardar su zona, y entonces se trata como ésa); si no, el motivo.
+
+    Leer en otra ventana no pide permiso (leer no es escribir), pero escribir allí sí
+    es otra cosa (decisión 460, amplía la 458): los atajos —«Ir a la línea», ir al
+    principio— son los del programa calibrado en Ajustes, y en VS Code, Notas o el
+    navegador hacen otra cosa o nada. Eso lo aprueba la persona mirando el diff."""
+    if not zona or perfil is None or [int(v) for v in zona] == [int(v) for v in perfil["region_editor"]]:
+        return None
+    return (f"se escribe en otra ventana que la del editor de Ajustes, con los atajos de "
+            f"{perfil.get('nombre') or 'su programa'}: lo aprueba la persona")
+
+
+def cabe(c: Cambio, permiso: Permiso, zona: list[int] | None = None, perfil: dict | None = None) -> str | None:
     """None si el cambio es una corrección pequeña que cabe en lo que le queda al
     permiso; si no, el motivo, para decírselo a la persona.
 
     Pequeña es corregir lo que hay: escribir un documento de cero o reemplazarlo
-    entero sigue siendo de su aprobación, quepa o no en el presupuesto."""
+    entero sigue siendo de su aprobación, quepa o no en el presupuesto. Y en la
+    ventana de Ajustes: `zona` es la de la lectura y `perfil` el de ahora
+    (`fuera_de_ajustes`); sin ellos, la de Ajustes, como una lectura de antes."""
+    fuera = fuera_de_ajustes(zona, perfil)
+    if fuera:
+        return fuera
     if not any(x.strip() for x in c.original):
         return "el documento leído está vacío: escribir uno de cero lo aprueba la persona"
     sm = difflib.SequenceMatcher(None, c.original, c.nuevo, autojunk=False)
@@ -224,14 +246,15 @@ def cabe(c: Cambio, permiso: Permiso) -> str | None:
     return permiso.cabe(*medida(c))
 
 
-def aprobar(c: Cambio, permiso: Permiso | None = None) -> None:
+def aprobar(c: Cambio, permiso: Permiso | None = None, zona: list[int] | None = None,
+            perfil: dict | None = None) -> None:
     """La única transición a «aprobado». Sin permiso, el clic de la persona; con él,
     sólo si `cabe`, y lo gasta en el mismo paso: no hay aprobado por permiso sin
     descontarlo del presupuesto.
 
     La persona también aprueba uno que aprobó su permiso de correcciones: es lo
     que le queda por hacer cuando la concesión acabó (`permiso_acabado`), y su
-    sí ya no depende de ninguna concesión."""
+    sí ya no depende de ninguna concesión. `zona` y `perfil`, los de `cabe`."""
     de_su_permiso = permiso is None and c.estado == "aprobado" and c.aprobado_por == "correcciones"
     if c.estado != "propuesto" and not de_su_permiso:
         raise ValueError(f"sólo se aprueba un cambio propuesto (está {c.estado})")
@@ -239,7 +262,9 @@ def aprobar(c: Cambio, permiso: Permiso | None = None) -> None:
         c.aprobado_por, c.permiso = "persona", None
         c.anotar("aprobado", "persona")
     else:
-        motivo = cabe(c, permiso)
+        if perfil is None:  # sin él, `fuera_de_ajustes` no podría decir que no
+            raise ValueError("aprobar por el permiso necesita el perfil de ahora")
+        motivo = cabe(c, permiso, zona, perfil)
         if motivo:
             raise ValueError(f"no cabe en el permiso de correcciones pequeñas ({motivo})")
         permiso.gastar(*medida(c), c.id)
@@ -258,7 +283,7 @@ def permiso_acabado(c: Cambio, permiso: Permiso | None) -> bool:
             and (permiso is None or permiso.id != c.permiso))
 
 
-def escribible(c: Cambio, permiso: Permiso | None) -> None:
+def escribible(c: Cambio, permiso: Permiso | None, perfil: dict | None = None) -> None:
     """Se puede escribir ya, o ValueError. Es LA comprobación, la usan la API y
     `escribir`: dos copias acabarían diciendo cosas distintas.
 
@@ -266,17 +291,26 @@ def escribible(c: Cambio, permiso: Permiso | None) -> None:
     dure esa concesión (`permiso` es el vigente, o None). Si acabó —la persona
     retomó el Mac, pulsó Parar, Claude terminó su turno, caducó, o se lo dio
     otra vez, con o sin la casilla— vuelve a esperar su aprobación: el permiso
-    era para aquel rato, no para siempre."""
+    era para aquel rato, no para siempre.
+
+    Y sólo mientras su lectura siga en la región del editor de Ajustes (`perfil`, el
+    de ahora): si la persona la movió después de aprobarlo, los atajos pueden ser ya
+    de otro programa, y eso lo aprueba ella (decisión 460)."""
     if c.estado != "aprobado":
         raise ValueError(f"el cambio está {c.estado}: sólo se escribe uno aprobado por la persona")
+    motivo = None
     if permiso_acabado(c, permiso):
+        motivo = "el permiso de correcciones pequeñas con que se aprobó ya acabó"
+    elif c.aprobado_por == "correcciones" and perfil is not None:
+        fuera = fuera_de_ajustes(lecturas.cargar(c.lectura).zona, perfil)
+        if fuera:
+            motivo = f"la región del editor cambió después de aprobarlo ({fuera})"
+    if motivo:
         c.estado, c.aprobado_en = "propuesto", None
         c.aprobado_por, c.permiso = "persona", None
-        c.anotar("el permiso de correcciones pequeñas con que se aprobó ya acabó: vuelve a esperar "
-                 "tu aprobación", "puente")
+        c.anotar(f"{motivo}: vuelve a esperar tu aprobación", "puente")
         c.guardar()
-        raise ValueError("el permiso de correcciones pequeñas con que se aprobó ya acabó: el cambio vuelve "
-                         "a esperar la aprobación de la persona")
+        raise ValueError(f"{motivo}: el cambio vuelve a esperar la aprobación de la persona")
 
 
 def rechazar(c: Cambio) -> None:
@@ -298,9 +332,19 @@ def pagina_hasta(lectura: lecturas.Lectura, c: Cambio) -> int:
     return len(lectura.paginas)  # sin números que lo digan: todas
 
 
+def zona_de(lectura: lecturas.Lectura) -> tuple[int, int, int, int] | None:
+    """Donde se leyó, para comprobar y escribir ahí mismo (decisión 460); None, una
+    lectura de antes de guardarla, que se trata como la región de Ajustes de ahora.
+
+    Antes de C-0491 todo esto usaba la región de Ajustes: una lectura hecha en otra
+    ventana no casaba nunca con su captura y no se podía escribir."""
+    return tuple(lectura.zona) if lectura.zona else None
+
+
 async def comprobar_paginas(motor: Motor, lectura: lecturas.Lectura, hasta: int) -> None:
     """Recorre el documento como al leerlo y compara cada página con su captura."""
     perfil = motor.perfil
+    zona = zona_de(lectura)
     for n in range(1, hasta + 1):
         motor.progreso = f"comprobando la página {n} de {hasta} antes de escribir"
         atajo = perfil["inicio_documento"] if n == 1 else perfil["pagina_abajo"]
@@ -308,7 +352,8 @@ async def comprobar_paginas(motor: Motor, lectura: lecturas.Lectura, hasta: int)
         # que con el vídeo llegando tarde era la de antes (C-0485): comparada con
         # la leída, fallaba en falso. Que no cambie (ya estaba arriba) no es fallo:
         # lo dice la comparación de abajo.
-        visto = await motor.tras(lambda: motor.atajo(atajo, apuntar=False), clase="inicio" if n == 1 else "pagina")
+        visto = await motor.tras(lambda: motor.atajo(atajo, apuntar=False), zona=zona,
+                                 clase="inicio" if n == 1 else "pagina")
         ahora, quieta = visto.img, visto.quieta
         if not quieta:
             raise PantallaInesperada(
@@ -325,7 +370,7 @@ async def comprobar_paginas(motor: Motor, lectura: lecturas.Lectura, hasta: int)
 
 async def escribir(motor: Motor, c: Cambio, quien: str, permiso: Permiso | None = None) -> Cambio:
     """`permiso`: el de correcciones vigente al empezar (`Control.permiso_vigente`)."""
-    escribible(c, permiso)
+    escribible(c, permiso, motor.perfil)
     lectura = lecturas.cargar(c.lectura)
     c.estado, c.error = "escribiendo", ""
     c.anotar("escribiendo", quien)
@@ -345,11 +390,12 @@ async def escribir(motor: Motor, c: Cambio, quien: str, permiso: Permiso | None 
             cambio=c.id)
         total = len(c.original)
         fila = alto_de_fila(lectura)
+        zona = zona_de(lectura)
         for t in sorted(c.tramos, key=lambda t: t.desde, reverse=True):
             motor.progreso = f"tramo {t.i} de {len(c.tramos)}"
             ultima_actual = total + sum(len(o.nuevas) - (o.hasta - o.desde + 1)
                                         for o in c.tramos if o.desde > t.desde)
-            antes = await _escribir_tramo(motor, t, ultima_actual, c.id)
+            antes = await _escribir_tramo(motor, t, ultima_actual, c.id, zona)
             t.estado = "escrito"
             await motor.aparcar_raton()
             await motor.ir_a_linea(max(1, t.desde))
@@ -357,7 +403,7 @@ async def escribir(motor: Motor, c: Cambio, quien: str, permiso: Permiso | None 
             # línea» (C-0485). Con `tras(ir_a_linea)` el cambio que se vería
             # primero es el diálogo abriéndose, y la captura podía salir con él
             # aún encima; o, si el cursor ya estaba en esa línea, nada que ver.
-            img, quieta = await motor.asentada()
+            img, quieta = await motor.asentada(zona=zona)
             img.save(c.png(t.i))
             t.captura_inestable = not quieta
             t.franja = _franja_sin_cortar(motor, c, antes, img, fila)
@@ -444,8 +490,8 @@ def _franja_sin_cortar(motor: Motor, c: Cambio, antes: Image.Image | None, despu
         return None
 
 
-async def _vista(motor: Motor, cambio: str) -> Image.Image | None:
-    """La región del editor tal como está, para comparar con la del tramo ya escrito.
+async def _vista(motor: Motor, cambio: str, zona: tuple[int, int, int, int] | None) -> Image.Image | None:
+    """La zona de la lectura (`zona_de`) tal como está, para comparar con la del tramo ya escrito.
 
     Una sola captura, sin esperar a que se quede quieta: aquí ya se está a punto
     de teclear, y lo que se escribe, en qué orden y con qué esperas sigue igual que
@@ -454,14 +500,15 @@ async def _vista(motor: Motor, cambio: str) -> Image.Image | None:
     entero.
     """
     try:
-        return motor.recortar(await motor.captura())
+        return motor.recortar(await motor.captura(), zona)
     except Exception as e:
         motor.bitacora.apuntar("error", f"{cambio}: no pude capturar antes de teclear el tramo "
                                f"({type(e).__name__}: {e}); se enseña entero", cambio=cambio)
         return None
 
 
-async def _escribir_tramo(motor: Motor, t: Tramo, ultima_actual: int, cambio: str) -> Image.Image | None:
+async def _escribir_tramo(motor: Motor, t: Tramo, ultima_actual: int, cambio: str,
+                          zona: tuple[int, int, int, int] | None = None) -> Image.Image | None:
     """Teclea el tramo y devuelve la vista de justo antes de teclear (ver `franja`).
 
     La vista se captura ya colocado (tras «Ir a la línea» o ir al final) y antes
@@ -474,16 +521,16 @@ async def _escribir_tramo(motor: Motor, t: Tramo, ultima_actual: int, cambio: st
     if cuantas == 0:  # sólo insertar
         if t.desde <= ultima_actual:
             await motor.ir_a_linea(t.desde)
-            antes = await _vista(motor, cambio)
+            antes = await _vista(motor, cambio, zona)
             await motor.teclear(texto + "\n")
         else:
             await motor.atajo(p["fin_documento"])
-            antes = await _vista(motor, cambio)
+            antes = await _vista(motor, cambio, zona)
             await motor.teclear("\n" + texto)
         return antes
     if t.hasta < ultima_actual:
         await motor.ir_a_linea(t.desde)
-        antes = await _vista(motor, cambio)
+        antes = await _vista(motor, cambio, zona)
         await motor.atajo("shift+down", veces=cuantas)
         if t.nuevas:
             await motor.teclear(texto + "\n")
@@ -493,7 +540,7 @@ async def _escribir_tramo(motor: Motor, t: Tramo, ultima_actual: int, cambio: st
     # El tramo llega a la última línea: Mayús+↓ ahí no baja, va al final.
     if t.nuevas:
         await motor.ir_a_linea(t.desde)
-        antes = await _vista(motor, cambio)
+        antes = await _vista(motor, cambio, zona)
         if cuantas > 1:
             await motor.atajo("shift+down", veces=cuantas - 1)
         await motor.atajo("shift+" + fin)
@@ -502,7 +549,7 @@ async def _escribir_tramo(motor: Motor, t: Tramo, ultima_actual: int, cambio: st
         if t.desde == 1:
             raise RuntimeError("el cambio borra el documento entero: eso no se hace tecleando")
         await motor.ir_a_linea(t.desde - 1)
-        antes = await _vista(motor, cambio)
+        antes = await _vista(motor, cambio, zona)
         await motor.atajo(fin)
         await motor.atajo("shift+down", veces=cuantas)
         await motor.atajo("shift+" + fin)
