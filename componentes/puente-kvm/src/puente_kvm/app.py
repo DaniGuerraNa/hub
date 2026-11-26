@@ -141,6 +141,8 @@ class Puente:
         self.bitacora = Bitacora()
         self.dispositivo.avisar = self.aviso_del_aparato
         self.motor = Motor(self.dispositivo, self.control, self.bitacora, self.ajustes["perfil"])
+        self.motor.al_soltar = self._tras_tarea
+        self.devolver_pendiente: str | None = None
         self.error_conexion = ""
         # Mientras conecta (al arrancar, «Reconectar», una reunión que reconecta),
         # el aparato dice «sin conectar» sin que nada haya fallado: el panel lo
@@ -203,9 +205,31 @@ class Puente:
         """La única puerta por la que el puente le devuelve el Mac a la persona, con
         su línea en la bitácora. Sólo con el control dado a Claude: nunca se lo da,
         y un PARADO sigue parado."""
+        self.devolver_pendiente = None
         if self.control.modo == "claude":
             self.control.retomar(motivo)
             self.bitacora.apuntar("control", motivo, quien="puente")
+
+    def devolver_al_acabar(self, motivo: str) -> None:
+        """Como `devolver_control`, pero sin cortar la tarea en marcha (C-0488).
+
+        Escribir un documento largo es una sola tarea de casi una hora, y Claude
+        puede terminar su turno mientras tanto (avisa del progreso y se para).
+        Quitarle el control entonces cortaba el tecleo a mitad del documento:
+        antes de C-0486 el control duraba hasta acabar la tarea, y eso se
+        conserva. Lo que corta en el acto sigue siendo de la persona: Parar,
+        Retomar y «Usar el Mac desde aquí»."""
+        if self.motor.tarea and self.control.modo == "claude":
+            if self.devolver_pendiente is None:
+                self.bitacora.apuntar("control", f"{motivo.split(':')[0]}; el Mac vuelve a ti cuando acabe "
+                                      f"«{self.motor.tarea}»", quien="puente")
+            self.devolver_pendiente = motivo
+        else:
+            self.devolver_control(motivo)
+
+    def _tras_tarea(self) -> None:
+        if self.devolver_pendiente:
+            self.devolver_control(self.devolver_pendiente)
 
     # ── cuándo vuelve el Mac: al acabar el encargo, no cada tarea (C-0486) ──
     def turno_en_curso(self) -> bool:
@@ -270,17 +294,17 @@ class Puente:
             # tocar el Mac con el control dado para el encargo de la conversación:
             # con el control por turno, ese rato ya no es una tarea, es un turno.
             if del_mac:
-                self.devolver_control("otra sesión de Claude iba a tocar el Mac: el control vuelve a ti")
+                self.devolver_al_acabar("otra sesión de Claude iba a tocar el Mac: el control vuelve a ti")
             return
         if evento in ("Stop", "SessionEnd"):
-            self.devolver_control("Claude terminó: el Mac vuelve a ti para revisar y guardar")
+            self.devolver_al_acabar("Claude terminó: el Mac vuelve a ti para revisar y guardar")
         elif pregunta:
-            self.devolver_control("Claude te pregunta algo: el Mac vuelve a ti")
+            self.devolver_al_acabar("Claude te pregunta algo: el Mac vuelve a ti")
         elif evento == "UserPromptSubmit" and conv.id in self.actividad.abiertos \
                 and self.control.desde < self.actividad.abiertos[conv.id]:
             # Un Esc corta el turno sin `Stop`: el mensaje siguiente lo delata. Si
             # la persona dio el control después del corte, lo dio para esto.
-            self.devolver_control("el encargo anterior se cortó sin terminar: el Mac vuelve a ti")
+            self.devolver_al_acabar("el encargo anterior se cortó sin terminar: el Mac vuelve a ti")
 
     def en_segundo_plano(self, coro) -> None:
         t = asyncio.create_task(coro)

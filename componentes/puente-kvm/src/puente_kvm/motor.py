@@ -206,6 +206,9 @@ class Motor:
         self.perfil = perfil
         self._cerrojo = asyncio.Lock()
         self.tarea: str | None = None
+        # Lo que hay que hacer al acabar cada tarea, lo ponga quien lo ponga (el
+        # puente: devolver el control que un fin de turno dejó pendiente).
+        self.al_soltar = None
         self.progreso: str = ""
         # Cuánto se espera, como mucho, a que la pantalla se quede quieta.
         self.tope_estable = 4.0
@@ -244,6 +247,11 @@ class Motor:
                 self.tarea, self.progreso = None, ""
                 with contextlib.suppress(Exception):
                     await self.dispositivo.informe_teclado(0, [])
+                if self.al_soltar:  # el control que esperaba a que acabara (C-0488)
+                    try:
+                        self.al_soltar()
+                    except Exception as e:
+                        print(f"[motor] al soltar la tarea: {e}", flush=True)
 
     # ── ver ─────────────────────────────────────────────────────────────────
     async def captura(self) -> Image.Image:

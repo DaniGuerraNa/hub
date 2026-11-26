@@ -15,6 +15,24 @@ cruzar.
 
 ## Sin publicar
 
+## 0.14.1 — 2026-11-25
+
+### Qué tienes que hacer
+
+- Actualiza. Si usas el Puente KVM, en su pantalla, «Reabrir la conversación
+  de Claude».
+
+### Qué cambia en lo que ya usabas
+
+- **Puente KVM: terminar el turno ya no corta una escritura en marcha.** Con
+  la 0.14.0, si Claude lanzaba una escritura larga, te avisaba del progreso y
+  terminaba su turno, el puente le quitaba el control y el tecleo se cortaba a
+  mitad del documento. Ahora el control vuelve a ti **cuando acaba la
+  escritura** (o la lectura). Parar, «Retomar el Mac» y «Usar el Mac desde
+  aquí» la siguen cortando en el acto. Si se te cortó una, el documento quedó
+  a medias y sin guardar: vuelve al archivo guardado (Archivo → Revertir) y
+  pídele a Claude que la repita.
+
 ## 0.14.0 — 2026-11-25
 
 El Puente KVM deja que Claude termine un encargo entero sin perder el control,

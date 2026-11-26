@@ -94,6 +94,57 @@ def test_con_el_encargo_en_curso_el_control_sigue_tras_escribir_y_el_segundo_cam
     assert re.search(r'id="escrito-claude-sigue"\s*hidden', c.get(f"/cambios/{cid2}").text)
 
 
+def test_el_fin_de_turno_con_una_escritura_en_marcha_no_la_corta_y_el_mac_vuelve_al_acabar(entorno):
+    """🔴 C-0488, visto con el aparato: Claude lanzó una escritura de ~55 min,
+    avisó del progreso y terminó su turno; el `Stop` le quitó el control y el
+    tecleo se cortó en la línea 204 de un HTML. Antes de C-0486 el control
+    duraba hasta acabar la tarea: eso se conserva."""
+    c, sim = entorno
+    sesion = abierta()
+    hook(c, "UserPromptSubmit", sesion)
+    lid = leer(c)
+    transcribir_como_oraculo(c, sim, lid)
+    nuevo = list(sim.editor.guardado)
+    for i in range(10, 40):
+        nuevo[i] += " -- una línea bastante larga añadida para que escribir tarde un buen rato"
+    cid = proponer_y_aprobar(c, lid, nuevo, "muchas líneas")
+    assert c.post(f"/api/cambios/{cid}/escribir").status_code == 200
+    fin = time.time() + 20
+    while c.get(f"/api/cambios/{cid}").json()["estado"] != "escribiendo":
+        assert time.time() < fin
+        time.sleep(0.02)
+    hook(c, "Stop", sesion)  # Claude avisa del progreso y termina su turno
+    assert c.app.state.puente.motor.tarea, "la escritura tenía que seguir en marcha al llegar el Stop"
+    assert control(c)["modo"] == "claude"
+    assert "cuando acabe" in lineas_de_control(c)[-1]["detalle"]
+    esperar(c)
+    assert c.get(f"/api/cambios/{cid}").json()["estado"] == "escrito"
+    assert all(sim.editor.lineas[i].endswith("buen rato") for i in range(10, 40))
+    assert control(c)["modo"] == "libre"
+
+
+def test_parar_sigue_cortando_una_escritura_en_marcha_en_el_acto(entorno):
+    c, sim = entorno
+    sesion = abierta()
+    hook(c, "UserPromptSubmit", sesion)
+    lid = leer(c)
+    transcribir_como_oraculo(c, sim, lid)
+    nuevo = list(sim.editor.guardado)
+    for i in range(10, 40):
+        nuevo[i] += " -- una línea bastante larga añadida para que escribir tarde un buen rato"
+    cid = proponer_y_aprobar(c, lid, nuevo, "muchas líneas")
+    assert c.post(f"/api/cambios/{cid}/escribir").status_code == 200
+    fin = time.time() + 20
+    while c.get(f"/api/cambios/{cid}").json()["estado"] != "escribiendo":
+        assert time.time() < fin
+        time.sleep(0.02)
+    hook(c, "Stop", sesion)
+    assert c.post("/api/control", json={"accion": "parar"}, headers=PERSONA).status_code == 200
+    esperar(c)
+    assert c.get(f"/api/cambios/{cid}").json()["estado"] == "fallido"
+    assert control(c)["modo"] == "parado"
+
+
 def test_el_stop_de_la_conversacion_abierta_devuelve_el_mac_y_lo_apunta(entorno):
     c, _ = entorno
     sesion = abierta()

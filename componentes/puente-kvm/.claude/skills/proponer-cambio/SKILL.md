@@ -36,6 +36,9 @@ Herramientas, en una sola búsqueda:
    escribir, el puente comprueba que la pantalla es la del documento leído; si
    falla, no escribe nada: cuéntale por qué y qué hacer (normalmente, volver al
    documento, o leerlo de nuevo si cambió).
+   Una escritura larga puede tardar mucho: puedes terminar tu turno mientras
+   sigue, y el control vuelve a la persona **cuando acaba**, no antes. Dile
+   que no toque el Mac hasta entonces (Parar sí la corta en el acto).
 6. Revisa cada tramo con `ver_tramo`: llega sólo la franja que cambió al
    escribirlo (lo demás está igual que antes de teclear); si necesitas el
    resto, `entera=True`. Si alguno no quedó como debía, dilo con precisión

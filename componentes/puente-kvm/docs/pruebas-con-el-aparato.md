@@ -230,7 +230,10 @@ orden y lo que hay que vigilar.
   un navegador (ver arriba).
 - **Cuándo vuelve el control** lo dicen los hooks de Claude Code (C-0486): su
   final de turno, una pregunta suya, y el mensaje siguiente a un encargo cortado
-  con Esc (que no manda final de turno). Con Claude Code de verdad sólo se ha
+  con Esc (que no manda final de turno). Si eso llega con una lectura o una
+  escritura en marcha, el control vuelve **al acabarla** (C-0488: un fin de
+  turno cortó una escritura de ~55 min en la línea 204); Parar, Retomar y
+  «Usar el Mac» la siguen cortando en el acto. Con Claude Code de verdad sólo se ha
   razonado, no visto: que el final de turno llegue con el id de la conversación
   abierta, y qué pasa tras un `/clear` (si cambia ese id, el puente deja de
   reconocerla y el control vuelve tras cada tarea, como sin hooks). Si Claude
