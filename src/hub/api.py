@@ -3216,6 +3216,11 @@ def estudio(local: bool) -> dict[str, Any]:
         datos.update(direccion=_e.direccion(), puerto=_e.puerto(), variable_puerto=_e.VARIABLE_PUERTO)
         for p in datos["proyectos"]:
             p["direccion"] = _e.direccion_de(p["id"])
+    if estado["vivo"]:
+        nueva = _e.version_nueva(estado.get("version"))
+        if nueva:
+            datos.update(actualizar={"corre": estado.get("version"), "publicada": nueva},
+                         se_puede_preparar=True)
     if not estado["vivo"]:
         # Lo que falta, en pasos y sin un comando para la persona: lo hace la
         # sesión de «Preparar con Claude» (C-0503). Sin rutas, así que sirve

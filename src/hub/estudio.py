@@ -129,6 +129,24 @@ def en_catalogo() -> bool:
     return KIT in kits.catalogo()
 
 
+def version_publicada() -> str | None:
+    """La versión del kit que da el catálogo, o None si no está en él."""
+    version = (kits.catalogo().get(KIT) or {}).get("version")
+    return str(version) if version else None
+
+
+def version_nueva(corre: str | None) -> str | None:
+    """La del catálogo si es más nueva que la que corre; si no, None. Quien
+    ya lo tenía instalado no recibía los arreglos del kit (27-nov)."""
+    publicada = version_publicada()
+    if not corre or not publicada:
+        return None
+    try:
+        return publicada if kits.es_mas_nueva(publicada, corre) else None
+    except ValueError:
+        return None
+
+
 def kit() -> Path | None:
     """Dónde está instalado el kit del estudio, la versión más alta; None si
     no está. Lo mismo que da `bash scripts/kit.sh ruta estudio`."""

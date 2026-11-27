@@ -538,3 +538,40 @@ def test_el_kit_del_estudio_esta_en_el_catalogo_publicado():
 def test_sin_proyectos_lo_dice(cliente, encendido, estudio_falso):
     estudio_falso(proyectos=[])
     assert "Aún no tiene ningún proyecto" in cliente.get("/estudio").text
+
+
+# ── Una versión nueva del kit (27-nov) ─────────────────────────────────────
+# El kit 0.3 arregló «Origen no admitido» al crear un proyecto, pero quien ya
+# lo tenía instalado seguía con la versión vieja corriendo: el hub sólo miraba
+# si el kit estaba, no si estaba al día, y `install.sh` no reinicia la unidad.
+
+def _catalogo_en(monkeypatch, version):
+    monkeypatch.setattr(kits, "catalogo", lambda: {estudio.KIT: {"id": estudio.KIT, "version": version,
+                                                                "origen": "https://example.org/estudio.git"}})
+
+
+def test_si_corre_una_version_vieja_del_kit_lo_dice_y_ofrece_actualizarlo_con_claude(
+        cliente, encendido, estudio_falso, monkeypatch):
+    estudio_falso(salud={"vivo": True, "version": "0.1"})
+    _catalogo_en(monkeypatch, "0.3")
+    r = cliente.get("/estudio")
+    assert r.status_code == 200
+    trozo = r.text[r.text.index('id="actualizar"'):]
+    assert "0.3" in trozo and "0.1" in trozo
+    assert 'action="/componentes/preparar"' in trozo and 'name="nombre" value="estudio"' in trozo
+    for comando in COMANDOS:
+        assert comando not in trozo, comando
+
+
+def test_al_dia_no_ofrece_actualizar(cliente, encendido, estudio_falso, monkeypatch):
+    estudio_falso(salud={"vivo": True, "version": "0.3"})
+    _catalogo_en(monkeypatch, "0.3")
+    assert 'id="actualizar"' not in cliente.get("/estudio").text
+
+
+def test_el_encargo_actualiza_a_la_version_del_catalogo_y_reinicia_la_unidad():
+    from hub import componentes
+    encargo = componentes._encargo("estudio")
+    assert "versión del catálogo" in encargo
+    assert "systemctl --user restart estudio" in encargo
+    assert '"version"' in encargo

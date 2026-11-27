@@ -345,6 +345,11 @@ def colisiones(manifiestos: list[Kit]) -> dict[str, list[str]]:
     return {d: quienes for d, quienes in de_quien.items() if len(quienes) > 1}
 
 
+def es_mas_nueva(a: str, b: str) -> bool:
+    """Si la versión `a` es más nueva que `b` (`X.Y`)."""
+    return _orden_version(a) > _orden_version(b)
+
+
 def _orden_version(v: str) -> tuple[int, int]:
     mayor, _, menor = v.partition(".")
     return (int(mayor or 0), int(menor or 0))

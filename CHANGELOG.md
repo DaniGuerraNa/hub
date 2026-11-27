@@ -15,6 +15,20 @@ cruzar.
 
 ## Sin publicar
 
+## 0.18.2 — 2026-11-27
+
+### Qué tienes que hacer
+
+- Si usas el estudio, abre su pantalla en el hub: si dice «Hay una versión
+  nueva del estudio», pulsa «Preparar con Claude».
+
+### Qué cambia en lo que ya usabas
+
+- **Crear un proyecto en el estudio ya funciona.** Daba «Origen no
+  admitido». El kit pasa a la 0.3.
+- **El hub avisa cuando el estudio que corre es más viejo que el publicado**,
+  y «Preparar con Claude» lo actualiza y lo reinicia.
+
 ## 0.18.1 — 2026-11-27
 
 ### Qué tienes que hacer

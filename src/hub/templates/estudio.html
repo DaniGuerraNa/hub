@@ -69,6 +69,20 @@
     </div>
   </section>
 
+  {% if s.vivo and e.actualizar %}
+  {# Quien ya lo tenía no recibía los arreglos del kit (27-nov): lo que corre
+     se compara con el catálogo, y lo pone al día la sesión de Claude. #}
+  <section class="tarjeta prep" id="actualizar" aria-labelledby="estudio-actualizar">
+    <h2 id="estudio-actualizar">Hay una versión nueva del estudio</h2>
+    {% if e.local %}
+    {{ prep.cabeza('Corre la ' ~ e.actualizar.corre ~ ' y hay publicada la ' ~ e.actualizar.publicada ~ ', con arreglos. «Preparar con Claude» abre una ventana con Claude y el encargo escrito: trae la versión nueva, la instala y reinicia el estudio, pidiéndote permiso para cada paso. Lo lanzas tú con Enter.',
+                   'estudio', 'Ayúdame a actualizar el estudio a su versión nueva.', rail.hay_asistente) }}
+    {% else %}
+    <p class="tenue">Corre la {{ e.actualizar.corre }} y hay publicada la {{ e.actualizar.publicada }}. Se actualiza en la PC donde corre: allí, esta pantalla tiene «Preparar con Claude».</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
   {% if s.vivo %}
   <section class="tarjeta" id="proyectos" aria-labelledby="estudio-proyectos">
     <h2 id="estudio-proyectos">Proyectos</h2>
