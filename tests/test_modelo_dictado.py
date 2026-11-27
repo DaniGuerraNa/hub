@@ -56,13 +56,11 @@ def casa(tmp_path, monkeypatch):
     monkeypatch.setattr(transcribir, "_python_del_servidor", lambda aj: "")
     monkeypatch.setattr(transcribir, "por_omision", lambda: [sys.executable, "guion", "{audio}"])
     monkeypatch.setattr(procesos, "puede_desasir", lambda: False)
-    transcribir._disponibles_cache.clear()
     yield tmp_path / "hub" / "voz"
     try:
         transcribir.apagar_servidor(tmp_path / "hub" / "voz" / "whisper.sock", 3)
     except RuntimeError:
         pass
-    transcribir._disponibles_cache.clear()
 
 
 def cargado(voz) -> dict | None:
@@ -296,3 +294,32 @@ def test_el_rotulo_solo_lee_la_eleccion_sin_lanzar_nada(casa, monkeypatch):
     monkeypatch.setattr(transcribir, "estado_servidor", lambda e: pytest.fail("no debe preguntar al servidor"))
     transcribir._guardar_eleccion("apagado")
     assert api.voz_estado(solo_eleccion=True) == {"eleccion": "apagado", "selector": True}
+
+
+def test_lo_descargado_se_recuerda_con_recordar_y_un_fallo_no_se_recuerda(casa, monkeypatch):
+    """C-0496: qué modelos hay se recuerda por `recordar.por_tiempo`, no por una
+    caché propia; si mirar falla, la vez siguiente vuelve a mirar."""
+    import subprocess as sp
+
+    from hub import recordar
+
+    real = sp.run
+    miradas = []
+
+    def run(cmd, *a, **k):
+        if "--disponibles" not in cmd:
+            return real(cmd, *a, **k)
+        miradas.append(cmd)
+        if len(miradas) == 1:
+            raise sp.CalledProcessError(1, cmd)
+        return sp.CompletedProcess(cmd, 0, stdout='{"small": true, "large-v3-turbo": false}\n')
+
+    monkeypatch.setattr(transcribir.subprocess, "run", run)
+    assert transcribir.disponibles() == {}
+    assert transcribir.disponibles() == {"small": True, "large-v3-turbo": False}
+    transcribir.disponibles()["small"] = False   # lo devuelto es una copia
+    assert transcribir.disponibles() == {"small": True, "large-v3-turbo": False}
+    assert len(miradas) == 2
+    recordar.olvidar()
+    transcribir.disponibles()
+    assert len(miradas) == 3

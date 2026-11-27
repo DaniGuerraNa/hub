@@ -643,3 +643,27 @@ def test_no_se_hacer_sin_decir_que_falta_no_apunta_nada(con):
     r = herramientas.todas()["no_se_hacer"].funcion(con, {"que": "  ", "por_que": "algo"})
 
     assert r["hecho"] is False and memoria.bitacora(con) == []
+
+
+@pytest.mark.parametrize("contenido", ["- motor\n- dueno\n", "solo una frase\n", ": : roto\n"])
+def test_un_secretario_yml_que_no_es_un_diccionario_vale_vacio_en_todas_sus_lecturas(contenido):
+    """C-0495: `piezas.ajustes` es la única que lee `secretario.yml`; una lista,
+    un texto suelto o un YAML roto valen `{}` y nadie revienta al leerlo."""
+    from hub.secretario import conversacion, motor
+    (memoria.carpeta() / "secretario.yml").write_text(contenido, encoding="utf-8")
+    assert motor.actual() is motor.MOTORES["suscripcion"]
+    assert conversacion._dueno() == "su dueño"
+    assert conversacion.ajustes() == {}
+    assert piezas.ajustes() == {}
+    assert piezas.ajuste("motor") is None
+
+
+def test_secretario_yml_se_lee_en_un_solo_sitio():
+    """C-0495: dos lectoras de lo mismo acabaron haciendo cosas distintas."""
+    import pathlib
+    import re
+    nombre = re.compile(r"""["']secretario\.yml["']""")   # el nombre como literal, no en un docstring
+    raiz = pathlib.Path(piezas.__file__).parents[1]
+    lectoras = [str(p.relative_to(raiz)) for p in raiz.rglob("*.py")
+                if nombre.search(p.read_text(encoding="utf-8"))]
+    assert lectoras == ["secretario/piezas.py"]

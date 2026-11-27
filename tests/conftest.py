@@ -143,6 +143,8 @@ def _datos_aparte(tmp_path, monkeypatch):
     # Y sus datos: ahí deja las reuniones del Mac (decisión 443), y con la
     # herramienta encendida Reuniones las leería y el ciclo lento las procesaría.
     monkeypatch.setenv("PUENTE_HOME", str(tmp_path / "puente-datos-que-no-existen"))
+    # Y el estudio (decisión 461), por lo mismo: el de verdad puede estar en su 8795.
+    monkeypatch.setenv("ESTUDIO_PUERTO", "1")
     # Y el estado que Claude Code escribe de cada sesión viva (decisión 270): el
     # orquestador lo consulta en cada espera, y en la máquina de quien ejecuta
     # la suite hay sesiones reales en paneles `%5` de verdad.

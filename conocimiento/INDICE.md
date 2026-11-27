@@ -20,6 +20,7 @@ haga falta.
 | [`13-secretario.md`](13-secretario.md) | El secretario: encenderlo, hablarle (también por voz), conectar Telegram y Google Calendar, recordatorios, confianza y disparadores |
 | [`14-maquina-aparte.md`](14-maquina-aparte.md) | Tener el hub en una máquina sin monitor y usarlo desde tu PC: el primer aparato por SSH, que vuelva sola tras un apagón y lo que no funciona entre dos máquinas |
 | [`15-puente-kvm.md`](15-puente-kvm.md) | El Puente KVM (Claude en un Mac ajeno, por un JetKVM): encenderlo, prepararlo, abrirlo, grabar una reunión del Mac, dónde va la contraseña, qué hacer al actualizar o desinstalar el hub, y que aún no se ha probado con el aparato |
+| [`16-estudio.md`](16-estudio.md) | El estudio (donde alguien que no programa habla con Claude Code y revisa su aplicación): encenderlo, qué enseña, abrirlo, instalarlo y arrancarlo, y qué hacer si no contesta |
 
 🔴 **Si la pregunta es «¿puedo abrir el puerto a la red?», la respuesta es no**, y
 no hace falta abrir ningún documento para decirlo: la pantalla `/terminal` da

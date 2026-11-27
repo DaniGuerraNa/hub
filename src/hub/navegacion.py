@@ -69,6 +69,7 @@ SECCIONES: tuple[dict, ...] = (
         _p("/talleres", "talleres", "Talleres", "rejilla"),
         # Herramienta opcional (438): sólo sale si está encendida.
         _p("/puente", "puente", "Puente KVM", "teclado", opcional="puente-kvm"),
+        _p("/estudio", "estudio", "Estudio", "imagen", opcional="estudio"),
     )},
     {"clave": "fuera", "nombre": "Fuera", "icono": "conversacion", "pantallas": (
         _p("/canal", "canal", "Canal", "conversacion"),

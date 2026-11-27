@@ -539,3 +539,30 @@ def test_no_queda_un_style_suelto_entre_la_cabeza_y_el_cuerpo() -> None:
     assert not re.search(r"</head>\s*<style", texto)
     hoja = texto[texto.index("<style>"):texto.index("{% block estilo_marco %}")]
     assert ".aviso-accion {" in hoja.replace(".aviso-accion{", ".aviso-accion {")
+
+
+#: Los colores escritos a propósito fuera de los tokens, con su regla
+#: entera (CLAUDE.md, «El sistema visual manda»): el QR se lee con cualquier
+#: cámara sólo en blanco y negro. La paleta ANSI de xterm va en un `<script>`
+#: de `trabajo.html`, no en su `<style>`, y no se mira aquí.
+COLORES_A_PROPOSITO = {"acceso.html": re.compile(r"(?m)^\s*\.qr\s*\{[^}]*\}")}
+
+ESTILOS_DE_PANTALLA = sorted(
+    [*(a for a in PLANTILLAS.rglob("*.html") if _nombre(a) not in ("base.html", "nueva/base.html")),
+     *(c for c in ESTATICOS.glob("*.css") if c.name not in VENDORIZADOS)])
+
+
+@pytest.mark.parametrize("archivo", ESTILOS_DE_PANTALLA, ids=lambda a: _clave(a))
+def test_las_pantallas_toman_sus_colores_de_los_tokens(archivo: Path) -> None:
+    """C-0500: el CSS de cada pantalla y de `static/` no escribe colores; los
+    toma de los tokens de la base. Las bases las mira
+    `test_en_base_los_colores_salen_de_root`. El velo de la lupa del lienzo
+    era `rgba(6,10,14,.82)` en `trabajo.html` y ningún test lo veía."""
+    texto = _sin_comentarios(archivo.read_text(encoding="utf-8"))
+    css = texto if archivo.suffix == ".css" else "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", texto, re.S))
+    a_proposito = COLORES_A_PROPOSITO.get(_clave(archivo))
+    if a_proposito:
+        assert a_proposito.search(css), f"{_clave(archivo)}: ya no está la excepción declarada; quítala"
+        css = a_proposito.sub("", css)
+    culpables = [decl.strip() for decl in re.split(r"[;{}]", css) if re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(", decl)]
+    assert not culpables, f"{_clave(archivo)}: colores escritos a mano: {culpables}. Usa un token de `:root`."

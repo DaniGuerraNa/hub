@@ -180,7 +180,8 @@ solo, pero sin él también funciona (`--sin-servicios`). Opcionalmente `docker`
 y `rg`. Navegante y Reuniones traen su propio componente y se preparan
 desde su pantalla ([`conocimiento/12`](conocimiento/12-navegante-y-reuniones.md)).
 El Puente KVM, sólo para quien tiene un JetKVM, viene apagado y se enciende en
-la Guía ([`conocimiento/15`](conocimiento/15-puente-kvm.md)).
+la Guía ([`conocimiento/15`](conocimiento/15-puente-kvm.md)); lo mismo el
+estudio, del kit `estudio` ([`conocimiento/16`](conocimiento/16-estudio.md)).
 El diagnóstico te lo dice todo:
 
 ```bash

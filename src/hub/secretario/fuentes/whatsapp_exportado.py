@@ -42,8 +42,8 @@ _OMITIDO = re.compile(r"^<?(multimedia omitido|media omitted|imagen omitida|imag
 
 
 def _dueno() -> str:
-    from ..conversacion import ajustes as ajustes_secretario
-    return str(ajustes_secretario().get("dueno") or "")
+    from .. import piezas
+    return str(piezas.ajuste("dueno") or "")
 
 
 def carpeta() -> Path:

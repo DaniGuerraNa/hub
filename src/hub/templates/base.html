@@ -1191,8 +1191,8 @@ dialog.paleta li .detalle {
   {{ entrada_rail('/trabajo', 'trabajo', 'Trabajo', 'terminal') }}
   {{ entrada_rail('/secretario', 'secretario', rail.secretario_nombre or 'Secretario', 'secretario') }}
   {{ entrada_rail('/tablero', 'tablero', 'Tablero', 'lapiz') }}
-  {% set ver_rail = rail.version %}{# El Puente KVM es una herramienta
-     opcional (438): apagado no sale, y el raíl se pinta como si no existiera.
+  {% set ver_rail = rail.version %}{# El Puente KVM y el estudio son herramientas
+     opcionales (438, 461): apagado no sale, y el raíl se pinta como si no existiera.
      El comentario pegado a la línea de arriba: en una suya dejaría un salto
      de más en cada página. #}
   {% set grupos_rail = [
@@ -1201,7 +1201,8 @@ dialog.paleta li .detalle {
         ('/talleres', 'talleres', 'Talleres', 'rejilla'),
         ('/navegante', 'navegante', 'Navegante', 'navegador'),
         ('/reuniones', 'reuniones', 'Reuniones', 'reunion')]
-        + ([('/puente', 'puente', 'Puente KVM', 'teclado')] if 'puente-kvm' in (rail.opcionales or []) else [])),
+        + ([('/puente', 'puente', 'Puente KVM', 'teclado')] if 'puente-kvm' in (rail.opcionales or []) else [])
+        + ([('/estudio', 'estudio', 'Estudio', 'imagen')] if 'estudio' in (rail.opcionales or []) else [])),
       ('Proyectos', 'rejilla', 0, [
         ('/inventario', 'inventario', 'Inventario', 'lineas'),
         ('/archivos', 'archivos', 'Archivos', 'carpeta'),

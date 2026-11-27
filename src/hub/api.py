@@ -3144,6 +3144,36 @@ def puente(local: bool) -> dict[str, Any]:
     return datos
 
 
+# ───────────────────────────── el estudio ─────────────────────────────
+
+
+def estudio(local: bool) -> dict[str, Any]:
+    """Lo que pinta /estudio (decisión 461): si está encendido, si contesta,
+    sus proyectos y cómo se abre o se instala.
+
+    Es el único sitio donde se le pregunta al estudio (`estudio.estado`, dos
+    GET a loopback con un plazo absoluto de 0,8 s entre los dos): ni el raíl
+    ni el muestreo lo hacen. Apagado no se le pregunta nada.
+
+    Las direcciones —la del estudio, la de cada proyecto y la carpeta del kit—
+    sólo van si `local`: su web no pasa por la puerta de /acceso (regla dura
+    8), y desde otro aparato no se ofrece abrirla."""
+    from . import estudio as _e
+    if not _opcionales.encendida("estudio"):
+        return {"encendida": False}
+    estado = _e.estado()
+    datos: dict[str, Any] = {"encendida": True, "local": local, "estado": estado,
+                             "proyectos": [dict(p) for p in estado["proyectos"] or []]}
+    if local:
+        datos.update(direccion=_e.direccion(), puerto=_e.puerto(), variable_puerto=_e.VARIABLE_PUERTO)
+        for p in datos["proyectos"]:
+            p["direccion"] = _e.direccion_de(p["id"])
+        if not estado["vivo"]:
+            kit = _e.kit()
+            datos["kit"] = str(kit) if kit else None
+    return datos
+
+
 def navegante_corrida(flujo: str, cuando: str) -> dict[str, Any]:
     from . import navegante as nav
     return nav.corrida(flujo, cuando)

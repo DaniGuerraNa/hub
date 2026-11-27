@@ -1861,6 +1861,17 @@ def puente_vista(request: Request):
                                            "seccion": "puente"})
 
 
+@app.get("/estudio")
+def estudio_vista(request: Request):
+    """El estudio, si está encendido: si contesta, sus proyectos y cómo se
+    abre (decisión 461). Abrirlo, con el mismo criterio que /puente: sólo
+    desde la PC donde corre."""
+    anfitrion = request.headers.get("host")
+    local = bool(anfitrion) and _es_de_casa(anfitrion, _ip(request))
+    return _vista(request, "estudio.html", {"e": api.estudio(local), "titulo": "Estudio",
+                                            "seccion": "estudio"})
+
+
 @app.post("/opcionales")
 def opcionales_poner(clave: str = Form(""), encendida: str = Form(""),
                      destino: str = Form("/guia#opcionales")):

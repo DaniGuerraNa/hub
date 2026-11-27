@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block contenido %}
+
+<style>
+  /* Una columna: cómo está, sus proyectos y, si no contesta, cómo se instala
+     y se arranca. Sin `iframe`: el estudio se abre en su pestaña y sólo desde
+     la PC donde corre (decisión 461). */
+  .estudio-v { display:grid; gap:14px; grid-template-columns:minmax(0, 1fr); max-width:880px; }
+  .estudio-v > .tarjeta { margin:0; }
+  .estudio-v > .tarjeta > h2 { margin:0 0 10px; font-size:var(--letra-4); }
+  .estudio-cabeza { display:flex; gap:10px 14px; align-items:center; flex-wrap:wrap; margin:0; }
+  .estudio-cabeza .motivo { color:var(--texto-3); font-size:var(--letra-3); overflow-wrap:anywhere; }
+  .estudio-cabeza .boton.sutil { margin-left:auto; }
+  .estudio-abrir { display:flex; gap:10px 14px; align-items:center; flex-wrap:wrap;
+                   margin-top:16px; padding-top:14px; border-top:1px solid var(--borde); }
+  .estudio-abrir p { margin:0; color:var(--texto-3); font-size:var(--letra-3); max-width:64ch; }
+  .estudio-lista { list-style:none; margin:0; padding:0; }
+  .estudio-lista > li { display:flex; gap:8px 14px; align-items:center; flex-wrap:wrap;
+                        padding:10px 0; border-top:1px solid var(--borde); }
+  .estudio-lista > li:first-child { border-top:0; padding-top:0; }
+  .estudio-lista .que { display:grid; gap:2px; min-width:0; flex:1 1 220px; }
+  .estudio-lista .que > strong { font-size:var(--letra-4); overflow-wrap:anywhere; }
+  .estudio-lista .que > span:not(.placa) { color:var(--texto-3); font-size:var(--letra-3); overflow-wrap:anywhere; }
+  .estudio-lista .como { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .estudio-pasos { margin:0; padding-left:20px; display:grid; gap:8px; }
+  .estudio-pasos > li { font-size:var(--letra-3); color:var(--texto-2); }
+  .estudio-pasos code { overflow-wrap:anywhere; }
+</style>
+
+{{ ui.cabecera_vista('Estudio', 'Donde alguien que no programa habla con Claude Code y revisa su aplicación') }}
+
+{% if not e.encendida %}
+{# Tecleada a mano con la herramienta apagada: se dice dónde se enciende, y
+   al estudio no se le ha preguntado nada. #}
+<div class="tarjeta" id="apagado">
+  <div class="pila">
+    <strong>Apagado en esta instalación</strong>
+    <span class="tenue">Es una herramienta opcional y viene apagada: sólo tiene sentido si has instalado el kit «estudio».
+      Se enciende en <a href="/guia#opcionales">Ajustes → Guía</a>, en «Herramientas opcionales».</span>
+  </div>
+</div>
+{% else %}
+{% set s = e.estado %}
+<div class="estudio-v">
+
+  <section class="tarjeta" id="estado" aria-labelledby="estudio-estado">
+    <h2 class="solo-lector" id="estudio-estado">Cómo está</h2>
+    <div class="estudio-cabeza">
+      {% if s.vivo %}
+      <span class="insignia ok"><span class="glifo" aria-hidden="true">●</span><span>En marcha</span></span>
+      {% if s.version %}<span class="motivo">versión {{ s.version }}</span>{% endif %}
+      {% else %}
+      <span class="insignia riesgo"><span class="glifo" aria-hidden="true">✕</span><span>No contesta</span></span>
+      <span class="motivo">{{ s.motivo }}</span>
+      {% endif %}
+      <a class="boton sutil" href="/estudio">Volver a mirar</a>
+    </div>
+
+    <div class="estudio-abrir">
+      {% if e.direccion and s.vivo %}
+      <a class="boton cta" href="{{ e.direccion }}" target="_blank" rel="noopener">Abrir el estudio</a>
+      <p>En una pestaña aparte. Contestar, aprobar y comentar se hace allí, no desde el hub.</p>
+      {% elif e.direccion %}
+      <p>Cuando conteste, aquí tendrás «Abrir el estudio».</p>
+      {% else %}
+      <p>Se abre en la PC donde corre: su web escucha sólo en esa máquina y no pasa por la puerta del hub.
+        Desde este aparato ves cómo está.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  {% if s.vivo %}
+  <section class="tarjeta" id="proyectos" aria-labelledby="estudio-proyectos">
+    <h2 id="estudio-proyectos">Proyectos</h2>
+    {% if s.proyectos is none %}
+    <p class="tenue">No se pudo saber qué proyectos tiene: {{ s.motivo_proyectos }}.</p>
+    {% elif not e.proyectos %}
+    <p class="tenue">Aún no tiene ningún proyecto. Se crean desde el estudio.</p>
+    {% else %}
+    <ul class="estudio-lista">
+      {% for p in e.proyectos %}
+      <li id="proyecto-{{ p.id }}">
+        <div class="que">
+          <strong>{{ p.nombre }}</strong>
+          {% if p.momento %}<span>{{ p.momento }}</span>{% endif %}
+        </div>
+        <div class="como">
+          {% if p.trabajando %}<span class="insignia espera"><span class="glifo" aria-hidden="true">●</span><span>Claude está trabajando</span></span>{% endif %}
+          {% if p.esperando %}<span class="insignia riesgo"><span class="glifo" aria-hidden="true">●</span><span>Te espera {{ p.esperando }}</span></span>
+          {% elif p.esperando == 0 %}<span class="tenue">Nada te espera</span>{% endif %}
+          {% if p.direccion %}<a class="boton aceptar" href="{{ p.direccion }}" target="_blank" rel="noopener">Abrir</a>{% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+  {% else %}
+  <section class="tarjeta" id="instalar" aria-labelledby="estudio-instalar">
+    <h2 id="estudio-instalar">Cómo se instala y se arranca</h2>
+    {% if e.local %}
+    <ol class="estudio-pasos">
+      {% if e.kit %}
+      <li>El kit está instalado en <code>{{ e.kit }}</code>.</li>
+      <li>Instálalo como servicio, una vez: <code>bash "{{ e.kit }}/install.sh"</code>. Deja la unidad de usuario
+        <code>estudio</code>, que arranca sola con la sesión.</li>
+      {% else %}
+      <li>El kit «estudio» no está instalado en esta máquina: <code>bash scripts/kit.sh ruta estudio</code>, en la
+        carpeta del hub, lo dice así. Si está en el catálogo de kits, lo trae <code>bash scripts/kit.sh instalar estudio</code>.</li>
+      <li>Después, una vez: <code>bash "$(bash scripts/kit.sh ruta estudio)/install.sh"</code>. Deja la unidad de
+        usuario <code>estudio</code>, que arranca sola con la sesión.</li>
+      {% endif %}
+      <li>Si ya estaba instalado y no contesta: <code>systemctl --user start estudio</code>, y por qué no arranca,
+        <code>journalctl --user -u estudio</code>.</li>
+      <li>El hub lo busca en el puerto {{ e.puerto }}. Si el estudio escucha en otro, pon ese en
+        <code>{{ e.variable_puerto }}</code> en el entorno del hub.</li>
+    </ol>
+    {% else %}
+    <p class="tenue">Se instala y se arranca en la PC donde corre; allí, esta pantalla dice cómo.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+</div>
+{% endif %}
+{% endblock %}

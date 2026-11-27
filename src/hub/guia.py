@@ -85,6 +85,13 @@ PANTALLAS: list[dict[str, Any]] = [
      "que_haces": ["Ver si el puente contesta y si llega al aparato",
                    "La primera vez: prepararlo paso a paso («Preparar con Claude»)",
                    "Abrirlo en una pestaña aparte, desde la PC donde corre"]},
+    {"grupo": "El día a día", "ruta": "/estudio", "nombre": "Estudio", "opcional": "estudio",
+     "para_que": "Donde alguien que no programa habla con Claude Code y revisa su aplicación. Es un "
+                 "programa aparte: aquí ves si contesta, sus proyectos y cuáles te esperan.",
+     "que_haces": ["Ver si el estudio contesta y qué proyectos tiene",
+                   "Ver cuántas cosas te espera cada proyecto y si Claude está trabajando",
+                   "Abrir el estudio o un proyecto en una pestaña aparte, desde la PC donde corre",
+                   "Si no contesta: cómo se instala y se arranca"]},
     {"grupo": "El día a día", "ruta": "/intercambio", "nombre": "Intercambio",
      "para_que": "La carpeta por la que pasan archivos entre el teléfono y las sesiones.",
      "que_haces": ["Subir un archivo desde el teléfono", "Bajarte lo que dejó una sesión",

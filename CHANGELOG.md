@@ -15,6 +15,37 @@ cruzar.
 
 ## Sin publicar
 
+## 0.17.0 — 2026-11-27
+
+### Qué tienes que hacer
+
+- Nada, si no usas el estudio. Si lo usas, enciéndelo en **Ajustes → Guía**,
+  «Herramientas opcionales».
+
+### Nuevo
+
+- **El estudio, como herramienta opcional.** El estudio es una web aparte
+  (del kit `estudio`) donde alguien que no programa habla con Claude Code y
+  revisa su aplicación. Viene apagado; encendido, sale en el menú (Agentes, o
+  Herramientas en la interfaz nueva) y su pantalla, `/estudio`, dice si
+  contesta y con qué versión, qué proyectos tiene, cuántas cosas te espera
+  cada uno y si Claude está trabajando. «Abrir el estudio» y «Abrir» en cada
+  proyecto lo abren en una pestaña aparte, y sólo desde la PC donde corre. Si
+  no contesta, dice cómo se instala y se arranca. El hub no le manda nada:
+  sólo le pregunta. Todo, en `conocimiento/16-estudio.md`.
+  El kit `estudio` todavía no está en el catálogo público: hasta que lo
+  esté, la herramienta sólo sirve en un equipo donde ya esté instalado.
+
+### Qué cambia en lo que ya usabas
+
+- Nada. El Puente KVM le pregunta igual que antes, ahora por el mismo
+  cliente que el estudio.
+- Si `secretario.yml` no tiene la forma `clave: valor` (por ejemplo, una
+  lista con guiones o una frase suelta), el secretario ya no se cae al leerlo:
+  sigue con lo de fábrica y lo dice en su registro.
+- Publicar (`scripts/publicar.sh`) corre también las pruebas de navegador y
+  no publica si alguna falla o se salta.
+
 ## 0.16.0 — 2026-11-26
 
 El Puente KVM escribe en la misma ventana en la que leyó, sin mover la región

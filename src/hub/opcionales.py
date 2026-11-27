@@ -1,8 +1,9 @@
 """Las herramientas opcionales del hub: una lista cerrada, apagadas de fábrica (decisión 438).
 
 Una herramienta opcional es algo que viaja con el hub pero que usará una sola
-de las personas que lo instalan: hoy, el Puente KVM, que sólo sirve a quien
-tiene un JetKVM. Apagada no sale en ningún menú y las pantallas se pintan como
+de las personas que lo instalan: el Puente KVM, que sólo sirve a quien
+tiene un JetKVM, y el estudio (461), que sólo sirve a quien instaló su
+kit. Apagada no sale en ningún menú y las pantallas se pintan como
 si no existiera; se enciende y se apaga en Ajustes → Guía, con un formulario
 normal.
 
@@ -17,7 +18,7 @@ clave que no está en `OPCIONALES` vale lo mismo: apagada. Al escribirlo, uno
 ilegible no se pisa (`Ilegible`).
 
 Módulo hoja: sólo sabe qué hay y qué está encendido. Lo que cada herramienta
-hace es de su propio módulo (`puente.py`).
+hace es de su propio módulo (`puente.py`, `estudio.py`).
 """
 
 from __future__ import annotations
@@ -54,6 +55,16 @@ OPCIONALES: dict[str, Opcional] = {
                "sin instalar nada en ese Mac. Es un programa aparte: el hub sólo dice cómo está "
                "y te lleva a él.",
         quien="Sólo tiene sentido si tienes un JetKVM.",
+    ),
+    # El estudio (461): el kit `estudio`, no un componente del clon.
+    "estudio": Opcional(
+        nombre="Estudio",
+        ruta="/estudio",
+        icono="imagen",
+        que_es="Una web aparte donde alguien que no programa habla con Claude Code y revisa su "
+               "aplicación con maquetas y capturas. Es un programa aparte: el hub sólo dice si "
+               "contesta, qué proyectos tiene y te lleva a él.",
+        quien="Sólo tiene sentido si has instalado el kit «estudio».",
     ),
 }
 

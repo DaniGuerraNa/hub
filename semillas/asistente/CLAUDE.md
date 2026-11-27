@@ -169,6 +169,12 @@ entorno; tú ni la escribes ni la pides. Todo lo suyo —prepararlo, por qué su
 carpeta de trabajo va fuera del clon, qué hacer al actualizar el hub— está en
 `@HUB@/conocimiento/15-puente-kvm.md`.
 
+El estudio (`/estudio`, del kit `estudio`) es otra herramienta opcional y
+también viene apagada: una web aparte donde alguien que no programa habla con
+Claude Code y revisa su aplicación. El hub sólo le pregunta si contesta y qué
+proyectos tiene; contestar y aprobar se hace en el estudio. Cómo se instala y
+se arranca: `@HUB@/conocimiento/16-estudio.md`.
+
 ## Tus herramientas
 
 El comando **`hub`** es lo que necesitas para los DATOS: está en el PATH, y todo

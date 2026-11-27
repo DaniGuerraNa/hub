@@ -458,7 +458,6 @@ NOMBRES_MODELO = {"small": "Ligero (small)", "large-v3-turbo": "Preciso (turbo, 
 ESPERA_CARGA_S = 90
 #: Cuánto vale lo que se miró de qué modelos hay descargados.
 DISPONIBLES_VALE_S = 300
-_disponibles_cache: dict = {}
 
 
 def _carpeta_voz() -> Path:
@@ -514,29 +513,35 @@ def _sin_selector() -> str:
 def disponibles() -> dict:
     """Qué modelos del dictado están ya descargados, `{modelo: bool}`, o {} si
     no se pudo mirar. Pregunta al intérprete del servidor sin bajar nada; lo
-    guarda unos minutos, que lanzarlo cuesta ~0,3 s."""
-    import json
-    import time
-
-    from . import config
+    recuerda unos minutos por `recordar.por_tiempo` (C-0496), que lanzarlo
+    cuesta ~0,3 s. Un fallo no se recuerda: la vez siguiente vuelve a mirar."""
+    from . import recordar
 
     if _sin_selector():
         return {}
     python = interprete_del_servidor() or (por_omision() or [""])[0]
-    guardado = _disponibles_cache.get(python)
-    if guardado and time.monotonic() - guardado[0] < DISPONIBLES_VALE_S:
-        return dict(guardado[1])
     try:
-        salida = subprocess.run(
-            [python, str(config.RAIZ_REPO / "scripts" / "transcribir-servidor.py"),
-             "--disponibles", *MODELOS_DICTADO],
-            capture_output=True, text=True, timeout=30, check=True).stdout
-        hay = {m: bool(v) for m, v in json.loads(salida.strip().splitlines()[-1]).items() if m in MODELOS_DICTADO}
+        hay = recordar.por_tiempo(("transcribir.disponibles", python),
+                                  lambda: _mirar_disponibles(python), DISPONIBLES_VALE_S)
     except (OSError, ValueError, IndexError, subprocess.SubprocessError) as exc:
         print(f"[transcribir] no pude mirar qué modelos de Whisper hay: {exc}", flush=True)
         return {}
-    _disponibles_cache[python] = (time.monotonic(), hay)
+    # `por_tiempo` comparte lo que guarda: quien recibe esto puede tocarlo.
     return dict(hay)
+
+
+def _mirar_disponibles(python: str) -> dict:
+    """Lo que dice el intérprete del servidor; lanza si no contesta bien, para
+    que `por_tiempo` no guarde un fallo como si fuera «no hay ninguno»."""
+    import json
+
+    from . import config
+
+    salida = subprocess.run(
+        [python, str(config.RAIZ_REPO / "scripts" / "transcribir-servidor.py"),
+         "--disponibles", *MODELOS_DICTADO],
+        capture_output=True, text=True, timeout=30, check=True).stdout
+    return {m: bool(v) for m, v in json.loads(salida.strip().splitlines()[-1]).items() if m in MODELOS_DICTADO}
 
 
 # ── El glosario del dictado del dueño (C-0036, decisión 453) ─────────────

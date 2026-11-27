@@ -258,24 +258,49 @@ def test_solo_tres_modulos_lanzan_powershell():
     assert not fuera, f"lanzan PowerShell por su cuenta: {fuera}"
 
 
-def test_el_puerto_del_puente_solo_aparece_en_su_modulo_y_ahi_no_hay_post():
-    """Al Puente KVM sólo se le hace un GET a loopback, desde `puente.py`
-    (438): dar el control y aprobar son de la persona en su pantalla. Su
-    puerto escrito en otro sitio sería un segundo camino hacia él, y un POST
-    o su archivo de entorno en su módulo, justo lo que no debe hacer."""
+def _codigo(archivo: str) -> str:
+    return re.sub(r'""".*?"""|#[^\n]*', "", (SRC / archivo).read_text(encoding="utf-8"), flags=re.S)
+
+
+@pytest.mark.parametrize("modulo, puerto, caminos", [
+    ("puente.py", r"\b8794\b|PUENTE_PUERTO", ['"/api/estado"']),
+    ("estudio.py", r"\b8795\b|ESTUDIO_PUERTO", ['"/api/salud"', '"/api/proyectos"']),
+])
+def test_el_puerto_de_un_programa_aparte_solo_aparece_en_su_modulo_y_ahi_no_hay_post(modulo, puerto, caminos):
+    """Al Puente KVM (438) y al estudio (461) sólo se les hace un GET a
+    loopback, desde su módulo y por `consulta_local`: dar el control, aprobar
+    y contestar son de la persona en su pantalla. Su puerto escrito en otro
+    sitio sería un segundo camino hacia él, y un POST, un socket propio o su
+    archivo de entorno en su módulo, justo lo que no debe hacer."""
     textos = [a for a in SRC.rglob("*") if a.is_file() and a.suffix in (".py", ".html", ".js")]
     con_puerto = sorted(str(a.relative_to(SRC)) for a in textos
-                        if re.search(r"\b8794\b|PUENTE_PUERTO", a.read_text(encoding="utf-8")))
-    assert con_puerto == ["puente.py"], con_puerto
-    propio = (SRC / "puente.py").read_text(encoding="utf-8")
-    codigo = re.sub(r'""".*?"""|#[^\n]*', "", propio, flags=re.S)
-    # Una sola petición, escrita entera: un GET a su estado y nada más.
-    assert re.findall(r'"GET /api/estado HTTP/1\.0', codigo) == ['"GET /api/estado HTTP/1.0'], \
-        "el vigía ya no ve la petición"
-    assert len(re.findall(r"\.send(all)?\(", codigo)) == 1, "puente.py manda algo más que su GET"
+                        if re.search(puerto, a.read_text(encoding="utf-8")))
+    assert con_puerto == [modulo], con_puerto
+    codigo = _codigo(modulo)
+    assert re.findall(r'consulta_local\.pedir_json\(puerto\(\), ("/[^"]*")', codigo) == caminos, \
+        "el vigía ya no ve sus preguntas"
     for prohibido in (r"\bPOST\b", r"\bPUT\b", r"\bDELETE\b", r"\bPATCH\b", r"urlopen", r"http\.client",
-                      r"body\s*=", r"\.config", r"entorno", r"open\("):
-        assert not re.search(prohibido, codigo), f"puente.py: {prohibido}"
+                      r"\bsocket\b", r"\.send", r"body\s*=", r"\.config", r"entorno", r"open\("):
+        assert not re.search(prohibido, codigo), f"{modulo}: {prohibido}"
+
+
+def test_el_cliente_de_los_programas_aparte_solo_sabe_hacer_un_get_a_loopback():
+    """`consulta_local` es el único cliente HTTP hacia los programas aparte
+    (461): una petición, escrita entera, GET y a `127.0.0.1`. Un segundo
+    cliente sería el camino duplicado que el catálogo existe para evitar."""
+    codigo = _codigo("consulta_local.py")
+    assert re.findall(r'"GET \{camino\} HTTP/1\.0', codigo) == ['"GET {camino} HTTP/1.0'], \
+        "el vigía ya no ve la petición"
+    assert len(re.findall(r"\.send(all)?\(", codigo)) == 1, "consulta_local.py manda algo más que su GET"
+    assert re.search(r'ANFITRION = "127\.0\.0\.1"', codigo)
+    for prohibido in (r"\bPOST\b", r"\bPUT\b", r"\bDELETE\b", r"\bPATCH\b", r"urlopen", r"http\.client",
+                      r"body\s*=", r"open\("):
+        assert not re.search(prohibido, codigo), f"consulta_local.py: {prohibido}"
+    fuera = sorted(str(a.relative_to(SRC)) for a in SRC.rglob("*.py")
+                   if a.name not in ("consulta_local.py", "puente.py", "estudio.py")
+                   and re.search(r"\bconsulta_local\b", re.sub(r'""".*?"""|#[^\n]*', "",
+                                                                a.read_text(encoding="utf-8"), flags=re.S)))
+    assert not fuera, f"usan el cliente de los programas aparte por su cuenta: {fuera}"
 
 
 def test_solo_la_costura_de_lectura_le_pregunta_al_puente():
@@ -287,6 +312,17 @@ def test_solo_la_costura_de_lectura_le_pregunta_al_puente():
                    and vigia.search(re.sub(r'""".*?"""|#[^\n]*', "", a.read_text(encoding="utf-8"), flags=re.S)))
     assert not fuera, f"le preguntan al puente por su cuenta: {fuera}"
     assert vigia.search((SRC / "api.py").read_text(encoding="utf-8")), "el vigía ya no ve a api.puente"
+
+
+def test_solo_la_costura_de_lectura_le_pregunta_al_estudio():
+    """`estudio.estado` se llama al pintar /estudio, por `api.estudio`, y en
+    ningún otro sitio: ni el raíl ni el muestreo le preguntan (461)."""
+    vigia = re.compile(r"from\s+\.+\s+import[^\n]*\bestudio\b|import\s+hub\.estudio|\bestudio\.estado\(")
+    fuera = sorted(str(a.relative_to(SRC)) for a in SRC.rglob("*.py")
+                   if a.name not in ("api.py", "estudio.py")
+                   and vigia.search(re.sub(r'""".*?"""|#[^\n]*', "", a.read_text(encoding="utf-8"), flags=re.S)))
+    assert not fuera, f"le preguntan al estudio por su cuenta: {fuera}"
+    assert vigia.search((SRC / "api.py").read_text(encoding="utf-8")), "el vigía ya no ve a api.estudio"
 
 
 def test_las_pantallas_solo_se_recorren_por_navegacion_visibles():

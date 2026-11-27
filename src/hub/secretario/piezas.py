@@ -244,13 +244,26 @@ def proveedores(capacidad: str) -> dict[str, Proveedor]:
     return out
 
 
+def ajustes() -> dict:
+    """`secretario.yml` entero, o `{}`. Es la única lectora (C-0495): había dos,
+    y una dejaba pasar una lista o un texto suelto que luego reventaba en
+    `.get`. Lo que no es un diccionario no es un ajuste: vale lo mismo que
+    no tenerlo."""
+    try:
+        datos = yaml.safe_load((memoria.carpeta(crear=False) / "secretario.yml").read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return {}
+    if datos is not None and not isinstance(datos, dict):
+        # Se dice: si no, el secretario vuelve a lo de fábrica y nadie sabe por qué.
+        print(f"[secretario] secretario.yml no tiene la forma «clave: valor» ({type(datos).__name__}): no lo leo",
+              flush=True)
+        return {}
+    return datos or {}
+
+
 def ajuste(clave: str):
     """Un valor de `secretario.yml`, o None."""
-    try:
-        return (yaml.safe_load((memoria.carpeta(crear=False) / "secretario.yml").read_text(encoding="utf-8"))
-                or {}).get(clave)
-    except (OSError, yaml.YAMLError, AttributeError):
-        return None
+    return ajustes().get(clave)
 
 
 def carpeta_de_fichas() -> Path | None:
@@ -398,8 +411,7 @@ def alias_del_dueno(ajustes: dict) -> list[str]:
     if isinstance(alias, str):
         alias = [alias]
     if not alias:
-        from .conversacion import ajustes as ajustes_secretario
-        alias = [ajustes_secretario().get("dueno") or ""]
+        alias = [ajuste("dueno") or ""]
     return [str(a).strip() for a in alias if str(a or "").strip()]
 
 

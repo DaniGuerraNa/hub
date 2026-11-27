@@ -26,10 +26,8 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-import yaml
-
 from .. import intercambio
-from . import enrutador, memoria, motor
+from . import enrutador, memoria, motor, piezas
 from .tiempo import a_local, dicho_el
 
 CIERRE_MINUTOS = 30
@@ -134,10 +132,9 @@ no lo des por hecho.
 
 
 def ajustes() -> dict:
-    try:
-        return yaml.safe_load((memoria.carpeta(crear=False) / "secretario.yml").read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        return {}
+    """`secretario.yml`, por su única puerta (`piezas.ajustes`, C-0495). Se
+    queda aquí con su nombre porque es lo que llaman `motor`, `api` y otros."""
+    return piezas.ajustes()
 
 
 def _dueno() -> str:
