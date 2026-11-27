@@ -530,7 +530,9 @@ def test_el_kit_del_estudio_esta_en_el_catalogo_publicado():
 
     datos = yaml.safe_load((config.RAIZ_REPO / "kits.yml").read_text(encoding="utf-8"))
     kit = next(k for k in datos["kits"] if k["id"] == estudio.KIT)
-    assert kit["origen"].startswith("https://") and kit["version"] == "0.1"
+    assert kit["origen"].startswith("https://") and kit["version"]
+    # La 0.1 no encontraba `claude` si sólo estaba en el PATH (C-0508).
+    assert kit["version"] != "0.1"
 
 
 def test_sin_proyectos_lo_dice(cliente, encendido, estudio_falso):

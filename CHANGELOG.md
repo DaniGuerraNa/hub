@@ -15,6 +15,18 @@ cruzar.
 
 ## Sin publicar
 
+## 0.18.1 — 2026-11-27
+
+### Qué tienes que hacer
+
+- Nada.
+
+### Qué cambia en lo que ya usabas
+
+- **El estudio se instala aunque Claude Code no esté en una de sus carpetas
+  de siempre.** Su kit pasa a la 0.2: el instalador no veía un Claude Code
+  que sólo estaba en el PATH y decía que faltaba.
+
 ## 0.18.0 — 2026-11-27
 
 ### Qué tienes que hacer
