@@ -15,6 +15,20 @@ cruzar.
 
 ## Sin publicar
 
+## 0.18.4 — 2026-11-27
+
+### Qué tienes que hacer
+
+- Si usas el estudio: en su pantalla del hub, «Preparar con Claude» otra vez
+  para pasar a la 0.6.
+
+### Qué cambia en lo que ya usabas
+
+- **El estudio pasa a la 0.6.** Tras actualizarlo, Claude ya no pierde la
+  orden para dejarte tarjetas. Si falta `python3-venv`, crea el entorno con
+  `uv`, sin pedirte la contraseña de administrador. Y puede instalar el
+  navegador de las capturas sin frenarse.
+
 ## 0.18.3 — 2026-11-27
 
 ### Qué tienes que hacer
