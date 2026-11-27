@@ -69,6 +69,6 @@ kits:
   # «Preparar con Claude» en /estudio (C-0503).
   - id: estudio
     nombre: Estudio
-    version: "0.3"
+    version: "0.4"
     origen: https://github.com/DaniGuerraNa/estudio.git
     descripcion: Una web local donde alguien que no programa construye su aplicación con Claude Code, en iteraciones muy visuales.

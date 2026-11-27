@@ -15,6 +15,20 @@ cruzar.
 
 ## Sin publicar
 
+## 0.18.3 — 2026-11-27
+
+### Qué tienes que hacer
+
+- Si usas el estudio, abre su pantalla en el hub. Si dice «Hay una versión
+  nueva del estudio», pulsa «Preparar con Claude».
+
+### Qué cambia en lo que ya usabas
+
+- **El estudio pasa a la 0.4.** Claude ya no se frena al preparar un
+  proyecto Python (entorno, `pip`, `manage.py`) o Node. Si pide una orden
+  que no tiene permitida, el chat la enseña con un botón «Permitir», en vez
+  de pedirte editar archivos de configuración.
+
 ## 0.18.2 — 2026-11-27
 
 ### Qué tienes que hacer
