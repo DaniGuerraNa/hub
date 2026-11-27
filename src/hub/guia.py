@@ -91,7 +91,20 @@ PANTALLAS: list[dict[str, Any]] = [
      "que_haces": ["Ver si el estudio contesta y qué proyectos tiene",
                    "Ver cuántas cosas te espera cada proyecto y si Claude está trabajando",
                    "Abrir el estudio o un proyecto en una pestaña aparte, desde la PC donde corre",
-                   "Si no contesta: cómo se instala y se arranca"]},
+                   # 🔴 El proceso de instalarlo y arrancarlo, en llano y sin un comando:
+                   # el secretario guía con esto (`hub_buscar`, C-0503).
+                   "Si no contesta, desde la PC donde corre: pulsar «Preparar con Claude», debajo de "
+                   "«Instalarlo y arrancarlo». Se abre una ventana en Trabajo con Claude y el encargo "
+                   "ya escrito; hay que pulsar Enter en ella para que empiece",
+                   "En esa ventana, Claude trae el kit, lo instala, lo arranca y comprueba que contesta, "
+                   "y pide permiso para cada paso: hay que contestarle. Si falta algo del sistema "
+                   "(Python, git o Claude Code), lo dice y espera a que se instale",
+                   "Cuando Claude diga que contesta, volver a Estudio y pulsar «Volver a mirar»: sale "
+                   "«En marcha» y el botón «Abrir el estudio»",
+                   "Si sigue sin contestar: otra vez «Preparar con Claude»; esa ventana lo arranca y dice "
+                   "por qué no contestaba. Lo que falta se ve en los pasos de la pantalla, marcados "
+                   "como hechos o por hacer. Si no sale el botón, el primer paso dice por qué: no hay "
+                   "de dónde traer el kit"]},
     {"grupo": "El día a día", "ruta": "/intercambio", "nombre": "Intercambio",
      "para_que": "La carpeta por la que pasan archivos entre el teléfono y las sesiones.",
      "que_haces": ["Subir un archivo desde el teléfono", "Bajarte lo que dejó una sesión",

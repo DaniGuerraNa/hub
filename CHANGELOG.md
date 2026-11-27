@@ -15,6 +15,96 @@ cruzar.
 
 ## Sin publicar
 
+## 0.18.0 — 2026-11-27
+
+### Qué tienes que hacer
+
+Nada obligatorio. Lo que sí conviene:
+
+- **Estudio:** si en su pantalla sale «No contesta», pulsa «Preparar con
+  Claude».
+- **Acceso:** si al entrar desde el móvil te dice que su archivo está mal
+  escrito, pulsa «Arreglarlo».
+- **Asistente** (no el secretario): pulsa «Limpiar» en su chat para que lea
+  sus instrucciones nuevas sobre Acceso y el estudio.
+- **Si quieres que el secretario clone él una lista de repos**, marca ese
+  comando en tu `comandos.yml` con `ejecutable: true` y `crea: "{repo}"` (la
+  carpeta que crea, relativa a donde lo corres). Sólo lo decides tú: el hub
+  no escribe ese archivo. Si las credenciales de git no le llegan al
+  servicio del secretario, lo verás en su informe la primera vez.
+
+### Nuevo
+
+- **El kit `estudio` ya está en el catálogo de kits**, así que el estudio se
+  puede instalar en cualquier equipo, no sólo en uno donde ya estaba.
+- **El secretario usa tus comandos preparados** (los de Archivos, como
+  «Clonar repo»). Los ve antes de decirte que no hay un script, y te deja uno
+  escrito sin Enter en una ventana nueva —con una lista, todas las órdenes en
+  una sola línea—, con el enlace a esa ventana.
+- **Clonar una lista de repos él mismo.** Le das los nombres y la carpeta, y
+  en Pendientes ves cada orden exacta antes de aprobarla; si apruebas pasados
+  15 minutos, no la corre. Va de uno en uno, salta los que ya estaban sin
+  tocarlos, comprueba que cada uno quedó como repo de git y te deja en el
+  chat cuáles salieron, cuáles ya estaban y cuáles fallaron con su error.
+  Sólo con los comandos que marcaste `ejecutable`, hasta 30 de una vez y
+  nunca en un proyecto con guardrail `never`.
+
+- **Detener al secretario mientras contesta.** El botón de enviar del chat
+  pasa a ser **Detener** (el cuadrado) mientras te contesta, en su pantalla,
+  en el panel, en el modo monitor y en el teléfono; en el modo voz sale un
+  botón **Detener** junto a «Pausar». Para entre herramientas: lo que ya hizo
+  queda hecho, y lo que pidió permiso sigue en Pendientes hasta que lo
+  apruebes o lo rechaces. Su respuesta queda con lo que llevaba escrito,
+  «Detenido.» y qué hizo antes de parar. Si ya había terminado, te lo dice.
+- **Acceso se prepara con botones.** «Preparar con Claude» abre una ventana
+  con el encargo escrito para publicar el hub en tu red privada; «Usar este
+  nombre» guarda el nombre de la máquina que da Tailscale; «Arreglarlo»
+  reescribe bien un archivo de acceso mal escrito. Paso a paso en
+  `conocimiento/10-mas-pantallas.md`.
+- **El secretario lee el manual del hub** (`conocimiento/`) antes de
+  explicarte cómo se hace algo en él: qué botón y en qué pantalla.
+- **Descargar un modelo del dictado desde su menú.** Un modelo que no está
+  en la máquina se lee «— sin descargar» y trae «↓ Descargar (≈1,6 GB)»: baja
+  en segundo plano, de uno en uno, y al acabar queda elegible sin elegirse
+  solo. Si falla, el menú dice por qué en una frase. El preciso (turbo) sólo
+  se ofrece si hay GPU.
+
+### Qué cambia en lo que ya usabas
+
+- **`/estudio` sin contestar ya no da comandos que escribir.** Enseña sus
+  pasos —el kit en esta máquina, si hay systemd de usuario, si contesta—
+  marcados como hechos o por hacer, y «Preparar con Claude» abre una ventana
+  con Claude y el encargo escrito: trae el kit del catálogo, lo instala, lo
+  arranca y comprueba que contesta, pidiéndote permiso para cada paso. Lo
+  lanzas tú con Enter. Si ya estaba instalado y no contesta, la misma ventana
+  lo arranca y te dice por qué no contestaba. Se ofrece sólo desde la PC
+  donde corre.
+- El asistente también lo prepara: `hub preparar estudio`, y `hub
+  componentes` cuenta sus pasos si está encendido. Para que lo sepa, en su
+  chat, «Limpiar».
+- **El secretario sabe guiarte en cada pantalla** con lo mismo que dice la
+  Guía: qué pulsar y qué verás. En el estudio, «Guíame» te lleva paso a paso
+  por «Preparar con Claude» sin darte comandos.
+- «Abrir terminal aquí» y los comandos de Archivos funcionan igual.
+- Con algo escrito o adjunto, el botón sigue siendo **Enviar** aunque esté
+  contestando: lo que mandes espera su turno, como siempre.
+- **Acceso ya no da un error 500 con su archivo mal escrito.** Un `hosts`
+  escrito como texto suelto, con un comodín o un archivo que no se lee hacían
+  fallar «Generar el QR». Ahora la pantalla dice qué le pasa, enseña cómo
+  quedará y lo reescribe con **«Arreglarlo»**, guardando el anterior al lado.
+  Mientras tanto, al hub se sigue entrando desde la propia PC.
+- **Sin el nombre de la red privada, Acceso no genera un QR que no funciona.**
+  Antes salía un QR a `127.0.0.1`, que ningún móvil abre. Ahora dice qué
+  falta y lo resuelve con botones: **«Preparar con Claude»** deja escrito el
+  encargo para publicar el hub en tu red privada (`tailscale serve`; lo lanzas
+  tú con Enter) y **«Usar este nombre»** guarda el nombre que da Tailscale.
+  Sin escribir comandos ni editar archivos. Una IP, un `https://` o un puerto
+  en la lista de nombres se señalan y no se usan para el QR.
+- Los avisos de «el hub no acepta el nombre» y «este aparato no está dado de
+  alta» mandan a los botones de Acceso en vez de a editar un archivo.
+- El secretario nunca te propondrá abrir el puerto, escuchar en `0.0.0.0` ni
+  un enlace con la IP de Tailscale para entrar desde otro aparato.
+
 ## 0.17.0 — 2026-11-27
 
 ### Qué tienes que hacer

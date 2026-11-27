@@ -68,7 +68,8 @@ def test_acceso_da_todo_lo_que_lee_su_plantilla_menos_el_qr():
     datos = api.acceso(otro)
     # `rail` también sale de `api` (`api.rail`), y lo pone `_vista` en todas
     # las pantallas: Acceso lo lee para nombrar a quien habla (C-0355).
-    assert plantilla.nombres("acceso.html") <= set(datos) | {"qr", "enlace", "rail"}
+    # `de_casa` también lo pone la ruta: es de la petición, como el QR (C-0504).
+    assert plantilla.nombres("acceso.html") <= set(datos) | {"qr", "enlace", "rail", "de_casa"}
     assert plantilla.campos("acceso.html", "pendiente") <= set(datos["pendiente"])
     (aparato,) = datos["dispositivos"]
     assert plantilla.campos_de_cada("acceso.html", "dispositivos") <= set(aparato)
@@ -88,7 +89,7 @@ def test_un_acceso_yml_invalido_se_dice_en_la_pantalla_y_quedan_los_nombres_loca
 def test_la_pantalla_de_acceso_pinta_lo_que_da_api(monkeypatch):
     datos = api.acceso()
     datos["archivo"] = "/ruta/de/prueba/acceso.yml"
-    monkeypatch.setattr(api, "acceso", lambda codigo=None: datos)
+    monkeypatch.setattr(api, "acceso", lambda codigo=None, de_casa=False: datos)
     assert "/ruta/de/prueba/acceso.yml" in TestClient(web.app).get("/acceso").text
 
 

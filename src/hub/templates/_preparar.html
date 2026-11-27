@@ -1,6 +1,7 @@
 {# Los pasos para tener un componente funcionando (decisión 293). Los usan
-   Navegante y Reuniones mientras no están preparados. Tienen el aspecto de la
-   Guía a propósito: «lo que falta» se tiene que leer igual en todo el hub. #}
+   Navegante, Reuniones, el Puente KVM y el estudio mientras no están listos.
+   Tienen el aspecto de la Guía a propósito: «lo que falta» se tiene que leer
+   igual en todo el hub. #}
 
 {% macro estilos() %}
 <style>
@@ -31,14 +32,18 @@
 </style>
 {% endmacro %}
 
-{# La cabecera: qué es, y las dos ayudas —la ventana con Claude y el asistente—. #}
-{% macro cabeza(explica, componente, pregunta, hay_asistente) %}
+{# La cabecera: qué es, y las dos ayudas —la ventana con Claude y el asistente—.
+   Sin `preparar` no va el botón: el estudio no lo ofrece desde otro aparato, ni
+   cuando no hay de dónde traer su kit (C-0503). #}
+{% macro cabeza(explica, componente, pregunta, hay_asistente, preparar=true) %}
   <p>{{ explica }}</p>
   <div class="acciones">
+    {% if preparar %}
     <form method="post" action="/componentes/preparar">
       <input type="hidden" name="nombre" value="{{ componente }}">
       <button class="boton principal" title="Abre una ventana con Claude en su carpeta y el encargo escrito; lo lanzas tú con Enter">Preparar con Claude</button>
     </form>
+    {% endif %}
     {% if hay_asistente %}
     <button type="button" class="boton" data-guiame="{{ pregunta }}">Guíame</button>
     {% endif %}

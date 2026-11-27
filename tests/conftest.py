@@ -65,6 +65,15 @@ def _hostname_fijo(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _sin_tailscale(monkeypatch):
+    """/acceso pregunta a Tailscale al pintar (C-0504): la suite no le
+    pregunta al de quien la corre, que diría su nombre en la red privada y
+    tardaría. Las pruebas de `maquina.red_privada` traen uno de mentira."""
+    from hub import maquina
+    monkeypatch.setattr(maquina, "_programa_tailscale", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def _secretario_apagado(monkeypatch):
     """El aviso de «secretario caído» mira `systemctl` de quien corre la suite:
     en la máquina del dueño está habilitado y en la de otro no. Por omisión,

@@ -136,6 +136,32 @@ def test_donde_esta_del_secretario_solo_la_encuentra_encendida():
         con.close()
 
 
+def test_el_secretario_sabe_guiar_la_instalacion_sin_comandos_ni_pasos_inventados():
+    """«Todo documentado para que el secretario la guíe» (C-0503): lo que le
+    llega por `hub_buscar` dice qué pantalla, qué botón, que hay que dar Enter,
+    qué se ve al quedar listo y qué hacer si no contesta. Ningún comando."""
+    from hub import db
+    from hub.secretario import conversacion, herramientas, memoria
+    h = db.conectar()
+    db.inicializar(h)
+    h.close()
+    opcionales.poner("estudio", True)
+    con = memoria.conectar()
+    try:
+        r = herramientas.todas()["hub_buscar"].funcion(con, {"texto": "estudio"})
+    finally:
+        con.close()
+    pantalla = next(x for x in r["resultados"] if x["url"] == "/estudio")
+    pasos = " ".join(pantalla["que_haces"])
+    for frase in ("«Preparar con Claude»", "Enter", "«Volver a mirar»", "«En marcha»",
+                  "«Abrir el estudio»", "Si sigue sin contestar"):
+        assert frase in pasos, frase
+    for comando in COMANDOS:
+        assert comando not in pasos, comando
+    assert "lo que `hub_buscar` trae de ella dice qué pulsar y qué verá" in conversacion.SISTEMA
+    assert "sin inventar pasos ni darle comandos que escribir" in conversacion.SISTEMA
+
+
 def test_la_guia_ofrece_encenderla_con_un_formulario_normal(cliente):
     html = cliente.get("/guia").text
     tarjeta = html[html.index('id="opcional-estudio"'):]
@@ -325,30 +351,186 @@ def test_desde_fuera_se_ve_como_esta_pero_no_se_ofrece_abrir(de_fuera_con_alta, 
     assert "direccion" not in json.dumps(api.estudio(local=False))
 
 
-def test_sin_contestar_dice_por_que_y_como_se_instala_si_el_kit_no_esta(cliente, encendido):
+@pytest.fixture
+def con_systemd(monkeypatch):
+    """Qué contesta `salud.hay_systemd_de_usuario`: la máquina de las pruebas
+    no tiene por qué parecerse a la de quien instala."""
+    from hub import salud
+
+    def poner(hay: bool):
+        monkeypatch.setattr(salud, "hay_systemd_de_usuario", lambda: hay)
+    poner(True)
+    return poner
+
+
+def _instalar(html: str) -> str:
+    """La tarjeta de instalar y arrancar, sin el resto de la página."""
+    trozo = html[html.index('id="instalar"'):]
+    return trozo[:trozo.index("</section>")]
+
+
+#: Lo que la persona no tiene que escribir nunca (C-0503): ni comandos ni
+#: variables. Si hacen falta, van en el encargo que lee Claude.
+COMANDOS = ("<code>", "systemctl", "journalctl", "kit.sh", "install.sh", "ESTUDIO_PUERTO", "bash ")
+
+
+def test_sin_contestar_y_sin_kit_ofrece_preparar_con_claude_y_ningun_comando(cliente, encendido,
+                                                                             con_systemd):
     antes = time.monotonic()
     r = cliente.get("/estudio")
     assert time.monotonic() - antes < 3
     assert r.status_code == 200
     assert "No contesta" in r.text and "no hay nada escuchando en su puerto" in r.text
     assert "Abrir el estudio</a>" not in r.text and "Cuando conteste" in r.text
-    assert 'id="instalar"' in r.text and "no está instalado en esta máquina" in r.text
-    assert "bash scripts/kit.sh ruta estudio" in r.text and "systemctl --user start estudio" in r.text
+    tarjeta = _instalar(r.text)
+    assert 'action="/componentes/preparar"' in tarjeta and 'name="nombre" value="estudio"' in tarjeta
+    assert "Preparar con Claude" in tarjeta
+    # El kit es lo siguiente; tener systemd ya está hecho.
+    assert re.search(r'class="prep-paso\s+siguiente" id="prep-kit"', tarjeta)
+    assert re.search(r'class="prep-paso hecho\s*" id="prep-systemd"', tarjeta)
+    assert 'id="prep-contesta"' in tarjeta
+    for comando in COMANDOS:
+        assert comando not in tarjeta, comando
 
 
-def test_sin_contestar_y_con_el_kit_instalado_da_su_instalador(cliente, encendido):
-    carpeta = kits.ruta_de("estudio", "0.1")
-    carpeta.mkdir(parents=True)
-    html = cliente.get("/estudio").text
-    assert f"<code>bash \"{carpeta}/install.sh\"</code>" in html
-    assert "no está instalado en esta máquina" not in html
+def test_con_el_kit_instalado_y_sin_contestar_lo_arranca_la_sesion_sin_comandos(cliente, encendido,
+                                                                               con_systemd):
+    kits.ruta_de("estudio", "0.1").mkdir(parents=True)
+    tarjeta = _instalar(cliente.get("/estudio").text)
+    assert re.search(r'class="prep-paso hecho\s*" id="prep-kit"', tarjeta)
+    assert re.search(r'class="prep-paso\s+siguiente" id="prep-contesta"', tarjeta)
+    assert "«Preparar con Claude» lo arranca" in tarjeta
+    assert str(kits.ruta_de("estudio", "0.1")) not in tarjeta
+    for comando in COMANDOS:
+        assert comando not in tarjeta, comando
 
 
-def test_desde_fuera_sin_contestar_no_da_la_carpeta_del_kit(de_fuera_con_alta, encendido):  # noqa: F811
+def test_sin_systemd_lo_dice_como_opcional_y_tampoco_da_comandos(cliente, encendido, con_systemd):
+    con_systemd(False)
+    tarjeta = _instalar(cliente.get("/estudio").text)
+    paso = tarjeta[tarjeta.index('id="prep-systemd"'):]
+    paso = paso[:paso.index("</li>")]
+    assert "opcional" in paso and "lo deja corriendo en una ventana propia" in paso
+    for comando in COMANDOS:
+        assert comando not in tarjeta, comando
+
+
+def test_sin_el_kit_en_el_catalogo_no_se_ofrece_preparar(cliente, encendido, con_systemd, monkeypatch):
+    """Sin de dónde traerlo, la primera orden del encargo fallaría: ni botón."""
+    monkeypatch.setattr(estudio, "en_catalogo", lambda: False)
+    tarjeta = _instalar(cliente.get("/estudio").text)
+    assert "Preparar con Claude" not in tarjeta
+    assert "no hay de dónde traerlo" in tarjeta
+
+
+def test_desde_fuera_sin_contestar_ve_los_pasos_sin_boton_ni_carpeta(de_fuera_con_alta, encendido,  # noqa: F811
+                                                                    con_systemd):
     kits.ruta_de("estudio", "0.1").mkdir(parents=True)
     html = de_fuera_con_alta.get("/estudio").text
-    assert "install.sh" not in html and "kit" not in api.estudio(local=False)
-    assert "Se instala y se arranca en la PC donde corre" in html
+    tarjeta = _instalar(html)
+    assert 'id="prep-kit"' in tarjeta and "Preparar con Claude</button>" not in tarjeta
+    assert "Se instala y se arranca en la PC donde corre" in tarjeta
+    assert "install.sh" not in html and str(kits.ruta_de("estudio", "0.1")) not in html
+    assert "kit" not in api.estudio(local=False)
+
+
+# ───────────────────────────── preparar con Claude ─────────────────────────────
+
+
+@pytest.fixture
+def ventanas(monkeypatch):
+    """Las ventanas que se abrirían, sin tocar tmux."""
+    from hub import slots, tmux
+
+    abiertas: list = []
+    monkeypatch.setattr(slots, "abrir_en", lambda ruta, nombre, sesion, texto: abiertas.append(
+        (ruta, nombre, sesion, texto)) or "%9")
+    monkeypatch.setattr(tmux, "listar_paneles", lambda: [{"pane_id": "%9", "window_idx": 4}])
+    return abiertas
+
+
+def test_preparar_el_estudio_abre_claude_en_el_clon_con_el_encargo_y_sin_enter(cliente, encendido, ventanas,
+                                                                              monkeypatch):
+    """El tercer caso de la regla dura 15: la ventana nace con el texto y el
+    Enter lo pone la persona. En el clon, porque ahí está `scripts/kit.sh` y el
+    kit puede no estar aún en disco."""
+    from hub import config
+
+    monkeypatch.delenv("ESTUDIO_PUERTO")
+    r = cliente.post("/componentes/preparar", data={"nombre": "estudio"},
+                     headers={"origin": "http://127.0.0.1:8787"}, follow_redirects=False)
+    assert r.headers["location"] == "/trabajo?session=hub&ventana=4"
+    ruta, nombre, sesion, texto = ventanas[0]
+    assert ruta == str(config.RAIZ_REPO) and nombre == "preparar-estudio" and sesion == "hub"
+    assert "claude" in texto and not texto.endswith("\n")
+    for frase in ("bash scripts/kit.sh instalar estudio", "install.sh", "--sin-servicio",
+                  "systemctl --user restart estudio", "journalctl --user -u estudio",
+                  "http://127.0.0.1:8795/api/salud", "no uses sudo", "no cambies nada de ella",
+                  "Volver a mirar"):
+        assert frase in texto, frase
+    assert "--puerto" not in texto
+
+
+def test_con_otro_puerto_el_encargo_instala_en_el_que_mira_el_hub(cliente, encendido, ventanas, monkeypatch):
+    monkeypatch.setenv("ESTUDIO_PUERTO", "9123")
+    cliente.post("/componentes/preparar", data={"nombre": "estudio"},
+                 headers={"origin": "http://127.0.0.1:8787"}, follow_redirects=False)
+    texto = ventanas[0][3]
+    assert "--puerto 9123" in texto and "http://127.0.0.1:9123/api/salud" in texto
+
+
+def test_apagado_preparar_no_abre_nada(cliente, ventanas):
+    r = cliente.post("/componentes/preparar", data={"nombre": "estudio"},
+                     headers={"origin": "http://127.0.0.1:8787"}, follow_redirects=False)
+    assert r.status_code == 303 and ventanas == []
+
+
+def test_sin_kit_ni_catalogo_preparar_no_abre_nada_y_vuelve_al_estudio(cliente, encendido, ventanas,
+                                                                       monkeypatch):
+    monkeypatch.setattr(estudio, "en_catalogo", lambda: False)
+    r = cliente.post("/componentes/preparar", data={"nombre": "estudio"},
+                     headers={"origin": "http://127.0.0.1:8787"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/estudio")
+    assert ventanas == []
+
+
+def test_el_asistente_ve_los_pasos_del_estudio_solo_encendido(con_systemd):
+    assert api.componentes()["estudio"] == {"encendida": False, "pantalla": "/estudio"}
+    opcionales.poner("estudio", True)
+    e = api.componentes()["estudio"]
+    assert e["encendida"] and not e["listo"]
+    # Sin preguntarle si contesta: eso es de su pantalla.
+    assert [p["id"] for p in e["pasos"]] == ["kit", "systemd"]
+
+
+def test_hub_componentes_cuenta_el_estudio_y_hub_preparar_lo_admite(con_systemd, capsys, monkeypatch):
+    from importlib.machinery import SourceFileLoader
+    from importlib.util import module_from_spec, spec_from_loader
+    from pathlib import Path
+    ruta = Path(__file__).resolve().parents[1] / "semillas" / "asistente" / "bin" / "hub"
+    cargador = SourceFileLoader("hub_cli_de_prueba_estudio", str(ruta))
+    cli = module_from_spec(spec_from_loader(cargador.name, cargador))
+    cargador.exec_module(cli)
+    monkeypatch.setattr(estudio, "estado", lambda *a, **k: pytest.fail("el asistente no le pregunta"))
+    monkeypatch.setattr(cli, "pedir", lambda camino, cuerpo=None: api.componentes())
+    cli.cmd_componentes([])
+    assert "estudio: herramienta opcional apagada" in capsys.readouterr().out
+    opcionales.poner("estudio", True)
+    cli.cmd_componentes([])
+    salida = capsys.readouterr().out
+    assert "estudio: sin preparar · /estudio" in salida and "El kit «estudio» está en esta máquina" in salida
+    assert "hub preparar <navegante|reuniones|puente|estudio>" in cli.__doc__
+
+
+def test_el_kit_del_estudio_esta_en_el_catalogo_publicado():
+    """Fuera de la máquina del dueño, `/estudio` mandaba a instalar un kit que
+    no estaba en el catálogo: fallaba siempre (C-0503)."""
+    import yaml
+    from hub import config
+
+    datos = yaml.safe_load((config.RAIZ_REPO / "kits.yml").read_text(encoding="utf-8"))
+    kit = next(k for k in datos["kits"] if k["id"] == estudio.KIT)
+    assert kit["origen"].startswith("https://") and kit["version"] == "0.1"
 
 
 def test_sin_proyectos_lo_dice(cliente, encendido, estudio_falso):

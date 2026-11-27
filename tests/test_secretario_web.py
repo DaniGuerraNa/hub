@@ -3098,3 +3098,119 @@ def test_en_el_telefono_responder_va_dentro_del_globo():
     dentro = [c for s, c in reglas.items() if s.endswith("> .citar") and ".burbuja.dueno" in s]
     assert dentro and re.search(r"left\s*:\s*auto", dentro[0]) and re.search(r"right\s*:\s*8px", dentro[0])
     assert any(":has(> .citar)" in s and re.search(r"padding-right\s*:\s*44px", c) for s, c in reglas.items())
+
+
+# ── «Detener» (C-0506) ──────────────────────────────────────────────────────
+
+def _contestando():
+    return {"hilo": 1, "vivo": True, "turnos": [
+        {"id": 5, "rol": "dueno", "texto": "hazme un plan largo", "estado": "atendiendo", "tarjetas": []},
+        {"id": 6, "rol": "secretario", "texto": "Primero", "estado": "escribiendo", "tarjetas": []}]}
+
+
+_BOTON = ("const boton = (m) => registro.valores.push([m, nodo('sec-enviar').dataset.modo || '',"
+          " nodo('sec-enviar').title, nodo('sec-enviar').querySelector('[data-ico=\"detener\"]').hidden,"
+          " nodo('estado-sec').textContent]);")
+_PARAR = ("setTimeout(() => { const ts = RESPUESTAS['/api/secretario/turnos'].turnos;"
+          "  ts[0].estado = 'listo'; ts[1].estado = 'listo';"
+          "  ts[1].texto = 'Primero. Y un resto que no debe sonar.\\n\\nDetenido.'; }, %d);")
+
+
+def test_mientras_contesta_el_boton_de_enviar_es_detener_y_pide_parar_ese_turno(tmp_path):
+    """No había forma de cancelar lo que hacía (C-0506). «Detenido» no se
+    pinta al volver el POST: lo dice el sondeo cuando de verdad paró (regla 17)."""
+    accion = (_SIN_SECRETARIO + _BOTON
+              + "nodo('sec-texto').value = 'hazme un plan largo';"
+              "nodo('sec-escribir').disparar('submit', {preventDefault(){}});"
+              "setTimeout(() => boton('contestando'), 6);"
+              "setTimeout(() => nodo('sec-escribir').disparar('submit', {preventDefault(){}}), 7);"
+              "setTimeout(() => boton('pedido'), 9);"
+              + _PARAR % 12
+              + "setTimeout(() => boton('parado'), 18);")
+    r = ejecutar(GUION, tmp_path, {"POST /api/secretario/mensaje": {"ok": True, "hilo": 1, "turno": 5},
+                                   "POST /api/secretario/detener": {"ok": True, "pedido": True},
+                                   "/api/secretario/turnos": _contestando()}, previo=PREVIO, accion=accion)
+    assert r["errores"] == []
+    modo, titulo, sin_icono, _ = _estado(r, "contestando")
+    assert modo == "detener" and titulo.startswith("Detener") and sin_icono is False
+    paradas = [e["cuerpo"] for e in r["enviados"] if e["url"] == "/api/secretario/detener"]
+    assert paradas == [{"turno": 5}]
+    assert [e["url"] for e in r["enviados"]].count("/api/secretario/mensaje") == 1
+    modo, _, _, linea = _estado(r, "pedido")
+    assert modo == "detener" and linea == "deteniendo…"
+    modo, titulo, sin_icono, linea = _estado(r, "parado")
+    assert modo == "" and titulo == "Enviar" and sin_icono is True and linea == ""
+
+
+def test_con_algo_escrito_mientras_contesta_el_boton_manda_y_no_detiene(tmp_path):
+    """Lo escrito entra en cola como siempre: el botón no se lo traga."""
+    accion = (_SIN_SECRETARIO
+              + "nodo('sec-texto').value = 'hola'; nodo('sec-escribir').disparar('submit', {preventDefault(){}});"
+              "setTimeout(() => { nodo('sec-texto').value = 'y otra cosa';"
+              "  nodo('sec-escribir').disparar('submit', {preventDefault(){}}); }, 6);"
+              + _PARAR % 12)
+    r = ejecutar(GUION, tmp_path, {"POST /api/secretario/mensaje": {"ok": True, "hilo": 1, "turno": 5},
+                                   "/api/secretario/turnos": _contestando()}, previo=PREVIO, accion=accion)
+    assert r["errores"] == []
+    urls = [e["url"] for e in r["enviados"]]
+    assert urls.count("/api/secretario/mensaje") == 2 and "/api/secretario/detener" not in urls
+
+
+def test_si_ya_habia_terminado_lo_dice_y_no_pinta_detenido(tmp_path):
+    accion = (_SIN_SECRETARIO + _BOTON
+              + "nodo('sec-texto').value = 'hola'; nodo('sec-escribir').disparar('submit', {preventDefault(){}});"
+              "setTimeout(() => nodo('sec-escribir').disparar('submit', {preventDefault(){}}), 6);"
+              "setTimeout(() => boton('tarde'), 8);"
+              + _PARAR % 9)
+    r = ejecutar(GUION, tmp_path, {"POST /api/secretario/mensaje": {"ok": True, "hilo": 1, "turno": 5},
+                                   "POST /api/secretario/detener": {"ok": True, "ya_terminado": True},
+                                   "/api/secretario/turnos": _contestando()}, previo=PREVIO, accion=accion)
+    assert r["errores"] == []
+    assert _estado(r, "tarde")[3] == "ya había terminado"
+
+
+def test_en_modo_voz_detener_calla_no_lee_el_resto_dice_detenido_y_vuelve_a_escuchar(tmp_path):
+    """Interrumpir hablando sigue siendo callar la lectura (318); «Detener» es
+    eso y además pedir que pare."""
+    accion = (_SIN_SECRETARIO
+              + "nodo('sec-modo-voz').disparar('click');"
+              "setTimeout(() => { global.REC.stop(); nodo('sec-texto').value = 'hazme un plan largo'; }, 1);"
+              "setTimeout(() => nodo('sec-escribir').disparar('submit', {preventDefault(){}}), 2);"
+              "setTimeout(() => registro.valores.push(['boton', nodo('sec-voz-detener').hidden]), 8);"
+              "setTimeout(() => { registro.valores.push('pulsa'); nodo('sec-voz-detener').disparar('click'); }, 9);"
+              + _PARAR % 12
+              + "setTimeout(() => registro.valores.push(['fin', nodo('sec-voz-detener').hidden]), 18);")
+    r = ejecutar(GUION, tmp_path, {"POST /api/secretario/mensaje": {"ok": True, "hilo": 1, "turno": 5},
+                                   "POST /api/secretario/detener": {"ok": True, "pedido": True},
+                                   "/api/secretario/turnos": _contestando()},
+                 previo=PREVIO + VOZ_FALSA, accion=accion)
+    assert r["errores"] == []
+    assert _estado(r, "boton") == [False]
+    assert any(e["url"] == "/api/secretario/detener" for e in r["enviados"])
+    v = r["valores"]
+    tras = v[v.index("pulsa"):]
+    dichos = [x[1] for x in tras if isinstance(x, list) and x[0] == "dicho"]
+    assert dichos == ["Detenido."], dichos
+    i = next(i for i, x in enumerate(tras) if isinstance(x, list) and x[0] == "dicho")
+    assert "escuchando" in tras[i:], "tras decirlo vuelve a escuchar"
+    assert _estado(r, "fin") == [True]
+
+
+def test_en_modo_voz_si_acabo_solo_antes_de_parar_no_dice_detenido(tmp_path):
+    """El POST dijo «pedido», pero el turno acabó solo antes de que el
+    secretario lo atendiera: gana lo terminado, y decir «Detenido.» mentiría."""
+    accion = (_SIN_SECRETARIO
+              + "nodo('sec-modo-voz').disparar('click');"
+              "setTimeout(() => { global.REC.stop(); nodo('sec-texto').value = 'hola'; }, 1);"
+              "setTimeout(() => nodo('sec-escribir').disparar('submit', {preventDefault(){}}), 2);"
+              "setTimeout(() => { registro.valores.push('pulsa'); nodo('sec-voz-detener').disparar('click'); }, 9);"
+              "setTimeout(() => { const ts = RESPUESTAS['/api/secretario/turnos'].turnos;"
+              "  ts[0].estado = 'listo'; ts[1].estado = 'listo'; ts[1].texto = 'Primero y todo lo demás.'; }, 12);")
+    r = ejecutar(GUION, tmp_path, {"POST /api/secretario/mensaje": {"ok": True, "hilo": 1, "turno": 5},
+                                   "POST /api/secretario/detener": {"ok": True, "pedido": True},
+                                   "/api/secretario/turnos": _contestando()},
+                 previo=PREVIO + VOZ_FALSA, accion=accion)
+    assert r["errores"] == []
+    v = r["valores"]
+    dichos = [x[1] for x in v[v.index("pulsa"):] if isinstance(x, list) and x[0] == "dicho"]
+    assert dichos == ["Ya había terminado."]

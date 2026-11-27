@@ -137,17 +137,57 @@ def _glosario(pedido) -> tuple[dict, str]:
 
 def _disponibles(nombres: list[str]) -> dict:
     """Qué modelos están ya en disco, sin bajar nada (C-0313): el selector del
-    dictado no ofrece uno que, al elegirlo, empezaría una descarga de gigas."""
+    dictado no ofrece uno que, al elegirlo, empezaría una descarga de gigas.
+
+    🔴 Con `model.bin` legible dentro, no sólo la carpeta (C-0505): con
+    `local_files_only` algunas versiones de `huggingface_hub` devuelven el
+    snapshot aunque esté a medias. Una descarga cortada saldría elegible y
+    fallaría al cargar."""
     from faster_whisper.utils import download_model
 
     hay = {}
     for nombre in nombres:
         try:
-            download_model(nombre, local_files_only=True)
-            hay[nombre] = True
+            carpeta = Path(download_model(nombre, local_files_only=True))
+            peso = carpeta / "model.bin"
+            hay[nombre] = peso.is_file() and peso.stat().st_size > 0 and os.access(peso, os.R_OK)
         except Exception:  # noqa: BLE001 — no está, o el nombre no existe
             hay[nombre] = False
     return hay
+
+
+def _descargar(nombre: str, avance: Path) -> int:
+    """Baja un modelo a la caché de siempre (C-0505) y deja en `avance` cómo
+    acabó: `{"modelo", "estado": "hecha"|"fallo", "error", "fin"}`.
+
+    Sólo al acabar, y entero de una vez: el hub mira su fecha para saber que
+    tiene que volver a mirar qué hay descargado. Sin porcentaje: medir lo que
+    lleva una descarga en la caché (enlaces, reservas por adelantado) no se
+    ha comprobado con una de verdad, y una cifra que no se puede defender no
+    se enseña (regla dura 13). Si se corta, volver a lanzarla sigue donde iba."""
+    from faster_whisper import utils
+
+    def escribir(datos: dict) -> None:
+        # 600 como `descarga.json`: el error puede llevar rutas de la máquina.
+        tmp = avance.with_name(avance.name + f".{os.getpid()}.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"modelo": nombre, "fin": time.time(), **datos}, ensure_ascii=False))
+        os.replace(tmp, avance)
+
+    try:
+        utils.download_model(nombre)
+    except BaseException as exc:  # noqa: BLE001 — se dice cómo acabó, sea lo que sea
+        motivo = (str(exc).strip() or type(exc).__name__).splitlines()[0][:300]
+        escribir({"estado": "fallo", "error": motivo})
+        print(f"no se pudo descargar {nombre}: {motivo}", file=sys.stderr, flush=True)
+        return 1
+    if not _disponibles([nombre]).get(nombre):
+        escribir({"estado": "fallo", "error": "terminó, pero el modelo no quedó entero en el disco"})
+        return 1
+    escribir({"estado": "hecha"})
+    print(f"descargado {nombre}", file=sys.stderr, flush=True)
+    return 0
 
 
 def main() -> int:
@@ -155,6 +195,10 @@ def main() -> int:
     partes.add_argument("socket", nargs="?")
     partes.add_argument("--disponibles", nargs="+", metavar="MODELO",
                         help="dice en JSON cuáles de estos modelos están ya descargados y sale")
+    partes.add_argument("--descargar", metavar="MODELO",
+                        help="baja ese modelo a la caché de siempre y sale (C-0505)")
+    partes.add_argument("--avance", metavar="RUTA",
+                        help="con --descargar, dónde dejar cómo acabó")
     partes.add_argument("--modelo", default="small")
     partes.add_argument("--idioma", default="es")
     partes.add_argument("--ocioso", type=int, default=900)
@@ -170,6 +214,10 @@ def main() -> int:
     if args.disponibles:
         print(json.dumps(_disponibles(args.disponibles)))
         return 0
+    if args.descargar:
+        if not args.avance:
+            partes.error("--descargar necesita --avance")
+        return _descargar(args.descargar, Path(args.avance))
     if not args.socket:
         partes.error("falta el socket")
 

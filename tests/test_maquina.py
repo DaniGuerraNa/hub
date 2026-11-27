@@ -408,3 +408,57 @@ def test_sin_apagones_registrados_se_dice_y_no_sale_una_raya(con, tmp_path, monk
     monkeypatch.setattr(web, "conexion", lambda: db.conectar(tmp_path / "hub.db"))
 
     assert "ninguno registrado" in TestClient(web.app).get("/maquina").text
+
+
+# ── El nombre en la red privada, al pintar /acceso (C-0504) ─────────────────
+
+def _tailscale_falso(tmp_path, monkeypatch, status, serve, dormir=0):
+    """Un `tailscale` de verdad (un programa), que contesta lo que se le diga."""
+    import sys
+    programa = tmp_path / "tailscale"
+    programa.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys, time\n"
+        f"time.sleep({dormir})\n"
+        f"print(json.dumps({serve!r} if sys.argv[1] == 'serve' else {status!r}))\n")
+    programa.chmod(0o755)
+    monkeypatch.setattr(maquina, "_programa_tailscale", lambda: str(programa))
+
+
+def test_la_red_privada_da_el_nombre_de_la_maquina_y_si_serve_lleva_al_hub(tmp_path, monkeypatch):
+    estado = {"BackendState": "Running", "Self": {"DNSName": "Maquina.red.ts.net."}}
+    _tailscale_falso(tmp_path, monkeypatch, estado, SERVE_MEDIDO)
+    red = maquina.red_privada()
+    assert red == {"hay": True, "conectado": True, "nombre": "maquina.red.ts.net",
+                   "lleva_al_hub": True, "puerto": 443, "error": ""}
+
+
+def test_sin_serve_hacia_el_hub_se_sabe_el_nombre_igual(tmp_path, monkeypatch):
+    estado = {"BackendState": "Running", "Self": {"DNSName": "maquina.red.ts.net."}}
+    _tailscale_falso(tmp_path, monkeypatch, estado, {})
+    red = maquina.red_privada()
+    assert red["nombre"] == "maquina.red.ts.net" and red["lleva_al_hub"] is False
+
+
+def test_un_tailscale_que_no_contesta_a_tiempo_no_es_un_no(tmp_path, monkeypatch):
+    """Lo que no se pudo medir no se pinta ni hecho ni por hacer (regla 13)."""
+    _tailscale_falso(tmp_path, monkeypatch, {}, {}, dormir=5)
+    red = maquina.red_privada(tope=0.5)
+    assert red["hay"] is True and red["lleva_al_hub"] is None and red["error"]
+
+
+def test_sin_tailscale_se_dice_y_no_lanza(monkeypatch):
+    monkeypatch.setattr(maquina, "_programa_tailscale", lambda: None)
+    red = maquina.red_privada()
+    assert red["hay"] is False and red["error"]
+
+
+def test_el_tope_de_la_red_privada_es_para_las_dos_preguntas_juntas(tmp_path, monkeypatch):
+    """Son dos llamadas (`status` y `serve status`): con un tope por llamada,
+    /acceso esperaba el doble de lo dicho."""
+    import time
+    _tailscale_falso(tmp_path, monkeypatch, {"BackendState": "Running"}, {}, dormir=0.6)
+    inicio = time.monotonic()
+    red = maquina.red_privada(tope=1.0)
+    assert time.monotonic() - inicio < 1.5
+    assert red["lleva_al_hub"] is None and red["error"]

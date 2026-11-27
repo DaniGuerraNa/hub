@@ -145,8 +145,11 @@ def test_hub_version_lee_lo_de_verdad_sin_reventar(con):
 
 def test_hub_buscar_trae_la_pantalla_con_su_ruta_para_abrirla(con, hub):
     r = _leer("hub_buscar", con, texto="respaldo")
-    assert r["resultados"][0] == {"clase": "pantalla", "titulo": "Respaldo", "url": "/respaldo",
-                                  "seccion": "Salud"}
+    primero = r["resultados"][0]
+    assert {k: primero[k] for k in ("clase", "titulo", "url", "seccion")} == {
+        "clase": "pantalla", "titulo": "Respaldo", "url": "/respaldo", "seccion": "Salud"}
+    # Y lo que la Guía dice de ella, para guiar sin inventar (C-0503).
+    assert primero["para_que"] and "«Medir ahora»" in " ".join(primero["que_haces"])
 
 
 def test_hub_buscar_trae_lo_indexado_por_la_misma_busqueda_que_ctrl_k(con, hub):
@@ -166,3 +169,56 @@ def test_las_cinco_lecturas_se_sirven_tambien_sin_el_duenio_delante():
     sin_el = herramientas.todas(con_el_dueno=False)
     for nombre in ("ideas", "fichas", "uso", "hub_version", "hub_buscar"):
         assert nombre in sin_el, nombre
+
+
+# ── hub_ayuda: los pasos del hub, de su conocimiento (C-0504) ────────────────
+
+def test_no_me_funciona_el_qr_lo_contesta_con_lo_que_dice_el_conocimiento(con):
+    """Quien preguntó a su secretario por el QR recibió enlaces inventados y
+    «escucha en 0.0.0.0». Ahora lee la sección escrita para eso: qué botón y
+    en qué pantalla, y lo que nunca lo arregla."""
+    r = _leer("hub_ayuda", con, texto="no me funciona el QR de acceso")
+    assert r["secciones"], r
+    primera = r["secciones"][0]
+    assert primera["archivo"] == "10-mas-pantallas.md"
+    assert "no me funciona el QR" in primera["titulo"]
+    texto = " ".join(primera["texto"].split())
+    assert "Usar este nombre" in texto and "Preparar con Claude" in texto
+    assert "nunca" in texto and "0.0.0.0" in texto
+    assert "No añadas otros pasos ni enlaces" in r["nota"]
+
+
+@pytest.mark.parametrize("pregunta, titulo", [
+    ("cómo pongo el nombre de la red privada tailscale serve", "preparar la red privada"),
+    ("el archivo de acceso está mal escrito", "mal escrito"),
+    ("dar de alta el móvil con el QR", "dar de alta un aparato"),
+    ("descargar un modelo del dictado", "Dictado: descargar un modelo"),
+])
+def test_cada_proceso_que_guia_el_secretario_tiene_su_seccion(con, pregunta, titulo):
+    r = _leer("hub_ayuda", con, texto=pregunta)
+    assert any(titulo in s["titulo"] for s in r["secciones"]), [s["titulo"] for s in r["secciones"]]
+
+
+def test_lo_que_no_esta_escrito_lo_dice_y_no_se_lo_inventa(con):
+    r = _leer("hub_ayuda", con, texto="zzqx wvkj")
+    assert r["secciones"] == [] and "sin inventar" in r["nota"]
+    assert "error" in _leer("hub_ayuda", con, texto="q")
+
+
+def test_el_secretario_lee_hub_ayuda_antes_de_explicar_el_hub_y_nunca_manda_a_abrir_el_puerto():
+    from hub.secretario import conversacion
+    assert "lee antes `hub_ayuda`" in conversacion.SISTEMA
+    assert "nunca le digas que escuche fuera de 127.0.0.1" in conversacion.SISTEMA
+    assert "hub_ayuda" in herramientas.todas(con_el_dueno=False)
+
+
+def test_la_ayuda_lee_el_conocimiento_del_clon_o_el_del_repo_y_sin_carpeta_nada(tmp_path, monkeypatch):
+    from hub import ayuda, config
+    assert ayuda.carpeta().name == "conocimiento" and ayuda.carpeta().is_dir()
+    monkeypatch.setattr(config, "RAIZ_REPO", tmp_path)
+    assert ayuda.secciones("acceso qr") == []
+    (tmp_path / "conocimiento").mkdir()
+    (tmp_path / "conocimiento" / "a.md").write_text("# A\n\n## Acceso con QR\n\nPulsa el botón.\n")
+    (tmp_path / "conocimiento" / "INDICE.md").write_text("## Acceso con QR índice\n")
+    assert ayuda.secciones("acceso qr") == [
+        {"titulo": "Acceso con QR", "archivo": "a.md", "texto": "## Acceso con QR\n\nPulsa el botón."}]

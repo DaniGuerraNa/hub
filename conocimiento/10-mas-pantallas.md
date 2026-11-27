@@ -13,20 +13,32 @@ eso el hub escucha sólo en `127.0.0.1`, y la respuesta a «¿abro el puerto a l
 red?» o «¿lo pongo en `0.0.0.0`?» es **no**, siempre. Nunca se expone a
 internet.
 
-Para entrar desde otro aparato el camino es otro, y tiene tres cerraduras:
+Para entrar desde otro aparato el camino es otro, y tiene tres cerraduras.
+Las dos primeras las monta la propia pantalla Acceso con botones, sin
+escribir comandos ni editar archivos:
 
 1. **Una red privada** entre tus aparatos (tipo Tailscale) que haga de puente
-   hasta `127.0.0.1` de esta máquina — con Tailscale, `tailscale serve`.
-2. **Nombres exactos.** El nombre de la máquina en esa red se declara en
-   `~/.local/share/hub/acceso.yml`:
+   hasta `127.0.0.1` de esta máquina — con Tailscale, `tailscale serve` hacia
+   `http://127.0.0.1:8787`. En Acceso, **«Preparar con Claude»** abre una
+   ventana con el encargo escrito: lo lanzas tú con Enter y Claude te pide
+   permiso para cada paso. El hub no lo hace solo: la primera vez Tailscale
+   puede pedir que actives serve en su consola, y eso sólo lo puedes hacer tú.
+2. **Nombres exactos.** El nombre de la máquina en esa red va en `hosts` de
+   `~/.local/share/hub/acceso.yml`. Acceso lo pregunta a Tailscale y lo
+   guarda con **«Usar este nombre»** (o lo escribes en su campo, si no lo
+   ve). Un comodín (`*`) se rechaza, y por un nombre que no esté en la lista
+   no se entra. Una IP, un `https://` o un `:puerto` en la lista no sirven
+   para entrar: la pantalla los señala y no los usa para el QR.
 
-   ```yaml
-   hosts:
-     - esta-maquina.tu-red.ts.net
-   ```
+   **Mientras no haya ese nombre, Acceso no genera ningún QR**: uno a
+   `127.0.0.1` es válido y no lo abre ningún móvil. En su lugar dice qué
+   falta. Y si `acceso.yml` está mal escrito, dice qué le pasa, cómo quedará y
+   lo reescribe con **«Arreglarlo»**, guardando el anterior al lado
+   (`acceso.yml.roto-<fecha>-<hora>`).
 
-   Un comodín (`*`) se rechaza. Por un nombre que no esté en la lista no se
-   entra.
+   🔴 **La solución nunca es poner la IP de Tailscale con el puerto del hub,
+   ni escuchar en `0.0.0.0`, ni abrir el puerto**: el hub no escucha ahí, y
+   no debe.
 3. **Aparatos dados de alta.** Entrando por un nombre de fuera, cada aparato
    necesita alta: en Acceso, «Generar el QR», y se escanea con el aparato —o
    se abre en él el enlace que sale debajo— en los 10 minutos siguientes. El
@@ -41,10 +53,86 @@ Para entrar desde otro aparato el camino es otro, y tiene tres cerraduras:
 remota» de Acceso. Viene apagado y **se apaga solo cada vez que el hub
 reinicia**. Desde esta máquina la terminal funciona siempre.
 
-**Qué no hace:** no abre ningún puerto ni configura la red privada; eso lo
-montas tú. Y no defiende de un aparato que ya esté dentro de tu red privada
+**Qué no hace:** no abre ningún puerto ni configura la red privada por su
+cuenta; eso lo montas tú, con «Preparar con Claude» si quieres. Y no defiende de un aparato que ya esté dentro de tu red privada
 y se haga pasar por local: la defensa ahí es aprobar a mano qué aparatos
 entran en esa red.
+
+### Acceso, paso a paso: preparar la red privada (Preparar con Claude)
+
+Se hace una vez, en la PC del hub, en [Acceso](/acceso). Mientras falte,
+«Dar de alta un aparato» no enseña el formulario del QR sino **«Para entrar
+desde el móvil u otro aparato faltan dos cosas»**, con dos pasos:
+
+1. **«La red privada lleva al hub».** Pulsa **«Preparar con Claude»**. Se abre
+   la pantalla Trabajo con una ventana nueva donde ya está escrito el encargo
+   para Claude: pulsa **Enter** para lanzarlo. Claude mira si Tailscale está
+   instalado y con la sesión iniciada, publica el hub en la red privada
+   (`tailscale serve` hacia `http://127.0.0.1:8787`) y guarda el nombre de la
+   máquina. Te pide permiso para cada orden. Si Tailscale pide activar
+   «serve» o https en su consola, Claude te da el enlace y espera: eso sólo
+   lo puedes hacer tú, con tu cuenta. Al acabar, vuelve a Acceso: el paso sale
+   «hecho».
+   - Si dice **«No veo Tailscale en esta máquina»**: instala Tailscale en ella
+     (en Windows, el de Windows), inicia sesión con tu cuenta y vuelve a abrir
+     Acceso. Claude, con el mismo botón, te guía.
+   - Si dice **«No pude mirarlo»**: Tailscale no contestó a tiempo. Ábrelo (o
+     espera a que conecte) y recarga la página.
+2. **«El nombre de esta máquina en la red privada».** Si Tailscale lo da, sale
+   escrito (algo como `esta-maquina.tu-red.ts.net`) con el botón **«Usar este
+   nombre»**: púlsalo. Si no lo ve, hay un campo: escribe ahí el nombre exacto
+   que te da la app de Tailscale y pulsa **«Guardar»**. Vale en el acto, sin
+   reiniciar nada.
+
+### Acceso, paso a paso: dar de alta un aparato con el QR
+
+En la PC del hub, en [Acceso](/acceso) → «Dar de alta un aparato»: escribe
+un nombre para reconocerlo («Móvil») y pulsa **«Generar el QR»**. Sale un QR
+y, debajo, su enlace, que empieza por `https://` y el nombre de la red
+privada. Con el aparato **conectado a Tailscale**, escanéalo con su cámara (o
+abre en él ese enlace) antes de 10 minutos: entra al hub y queda dado de
+alta. Sirve una sola vez. Los aparatos dados de alta salen debajo, y
+**«Quitar»** deja fuera a uno en la petición siguiente.
+
+### Acceso, paso a paso: «no me funciona el QR»
+
+- **No sale ningún QR, sale «faltan dos cosas»:** falta el nombre de la red
+  privada; sigue «preparar la red privada» (arriba). Es a propósito: un QR a
+  `127.0.0.1` no lo abre ningún móvil.
+- **El QR abre pero no carga:** el aparato no está conectado a Tailscale (abre
+  la app en él y conéctalo), o la red privada no lleva al hub. Si Acceso dice
+  «Tailscale no tiene guardado publicar el hub en la red privada», pulsa ahí
+  «Preparar con Claude».
+- **«Este código ya no vale»:** pasaron los 10 minutos o ya se usó. Genera
+  otro.
+- **«El hub no acepta el nombre…»:** el nombre por el que entra el aparato no
+  está guardado. En la PC del hub, Acceso → «Usar este nombre».
+- **«Este dispositivo no está dado de alta»:** genera un QR en la PC del hub y
+  escanéalo con ese aparato.
+- **Sale un aviso de que el archivo de acceso está mal escrito:** mira el
+  siguiente apartado.
+
+🔴 Lo que **nunca** arregla esto, aunque lo parezca: poner la IP de Tailscale
+con el puerto del hub (`http://100.x.x.x:8787`), hacer que el hub escuche en
+`0.0.0.0` o abrir el puerto o el cortafuegos. El hub escucha sólo en esta
+máquina a propósito, porque su terminal da una shell. Tampoco hay ningún
+enlace que escribir a mano: el bueno lo da el QR.
+
+### Acceso, paso a paso: el archivo de acceso está mal escrito
+
+Si `acceso.yml` dice algo que no se puede obedecer (un nombre suelto en vez
+de una lista, un comodín, un `https://` o un puerto dentro, o un archivo que
+no se lee), Acceso lo dice arriba en un aviso: qué le pasa, la lista de lo
+que cambiará y con qué nombres quedará. Pulsa **«Arreglarlo»** en la PC del
+hub. El archivo de antes se guarda al lado (`acceso.yml.roto-<fecha>-<hora>`). Si el
+aviso dice que **los aparatos tendrán que volver a darse de alta**, es que el
+archivo no se podía leer: después del arreglo, vuelve a dar de alta cada uno
+con su QR. Mientras está mal escrito, al hub se entra desde la propia PC, no
+desde fuera. Si dice «el archivo cambió mientras lo mirabas», recarga y
+vuelve a pulsar.
+
+Una IP en la lista no rompe nada, pero no sirve para el QR: Acceso la
+señala. El nombre bueno lo pone «Usar este nombre».
 
 ## Canal — preguntas por Telegram
 
@@ -150,6 +238,28 @@ comandos:
 Lo que va entre llaves es un hueco que rellenas al usarlo (se escapa antes de
 escribirlo). 🔴 Nada de credenciales en una plantilla: si un comando necesita
 una, la plantilla llama a un script tuyo que la lee.
+
+**El secretario también los usa.** Pídele «clóname estos repos en
+interno/repos» y te los deja escritos sin Enter en una ventana (todos en una
+sola línea, separados por ` ; `), con el enlace para abrirla. Si quieres que
+los corra él, marca ese comando así:
+
+```yaml
+  - id: clonar
+    nombre: Clonar un repo
+    plantilla: bash ~/.secretos/clonar.sh {repo} {ruta}
+    ejecutable: true      # sólo tú lo escribes: el hub nunca toca este archivo
+    crea: "{repo}"        # la carpeta que crea, relativa a donde se corre
+```
+
+Entonces te pide permiso en **Pendientes**, donde ves cada orden tal cual
+antes de aprobarla (si apruebas pasados 15 minutos, no la corre). Va de uno
+en uno, salta los que ya tienen su carpeta sin entrar en ellos, da por bueno
+sólo lo que quedó como repo de git, y te deja en el chat cuáles salieron,
+cuáles ya estaban y cuáles fallaron con su error. Hasta 30 de una vez, cada
+uno con 5 minutos como mucho, y nunca en un proyecto con guardrail `never`.
+Corre sin terminal: si tu script pide una contraseña, falla en vez de
+quedarse esperando.
 
 ## Tablero — ideas para después
 

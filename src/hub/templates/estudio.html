@@ -1,10 +1,12 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
+{% import "_preparar.html" as prep %}
 {% block contenido %}
+{{ prep.estilos() }}
 
 <style>
-  /* Una columna: cómo está, sus proyectos y, si no contesta, cómo se instala
-     y se arranca. Sin `iframe`: el estudio se abre en su pestaña y sólo desde
+  /* Una columna: cómo está, sus proyectos y, si no contesta, sus pasos para
+     instalarlo y arrancarlo. Sin `iframe`: el estudio se abre en su pestaña y sólo desde
      la PC donde corre (decisión 461). */
   .estudio-v { display:grid; gap:14px; grid-template-columns:minmax(0, 1fr); max-width:880px; }
   .estudio-v > .tarjeta { margin:0; }
@@ -23,9 +25,6 @@
   .estudio-lista .que > strong { font-size:var(--letra-4); overflow-wrap:anywhere; }
   .estudio-lista .que > span:not(.placa) { color:var(--texto-3); font-size:var(--letra-3); overflow-wrap:anywhere; }
   .estudio-lista .como { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .estudio-pasos { margin:0; padding-left:20px; display:grid; gap:8px; }
-  .estudio-pasos > li { font-size:var(--letra-3); color:var(--texto-2); }
-  .estudio-pasos code { overflow-wrap:anywhere; }
 </style>
 
 {{ ui.cabecera_vista('Estudio', 'Donde alguien que no programa habla con Claude Code y revisa su aplicación') }}
@@ -97,31 +96,31 @@
     {% endif %}
   </section>
   {% else %}
-  <section class="tarjeta" id="instalar" aria-labelledby="estudio-instalar">
-    <h2 id="estudio-instalar">Cómo se instala y se arranca</h2>
-    {% if e.local %}
-    <ol class="estudio-pasos">
-      {% if e.kit %}
-      <li>El kit está instalado en <code>{{ e.kit }}</code>.</li>
-      <li>Instálalo como servicio, una vez: <code>bash "{{ e.kit }}/install.sh"</code>. Deja la unidad de usuario
-        <code>estudio</code>, que arranca sola con la sesión.</li>
-      {% else %}
-      <li>El kit «estudio» no está instalado en esta máquina: <code>bash scripts/kit.sh ruta estudio</code>, en la
-        carpeta del hub, lo dice así. Si está en el catálogo de kits, lo trae <code>bash scripts/kit.sh instalar estudio</code>.</li>
-      <li>Después, una vez: <code>bash "$(bash scripts/kit.sh ruta estudio)/install.sh"</code>. Deja la unidad de
-        usuario <code>estudio</code>, que arranca sola con la sesión.</li>
-      {% endif %}
-      <li>Si ya estaba instalado y no contesta: <code>systemctl --user start estudio</code>, y por qué no arranca,
-        <code>journalctl --user -u estudio</code>.</li>
-      <li>El hub lo busca en el puerto {{ e.puerto }}. Si el estudio escucha en otro, pon ese en
-        <code>{{ e.variable_puerto }}</code> en el entorno del hub.</li>
-    </ol>
+  {# Sin un comando para la persona (C-0503): lo que falta lo hace la sesión
+     de «Preparar con Claude», que se abre sólo desde la PC donde corre. #}
+  {% set sig = prep.siguiente_de(e.pasos) | trim %}
+  <section class="tarjeta prep" id="instalar" aria-labelledby="estudio-instalar">
+    <h2 id="estudio-instalar">Instalarlo y arrancarlo</h2>
+    {% if e.local and e.se_puede_preparar %}
+    {{ prep.cabeza('Un programa aparte, del kit «estudio». «Preparar con Claude» abre una ventana con Claude y el encargo escrito: trae el kit, lo instala, lo arranca y comprueba que contesta, pidiéndote permiso para cada paso. Lo lanzas tú con Enter.',
+                   'estudio', 'Ayúdame a instalar y arrancar el estudio: qué me falta y cómo lo consigo.',
+                   rail.hay_asistente) }}
+    {% elif e.local %}
+    {{ prep.cabeza('Un programa aparte, del kit «estudio». Su kit no está en esta máquina ni en el catálogo de kits de este hub, así que no hay de dónde traerlo.',
+                   'estudio', 'Ayúdame a instalar y arrancar el estudio: qué me falta y cómo lo consigo.',
+                   rail.hay_asistente, false) }}
+    {% elif e.se_puede_preparar %}
+    <p class="tenue">Se instala y se arranca en la PC donde corre: allí, esta pantalla tiene «Preparar con Claude».</p>
     {% else %}
-    <p class="tenue">Se instala y se arranca en la PC donde corre; allí, esta pantalla dice cómo.</p>
+    <p class="tenue">Se instala y se arranca en la PC donde corre.</p>
     {% endif %}
+    <ol class="prep-pasos">
+      {% for paso in e.pasos %}{{ prep.paso(paso, loop.index, paso.id == sig) }}{% endfor %}
+    </ol>
   </section>
   {% endif %}
 
 </div>
+<script src="/static/guia.js"></script>
 {% endif %}
 {% endblock %}

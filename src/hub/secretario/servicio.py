@@ -40,6 +40,7 @@ from ..db import transaccion
 from . import asuntos
 from . import avisos, consultas, conversacion, disparadores, memoria, motor, piezas, recordatorios, sesiones, triaje
 from . import investigar
+from . import lotes
 from . import de_proyectos
 from . import delegados
 from . import huecos
@@ -206,7 +207,9 @@ def ejecutar_aprobadas(con: sqlite3.Connection) -> int:
                 # Sólo aquí se sabe que el dueño la aprobó: no viaja en
                 # `params`, que en `auto` los escribe el modelo (C-0151).
                 if getattr(a, "quiere_aprobacion", False):
-                    resultado, ok = a.ejecutar(con, params, aprobada=True), True
+                    # Y en qué hilo se pidió, a la que deja el informe después (C-0507).
+                    extra = {"hilo": s["hilo"]} if getattr(a, "quiere_hilo", False) else {}
+                    resultado, ok = a.ejecutar(con, params, aprobada=True, **extra), True
                 else:
                     resultado, ok = a.ejecutar(con, params), True
             except Exception as exc:  # noqa: BLE001
@@ -461,7 +464,8 @@ RETOMAR_INTENTOS = 3
 
 def _bucle_resumenes(parar: threading.Event) -> None:
     """Lo que se hace aparte, en su hilo: los resúmenes de sesiones largas
-    (C-0163) y las investigaciones en la web (385). Una llamada puede tardar
+    (C-0163), las investigaciones en la web (385) y las listas de comandos
+    preparados que él aprobó (`lotes`, C-0507). Una llamada puede tardar
     minutos, y en el ciclo lento retrasaría recordatorios y avisos. Cada uno
     en su paso: uno que falla siempre no deja al otro sin atender (regla 2).
 
@@ -470,7 +474,8 @@ def _bucle_resumenes(parar: threading.Event) -> None:
     lo que encuentre marcado «en curso» antes de atender no lo hace nadie."""
     con: sqlite3.Connection | None = None
     fallos = 0
-    por_retomar = {"retomar resúmenes": sesiones.retomar, "retomar investigaciones": investigar.retomar}
+    por_retomar = {"retomar resúmenes": sesiones.retomar, "retomar investigaciones": investigar.retomar,
+                   "retomar listas de comandos": lotes.retomar}
     intentos = 0
     while not parar.is_set():
         # 🔴 Abrir la base, en su `try` (regla dura 2, C-0314): fuera de él, un
@@ -501,6 +506,10 @@ def _bucle_resumenes(parar: threading.Event) -> None:
         if parar.is_set():
             break
         _paso(con, "investigaciones", investigar.atender)
+        if parar.is_set():
+            break
+        # Una lista de comandos que él aprobó (C-0507): en su paso, como las demás.
+        _paso(con, "listas de comandos", lotes.atender)
         parar.wait(15)
 
 

@@ -35,10 +35,10 @@ el asistente nunca lee la base ni escanea el disco por su cuenta.
                                   deja en /trabajo una ventana en ese proyecto
                                   con el encargo escrito y SIN Enter: lo lanza
                                   la persona y revisa ahí los cambios
-  hub componentes                 qué les falta a Navegante, Reuniones y el
-                                  Puente KVM (si está encendido), paso a paso,
-                                  medido en esta máquina
-  hub preparar <navegante|reuniones|puente>
+  hub componentes                 qué les falta a Navegante, Reuniones, el
+                                  Puente KVM y el estudio (si están encendidos),
+                                  paso a paso, medido en esta máquina
+  hub preparar <navegante|reuniones|puente|estudio>
                                   deja en /trabajo una ventana en su carpeta
                                   con Claude y el encargo de prepararlo, SIN
                                   Enter: lo lanza la persona
@@ -613,12 +613,12 @@ def cmd_kit(args):
 
 
 def cmd_componentes(args: list[str]) -> None:
-    """`hub componentes`: los mismos pasos que pintan /navegante, /reuniones y /puente.
+    """`hub componentes`: los mismos pasos que pintan /navegante, /reuniones, /puente y /estudio.
 
-    El Puente KVM es una herramienta opcional: apagado, sólo se dice dónde se
-    enciende. Si contesta no se mide aquí: lo dice su pantalla."""
+    El Puente KVM y el estudio son herramientas opcionales: apagados, sólo se
+    dice dónde se encienden. Si contestan no se mide aquí: lo dice su pantalla."""
     r = pedir("/api/componentes")
-    for nombre in ("navegante", "reuniones", "puente"):
+    for nombre in ("navegante", "reuniones", "puente", "estudio"):
         c = r.get(nombre)
         if c is None:
             continue
@@ -632,9 +632,9 @@ def cmd_componentes(args: list[str]) -> None:
 
 
 def cmd_preparar(args: list[str]) -> None:
-    """`hub preparar <navegante|reuniones|puente>`: prepara la ventana, no la lanza."""
+    """`hub preparar <navegante|reuniones|puente|estudio>`: prepara la ventana, no la lanza."""
     if len(args) != 1:
-        salir("uso: hub preparar <navegante|reuniones|puente>")
+        salir("uso: hub preparar <navegante|reuniones|puente|estudio>")
     r = pedir("/api/componentes/preparar", {"nombre": args[0]})
     if not r.get("ok"):
         salir(r.get("error", "no se pudo preparar"))

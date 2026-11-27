@@ -33,12 +33,31 @@ class WhisperModel:
         return [_T(" oído: " + open(ruta).read() + " ")], None
 '''
 
+# Un `download_model` de mentira con una caché de verdad: la carpeta de cada
+# modelo, con su `model.bin`, en `FALSO_CACHE`. Bajar (sin `local_files_only`)
+# no sale a internet: espera `FALSO_BAJA_S`, falla si `FALSO_BAJA` es «falla»,
+# o deja la carpeta sin `model.bin` si es «a-medias» (C-0505).
 UTILS = '''
-import os
+import os, pathlib, time
+_MODELS = {"large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo"}
 def download_model(nombre, local_files_only=False):
-    if nombre not in os.environ.get("FALSO_HAY", "small,large-v3-turbo").split(","):
+    cache = pathlib.Path(os.environ["FALSO_CACHE"])
+    carpeta = cache / nombre
+    if not local_files_only:
+        time.sleep(float(os.environ.get("FALSO_BAJA_S", "0")))
+        if os.environ.get("FALSO_BAJA") == "falla":
+            raise OSError("Connection reset by peer\\nmás detalle que no se enseña")
+        carpeta.mkdir(parents=True, exist_ok=True)
+        if os.environ.get("FALSO_BAJA") != "a-medias":
+            (carpeta / "model.bin").write_bytes(b"pesos")
+        return str(carpeta)
+    hay = os.environ.get("FALSO_HAY", "small,large-v3-turbo").split(",")
+    if nombre not in hay and not carpeta.is_dir():
         raise RuntimeError("not found locally")
-    return "/modelos/" + nombre
+    if nombre in hay:
+        carpeta.mkdir(parents=True, exist_ok=True)
+        (carpeta / "model.bin").write_bytes(b"pesos")
+    return str(carpeta)
 '''
 
 
@@ -52,6 +71,7 @@ def casa(tmp_path, monkeypatch):
     (falso / "__init__.py").write_text(FALSO)
     (falso / "utils.py").write_text(UTILS)
     monkeypatch.setenv("PYTHONPATH", str(falso.parent))
+    monkeypatch.setenv("FALSO_CACHE", str(tmp_path / "cache"))
     monkeypatch.setattr(config, "HUB_HOME", tmp_path / "hub")
     monkeypatch.setattr(transcribir, "_python_del_servidor", lambda aj: "")
     monkeypatch.setattr(transcribir, "por_omision", lambda: [sys.executable, "guion", "{audio}"])
@@ -323,3 +343,171 @@ def test_lo_descargado_se_recuerda_con_recordar_y_un_fallo_no_se_recuerda(casa, 
     recordar.olvidar()
     transcribir.disponibles()
     assert len(miradas) == 3
+
+
+# ── Bajar un modelo sin descargar, desde el menú (C-0505) ────────────────────
+#
+# El guion de verdad con el `download_model` de mentira de arriba: nada sale a
+# internet, pero el proceso se lanza, se le espera y deja su final escrito.
+
+@pytest.fixture
+def sin_turbo(casa, monkeypatch):
+    from hub import maquina
+    monkeypatch.setenv("FALSO_HAY", "small")
+    monkeypatch.setattr(maquina, "gpu_memoria", lambda: (1000, 12282))
+    return casa
+
+
+def _esperar_descarga(espera: float = 20) -> dict:
+    limite = time.monotonic() + espera
+    while time.monotonic() < limite:
+        d = transcribir.descarga()
+        if d and d["estado"] != "bajando":
+            return d
+        time.sleep(0.05)
+    raise AssertionError(f"la descarga no acabó: {transcribir.descarga()}")
+
+
+def test_un_modelo_sin_descargar_dice_cuanto_pesa_para_su_boton(sin_turbo):
+    estado = transcribir.estado_dictado()
+    turbo = next(m for m in estado["modelos"] if m["modelo"] == "large-v3-turbo")
+    assert turbo["disponible"] is False and estado["mirado"] is True
+    assert turbo["tamano"] == 1_621_665_983 and turbo["solo_gpu"] is True
+    assert estado["descarga"] is None
+
+
+def test_descargar_lo_deja_elegible_sin_elegirlo_y_sin_esperar_cinco_minutos(sin_turbo):
+    """`disponibles` recuerda cinco minutos: sin olvidarlo al acabar, el gris
+    seguiría ahí. Y nada se elige solo."""
+    assert transcribir.disponibles()["large-v3-turbo"] is False   # recordado
+    d = transcribir.descargar("large-v3-turbo")
+    assert d["modelo"] == "large-v3-turbo" and d["estado"] in ("bajando", "hecha")
+    assert _esperar_descarga()["estado"] == "hecha"
+    assert transcribir.disponibles()["large-v3-turbo"] is True
+    assert transcribir.eleccion() == "small"
+    assert transcribir.elegir("large-v3-turbo")["eleccion"] == "large-v3-turbo"
+
+
+def test_una_descarga_que_falla_lo_dice_en_una_frase_y_el_modelo_sigue_sin_estar(sin_turbo, monkeypatch):
+    monkeypatch.setenv("FALSO_BAJA", "falla")
+    transcribir.descargar("large-v3-turbo")
+    d = _esperar_descarga()
+    assert d["estado"] == "fallo" and d["error"] == "Connection reset by peer"
+    assert transcribir.disponibles()["large-v3-turbo"] is False
+
+
+def test_reintentar_tras_un_fallo_baja_de_verdad_y_sigue_siendo_de_una_en_una(sin_turbo, monkeypatch):
+    """El final del intento anterior quedaba en `descarga.avance`: el reintento
+    salía «fallo» con el error viejo nada más pulsar, y el cerrojo dejaba
+    lanzar otra encima (C-0505, revisor)."""
+    monkeypatch.setenv("FALSO_BAJA", "falla")
+    transcribir.descargar("large-v3-turbo")
+    assert _esperar_descarga()["estado"] == "fallo"
+    monkeypatch.delenv("FALSO_BAJA")
+    monkeypatch.setenv("FALSO_BAJA_S", "2")
+    d = transcribir.descargar("large-v3-turbo")
+    assert d["estado"] == "bajando" and d["error"] == ""
+    with pytest.raises(ValueError, match="de uno en uno"):
+        transcribir.descargar("large-v3-turbo")
+    assert len(_procesos_de_descarga()) == 1
+    assert _esperar_descarga()["estado"] == "hecha"
+    assert transcribir.disponibles()["large-v3-turbo"] is True
+
+
+def test_el_final_de_la_descarga_no_lo_lee_nadie_mas(sin_turbo, monkeypatch):
+    """Su error puede llevar rutas de la máquina: 600, como `descarga.json`."""
+    monkeypatch.setenv("FALSO_BAJA", "falla")
+    transcribir.descargar("large-v3-turbo")
+    _esperar_descarga()
+    assert (sin_turbo / "descarga.avance").stat().st_mode & 0o777 == 0o600
+    assert (sin_turbo / "descarga.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_una_descarga_a_medias_no_sale_elegible(sin_turbo, monkeypatch):
+    """Algunas `huggingface_hub` devuelven el snapshot a medias con
+    `local_files_only`: sin `model.bin`, no está."""
+    monkeypatch.setenv("FALSO_BAJA", "a-medias")
+    transcribir.descargar("large-v3-turbo")
+    assert _esperar_descarga()["estado"] == "fallo"
+    assert transcribir.disponibles()["large-v3-turbo"] is False
+
+
+def test_solo_una_descarga_a_la_vez(sin_turbo, monkeypatch):
+    monkeypatch.setenv("FALSO_BAJA_S", "3")
+    primera = transcribir.descargar("large-v3-turbo")
+    assert primera["estado"] == "bajando"
+    with pytest.raises(ValueError, match="de uno en uno"):
+        transcribir.descargar("large-v3-turbo")
+    assert len([p for p in _procesos_de_descarga()]) == 1
+    assert _esperar_descarga()["estado"] == "hecha"
+
+
+def _procesos_de_descarga() -> list[int]:
+    from pathlib import Path
+    vivos = []
+    for d in Path("/proc").iterdir():
+        if not d.name.isdigit():
+            continue
+        try:
+            linea = (d / "cmdline").read_bytes().split(b"\0")
+            estado = (d / "stat").read_text().split()[2]
+        except OSError:
+            continue
+        if b"--descargar" in linea and estado not in ("Z", "X"):
+            vivos.append(int(d.name))
+    return vivos
+
+
+def test_una_descarga_cortada_sin_final_es_un_fallo_que_se_puede_repetir(sin_turbo, monkeypatch):
+    import os
+    import signal
+    monkeypatch.setenv("FALSO_BAJA_S", "30")
+    d = transcribir.descargar("large-v3-turbo")
+    huella = json.loads((sin_turbo / "descarga.json").read_text())["huella"]
+    os.kill(huella["pid"], signal.SIGKILL)
+    limite = time.monotonic() + 5
+    while procesos.vivo(huella) and time.monotonic() < limite:
+        time.sleep(0.05)
+    d = transcribir.descarga()
+    assert d["estado"] == "fallo" and "vuelve a pulsar" in d["error"]
+    monkeypatch.setenv("FALSO_BAJA_S", "0")
+    transcribir.descargar("large-v3-turbo")
+    assert _esperar_descarga()["estado"] == "hecha"
+
+
+def test_no_se_baja_lo_que_ya_esta_ni_a_ciegas_ni_turbo_sin_gpu(casa, monkeypatch):
+    from hub import maquina
+    with pytest.raises(ValueError, match="ya está descargado"):
+        transcribir.descargar("large-v3-turbo")
+    with pytest.raises(ValueError, match="desconocido"):
+        transcribir.descargar("--borrar-todo")
+    monkeypatch.setenv("FALSO_HAY", "small")
+    monkeypatch.setattr(maquina, "gpu_memoria", lambda: None)
+    with pytest.raises(ValueError, match="GPU"):
+        transcribir.descargar("large-v3-turbo")
+    monkeypatch.setattr(transcribir, "_mirar_disponibles", lambda python: (_ for _ in ()).throw(OSError("x")))
+    from hub import recordar
+    recordar.olvidar()
+    with pytest.raises(ValueError, match="no pude comprobar"):
+        transcribir.descargar("large-v3-turbo")
+    estado = transcribir.estado_dictado()
+    assert estado["mirado"] is False
+    assert not (casa / "descarga.json").exists()
+
+
+def test_la_ruta_de_descargar_pide_mismo_origen_y_dice_el_error(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from hub import web
+
+    def descargar(modelo):
+        raise ValueError("ya se está bajando Preciso (turbo, en la GPU): de uno en uno")
+    monkeypatch.setattr(transcribir, "descargar", descargar)
+    monkeypatch.setattr(transcribir, "descarga", lambda: {"estado": "bajando"})
+    cliente = TestClient(web.app, base_url="http://127.0.0.1:8787")
+    origen = {"Origin": "http://127.0.0.1:8787"}
+    r = cliente.post("/api/voz/descargar", data={"modelo": "large-v3-turbo"}, headers=origen)
+    assert r.json() == {"ok": False, "error": "ya se está bajando Preciso (turbo, en la GPU): de uno en uno"}
+    assert cliente.post("/api/voz/descargar", data={"modelo": "large-v3-turbo"},
+                        headers={"Origin": "https://malo.example"}).status_code == 403
+    assert cliente.get("/api/voz/estado?solo=descarga").json() == {"descarga": {"estado": "bajando"}}

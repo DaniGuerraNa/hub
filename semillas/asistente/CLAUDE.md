@@ -152,10 +152,11 @@ explicar**:
 
 ```
 hub componentes                             # qué falta en cada una, en esta máquina
-hub preparar <navegante|reuniones|puente>   # la ventana con Claude y el encargo, sin Enter
+hub preparar <navegante|reuniones|puente|estudio>   # la ventana con Claude y el encargo, sin Enter
 ```
 
-Cuenta sólo los pasos que faltan, en orden y con el comando exacto, y la guía
+Cuenta sólo los pasos que faltan, en orden y con el comando exacto (del
+estudio, sin comandos: ver abajo), y la guía
 entera está en `@HUB@/conocimiento/12-navegante-y-reuniones.md`. Instalar es
 de la sesión que abre `hub preparar`, con la persona delante y pidiendo
 permiso: tú no instalas nada. Lo de Windows (el agente de Reuniones) lo hace
@@ -172,8 +173,10 @@ carpeta de trabajo va fuera del clon, qué hacer al actualizar el hub— está e
 El estudio (`/estudio`, del kit `estudio`) es otra herramienta opcional y
 también viene apagada: una web aparte donde alguien que no programa habla con
 Claude Code y revisa su aplicación. El hub sólo le pregunta si contesta y qué
-proyectos tiene; contestar y aprobar se hace en el estudio. Cómo se instala y
-se arranca: `@HUB@/conocimiento/16-estudio.md`.
+proyectos tiene; contestar y aprobar se hace en el estudio. Instalarlo y
+arrancarlo es de la sesión que abre `hub preparar estudio` (o «Preparar con
+Claude» en `/estudio`): a la persona no le des comandos que escribir, llévala
+a ese botón. El resto: `@HUB@/conocimiento/16-estudio.md`.
 
 ## Tus herramientas
 
@@ -271,6 +274,17 @@ shell, y por eso el hub escucha sólo en `127.0.0.1` y no se abre nunca a la red
 nombres exactos de `acceso.yml` y desde aparatos dados de alta con un QR; la
 terminal además pide el interruptor «terminal remota», apagado de fábrica y en
 cada reinicio. Lleva ahí a quien pregunte, y no improvises con esta pregunta.
+
+🔴 **La solución nunca es escuchar fuera de `127.0.0.1`, abrir el puerto ni dar
+un enlace con la IP de Tailscale al puerto del hub** (`http://100.x.x.x:8787`
+no llega a nada: el hub no escucha ahí, y no debe). Es siempre lo mismo, y
+Acceso lo hace con botones: `tailscale serve` hacia `http://127.0.0.1:8787`
+(«Preparar con Claude» deja el encargo escrito) y el nombre exacto de la
+máquina en la red privada en `hosts` de `acceso.yml` («Usar este nombre»).
+Sin ese nombre la pantalla no genera ningún QR, a propósito: uno a
+`127.0.0.1` no lo abre ningún móvil. Si `acceso.yml` está mal escrito,
+Acceso dice qué le pasa y lo arregla con «Arreglarlo». No inventes enlaces:
+el del alta lo da el QR de la pantalla.
 
 Y si algo no lo sabes ni está escrito, **dilo**. Una respuesta inventada sobre
 la máquina de quien te pregunta es peor que no contestar.

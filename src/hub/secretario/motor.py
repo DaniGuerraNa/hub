@@ -203,12 +203,51 @@ class TopeAgotado(MotorCaido):
 
 class Cancelada(MotorCaido):
     """Se paró a mitad porque `parar()` lo pidió (C-0241). Lo gastado hasta
-    ahí no se sabe: el proceso muere sin dar su `result`."""
+    ahí no se sabe: el proceso muere sin dar su `result`, o lo da sin gasto
+    (el «interrupt» del proceso abierto, C-0506).
+
+    `sigue`: en el proceso abierto, si siguió vivo tras parar (C-0506). Sólo
+    entonces se sabe que su sesión existe para retomarla."""
+
+    sigue = False
 
 
 #: Cada cuánto se pregunta a `parar` si hay que cortar (C-0241). Un segundo
 #: basta para quien acaba de pedir «para»; más a menudo sólo leería más.
 CADA_PARAR_S = 1.0
+#: En el proceso abierto (C-0506), lo más que se espera a que acabe la
+#: herramienta que está en vuelo antes de pedir que pare: cortada, su
+#: servidor puede acabarla igual —una nota, una solicitud— y el modelo
+#: creería que no la hizo. Pasado esto, se corta aunque no haya acabado.
+ESPERA_HERRAMIENTA_S = 30.0
+#: Lo más que se espera, pedido el «interrupt», a que el turno se cierre con
+#: su `result`. Medido el 27-nov (2.1.322): 10 ms escribiendo y 10 ms con
+#: una herramienta en vuelo. Si no llega, se mata el grupo del proceso.
+ESPERA_INTERRUMPIR_S = 10.0
+#: Cómo cierra el CLI un turno interrumpido (medido el 27-nov, 2.1.322):
+#: `is_error` con `subtype: error_during_execution` y una de éstas.
+CORTADO_POR_INTERRUMPIR = ("aborted_streaming", "aborted_tools")
+
+
+def _pide(parar: Callable[[], bool]) -> bool:
+    """Si `parar` dice que sí; una lectura que falla no corta (C-0241)."""
+    try:
+        return bool(parar())
+    except Exception:  # noqa: BLE001 — cancelar es una petición, no una garantía
+        return False
+
+
+def _matar_grupo(p: subprocess.Popen) -> None:
+    """Mata el grupo de `p` (nace con `process_group=0`), y si no es su
+    grupo o ya no existe, al menos a él. Por su id, nunca por un patrón."""
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        # Ya acabó (y su grupo con él), o no es su propio grupo: al menos él.
+        try:
+            p.kill()
+        except ProcessLookupError:
+            pass
 
 
 class _Vigia:
@@ -259,14 +298,7 @@ class _Vigia:
                 return
 
     def matar(self) -> None:
-        try:
-            os.killpg(self.p.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            # Ya acabó (y su grupo con él), o no es su propio grupo: al menos él.
-            try:
-                self.p.kill()
-            except ProcessLookupError:
-                pass
+        _matar_grupo(self.p)
 
     def cerrar(self) -> None:
         self._fin.set()
@@ -669,8 +701,10 @@ class _Abierto:
         self.usado = time.monotonic()
         self.lineas: queue.Queue = queue.Queue()
         self._err = open(_trabajo() / "abierto.err", "a", encoding="utf-8")  # noqa: SIM115 — vive con el proceso
+        # Su propio grupo, como `_Vigia` (C-0241): si hay que matarlo, matar
+        # sólo a `claude` dejaba vivo a su servidor MCP (C-0506).
         self.p = subprocess.Popen(linea, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._err,
-                                  text=True, cwd=_trabajo(), env=entorno)
+                                  text=True, cwd=_trabajo(), env=entorno, process_group=0)
         threading.Thread(target=self._leer, daemon=True, name="motor-abierto").start()
 
     def _leer(self) -> None:
@@ -682,7 +716,8 @@ class _Abierto:
         return self.p.poll() is None
 
     def turno(self, prompt: str | list[dict], tope: float, al_trozo: Callable[[str], None] | None = None,
-              al_evento: Callable[[dict], None] | None = None) -> dict | None:
+              al_evento: Callable[[dict], None] | None = None,
+              parar: Callable[[], bool] | None = None) -> dict | None:
         """El evento `result` del turno, o None si el proceso murió antes.
 
         `prompt` es el texto o, con imágenes, la lista de bloques del mensaje
@@ -692,9 +727,17 @@ class _Abierto:
         como mucho cada `CADA_TROZO_S` salvo al cerrar una frase, y siempre una
         última vez entero. Se llama desde este hilo, el del turno: quien lo
         recibe escribe en su conexión de sqlite, que no se comparte entre hilos.
-        `al_evento`, lo mismo con lo que va haciendo (`_Actividad`)."""
+        `al_evento`, lo mismo con lo que va haciendo (`_Actividad`).
+
+        `parar` (C-0506): se le pregunta cada `CADA_PARAR_S`, desde este hilo.
+        Si dice que sí, el turno se corta **entre herramientas**: la que está
+        en vuelo acaba antes (hasta `ESPERA_HERRAMIENTA_S`), y entonces se le
+        pide al CLI que pare (`_Corte`). El proceso sigue vivo para el turno
+        siguiente (328). Lo cortado lanza `Cancelada`, nunca devuelve None:
+        None hace que `llamar` repita el turno por `--resume`."""
         trozos = _Trozos(al_trozo) if al_trozo is not None else None
         actividad = _Actividad(al_evento) if al_evento is not None else None
+        corte = _Corte(parar) if parar is not None else None
         recientes: deque = deque(maxlen=LINEAS_GUARDADAS)
         self.usado = t0 = time.monotonic()
         try:
@@ -704,21 +747,51 @@ class _Abierto:
         except OSError:
             return None
         fin = time.monotonic() + tope
+        oido = time.monotonic()        # cuándo dijo algo por última vez
+
+        def cortado(motivo: str | None = None) -> Cancelada:
+            # Lo ya escrito se da entero: el último trozo puede no haber salido.
+            if motivo:
+                self._volcar(motivo, recientes)
+            if trozos is not None:
+                trozos.fin()
+            exc = Cancelada("se detuvo a petición del dueño")
+            # Si el proceso sigue vivo, la sesión sigue ahí para el turno siguiente.
+            exc.sigue = self.vivo()
+            return exc
+
         while True:
-            queda = fin - time.monotonic()
+            if corte is not None:
+                if corte.mirar() == "pedir" and not self._interrumpir(corte.id):
+                    corte.que = "matar"
+                if corte.que == "matar":
+                    self._matar()
+                    raise cortado("se pidió parar y no cerró el turno: se mata")
+            ahora = time.monotonic()
+            espera = min(fin - ahora, SIN_NOTICIAS_S - (ahora - oido))
+            if corte is not None:
+                espera = min(espera, CADA_PARAR_S)
             try:
-                l = self.lineas.get(timeout=max(0.1, min(queda, SIN_NOTICIAS_S)))
+                l = self.lineas.get(timeout=max(0.1, espera))
             except queue.Empty:
-                self.p.kill()
-                if queda > SIN_NOTICIAS_S:
+                ahora = time.monotonic()
+                if ahora < fin and ahora - oido < SIN_NOTICIAS_S:
+                    continue           # sólo tocaba preguntar a `parar`
+                self._matar()
+                if corte is not None and corte.pedido is not None:
+                    raise cortado() from None
+                if ahora < fin:
                     # Colgado: se repite por el camino de siempre (devuelve None).
                     self._volcar(f"{SIN_NOTICIAS_S} s sin decir nada: se mata y el turno se repite", recientes)
                     return None
                 self._volcar(f"llegó al tope de {int(tope)} s", recientes)
                 raise MotorCaido(f"el modelo no contestó en {int(tope)} s") from None
             if l is None:
+                if corte is not None and corte.pedido is not None:
+                    raise cortado()
                 return None
-            recientes.append((time.monotonic() - t0, l))
+            oido = time.monotonic()
+            recientes.append((oido - t0, l))
             try:
                 d = json.loads(l)
             except ValueError:
@@ -727,6 +800,20 @@ class _Abierto:
                 actividad.linea(d)
             if trozos is not None:
                 trozos.linea(d)
+            if corte is not None:
+                corte.linea(d)
+            if d.get("type") == "result" and corte is not None and corte.pedido is not None:
+                # El motivo medido o, si otra versión lo llama de otra forma,
+                # el `subtype` de un turno interrumpido: con la petición hecha,
+                # nunca debe acabar en «No pude contestar».
+                if d.get("is_error") and (d.get("terminal_reason") in CORTADO_POR_INTERRUMPIR
+                                          or d.get("subtype") == "error_during_execution"):
+                    self.usado = time.monotonic()
+                    raise cortado()
+                # Acabó solo antes de que el CLI atendiera la petición: gana
+                # lo terminado. Se espera a su respuesta, para que nada de esta
+                # petición quede por leer al empezar el turno siguiente.
+                self._esperar_respuesta(corte)
             if d.get("type") == "result":
                 self.usado = time.monotonic()
                 if d.get("is_error"):
@@ -763,6 +850,41 @@ class _Abierto:
             print(f"  +{t:6.1f}s {clase} {memoria.ocultar_secretos(l.strip())[:240]}", file=sys.stderr)
         sys.stderr.flush()
 
+    def _interrumpir(self, ident: str) -> bool:
+        """Le pide al CLI que corte el turno en curso (C-0506): el
+        `control_request` «interrupt» del stream-json. False si no se pudo escribir."""
+        try:
+            self.p.stdin.write(json.dumps({"type": "control_request", "request_id": ident,
+                                           "request": {"subtype": "interrupt"}}) + "\n")
+            self.p.stdin.flush()
+        except OSError:
+            return False
+        return True
+
+    def _esperar_respuesta(self, corte: _Corte) -> None:
+        """Lo que queda de una petición de parar que llegó tarde: su
+        `control_response`, si aún no salió, con un tope corto."""
+        fin = time.monotonic() + 2.0
+        while not corte.respondido and time.monotonic() < fin:
+            try:
+                l = self.lineas.get(timeout=max(0.05, fin - time.monotonic()))
+            except queue.Empty:
+                return
+            if l is None:
+                self.lineas.put(None)      # que el turno siguiente vea que murió
+                return
+            try:
+                corte.linea(json.loads(l))
+            except ValueError:
+                pass
+
+    def _matar(self) -> None:
+        _matar_grupo(self.p)
+        try:
+            self.p.wait(timeout=5)     # que `vivo()` lo vea muerto enseguida
+        except subprocess.TimeoutExpired:
+            pass
+
     def cerrar(self) -> None:
         try:
             self.p.stdin.close()
@@ -771,9 +893,58 @@ class _Abierto:
         try:
             self.p.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            self.p.kill()
+            self._matar()
             self.p.wait()
         self._err.close()
+
+
+class _Corte:
+    """Cuándo pedir que pare un turno del proceso abierto (C-0506).
+
+    Lleva las herramientas en vuelo: las del mensaje entero del modelo
+    (`assistant` con `tool_use`, que es cuando el CLI la ejecuta) hasta su
+    `tool_result`. `mirar()` dice qué toca: nada, «pedir» (una vez) o «matar»
+    (pedido y sin cerrar el turno en `ESPERA_INTERRUMPIR_S`). Una lectura de
+    `parar` que falla no corta: cancelar es una petición, no una garantía."""
+
+    def __init__(self, parar: Callable[[], bool]):
+        self.parar = parar
+        self.id = f"parar-{uuid.uuid4().hex[:12]}"
+        self.en_vuelo: set = set()
+        self.quiere: float | None = None     # cuándo dijo `parar` que sí
+        self.pedido: float | None = None     # cuándo se mandó el «interrupt»
+        self.respondido = False
+        self.que = ""
+        self._mirado = float("-inf")
+
+    def linea(self, d: dict) -> None:
+        tipo = d.get("type")
+        contenido = (d.get("message") or {}).get("content")
+        if tipo == "assistant" and isinstance(contenido, list):
+            self.en_vuelo |= {b.get("id") for b in contenido if isinstance(b, dict) and b.get("type") == "tool_use"}
+        elif tipo == "user" and isinstance(contenido, list):
+            self.en_vuelo -= {b.get("tool_use_id") for b in contenido
+                              if isinstance(b, dict) and b.get("type") == "tool_result"}
+        elif tipo == "control_response" and (d.get("response") or {}).get("request_id") == self.id:
+            self.respondido = True
+
+    def mirar(self) -> str:
+        ahora = time.monotonic()
+        if self.pedido is not None:
+            if ahora - self.pedido >= ESPERA_INTERRUMPIR_S:
+                self.que = "matar"
+            return ""
+        if self.quiere is None and ahora - self._mirado >= CADA_PARAR_S:
+            self._mirado = ahora
+            try:
+                if self.parar():
+                    self.quiere = ahora
+            except Exception:  # noqa: BLE001 — una lectura que falla no corta el turno
+                pass
+        if self.quiere is not None and (not self.en_vuelo or ahora - self.quiere >= ESPERA_HERRAMIENTA_S):
+            self.pedido = ahora
+            return "pedir"
+        return ""
 
 
 class Suscripcion(Motor):
@@ -839,10 +1010,13 @@ class Suscripcion(Motor):
             # proceso: una imagen que no se puede mandar no lo tumba.
             contenido = _bloques(imagenes, prompt) if imagenes else prompt
             t0 = time.monotonic()
-            r = self._en_abierto(contenido, entorno, kw, al_trozo, al_evento, tope_s)
+            r = self._en_abierto(contenido, entorno, kw, al_trozo, al_evento, tope_s, parar)
             if r is not None:
                 return r
             perdidos = time.monotonic() - t0
+            # Pedido parar mientras moría (C-0506): no se repite lo que él paró.
+            if parar is not None and _pide(parar):
+                raise Cancelada("se detuvo a petición del dueño")
             # Murió, calló o dio error de la API a mitad: la sesión ya existe y
             # se retoma. Si era su primer turno puede que no llegara a
             # guardarse, y entonces se crea.
@@ -859,12 +1033,14 @@ class Suscripcion(Motor):
             # suelta ya sabe darlo (C-0274), y sin él llegaba entero de golpe.
             try:
                 r = self.llamar(retomar, **{**kw, "nueva": False}, abierta=False, imagenes=imagenes,
-                                al_evento=al_evento, al_trozo=al_trozo, tope_s=tope_s)
+                                al_evento=al_evento, al_trozo=al_trozo, tope_s=tope_s, parar=parar)
+            except Cancelada:
+                raise
             except MotorCaido:
                 if not kw["nueva"]:
                     raise
                 r = self.llamar(prompt, **kw, abierta=False, imagenes=imagenes, al_evento=al_evento,
-                                al_trozo=al_trozo, tope_s=tope_s)
+                                al_trozo=al_trozo, tope_s=tope_s, parar=parar)
             r.perdidos += perdidos
             return r
         if sesion:
@@ -959,7 +1135,8 @@ class Suscripcion(Motor):
                 return _respuesta(d, sesion, time.monotonic() - t0, kw["modelo"])
         raise MotorCaido(f"`claude -p` salió con {r.returncode}: {(r.stderr or r.stdout)[-400:]}")
 
-    def _en_abierto(self, prompt, entorno, kw, al_trozo=None, al_evento=None, tope_s=None) -> Respuesta | None:
+    def _en_abierto(self, prompt, entorno, kw, al_trozo=None, al_evento=None, tope_s=None,
+                    parar=None) -> Respuesta | None:
         sesion = kw["sesion"]
         # Con otras nativas u otro tope es otro proceso: la línea no es la misma (385).
         clave = (kw["modelo"], kw["esfuerzo"], kw["herramientas"], kw["nativas"], kw["tope_usd"],
@@ -980,7 +1157,13 @@ class Suscripcion(Motor):
                     raise MotorNoDisponible(f"no se pudo arrancar claude: {exc}", "no_arranca") from exc
         t0 = time.monotonic()
         try:
-            d = a.turno(prompt, TOPE_SEGUNDOS if tope_s is None else tope_s, al_trozo, al_evento)
+            d = a.turno(prompt, TOPE_SEGUNDOS if tope_s is None else tope_s, al_trozo, al_evento, parar)
+        except Cancelada:
+            # Parado por el «interrupt», el proceso sigue vivo y es del hilo
+            # entero (328); si hubo que matarlo, se suelta (C-0506).
+            if not a.vivo():
+                self.soltar(sesion)
+            raise
         except MotorCaido:
             self.soltar(sesion)
             raise
@@ -1049,8 +1232,10 @@ def llamar(prompt: str, *, modelo: str, sistema: str | None = None, sesion: str 
     `parar`: se le pregunta cada `CADA_PARAR_S`, desde otro hilo, si cortar;
     si dice que sí, se mata el proceso y lanza `Cancelada` (C-0241). Es
     opcional como `al_evento` —un motor que no sabe de él lo ignora—, porque
-    no es una garantía: quien pidió parar comprueba que paró. No vale con
-    `abierta`: el proceso de la conversación es de todos sus turnos.
+    no es una garantía: quien pidió parar comprueba que paró. Con `abierta`
+    también (C-0506): ahí no se mata el proceso, que es de todos los turnos
+    del hilo (328), sino que se le pide al CLI que corte el turno, entre
+    herramientas (`_Abierto.turno`); sólo si no lo cierra se mata su grupo.
     `tope_s`: cuánto puede tardar, si no `TOPE_SEGUNDOS` (SEC-23). Es de cada
     trabajo: lo que va aparte del turno —una investigación— puede tardar más
     que una respuesta en el chat sin que nadie espere delante. Opcional como
@@ -1060,8 +1245,6 @@ def llamar(prompt: str, *, modelo: str, sistema: str | None = None, sesion: str 
     if nativas and herramientas:
         raise ValueError("con `nativas` no van las herramientas del secretario: lo leído en la web no puede "
                          "accionar nada (385); pasa herramientas=False")
-    if parar is not None and abierta:
-        raise ValueError("`parar` no va con `abierta`: matar el proceso abierto cortaría el hilo entero")
     t0 = time.monotonic()
     m = actual()
     # Un motor que no conoce `al_trozo` no lo recibe: contesta entero y nadie

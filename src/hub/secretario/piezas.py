@@ -116,6 +116,8 @@ ROTULOS_PARAMETROS = {
     "ventana": "ventana",
     # Los de las acciones que entran por una puerta del hub (C-0422).
     "activo": "activo", "contenedor": "contenedor", "razon": "por qué", "tarea": "tarea",
+    # Los de los comandos preparados (C-0507).
+    "preparado": "comando preparado", "valores": "valores", "hueco": "hueco", "fijos": "otros huecos",
 }
 
 

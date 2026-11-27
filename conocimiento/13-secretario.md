@@ -87,6 +87,19 @@ dueno: Tu nombre
   diez días. Una foto de más de 3,5 MB se reduce con `ffmpeg`; sin él, no la
   ve y te lo dice. Hasta 10 por mensaje; un PDF, hasta 10 MB, y entre todo lo
   que ve, hasta 15 MB por mensaje (lo que no cabe le llega sólo como ruta).
+- **Detenerle mientras contesta**: mientras escribe o trabaja, el botón de
+  enviar pasa a ser **Detener** (un cuadrado), en su pantalla, en el panel, en
+  el modo monitor y en el teléfono; en el modo voz sale **Detener** junto a
+  «Pausar». Si tienes algo escrito o adjunto, el botón vuelve a ser Enviar: lo
+  que mandes espera su turno. Para **entre herramientas**: si en ese momento
+  está usando una (buscar, apuntar una nota…), la deja acabar —medio minuto
+  como mucho— y luego para. Su respuesta queda con lo que llevaba escrito,
+  «Detenido.», lo que **ya había hecho** (eso no se deshace) y lo que **pidió
+  permiso** y sigue en Pendientes: detener no lo retira, recházalo allí si ya
+  no lo quieres. Si lo pulsas cuando aún no lo había empezado, no lo contesta;
+  si ya había terminado, te dice «ya había terminado» y la respuesta queda
+  entera. En el mensaje siguiente sabe que lo paraste: no retoma lo de antes.
+  En el modo voz se calla al momento, dice «Detenido.» y vuelve a escucharte.
 - **Respondiendo a un mensaje**: doble clic en el hueco **al lado** de un globo
   (encima, el doble clic selecciona una palabra), o su **↩**, que sale al pasar
   por él y en el teléfono se ve siempre, dentro del globo. Encima del cuadro sale «Respondiendo

@@ -124,6 +124,11 @@ def estado(espera: float = ESPERA_S) -> dict[str, Any]:
     return salida
 
 
+def en_catalogo() -> bool:
+    """Si el catálogo de kits sabe de dónde traer el del estudio (C-0503)."""
+    return KIT in kits.catalogo()
+
+
 def kit() -> Path | None:
     """Dónde está instalado el kit del estudio, la versión más alta; None si
     no está. Lo mismo que da `bash scripts/kit.sh ruta estudio`."""

@@ -115,12 +115,14 @@ def test_desde_fuera_con_aparato_y_el_interruptor_abierto_la_terminal_se_abre(de
 def test_un_nombre_que_no_esta_en_la_lista_se_rechaza_diciendo_que_hacer(acceso_yml):
     """§8.7. `TrustedHostMiddleware` contestaba «Invalid host header» y ya: es
     literalmente lo primero que se ve al abrir el hub desde el móvil, y no dice
-    que falte un nombre en un archivo."""
+    que falte un nombre en un archivo. Tampoco manda a editarlo ni a reiniciar
+    nada: lo guarda un botón de Acceso y vale en el acto (C-0504)."""
     otro = TestClient(web.app, base_url="https://otra-maquina.ts.net")
     r = otro.get("/")
     assert r.status_code == 400
     assert "otra-maquina.ts.net" in r.text
-    assert str(acceso.archivo()) in r.text
+    assert "Usar este nombre" in r.text
+    assert "reinicia" not in r.text
 
 
 def test_revocar_deja_fuera_al_aparato_en_la_peticion_siguiente(de_fuera):
@@ -202,7 +204,7 @@ def test_el_interruptor_de_la_terminal_no_se_persiste(de_fuera):
         assert "terminal" not in acceso.archivo().read_text(encoding="utf-8")
 
 
-def test_la_pantalla_pinta_el_qr_del_alta_recien_creada(de_casa):
+def test_la_pantalla_pinta_el_qr_del_alta_recien_creada(acceso_yml, de_casa):
     """🔴 Pedir `/acceso` a secas daba 200 y no probaba nada: sin código no hay
     QR, así que la rama que lo dibuja no se ejecutaba. Con `currentColor` —que
     segno rechaza— la pantalla daba un 500 y la suite seguía en verde."""
@@ -479,14 +481,6 @@ def test_el_qr_generado_desde_casa_apunta_a_la_red_privada_y_no_a_localhost(acce
     assert "127.0.0.1" not in r.text.split("Dar de alta")[-1].split("Aparatos")[0]
 
 
-def test_sin_nombre_de_red_privada_el_qr_se_arma_con_el_de_la_peticion(de_casa):
-    """Sin `acceso.yml` no hay a dónde apuntar, y un QR a `127.0.0.1` al menos
-    enseña el formato. Lo que no puede es inventarse un nombre."""
-    codigo = acceso.alta_pendiente("Móvil")
-    r = de_casa.get(f"/acceso?codigo={codigo}")
-    assert f"/acceso/alta/{codigo}" in r.text
-
-
 def test_desde_un_aparato_ya_dado_de_alta_el_qr_usa_https_aunque_uvicorn_vea_http(
     acceso_yml, de_fuera
 ):
@@ -620,3 +614,229 @@ def test_con_el_secretario_como_voz_acceso_no_habla_del_asistente(de_casa):
 
     assert "asistente" not in visible.lower()
     assert "lienzos, Atenea—" in " ".join(visible.split())
+
+
+# ── Un acceso.yml mal escrito y el QR sin nombre de fuera (C-0504) ───────────
+#
+# Lo reportó quien usa el hub en otra máquina: «Generar el QR» daba un 500, y
+# antes un QR a `127.0.0.1` que el móvil no abre. Con `raise_server_exceptions`
+# apagado, como lo ve el navegador: un 500 es un 500, no una excepción del test.
+
+CASA = "http://127.0.0.1:8787"
+
+MAL_ESCRITOS = [
+    f"hosts: {FUERA}\n",                 # en texto suelto, no en lista
+    "hosts:\n  - '*.ts.net'\n",          # un comodín
+    f"- {FUERA}\n",                      # la raíz es una lista
+    "hosts: [esto no cierra\n",          # no es YAML
+    "hosts: 5\n",                       # ni texto ni lista: era un TypeError
+    "dispositivos: 5\n",                # lo mismo en la lista de aparatos
+]
+
+
+@pytest.fixture
+def de_casa_como_navegador():
+    return TestClient(web.app, raise_server_exceptions=False)
+
+
+@pytest.mark.parametrize("contenido", MAL_ESCRITOS)
+def test_un_acceso_mal_escrito_no_da_un_500_al_generar_el_qr(acceso_yml, de_casa_como_navegador,
+                                                            contenido):
+    acceso_yml.write_text(contenido, encoding="utf-8")
+    r = de_casa_como_navegador.post("/acceso/alta", data={"nombre": "Móvil"},
+                                    headers={"origin": CASA})
+    assert r.status_code != 500, r.text
+    r = de_casa_como_navegador.get("/acceso")
+    assert r.status_code == 200, r.text
+    assert "no se puede obedecer" in r.text
+
+
+@pytest.mark.parametrize("contenido", MAL_ESCRITOS)
+def test_un_acceso_mal_escrito_no_tumba_los_demas_post_desde_casa(acceso_yml, de_casa_como_navegador,
+                                                                 contenido):
+    acceso_yml.write_text(contenido, encoding="utf-8")
+    r = de_casa_como_navegador.post("/acceso/terminal", data={"abrir": "0"},
+                                    headers={"origin": CASA}, follow_redirects=False)
+    assert r.status_code == 303, r.text
+
+
+def _tailscale(monkeypatch, **red):
+    """Lo que diría Tailscale al pintar /acceso, sin preguntarle al de verdad."""
+    from hub import maquina
+    medida = {"hay": True, "conectado": True, "nombre": "", "lleva_al_hub": False,
+              "puerto": None, "error": "", **red}
+    monkeypatch.setattr(maquina, "red_privada", lambda tope=3: dict(medida))
+
+
+def test_sin_nombre_de_red_privada_desde_casa_no_se_pinta_ningun_qr(de_casa, monkeypatch):
+    """Un QR a `127.0.0.1` es válido y no lo abre ningún móvil: se escanea, no
+    carga y no hay nada que mirar. Sin nombre de fuera no hay QR: se dice qué
+    falta. (El test de antes daba por bueno el QR a 127.0.0.1.)"""
+    _tailscale(monkeypatch)
+    codigo = acceso.alta_pendiente("Móvil")
+    r = de_casa.get(f"/acceso?codigo={codigo}")
+    assert r.status_code == 200
+    assert 'class="qr"' not in r.text
+    assert f"/acceso/alta/{codigo}" not in r.text
+    assert "faltan dos cosas" in r.text and "Preparar con Claude" in r.text
+
+
+def test_sin_nombre_no_se_crea_un_codigo_que_ningun_qr_podria_llevar(de_casa):
+    r = de_casa.post("/acceso/alta", data={"nombre": "Móvil"}, headers={"origin": CASA},
+                     follow_redirects=False)
+    assert r.status_code == 303
+    assert "codigo=" not in r.headers["location"]
+    assert acceso.pendientes() == []
+
+
+def test_con_el_nombre_detectado_se_guarda_con_un_boton_y_sale_el_qr(de_casa, monkeypatch):
+    """Ningún paso pide escribir un comando ni editar un archivo: el nombre lo
+    da Tailscale y lo guarda «Usar este nombre» (requisito del dueño, 27-nov)."""
+    _tailscale(monkeypatch, nombre=FUERA, lleva_al_hub=True, puerto=443)
+    pagina = de_casa.get("/acceso").text
+    assert "Usar este nombre" in pagina and FUERA in pagina
+    assert "hosts:\n" not in pagina   # nada de «escribe esto en el archivo»
+    r = de_casa.post("/acceso/nombre", data={"nombre": FUERA}, headers={"origin": CASA},
+                     follow_redirects=False)
+    assert r.status_code == 303
+    assert FUERA in acceso.hosts()
+    r = de_casa.post("/acceso/alta", data={"nombre": "Móvil"}, headers={"origin": CASA})
+    assert 'class="qr"' in r.text
+    assert f"https://{FUERA}/acceso/alta/" in r.text
+
+
+def test_si_serve_publica_el_hub_en_otro_puerto_el_qr_lo_lleva(acceso_yml, de_casa, monkeypatch):
+    _tailscale(monkeypatch, nombre=FUERA, lleva_al_hub=True, puerto=8443)
+    codigo = acceso.alta_pendiente("Móvil")
+    assert f"https://{FUERA}:8443/acceso/alta/{codigo}" in de_casa.get(f"/acceso?codigo={codigo}").text
+
+
+def test_poner_nombre_conserva_los_aparatos_y_pasa_un_texto_suelto_a_lista(acceso_yml):
+    acceso_yml.write_text(yaml.safe_dump({"hosts": "vieja.ts.net", "dispositivos": [
+        {"id": "a1", "nombre": "Móvil", "hash": "h"}]}), encoding="utf-8")
+    assert acceso.poner_nombre(f" {FUERA.upper()}. ") == FUERA
+    datos = yaml.safe_load(acceso_yml.read_text(encoding="utf-8"))
+    assert datos["hosts"] == ["vieja.ts.net", FUERA]
+    assert datos["dispositivos"][0]["id"] == "a1"
+
+
+@pytest.mark.parametrize("nombre", ["*.ts.net", "https://maquina.ts.net", "maquina.ts.net:8787",
+                                    "100.101.102.103", "localhost", "", "dos palabras"])
+def test_poner_nombre_no_admite_lo_que_no_es_un_nombre_exacto(acceso_yml, nombre):
+    with pytest.raises(acceso.AccesoInvalido):
+        acceso.poner_nombre(nombre)
+    assert yaml.safe_load(acceso_yml.read_text(encoding="utf-8")) == {"hosts": [FUERA]}
+
+
+def test_desde_fuera_no_se_ponen_nombres_ni_se_arregla_ni_se_abre_la_ventana(de_fuera):
+    """Añadir un nombre agranda la puerta: eso se hace delante de la máquina,
+    aunque el aparato de fuera esté dado de alta."""
+    de_fuera.cookies.set(acceso.COOKIE, _dar_de_alta(de_fuera, "Móvil"))
+    origen = {"origin": f"https://{FUERA}"}
+    for ruta, datos in (("/acceso/nombre", {"nombre": "otra.ts.net"}),
+                        ("/acceso/arreglar", {"huella": "x"}), ("/acceso/preparar", {})):
+        r = de_fuera.post(ruta, data=datos, headers=origen, follow_redirects=False)
+        assert r.status_code == 403, ruta
+    assert "otra.ts.net" not in acceso.hosts()
+
+
+@pytest.mark.parametrize("contenido, quedan, pierde", [
+    (f"hosts: {FUERA}\n", [FUERA], False),
+    (f"hosts:\n  - '*.ts.net'\n  - {FUERA}\n", [FUERA], False),
+    (f"- {FUERA}\n", [FUERA], False),
+    (f"hosts:\n  - https://{FUERA}:443/\n  - 127.0.0.1\n", [FUERA], False),
+    ("hosts: [esto no cierra\n", [], True),
+    ("hosts: 5\n", [], False),
+    (f"hosts:\n  {FUERA}: 1\n", [FUERA], False),   # un mapa conserva sus nombres
+    (f"hosts: [{FUERA}]\ndispositivos: 5\n", [FUERA], True),
+])
+def test_un_acceso_mal_escrito_se_arregla_con_un_boton_y_guarda_el_anterior(
+        acceso_yml, de_casa, contenido, quedan, pierde):
+    acceso_yml.write_text(contenido, encoding="utf-8")
+    estado = acceso.revisar()
+    assert estado["arreglo"] and estado["arreglo"]["hosts"] == quedan
+    assert estado["arreglo"]["pierde_aparatos"] is pierde
+    pagina = de_casa.get("/acceso").text
+    assert "Arreglarlo" in pagina
+    r = de_casa.post("/acceso/arreglar", data={"huella": estado["huella"]},
+                     headers={"origin": CASA}, follow_redirects=False)
+    assert r.status_code == 303
+    assert acceso.hosts() == (*acceso.HOSTS_LOCALES, *quedan)
+    assert acceso.revisar()["arreglo"] is None
+    copias = list(acceso_yml.parent.glob("acceso.yml.roto-*"))
+    assert len(copias) == 1 and copias[0].read_text(encoding="utf-8") == contenido
+    assert copias[0].stat().st_mode & 0o077 == 0
+
+
+def test_arreglar_no_pisa_un_archivo_que_cambio_desde_que_se_enseno(acceso_yml):
+    acceso_yml.write_text(f"hosts: {FUERA}\n", encoding="utf-8")
+    huella = acceso.revisar()["huella"]
+    acceso_yml.write_text("hosts: otra.ts.net\n", encoding="utf-8")
+    with pytest.raises(acceso.AccesoInvalido, match="cambió"):
+        acceso.arreglar(huella)
+    assert acceso_yml.read_text(encoding="utf-8") == "hosts: otra.ts.net\n"
+
+
+def test_los_aparatos_se_conservan_al_arreglar_los_nombres(acceso_yml, de_fuera):
+    testigo = _dar_de_alta(de_fuera, "Móvil")
+    datos = yaml.safe_load(acceso_yml.read_text(encoding="utf-8"))
+    datos["hosts"] = FUERA
+    acceso_yml.write_text(yaml.safe_dump(datos), encoding="utf-8")
+    acceso.arreglar(acceso.revisar()["huella"])
+    assert acceso.reconocer(testigo)
+
+
+@pytest.mark.parametrize("entrada", ["100.101.102.103", f"https://{FUERA}", f"{FUERA}:8443"])
+def test_una_ip_un_esquema_o_un_puerto_se_senalan_y_nunca_van_al_qr(acceso_yml, de_casa, entrada):
+    """Una IP no lleva el certificado de https y lo demás nunca casa con un
+    `Host`. Se señalan sin lanzar: lanzar apagaría también los nombres buenos
+    y dejaría fuera a quien está de viaje. `_enlace_de_alta` armaba con un
+    esquema dentro `https://https://…`."""
+    acceso_yml.write_text(yaml.safe_dump({"hosts": [entrada]}), encoding="utf-8")
+    estado = acceso.revisar()
+    assert estado["error"] is None
+    assert [a["nombre"] for a in estado["avisos"]] == [entrada]
+    assert estado["utilizables"] == []
+    assert acceso.destino_de_alta("127.0.0.1:8787", de_casa=True) is None
+    pagina = de_casa.get("/acceso").text
+    assert "https://https://" not in pagina
+    assert entrada in pagina
+
+
+def test_con_un_nombre_bueno_y_otro_malo_el_bueno_sigue_valiendo(acceso_yml):
+    acceso_yml.write_text(yaml.safe_dump({"hosts": ["100.101.102.103", FUERA]}), encoding="utf-8")
+    assert acceso.destino_de_alta("127.0.0.1:8787", de_casa=True) == FUERA
+    assert FUERA in acceso.hosts()
+
+
+def test_preparar_con_claude_deja_el_encargo_escrito_sin_enter(de_casa, monkeypatch):
+    """El hub no ejecuta `tailscale serve`: abre la ventana con el encargo y
+    la persona da Enter (tercer caso de la regla dura 15)."""
+    from hub import slots, tmux
+    abiertas = []
+    monkeypatch.setattr(slots, "abrir_en", lambda ruta, nombre, sesion, texto="": abiertas.append(
+        (ruta, nombre, sesion, texto)) or "%9")
+    monkeypatch.setattr(tmux, "listar_paneles", lambda *a, **k: [{"pane_id": "%9", "window_idx": 4}])
+    r = de_casa.post("/acceso/preparar", headers={"origin": CASA}, follow_redirects=False)
+    assert r.status_code == 303 and "ventana=4" in r.headers["location"]
+    (ruta, nombre, sesion, texto), = abiertas
+    assert nombre == "preparar-acceso" and sesion == "hub"
+    assert "tailscale serve --bg http://127.0.0.1:" in texto
+    assert "hub.acceso nombre" in texto
+    assert "Nunca tailscale funnel" in texto and "nunca escuchar en 0.0.0.0" in texto
+
+
+def test_el_cli_guarda_el_nombre_y_arregla_por_la_misma_puerta(acceso_yml, capsys):
+    acceso_yml.write_text(f"hosts: {FUERA}\n", encoding="utf-8")
+    assert acceso._cli(["arreglar"]) == 0
+    assert acceso.hosts() == (*acceso.HOSTS_LOCALES, FUERA)
+    assert acceso._cli(["nombre", "otra.tu-red.ts.net"]) == 0
+    assert "otra.tu-red.ts.net" in acceso.hosts()
+    assert acceso._cli(["nombre", "*.ts.net"]) == 1
+
+
+def test_poner_nombre_no_dice_listo_sobre_un_archivo_con_comodin(acceso_yml):
+    acceso_yml.write_text("hosts:\n  - '*.ts.net'\n", encoding="utf-8")
+    with pytest.raises(acceso.AccesoInvalido, match="arréglalo antes"):
+        acceso.poner_nombre(FUERA)
+    assert acceso_yml.read_text(encoding="utf-8") == "hosts:\n  - '*.ts.net'\n"

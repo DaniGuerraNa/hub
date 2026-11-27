@@ -150,16 +150,20 @@ def origen_permitido(origen: str | None, host: str | None = None) -> bool:
     # no hay puerto que comparar (sólo existe bajo pytest).
     if host and acceso.nombre_de_host(host) in _hosts_de_prueba():
         host = None
-    return acceso.origen_permitido(origen, host)
+    try:
+        return acceso.origen_permitido(origen, host)
+    except acceso.AccesoInvalido:
+        # 🔴 Esto corre dentro de la puerta, donde no llega ningún manejador de
+        # excepciones: con un `acceso.yml` mal escrito cada POST daba un 500,
+        # «Generar el QR» incluido (C-0504). Como `_hosts_validos`: roto el
+        # archivo, sólo valen los nombres de casa, y /acceso dice qué pasa.
+        return acceso.origen_permitido(origen, host, nombres=acceso.HOSTS_LOCALES)
 
 
 def _hosts_validos() -> tuple[str, ...]:
-    try:
-        return (*acceso.hosts(), *_hosts_de_prueba())
-    except acceso.AccesoInvalido:
-        # Un `acceso.yml` roto no puede dejar al hub inalcanzable: se sigue
-        # entrando por casa, y el manejador de `AccesoInvalido` explica qué pasa.
-        return (*acceso.HOSTS_LOCALES, *_hosts_de_prueba())
+    # Un `acceso.yml` roto no puede dejar al hub inalcanzable: se sigue
+    # entrando por casa, y /acceso dice qué pasa y lo arregla (C-0504).
+    return (*acceso.hosts(tolerante=True), *_hosts_de_prueba())
 
 
 # ── Registro de lo que importa (C-0245) ───────────────────────────────────────
@@ -273,12 +277,14 @@ async def _la_puerta(request: Request, siguiente):
         # primero que se ve al abrir el hub desde el móvil por la red privada, y
         # no da ninguna pista de que falta un nombre en un archivo.
         nombre = acceso.nombre_de_host(host)
+        # Sin reiniciar nada: `hosts()` se lee en cada petición. Y sin mandar a
+        # editar un archivo: lo guarda el botón de Acceso (C-0504).
         return PlainTextResponse(
             f"El hub no acepta el nombre «{nombre}».\n\n"
-            f"Añádelo a la lista `hosts` de {acceso.archivo()} y reinicia el "
-            "servicio. Tiene que ser el nombre exacto: aquí no se admiten "
-            "comodines, porque sin validar el `Host` los nombres de sesión se "
-            "pueden enumerar desde una página cualquiera.\n",
+            "En la PC del hub, abre la pantalla Acceso y pulsa «Usar este nombre». "
+            "Tiene que ser el nombre exacto: aquí no se admiten comodines, porque "
+            "sin validar el `Host` los nombres de sesión se pueden enumerar desde "
+            "una página cualquiera.\n",
             status_code=400,
         )
 
@@ -387,7 +393,9 @@ def _puerta_de_dispositivo(request: Request):
     # preguntar — mandar a un comando inventado deja sin salida justo ahí.
     return PlainTextResponse(
         "Este dispositivo no está dado de alta en el hub.\n\n"
-        "En la máquina del hub, en una terminal (si no tiene pantalla, por SSH):\n\n"
+        "En la PC del hub, abre la pantalla Acceso, pulsa «Generar el QR» y "
+        "escanéalo con este aparato.\n\n"
+        "Si esa máquina no tiene pantalla, en una terminal (o por SSH):\n\n"
         f"    cd {config.RAIZ_REPO}\n"
         "    uv run python -m hub.acceso alta \"Nombre del aparato\"\n\n"
         "Escanea el QR que imprime, o abre en este aparato el enlace que sale debajo. "
@@ -668,6 +676,18 @@ def _registro_invalido(request: Request, exc: Exception):
     return HTMLResponse(cuerpo, status_code=422)
 
 
+@app.exception_handler(acceso.AccesoInvalido)
+def _acceso_invalido(request: Request, exc: Exception):
+    """`acceso.yml` mal escrito en una acción que lo reescribe (dar de alta,
+    quitar un aparato): de vuelta a Acceso, que dice qué está mal y ofrece
+    arreglarlo (C-0504). No un 500: la persona no ha roto el hub, ha escrito
+    mal un archivo. A `/api/…`, JSON, como `_registro_invalido`."""
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=422)
+    return _volver("/acceso", "No se hizo: el archivo de acceso está mal escrito. "
+                              "Abajo dice qué le pasa y cómo arreglarlo.")
+
+
 class _CuerpoNoEsObjeto(Exception):
     """El cuerpo de una ruta JSON no es un objeto. No hereda de `ValueError`:
     los `except ValueError` de las rutas lo convertirían en otro mensaje."""
@@ -811,7 +831,7 @@ def proyecto(request: Request, proyecto_id: str, archivados: int = 0):
 
 # ── La puerta, por dentro ────────────────────────────────────────────────────
 
-def _enlace_de_alta(request: Request, codigo: str) -> str:
+def _enlace_de_alta(request: Request, codigo: str, puerto: int | None = None) -> str | None:
     """A dónde tiene que llevar el QR: al nombre por el que ese aparato va a
     entrar, que casi nunca es el nombre por el que se está mirando la pantalla.
 
@@ -820,16 +840,18 @@ def _enlace_de_alta(request: Request, codigo: str) -> str:
     entonces un QR a `127.0.0.1`: perfectamente válido, ilegible en la práctica, y
     sin ningún error — el móvil escanea, no carga, y no hay nada que mirar. Se usa
     el primer nombre de la red privada, igual que hace el CLI del alta
-    (decisión 185); sólo si no hay ninguno se cae al nombre de la petición, que
-    para dar de alta un segundo aparato desde otro que ya entró es el correcto.
+    (decisión 185, `acceso.destino_de_alta`). Desde casa y sin ninguno, None:
+    no se pinta QR (C-0504). Antes se caía al nombre de la petición y salía
+    justo el QR a `127.0.0.1` que no abre ningún móvil. Desde un aparato que
+    ya entró, el nombre por el que entró, que para dar de alta otro es el
+    correcto.
     """
     anfitrion = request.headers.get("host") or ""
-    if _es_de_casa(anfitrion, _ip(request)):
-        remotos = [h for h in _hosts_validos() if h not in acceso.HOSTS_LOCALES
-                   and h not in _hosts_de_prueba()]
-        if remotos:
-            return f"https://{remotos[0]}/acceso/alta/{codigo}"
-    return f"{_esquema(request)}://{anfitrion}/acceso/alta/{codigo}"
+    de_casa = _es_de_casa(anfitrion, _ip(request))
+    destino = acceso.destino_de_alta(anfitrion, de_casa, puerto)
+    if not destino:
+        return None
+    return f"{'https' if de_casa else _esquema(request)}://{destino}/acceso/alta/{codigo}"
 
 
 @app.get("/acceso")
@@ -840,14 +862,14 @@ def vista_acceso(request: Request, codigo: str | None = None):
     sesión para que recargar la página siga enseñando el mismo QR en vez de
     generar otro y dejar el primero colgando.
     """
-    datos = api.acceso(codigo)
+    de_casa = _es_de_casa(request.headers.get("host"), _ip(request))
+    datos = api.acceso(codigo, de_casa=de_casa)
     enlace = qr = None
     if datos["pendiente"]:
-        enlace = _enlace_de_alta(request, codigo)
-        qr = acceso.qr_svg(enlace)
-
+        enlace = _enlace_de_alta(request, codigo, (datos["red"] or {}).get("puerto"))
+        qr = acceso.qr_svg(enlace) if enlace else None
     return _vista(request, "acceso.html", {
-        **datos, "qr": qr, "enlace": enlace,
+        **datos, "qr": qr, "enlace": enlace, "de_casa": de_casa,
         "titulo": "Acceso", "seccion": "acceso",
     })
 
@@ -873,9 +895,64 @@ def api_estado_terminal(request: Request):
 
 
 @app.post("/acceso/alta")
-def crear_alta(nombre: str = Form(...)):
+def crear_alta(request: Request, nombre: str = Form(...)):
+    # Sin a dónde apuntar no se crea un código que ningún QR podría llevar.
+    if _enlace_de_alta(request, "x") is None:
+        return _volver("/acceso", "Antes de generar el QR falta el nombre de esta máquina "
+                                  "en la red privada: abajo, «Usar este nombre».")
     return RedirectResponse(f"/acceso?codigo={quote(acceso.alta_pendiente(nombre))}",
                             status_code=303)
+
+
+def _solo_desde_casa(request: Request):
+    """🔴 Añadir un nombre agranda la puerta, y reescribir el archivo cambia
+    quién entra: eso se hace delante de la máquina, nunca desde un aparato de
+    fuera, aunque esté dado de alta (C-0504). El `Origin` ya lo miró la puerta."""
+    if _es_de_casa(request.headers.get("host"), _ip(request)):
+        return None
+    return PlainTextResponse("Esto sólo se hace desde la PC del hub, en la pantalla Acceso.\n",
+                             status_code=403)
+
+
+@app.post("/acceso/nombre")
+def acceso_poner_nombre(request: Request, nombre: str = Form("")):
+    """«Usar este nombre»: el de esta máquina en la red privada, a `hosts`."""
+    if (fuera := _solo_desde_casa(request)) is not None:
+        return fuera
+    try:
+        guardado = acceso.poner_nombre(nombre)
+    except acceso.AccesoInvalido as exc:
+        return _volver("/acceso", f"No se guardó: {exc}")
+    return _volver("/acceso", f"Guardado: se entra desde fuera por «{guardado}». "
+                              "Ya puedes generar el QR.", hecho=True)
+
+
+@app.post("/acceso/arreglar")
+def acceso_arreglar(request: Request, huella: str = Form("")):
+    """Reescribe bien un `acceso.yml` mal escrito, si sigue siendo el que se enseñó."""
+    if (fuera := _solo_desde_casa(request)) is not None:
+        return fuera
+    try:
+        copia = acceso.arreglar(huella)
+    except acceso.AccesoInvalido as exc:
+        return _volver("/acceso", f"No se arregló: {exc}")
+    return _volver("/acceso", f"Arreglado. El anterior quedó guardado como {copia.name}, "
+                              "al lado.", hecho=True)
+
+
+@app.post("/acceso/preparar")
+def acceso_preparar(request: Request):
+    """La ventana con Claude y el encargo de la red privada, sin Enter (C-0504)."""
+    if (fuera := _solo_desde_casa(request)) is not None:
+        return fuera
+    try:
+        hecho = acceso.preparar_red()
+    except (ValueError, RuntimeError, tmux.TmuxNoDisponible) as exc:
+        return _volver("/acceso", f"No se abrió la ventana: {exc}")
+    destino = f"/trabajo?session={quote(hecho['session'])}"
+    if hecho["ventana"] is not None:
+        destino += f"&ventana={hecho['ventana']}"
+    return _volver(destino)
 
 
 @app.get("/acceso/alta/{codigo}")
@@ -2241,7 +2318,8 @@ def api_voz_estado(gpu: int = 0, solo: str = ""):
     intérprete para ver qué hay descargado y, con `gpu=1`, `nvidia-smi`:
     bajo demanda, nunca en un sondeo. `solo=eleccion`, para el rótulo al
     cargar la página: sólo lee un archivo."""
-    return JSONResponse(api.voz_estado(gpu=bool(gpu), solo_eleccion=solo == "eleccion"))
+    return JSONResponse(api.voz_estado(gpu=bool(gpu), solo_eleccion=solo == "eleccion",
+                                       solo_descarga=solo == "descarga"))
 
 
 @app.post("/api/voz/modelo")
@@ -2256,6 +2334,19 @@ def api_voz_modelo(modelo: str = Form(...)):
     except (ValueError, RuntimeError, OSError) as exc:
         return JSONResponse({"ok": False, "error": str(exc)})
     return JSONResponse({"ok": True, **estado})
+
+
+@app.post("/api/voz/descargar")
+def api_voz_descargar(modelo: str = Form(...)):
+    """Bajar un modelo del dictado que no está (C-0505). Vuelve en el acto: la
+    descarga sigue en segundo plano y el menú pregunta cómo va. Una a la vez;
+    no elige nada. El `Origin` lo mira el middleware, como en todo POST."""
+    from . import transcribir
+
+    try:
+        return JSONResponse({"ok": True, "descarga": transcribir.descargar(modelo)})
+    except (ValueError, OSError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)})
 
 
 @app.post("/archivos/terminal")
@@ -2276,33 +2367,20 @@ async def archivos_terminal(request: Request):
     id_comando = str(formulario.get("comando") or "").strip()
     volver = f"/archivos?ruta={quote(ruta)}"
 
+    valores = {k.removeprefix("hueco_"): str(v) for k, v in formulario.items() if k.startswith("hueco_")}
     con = conexion()
     try:
-        try:
-            destino = navegador.resolver(ruta, api.confin(con))
-        except (navegador.FueraDeRaiz, navegador.NoNavegable) as exc:
-            return _volver(volver, str(exc))
-        if not destino.is_dir():
-            return _volver(volver, "sólo se puede abrir una terminal en una carpeta")
-
-        texto = ""
-        if id_comando:
-            valores = {k.removeprefix("hueco_"): str(v) for k, v in formulario.items()
-                       if k.startswith("hueco_")}
-            try:
-                texto = comandos.preparar(id_comando, valores, str(destino))
-            except comandos.ComandoInvalido as exc:
-                return _volver(volver, f"no se escribió nada: {exc}")
-
-        proyecto_id = registry.atribuidor(con).atribuir(str(destino))
-        session = slots.sesion_para(con, proyecto_id) if proyecto_id else "hub"
-        try:
-            slots.abrir_en(str(destino), destino.name or "archivos", session, texto)
-        except Exception as exc:  # noqa: BLE001 — se dice en voz alta (regla 21)
-            return _volver(volver, f"no se pudo abrir la ventana: {exc}")
+        # La misma puerta que usa el secretario (C-0507): resolver, preparar y abrir.
+        hecho = comandos.dejar_escrito(con, id_comando, valores, ruta)
+    except comandos.CarpetaInvalida as exc:
+        return _volver(volver, str(exc))
+    except comandos.ComandoInvalido as exc:
+        return _volver(volver, f"no se escribió nada: {exc}")
+    except comandos.VentanaNoAbierta as exc:
+        return _volver(volver, f"no se pudo abrir la ventana: {exc}")
     finally:
         con.close()
-    return _volver(f"/trabajo?session={quote(session)}")
+    return _volver(f"/trabajo?session={quote(hecho['session'])}")
 
 
 # ───────────────────────── canal de consulta ─────────────────────────
@@ -4496,6 +4574,24 @@ async def api_secretario_mensaje(request: Request):
                                  voz=datos.get("voz") is True, enfoque=str(datos.get("enfoque") or ""),
                                  adjuntos=datos.get("adjuntos") or [], responde_a=datos.get("responde_a"),
                                  dictado=datos.get("dictado") is True)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    finally:
+        con.close()
+    return JSONResponse({"ok": True, **r})
+
+
+@app.post("/api/secretario/detener")
+async def api_secretario_detener(request: Request):
+    """«Detener» del chat (C-0506): sólo deja la petición en la memoria, como
+    `mensaje`; quien para es `hub-secretario`. Que paró lo dice el sondeo de
+    siempre, no esta respuesta (regla 17). El `Origin` lo mira el middleware."""
+    from .secretario import conversacion, memoria
+
+    datos = await _objeto_json(request)
+    con = memoria.conectar()
+    try:
+        r = conversacion.detener(con, datos.get("turno"))
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     finally:

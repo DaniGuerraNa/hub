@@ -509,10 +509,8 @@ def _copia_secretario() -> dict | None:
 
 def _con_nombre_remoto() -> bool:
     """Si se entra desde otro aparato: sólo entonces importa volver sin nadie."""
-    try:
-        return any(h not in acceso.HOSTS_LOCALES for h in acceso.hosts())
-    except acceso.AccesoInvalido:
-        return False   # eso ya lo dice /acceso, con el archivo que falla
+    # Roto el archivo, valen sólo los de casa: eso ya lo dice /acceso.
+    return any(h not in acceso.HOSTS_LOCALES for h in acceso.hosts(tolerante=True))
 
 
 def _desatendido(medidas: dict[str, dict]) -> list[dict]:

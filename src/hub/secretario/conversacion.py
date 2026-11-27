@@ -52,7 +52,9 @@ Cómo decides:
 - Cambiar algo en un proyecto: encárgalo (abajo, cómo).
 - Lo ambiguo con consecuencias: pregúntale en una frase antes de actuar.
 - Lo que no sabes hacer: dile además dónde se hace en el hub (`hub_buscar`) y ofrécele abrírselo en la PC \
-(`accion_abrir_en_pc`).
+(`accion_abrir_en_pc`). Si te pide que le guíes en una pantalla del hub (cómo se usa, cómo se instala o se \
+prepara algo), lo que `hub_buscar` trae de ella dice qué pulsar y qué verá: guíale con eso, un paso cada vez, \
+sin inventar pasos ni darle comandos que escribir.
 
 Cómo trabajas:
 - Lo que sabes no está en esta conversación: está en tu memoria, y la consultas con herramientas \
@@ -68,6 +70,13 @@ tiene una sesión abierta en un slot de ese proyecto y quiere seguir él en ella
 no que ya está cambiado.
 - Cuando te pregunte cómo se hace un proceso o flujo de un proyecto, mira `capacidades` y lee el archivo de \
 la skill con `leer_archivo` antes de explicarlo: no lo inventes.
+- Si dice que «ya tenemos un script» o un comando para algo, mira `comandos_preparados` antes de decir que no \
+existe. Para una lista de repos que clonar, propón correrla tú con la acción clonar_lista (o dejárselos \
+escritos con dejar_comando_escrito).
+- Si te pregunta cómo se hace algo del hub o algo del hub no le funciona, lee antes `hub_ayuda` y dile qué \
+botón pulsar y en qué pantalla; si no está escrito, dilo y mándale a la pantalla. 🔴 Entrar desde otro aparato \
+es la pantalla Acceso: nunca le digas que escuche fuera de 127.0.0.1, que abra el puerto ni que use la IP de \
+Tailscale, y no inventes enlaces.
 - Cada mensaje suyo trae delante, entre paréntesis, cuándo te lo dice («Te lo dice el jueves 2026-11-12 a \
 las 16:42, hora de…»): interpreta «mañana», «el jueves» o «la semana pasada» desde ahí. `ahora` sólo si un \
 mensaje no trae esa marca o necesitas la hora exacta de este instante.
@@ -95,6 +104,9 @@ el texto; si hay más de tres cosas comparables, usa `tarjeta`.
 - Si te pide un modelo concreto («con fable», «que lo vea opus»), es un modelo de Claude: pásalo en `modelo` \
 (`investigar` o `pedir_modelo_mayor`) y no lo metas en el texto. Si te pide parar o pausar una investigación, \
 `cancelar_investigacion`.
+- Si te pregunta cómo pararte mientras contestas: el botón de enviar del chat pasa a ser «Detener» (en el modo \
+voz, su botón «Detener»). Te corta entre herramientas; lo que ya hiciste queda hecho, y lo que pidió permiso \
+sigue en Pendientes hasta que lo apruebe o lo rechace.
 - `pantalla_actual` lee lo que se ve en la ventana de trabajo que él tiene delante. Úsala SÓLO cuando él \
 hable de lo que tiene en pantalla («esto», «este error», «lo que estoy viendo») o te pida que la mires; nunca \
 por tu cuenta. Él verá en el chat que la miraste.
@@ -404,9 +416,28 @@ def retomar_cortados(con: sqlite3.Connection) -> None:
     Cada turno que ya estaba tomado queda marcado (`retomar:<turno>`, C-0269):
     el modelo pudo llegar a usar sus herramientas, y `contestar` se lo dice
     para que no apunte dos veces el compromiso ni pida dos veces el permiso.
-    Uno que seguía `pendiente` no llegó al modelo y no se marca."""
-    for f in con.execute("SELECT id FROM turno WHERE rol = 'dueno' AND estado = 'atendiendo'").fetchall():
-        memoria.poner(con, f"retomar:{f['id']}", True)
+    Uno que seguía `pendiente` no llegó al modelo y no se marca.
+
+    El que él pidió detener (`PARAR_TURNO`, C-0506) no se repite: queda
+    «listo», su respuesta dice «Detenido.» y el turno siguiente lleva la nota."""
+    for f in con.execute("SELECT id, hilo FROM turno WHERE rol = 'dueno' AND estado = 'atendiendo'").fetchall():
+        if memoria.leer(con, PARAR_TURNO.format(f["id"])) is None:
+            memoria.poner(con, f"retomar:{f['id']}", True)
+            continue
+        rid = memoria.leer(con, f"turno_en_curso:{f['hilo']}")
+        r = con.execute("SELECT texto FROM turno WHERE id = ? AND rol = 'secretario' AND estado = 'escribiendo'",
+                        (rid,)).fetchone() if isinstance(rid, int) else None
+        if r is not None:
+            con.execute("UPDATE turno SET texto = ?, estado = 'listo', actividad = '' WHERE id = ?",
+                        (_con_detenido(r["texto"]), rid))
+            memoria.quitar(con, f"escalar:{rid}")
+        else:
+            # Sin respuesta a medias que cerrar, el globo que lo dice va aparte.
+            con.execute("INSERT INTO turno (hilo, rol, texto, estado, creado) VALUES (?,?,?,?,?)",
+                        (f["hilo"], "secretario", DETENIDO, "listo", memoria.ahora()))
+        con.execute("UPDATE turno SET estado = 'listo' WHERE id = ?", (f["id"],))
+        memoria.quitar(con, PARAR_TURNO.format(f["id"]))
+        memoria.poner(con, DETENIDO_ANTES.format(f["hilo"]), True)
     con.execute("UPDATE turno SET estado = 'pendiente' WHERE rol = 'dueno' AND estado = 'atendiendo'")
     # El escalado que pidió la respuesta cortada no lo recoge nadie: el turno
     # se repite con otra respuesta, y la marca se quedaba para siempre (C-0314).
@@ -731,6 +762,12 @@ def _prompt(con: sqlite3.Connection, turno: sqlite3.Row, hilo: sqlite3.Row) -> t
     if memoria.leer(con, f"retomar:{turno['id']}"):
         memoria.quitar(con, f"retomar:{turno['id']}")
         prompt = motor.RETOMAR + prompt
+    # Él detuvo la respuesta anterior de este hilo (C-0506): una sola vez,
+    # como `RETOMAR`. Sin esto, el modelo veía su respuesta a medias y la
+    # terminaba, o rehacía lo que ya había hecho.
+    if memoria.leer(con, DETENIDO_ANTES.format(turno["hilo"])):
+        memoria.quitar(con, DETENIDO_ANTES.format(turno["hilo"]))
+        prompt = DETUVO + prompt
     return prompt, imagenes, sesion, nueva
 
 
@@ -763,11 +800,19 @@ def _red_de_huecos(con: sqlite3.Connection, rid: int, texto: str, desde: int) ->
         pass   # es una red: la respuesta ya está dada y no depende de esto
 
 
-def contestar(con: sqlite3.Connection, turno: sqlite3.Row) -> None:
-    """Contesta un turno del dueño. Lo que falle queda escrito en el turno, no se pierde."""
+def contestar(con: sqlite3.Connection, turno: sqlite3.Row) -> bool:
+    """Contesta un turno del dueño. Lo que falle queda escrito en el turno, no se pierde.
+
+    Lo reclama antes (`pendiente` → `atendiendo`, C-0506): si él lo detuvo
+    mientras esperaba, ya no está pendiente y no se contesta. False entonces."""
     hilo = con.execute("SELECT * FROM hilo WHERE id = ?", (turno["hilo"],)).fetchone()
-    con.execute("UPDATE turno SET estado = 'atendiendo' WHERE id = ?", (turno["id"],))
+    if con.execute("UPDATE turno SET estado = 'atendiendo' WHERE id = ? AND estado = 'pendiente'",
+                   (turno["id"],)).rowcount != 1:
+        return False
+    parar = _pedir_parar(turno["id"])
     rid: int | None = None
+    bitacora_antes = solicitud_antes = 0
+    sesion, nueva = None, False
     dicho = {"texto": "", "actividad": "", "experto": False, "latido": float("-inf")}
     # Lo que se mide del turno para su línea en el journal (C-0321).
     medida = {"t0": time.monotonic(), "primer_trozo": None, "herramientas": 0, "estado": "error"}
@@ -856,16 +901,22 @@ def contestar(con: sqlite3.Connection, turno: sqlite3.Row) -> None:
         entorno = {"SECRETARIO_HILO": str(turno["hilo"])}
         prompt, imagenes, sesion, nueva = _prompt(con, turno, hilo)
         # Hasta dónde llegaba la bitácora: un hueco de después es de este turno (C-0324).
+        # Y las solicitudes: las de después, si él lo detiene, se le dicen (C-0506).
         bitacora_antes = con.execute("SELECT COALESCE(MAX(id), 0) FROM bitacora").fetchone()[0]
+        solicitud_antes = con.execute("SELECT COALESCE(MAX(id), 0) FROM solicitud").fetchone()[0]
         r = motor.llamar(prompt, modelo=enrutador.modelo("conversacion"), esfuerzo=enrutador.esfuerzo("conversacion"),
                          sistema=sistema(), sesion=sesion, nueva=nueva,
                          entorno_extra=entorno, abierta=True, trabajo="conversacion", al_trozo=al_trozo,
-                         al_evento=al_evento, imagenes=imagenes or None)
+                         al_evento=al_evento, imagenes=imagenes or None, parar=parar)
         if nueva:
             con.execute("UPDATE hilo SET sesion = ? WHERE id = ?", (r.sesion, hilo["id"]))
+            nueva = False
         motivo = memoria.leer(con, f"escalar:{rid}")
         if motivo is not None:
             memoria.quitar(con, f"escalar:{rid}")
+            # Lo pidió parar justo al acabar el menor: el mayor no empieza.
+            if parar():
+                raise motor.Cancelada("se detuvo antes de escalar")
             # Desde C-0241 trae el modelo que pidió el dueño; un texto suelto
             # es de un turno escalado justo antes de actualizar.
             escalado = motivo if isinstance(motivo, dict) else {"motivo": motivo}
@@ -887,7 +938,7 @@ def contestar(con: sqlite3.Connection, turno: sqlite3.Row) -> None:
                              sesion=r.sesion, entorno_extra=entorno, trabajo="mayor", al_evento=al_evento,
                              # También el mayor se ve escribir (C-0274): tardó minuto y medio
                              # con el rótulo y ni una palabra; en voz, silencio.
-                             al_trozo=al_trozo)
+                             al_trozo=al_trozo, parar=parar)
         # El resultado trae sólo el último mensaje; lo dicho antes de una
         # herramienta («déjame mirarlo») ya se leyó, y quitarlo haría que la
         # pantalla no reconociera lo ya dicho y se callara el final.
@@ -904,6 +955,22 @@ def contestar(con: sqlite3.Connection, turno: sqlite3.Row) -> None:
         # La práctica de inglés no cuenta: ahí no hace nada por diseño (354).
         if not turno["ingles"]:
             _red_de_huecos(con, rid, final, bitacora_antes)
+    except motor.Cancelada as exc:
+        # Antes que `MotorCaido`, que es su madre: si no, «No pude contestar» (C-0506).
+        try:
+            if nueva and sesion and exc.sigue:
+                # El proceso sigue con esa sesión: el turno siguiente la retoma.
+                # Muerto en el primer turno no se sabe si quedó guardada: el
+                # siguiente abre otra.
+                con.execute("UPDATE hilo SET sesion = ? WHERE id = ?", (sesion, hilo["id"]))
+            _dejar_detenido(con, turno, rid, dicho["texto"], bitacora_antes, solicitud_antes)
+            medida["estado"] = "detenido"
+        except Exception as fallo:  # noqa: BLE001 — no se queda «atendiendo» con un «pensando» fantasma (C-0314)
+            traceback.print_exc(file=sys.stderr)
+            try:
+                _dejar_el_fallo(con, turno, rid, fallo)
+            except sqlite3.Error:
+                pass   # dicho en stderr; el arranque lo da por cortado
     except motor.MotorCaido as exc:
         # Al chat, en llano y con qué hacer (C-0301); lo técnico, al registro
         # del servicio, que ya no lo lleva el turno (regla 21). Sin su salida
@@ -931,6 +998,8 @@ def contestar(con: sqlite3.Connection, turno: sqlite3.Row) -> None:
     # Al terminar y no al leerla: un turno cortado por un reinicio se repite
     # (C-0269) y tiene que seguir llevando la marca.
     memoria.quitar(con, f"dictado:{turno['id']}")
+    # La de «Detener», pedida o no a tiempo: el turno ya acabó (C-0506).
+    memoria.quitar(con, PARAR_TURNO.format(turno["id"]))
     con.execute("UPDATE hilo SET ultimo = ? WHERE id = ?", (memoria.ahora(), turno["hilo"]))
     # Lo último, para que nada de lo de arriba dependa de poder escribirla. Una
     # línea en el journal, como `[aprobada]` (C-0271): cuánto tardó la primera
@@ -941,20 +1010,124 @@ def contestar(con: sqlite3.Connection, turno: sqlite3.Row) -> None:
     print(f"[turno] {turno['id']}: primer_trozo={'-' if primero is None else f'{primero:.1f}'} s"
           f" total={time.monotonic() - medida['t0']:.1f} s voz={'sí' if turno['voz'] else 'no'}"
           f" herramientas={medida['herramientas']} estado={medida['estado']}", flush=True)
+    return True
 
 
 def atender(con: sqlite3.Connection, parar=None) -> int:
     """Los turnos que esperan, de uno en uno y por orden.
 
     `parar()`: si el servicio está parando (C-0266). El turno ya empezado se
-    acaba; los que siguen se quedan `pendiente` y se contestan al arrancar."""
+    acaba; los que siguen se quedan `pendiente` y se contestan al arrancar.
+    Uno que él detuvo mientras esperaba ya no está pendiente: se salta (C-0506)."""
     n = 0
     for t in con.execute("SELECT * FROM turno WHERE rol = 'dueno' AND estado = 'pendiente' ORDER BY id").fetchall():
         if parar is not None and parar():
             break
-        contestar(con, t)
-        n += 1
+        if contestar(con, t) is not False:
+            n += 1
     return n
+
+
+# ───────────────────────────── detener (C-0506) ─────────────────────────────
+
+#: La marca de «Detener» de un turno del dueño, en la memoria como `retomar:`
+#: y `turno_en_curso:`: no cambia el esquema. Por id de turno, para que una
+#: petición tardía nunca alcance al siguiente. La pone `hub-web` (`detener`),
+#: la mira el motor cada segundo (`_pedir_parar`) y la quita `contestar` al
+#: terminar el turno, haya parado o no.
+PARAR_TURNO = "parar_turno:{}"
+#: Que el turno siguiente de ese hilo lleve la nota `DETUVO`, una sola vez.
+DETENIDO_ANTES = "detenido_antes:{}"
+DETENIDO = "Detenido."
+DETUVO = ("(El dueño detuvo tu respuesta anterior a mitad. No la retomes ni repitas lo que ya hiciste con tus "
+          "herramientas: ya está hecho, y lo que pidió permiso sigue en Pendientes. Contesta sólo a lo que te "
+          "dice ahora:)\n\n")
+
+
+def _pedir_parar(turno: int):
+    """Lo que el motor pregunta cada segundo, a veces desde otro hilo: con su
+    propia conexión y en sólo lectura, como `investigar._pedir_parar`."""
+    clave = PARAR_TURNO.format(turno)
+
+    def parar() -> bool:
+        try:
+            return memoria.leer_sin_abrir(clave) is not None
+        except sqlite3.Error:
+            return False       # cancelar es una petición: una lectura que falla no corta
+    return parar
+
+
+def _con_detenido(texto: str | None) -> str:
+    texto = (texto or "").strip()
+    return f"{texto}\n\n{DETENIDO}" if texto else DETENIDO
+
+
+def _dejar_detenido(con: sqlite3.Connection, turno: sqlite3.Row, rid: int | None, escrito: str,
+                    bitacora_antes: int, solicitud_antes: int) -> None:
+    """La respuesta que él detuvo: lo que ya había escrito, «Detenido.», lo
+    que hizo con sus acciones y lo que quedó esperando su sí. Detener no
+    deshace nada: lo hecho, hecho está, y lo irreversible sólo había llegado a
+    pedir permiso. «listo», no un estado nuevo: es una respuesta, corta."""
+    from . import piezas
+    partes = [_con_detenido(escrito)]
+    catalogo = piezas.acciones()
+    hechas: list[str] = []
+    for f in con.execute("SELECT accion FROM bitacora WHERE id > ? AND nivel = 'auto' AND ok = 1 ORDER BY id",
+                         (bitacora_antes,)).fetchall():
+        if f["accion"] in catalogo:
+            nombre = piezas.nombre_de_accion(f["accion"], catalogo)
+            if nombre not in hechas:
+                hechas.append(nombre)
+    if hechas:
+        # Lo que dice la bitácora de mientras contestaba, que no guarda el
+        # hilo: se dice como lo que quedó hecho, no como lo que hizo él (regla 13).
+        partes.append(f"Mientras contestaba quedó hecho: {', '.join(hechas)}. Detener no lo deshace.")
+    pendientes = [piezas.nombre_de_accion(f["accion"], catalogo) for f in con.execute(
+        "SELECT accion FROM solicitud WHERE id > ? AND hilo = ? AND estado = 'pendiente' ORDER BY id",
+        (solicitud_antes, turno["hilo"])).fetchall()]
+    if pendientes:
+        partes.append(f"Quedó esperando tu permiso en Pendientes: {', '.join(dict.fromkeys(pendientes))}. Detener no "
+                      "lo retira: si ya no lo quieres, recházalo allí.")
+    texto = memoria.ocultar_secretos("\n\n".join(partes))
+    if rid is None:
+        con.execute("INSERT INTO turno (hilo, rol, texto, estado, ingles, creado) VALUES (?,?,?,?,?,?)",
+                    (turno["hilo"], "secretario", texto, "listo", turno["ingles"], memoria.ahora()))
+    else:
+        con.execute("UPDATE turno SET texto = ?, estado = 'listo', actividad = '' WHERE id = ?", (texto, rid))
+    con.execute("UPDATE turno SET estado = 'listo' WHERE id = ?", (turno["id"],))
+    memoria.poner(con, DETENIDO_ANTES.format(turno["hilo"]), True)
+
+
+def detener(con: sqlite3.Connection, turno) -> dict:
+    """«Detener» del chat (C-0506): para la respuesta a un turno del dueño.
+
+    - `pendiente` (aún no lo tomó): no se contesta; queda «listo» con un
+      «Detenido.» suyo. `{"detenido": True}`.
+    - `atendiendo`: deja la marca `PARAR_TURNO` y el motor corta entre
+      herramientas. `{"pedido": True}`: pedirlo no es haberlo hecho (regla
+      17), y la pantalla lo ve parado por el sondeo de siempre.
+    - Ya terminado: gana lo terminado. `{"ya_terminado": True}`.
+
+    En una transacción: `contestar` reclama y cierra el turno con sentencias
+    sueltas, así que mirar el estado y escribir no se cruzan con él. Lo usa
+    sólo la web: no es una acción del secretario ni del orquestador."""
+    if type(turno) is not int or not 0 < turno < 2 ** 63:
+        raise ValueError("falta el turno que hay que detener")
+    with _a_solas(con):
+        f = con.execute("SELECT id, hilo, rol, estado, ingles FROM turno WHERE id = ?", (turno,)).fetchone()
+        if f is None or f["rol"] != "dueno":
+            raise ValueError("ese mensaje no existe")
+        if f["estado"] == "pendiente":
+            con.execute("UPDATE turno SET estado = 'listo' WHERE id = ?", (turno,))
+            con.execute("INSERT INTO turno (hilo, rol, texto, estado, ingles, creado) VALUES (?,?,?,?,?,?)",
+                        (f["hilo"], "secretario", f"{DETENIDO} No llegué a empezarlo.", "listo", f["ingles"],
+                         memoria.ahora()))
+            memoria.quitar(con, f"dictado:{turno}")
+            return {"detenido": True}
+        if f["estado"] == "atendiendo":
+            memoria.poner(con, PARAR_TURNO.format(turno), {"pedida": memoria.ahora()})
+            return {"pedido": True}
+    return {"ya_terminado": True}
 
 
 # ───────────────────────────── cerrar hilos ─────────────────────────────

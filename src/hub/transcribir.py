@@ -510,22 +510,39 @@ def _sin_selector() -> str:
     return ""
 
 
+def _python_dictado() -> str:
+    """Con qué intérprete se mira, se sirve y se baja el modelo del dictado:
+    el del servidor o, si no hay nada declarado, el de Reuniones. «» si no hay."""
+    return interprete_del_servidor() or (por_omision() or [""])[0]
+
+
 def disponibles() -> dict:
     """Qué modelos del dictado están ya descargados, `{modelo: bool}`, o {} si
     no se pudo mirar. Pregunta al intérprete del servidor sin bajar nada; lo
     recuerda unos minutos por `recordar.por_tiempo` (C-0496), que lanzarlo
     cuesta ~0,3 s. Un fallo no se recuerda: la vez siguiente vuelve a mirar."""
+    return _mirados() or {}
+
+
+def _mirados() -> dict | None:
+    """Como `disponibles`, pero None si no se pudo mirar: «no pude mirarlo» no
+    es «no está» (regla dura 13), y un botón de «Descargar» sobre un modelo
+    que ya está enseña a no hacer caso del menú (C-0505)."""
     from . import recordar
 
     if _sin_selector():
-        return {}
-    python = interprete_del_servidor() or (por_omision() or [""])[0]
+        return None
+    python = _python_dictado()
     try:
-        hay = recordar.por_tiempo(("transcribir.disponibles", python),
+        # Con el instante en que acabó la última descarga en la clave: la acaba
+        # otro proceso, y sin esto el modelo recién bajado seguiría gris hasta
+        # que caducara lo recordado aquí, cinco minutos (C-0505). No cambia
+        # mientras baja: sólo una vez, al acabar.
+        hay = recordar.por_tiempo(("transcribir.disponibles", python, _fin_de_descarga()),
                                   lambda: _mirar_disponibles(python), DISPONIBLES_VALE_S)
     except (OSError, ValueError, IndexError, subprocess.SubprocessError) as exc:
         print(f"[transcribir] no pude mirar qué modelos de Whisper hay: {exc}", flush=True)
-        return {}
+        return None
     # `por_tiempo` comparte lo que guarda: quien recibe esto puede tocarlo.
     return dict(hay)
 
@@ -542,6 +559,137 @@ def _mirar_disponibles(python: str) -> dict:
          "--disponibles", *MODELOS_DICTADO],
         capture_output=True, text=True, timeout=30, check=True).stdout
     return {m: bool(v) for m, v in json.loads(salida.strip().splitlines()[-1]).items() if m in MODELOS_DICTADO}
+
+
+# ── Bajar un modelo del dictado desde el menú (C-0505) ───────────────────────
+# Un modelo sin descargar salía gris y sólo lo decía un `title`. Se baja sólo
+# cuando el dueño pulsa el botón: ni elegir, ni calentar, ni el arranque lo
+# bajan nunca. Con el mismo intérprete que lo va a servir, en segundo plano y
+# de uno en uno, a la caché de siempre de Hugging Face. Al acabar queda
+# elegible y no se elige solo. Dos archivos en `voz/`, cada uno con un solo
+# escritor: `descarga.json` lo escribe el hub al lanzarla (qué y su huella) y
+# `descarga.avance` el guion al acabar (cómo). Derivados: perderlos sólo
+# borra lo que enseña el menú; la verdad es el modelo en disco (regla dura 1).
+
+#: Lo que pesa cada modelo en disco, sumando los archivos de su snapshot en la
+#: caché de Hugging Face de la PC del dueño, medido el 27-nov: turbo
+#: (`mobiuslabsgmbh/faster-whisper-large-v3-turbo`, revisión 0a363e91…) y
+#: small (`Systran/faster-whisper-small`, 536b0662…). Sale en el botón.
+TAMANO_MODELO = {"small": 486_212_372, "large-v3-turbo": 1_621_665_983}
+#: Los que sólo van en la GPU (`_arrancar_servidor` no los deja caer a la CPU):
+#: sin GPU, bajarlos sólo lleva a un `elegir` que falla.
+SOLO_GPU = ("large-v3-turbo",)
+
+
+def _descarga_ruta(nombre: str) -> Path:
+    return _carpeta_voz() / nombre
+
+
+def _leer_json(ruta: Path) -> dict:
+    import json
+
+    try:
+        datos = json.loads(ruta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return datos if isinstance(datos, dict) else {}
+
+
+def _fin_de_descarga() -> float | None:
+    """Cuándo acabó la última descarga, o None si ninguna acabó."""
+    fin = _leer_json(_descarga_ruta("descarga.avance")).get("fin")
+    return fin if isinstance(fin, (int, float)) else None
+
+
+def descarga() -> dict | None:
+    """La descarga en curso o la última, o None si nunca hubo ninguna.
+
+    `estado`: `bajando`, `hecha` o `fallo` (con `error` en una frase); `desde`,
+    cuándo empezó (epoch). Un proceso que murió sin decir cómo acabó es un
+    fallo: se cortó, y volver a pulsar sigue donde iba. Un final escrito
+    antes de que empezara ésta es de otra vez, y no cuenta."""
+    from . import procesos
+
+    lanzada = _leer_json(_descarga_ruta("descarga.json"))
+    modelo = lanzada.get("modelo")
+    if modelo not in MODELOS_DICTADO:
+        return None
+    desde = lanzada.get("desde")
+    desde = desde if isinstance(desde, (int, float)) else None
+    final = _leer_json(_descarga_ruta("descarga.avance"))
+    fin = final.get("fin")
+    # El final que quedó de la vez anterior (un fallo, o la misma descarga
+    # hecha y borrada a mano) no es el de ésta: sin esto, reintentar salía
+    # «fallo» con el error viejo nada más pulsar, el botón volvía y el
+    # cerrojo dejaba lanzar otra encima (C-0505, revisor).
+    if final.get("modelo") != modelo or desde is None or not isinstance(fin, (int, float)) or fin < desde:
+        final = {}
+    estado, error = "bajando", ""
+    if final.get("estado") in ("hecha", "fallo"):
+        estado, error = final["estado"], str(final.get("error") or "")
+    elif not procesos.vivo(lanzada.get("huella")):
+        estado = "fallo"
+        error = "la descarga se cortó; vuelve a pulsar Descargar y sigue donde iba"
+    return {"modelo": modelo, "nombre": NOMBRES_MODELO[modelo], "estado": estado, "error": error,
+            "desde": desde, "total": TAMANO_MODELO.get(modelo)}
+
+
+def descargar(modelo: str) -> dict:
+    """Empieza a bajar `modelo` en segundo plano y devuelve `descarga()`.
+
+    🔴 Una sola a la vez: bajo el cerrojo de `voz/descarga.json` se mira si la
+    anterior sigue viva, y su huella se escribe antes de soltarlo. Fuera del
+    cgroup de quien la lanza (`procesos.desasir`, decisión 344): reiniciar
+    `hub-web` no la corta. `ValueError` si el modelo no es del dictado, no hay
+    selector, no se pudo mirar qué hay, ya está, pide una GPU que no hay o ya
+    hay otra bajando."""
+    import json
+    import os
+    import time
+
+    from . import config, maquina, procesos
+
+    if modelo not in MODELOS_DICTADO:
+        raise ValueError(f"modelo desconocido: {modelo!r}")
+    motivo = _sin_selector()
+    if motivo:
+        raise ValueError(motivo)
+    hay = _mirados()
+    if hay is None:
+        raise ValueError("no pude comprobar qué modelos hay descargados: no bajo nada a ciegas")
+    if hay.get(modelo):
+        raise ValueError(f"{NOMBRES_MODELO[modelo]} ya está descargado: elígelo en el menú")
+    if modelo in SOLO_GPU and maquina.gpu_memoria() is None:
+        raise ValueError(f"{NOMBRES_MODELO[modelo]} necesita una GPU NVIDIA, y en esta máquina no la veo")
+    python = _python_dictado()
+    if not python:
+        raise ValueError("no hay Whisper instalado: prepara Reuniones, que lo trae")
+    carpeta = _carpeta_voz()
+    carpeta.mkdir(parents=True, exist_ok=True)
+    marca = _descarga_ruta("descarga.json")
+    with _cerrojo(marca):
+        actual = descarga()
+        if actual and actual["estado"] == "bajando":
+            raise ValueError(f"ya se está bajando {actual['nombre']}: de uno en uno")
+        orden = [python, str(config.RAIZ_REPO / "scripts" / "transcribir-servidor.py"),
+                 "--descargar", modelo, "--avance", str(_descarga_ruta("descarga.avance"))]
+        # Antes de lanzarla: su final tiene que ser posterior para contar.
+        desde = time.time()
+        registro = _abrir_registro_servidor(carpeta)
+        try:
+            lanzado = procesos.desasir(orden, salida=registro)
+        except OSError as exc:
+            raise ValueError(f"no se pudo empezar a bajar {NOMBRES_MODELO[modelo]}: {exc}") from exc
+        finally:
+            registro.close()   # el hijo ya heredó su copia
+        huella = procesos.huella(lanzado.pid) if getattr(lanzado, "pid", None) else None
+        tmp = marca.with_name(marca.name + ".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"modelo": modelo, "huella": huella, "desde": desde}))
+        os.replace(tmp, marca)
+    print(f"[voz] bajando {modelo}", flush=True)
+    return descarga()
 
 
 # ── El glosario del dictado del dueño (C-0036, decisión 453) ─────────────
@@ -665,15 +813,23 @@ def estado_dictado(gpu: bool = False) -> dict:
     from . import maquina
 
     motivo = _sin_selector()
-    hay = disponibles() if not motivo else {}
+    # La descarga ANTES que lo descargado: si acaba entre las dos lecturas, el
+    # modelo sale ya elegible y no «hecha» y gris a la vez (C-0505).
+    bajando = descarga() if not motivo else None
+    mirados = _mirados() if not motivo else None
+    hay = mirados or {}
     estado = {
         "eleccion": eleccion(),
         "selector": not motivo,
         "motivo": motivo,
-        "modelos": [{"modelo": m, "nombre": NOMBRES_MODELO[m], "disponible": bool(hay.get(m))}
+        "modelos": [{"modelo": m, "nombre": NOMBRES_MODELO[m], "disponible": bool(hay.get(m)),
+                     "tamano": TAMANO_MODELO.get(m), "solo_gpu": m in SOLO_GPU}
                     for m in MODELOS_DICTADO] + [{"modelo": APAGADO, "nombre": NOMBRES_MODELO[APAGADO],
                                                   "disponible": not motivo}],
         "cargado": estado_servidor(_enchufe_dictado()) if not motivo else None,
+        "descarga": bajando,
+        # Sin poder mirarlo, nada sale «sin descargar» ni se ofrece bajar.
+        "mirado": mirados is not None,
     }
     # Escucha y no contesta al estado: está con una frase. No es «ninguno en
     # memoria» (regla 13).

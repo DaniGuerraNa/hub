@@ -125,6 +125,15 @@
   let candado = null;     // pantalla encendida mientras dura (Wake Lock)
   let ultimo = Number(chat.dataset.ultimo || 0);
   let esperando = false;
+  /* «Detener» (C-0506): el turno suyo que se está contestando (o espera a
+   * que lo tomen), como lo dice el sondeo; el que ya se pidió parar, para no
+   * pedirlo dos veces; y, en el modo voz, el que se detuvo hablando: lo que
+   * llegue de su respuesta no se lee, se dice «Detenido.» y vuelve a escuchar. */
+  let turnoEnCurso = null;
+  let deteniendo = null;
+  let detenidoEnVoz = null;
+  const botonEnviar = document.getElementById('sec-enviar');
+  const vozDetener = document.getElementById('sec-voz-detener');
   // El panel trae la conversación al cargar (C-0160): esa primera vez no habla.
   let cargando = !!chat.dataset.cargar;
 
@@ -332,7 +341,10 @@
     // es el escalado al modelo mayor, que vacía lo dicho por el menor.
     const escribe = t.estado === 'escribiendo' && (t.texto || locutor.turno() === t.id);
     // Lo que ya estaba contestado al cargar el panel no se lee otra vez.
-    if (t.rol === 'secretario' && antes !== 'listo' && (final || escribe) && !(cargando && final)) {
+    // Ni la respuesta que él detuvo en el modo voz (C-0506): de ella sólo «Detenido.».
+    if (t.rol === 'secretario' && detenidoEnVoz !== null && Number(t.id) > detenidoEnVoz) {
+      if (final) acabarDetenidoEnVoz(t);
+    } else if (t.rol === 'secretario' && antes !== 'listo' && (final || escribe) && !(cargando && final)) {
       if (final && t.texto && !continuo && !leerEnVoz()) anunciar(t);
       if (continuo && !pausado) {
         if (locutor.turno() !== t.id) {
@@ -809,6 +821,7 @@
   /* Pregunta por lo nuevo. Un turno «escribiendo» se vuelve a pedir hasta que
    * cambie: por eso se pide desde el último que ya está terminado. */
   const SIN_RED = 'el hub no contesta; sigo intentando…';
+  const DETENIENDO = 'deteniendo…';
   async function mirar() {
     let d;
     try {
@@ -828,12 +841,21 @@
     const otroHilo = 'hilo' in d && String(d.hilo ?? '') !== String(hiloAbierto ?? '');
     if ('hilo' in d) hiloAbierto = d.hilo ?? null;
     let pendiente = false;
+    let enCurso = null;
     for (const t of d.turnos || []) {
       ponerTurno(t);
       const abierto = t.estado === 'escribiendo' || t.estado === 'pendiente' || t.estado === 'atendiendo';
       if (abierto) pendiente = true;
       else if (!pendiente) ultimo = Math.max(ultimo, Number(t.id));
+      if (enCurso === null && t.rol === 'dueno' && (t.estado === 'pendiente' || t.estado === 'atendiendo')) {
+        enCurso = Number(t.id);
+      }
     }
+    // Parado o terminado, lo dice el sondeo y no la respuesta del POST (C-0506, regla 17).
+    if (enCurso !== turnoEnCurso) deteniendo = null;
+    turnoEnCurso = enCurso;
+    if (enCurso === null && estado && estado.textContent === DETENIENDO) avisar('');
+    pintarEnviar();
     if (otroHilo || (d.turnos || []).length) separar();
     esperando = pendiente;
     quitarHueco();
@@ -955,6 +977,7 @@
       return `<span class="adjunto">${vista}<button type="button" class="quitar" data-quitar="${i}"`
              + ` aria-label="Quitar ${nombre}" title="Quitar">✕</button></span>`;
     }).join('');
+    pintarEnviar();
   }
   // Devuelve '' si subió, o por qué no: mandar no sale sin lo que falló.
   async function subir(archivo, pegado) {
@@ -1113,10 +1136,81 @@
    * oyó Whisper y va marcado; si lo tocó, ya es suyo. */
   let dictadoEnCuadro = null;
   const enviarCuadro = () => enviar(cuadro.value, true, dictadoEnCuadro !== null && cuadro.value === dictadoEnCuadro, true);
-  formulario.addEventListener('submit', e => { e.preventDefault(); enviarCuadro(); });
+  // Lo decide lo que hay ahora y no cómo quedó pintado: un texto dictado al
+  // cuadro no dispara `input`, y el botón no puede tragarse lo que él escribió.
+  formulario.addEventListener('submit', e => {
+    e.preventDefault();
+    if (turnoEnCurso !== null && !hayQueMandar()) { detener(); return; }
+    enviarCuadro();
+  });
   // El cuadro crece con lo que se escribe, hasta su tope; luego desplaza.
   const ajustar = () => { cuadro.style.height = 'auto'; cuadro.style.height = `${cuadro.scrollHeight + 2}px`; };
   cuadro.addEventListener('input', ajustar);
+  cuadro.addEventListener('input', pintarEnviar);
+
+  /* ── Detener (C-0506) ──
+   * Mientras contesta y no hay nada por mandar, el botón de enviar es
+   * «Detener»; con algo escrito o adjunto vuelve a ser «Enviar» (lo escrito
+   * entra en cola, como siempre). Pedirlo no es haberlo hecho (regla 17): el
+   * POST sólo deja la petición, y «Detenido.» lo pinta el sondeo de siempre
+   * cuando el secretario de verdad paró. Corta entre herramientas: lo hecho
+   * queda hecho y lo que pidió permiso sigue en Pendientes. */
+  function hayQueMandar() { return !!cuadro.value.trim() || adjuntos.length > 0 || subidas.length > 0; }
+  function pintarEnviar() {
+    const parar = turnoEnCurso !== null && !hayQueMandar();
+    if (botonEnviar) {
+      botonEnviar.dataset.modo = parar ? 'detener' : '';
+      botonEnviar.setAttribute('aria-label', parar ? 'Detener' : 'Enviar');
+      botonEnviar.title = parar ? 'Detener la respuesta (lo ya hecho queda hecho)' : 'Enviar';
+      const enviarIco = botonEnviar.querySelector('[data-ico="enviar"]');
+      const detenerIco = botonEnviar.querySelector('[data-ico="detener"]');
+      if (enviarIco) enviarIco.hidden = parar;
+      if (detenerIco) detenerIco.hidden = !parar;
+    }
+    if (vozDetener) vozDetener.hidden = turnoEnCurso === null;
+  }
+  function acabarDetenidoEnVoz(t) {
+    detenidoEnVoz = null;
+    if (!continuo || pausado) return;
+    // Pudo acabar solo antes de que la petición llegara (gana lo terminado):
+    // entonces no se dice «Detenido.», y la respuesta entera está en el chat.
+    const parado = /Detenido\.$|Detenido\.\s/.test(String(t && t.texto || ''));
+    const dicho = parado ? dichoEn('Detenido.', 'Stopped.')
+                         : dichoEn('Ya había terminado.', 'It had already finished.');
+    fase('hablando', dicho);
+    decir(dicho, () => { if (continuo && !pausado) hablar(); });
+  }
+  async function detener() {
+    const id = turnoEnCurso;
+    if (id === null || deteniendo === id) return;
+    deteniendo = id;
+    // En el modo voz, como interrumpirle hablando (318) y además el POST:
+    // se calla y no lee lo que quede de esa respuesta.
+    if (continuo) { detenidoEnVoz = id; callarTodo(); fase('pensando', dichoEn('Deteniendo…', 'Stopping…')); }
+    else { locutor.olvidar(); VOZ.callar(); avisar(DETENIENDO); }
+    let d;
+    try {
+      const r = await fetch('/api/secretario/detener', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turno: id }),
+      });
+      d = await r.json();
+    } catch (e) {
+      d = { ok: false, error: 'el hub no contesta' };
+    }
+    if (!d.ok || d.ya_terminado) {
+      deteniendo = null;
+      const enVoz = detenidoEnVoz !== null;
+      detenidoEnVoz = null;
+      if (d.ok) {
+        // Gana lo terminado: su respuesta ya está entera en el chat.
+        if (enVoz && continuo) { fase('', ''); if (!pausado) hablar(); } else avisar('ya había terminado');
+      } else if (enVoz && continuo) {
+        pausar(`no se pudo detener: ${d.error}`, dichoEn('No pude detenerlo.', 'I could not stop it.'));
+      } else avisar(`no se pudo detener: ${d.error}`, 'error');
+    }
+    mirar().then(seguir);
+  }
+  if (vozDetener) vozDetener.addEventListener('click', () => detener());
   document.querySelectorAll('[data-idea]').forEach(b => b.addEventListener('click', () => enviar(b.textContent)));
   cuadro.addEventListener('keydown', e => {
     if (e.key === 'Escape' && cita) { e.preventDefault(); quitarCita(); return; }
@@ -1375,6 +1469,7 @@
     // Sin pasar por el cuadro nadie lo ha leído: va como dictado (C-0291).
     if (continuo || mandar || (manosLibres && manosLibres.checked)) { enviar(d.texto, true, true); return; }
     cuadro.value = (cuadro.value ? cuadro.value + ' ' : '') + d.texto;
+    pintarEnviar();
     dictadoEnCuadro = cuadro.value;
     cuadro.focus();
     if (estado) estado.textContent = 'revísalo y pulsa Enviar';

@@ -64,7 +64,12 @@ de la pantalla **Actualizaciones** (`/actualizaciones`), que hace lo mismo que
 
 1. **El hub indexa; nunca mueve ni copia contenido de otros proyectos.** Si algo
    necesita escribir dentro de un proyecto ajeno, lo hace un agente corriendo
-   ahí, con el usuario mirando — no el servidor.
+   ahí, con el usuario mirando — no el servidor. La única excepción es
+   estrecha: el secretario puede correr, sobre una lista, un comando preparado
+   que el usuario marcó `ejecutable: true` en su `comandos.yml` (clonar
+   repos), con su sí en Pendientes a cada orden; sólo crea carpetas nuevas y
+   nunca entra en una que ya exista. No marques un comando como ejecutable
+   por tu cuenta: ese archivo es suyo.
 2. **Nunca se almacena un secreto.** Sólo datos de conexión y un puntero a dónde
    vive la credencial. El hub comprueba si el puntero existe; jamás lo abre.
 3. **Nada automático.** No archiva, no expira y no hace push. Mide y muestra;

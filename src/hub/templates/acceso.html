@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
+{% import "_preparar.html" as prep %}
 {% block contenido %}
+{{ prep.estilos() }}
 
 <style>
   /* El QR es lo único propio de esta pantalla. Cuadrado, con su propio fondo
@@ -11,16 +13,49 @@
   .qr svg { display:block; }
   .codigo { font-family:var(--mono, ui-monospace, monospace); font-size:var(--letra-2);
             color:var(--texto-3); text-align:center; word-break:break-all; }
+  /* Lo que falta para entrar desde fuera, y el arreglo del archivo (C-0504). */
+  .acceso-arreglo { border-left-color:var(--alerta); }
+  .acceso-arreglo > div { flex:1; min-width:0; }
+  .acceso-arreglo ul { margin:8px 0; padding-left:18px; color:var(--texto-2); }
+  .acceso-arreglo form, .acceso-falta form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+  .acceso-falta form input[type=text] { flex:1 1 240px; min-width:0; }
+  .acceso-falta .detectado { color:var(--texto-2); }
+  .acceso-nota { margin:10px 0 0; }
 </style>
 
 {{ ui.cabecera_vista('Acceso',
     'Por qué nombres se entra al hub, qué aparatos pueden, y si la terminal está abierta desde fuera.') }}
 
-{% if error %}
-<div class="aviso" style="border-left-color:var(--alerta)">
+{% if error or arreglo %}
+{# Mal escrito: qué le pasa, cómo quedaría y el botón que lo deja así. Nada de
+   editar el archivo a mano (C-0504). #}
+<div class="aviso acceso-arreglo" id="arreglo">
   {{ ui.placa('aviso', 'riesgo') }}
-  <div style="flex:1"><strong>El archivo de acceso dice algo que no se puede obedecer.</strong>
-    <div class="tenue">{{ error }}</div></div>
+  <div>
+    {% if error %}
+    <strong>El archivo de acceso dice algo que no se puede obedecer.</strong>
+    <div class="tenue">{{ error }}</div>
+    <p class="tenue acceso-nota">Mientras tanto al hub sólo se entra desde esta máquina.</p>
+    {% else %}
+    <strong>Hay nombres en el archivo de acceso que no sirven para entrar.</strong>
+    {% endif %}
+    {% if arreglo %}
+    <ul>{% for c in arreglo.cambios %}<li>{{ c }}</li>{% endfor %}</ul>
+    <div class="tenue">Quedará con
+      {% if arreglo.hosts %}{% for h in arreglo.hosts %}<code>{{ h }}</code>{{ ', ' if not loop.last }}{% endfor %}
+      como {{ 'nombre' if arreglo.hosts | length == 1 else 'nombres' }} de fuera{% else %}ningún nombre de fuera todavía{% endif %}.
+      {% if arreglo.pierde_aparatos %}<strong>Los aparatos dados de alta tendrán que volver a darse de alta.</strong>{% endif %}
+      El archivo de ahora se guarda al lado, por si acaso.</div>
+    {% if de_casa %}
+    <form method="post" action="/acceso/arreglar">
+      <input type="hidden" name="huella" value="{{ huella }}">
+      <button class="cta">Arreglarlo</button>
+    </form>
+    {% else %}
+    <p class="tenue acceso-nota">Se arregla desde la PC del hub, en esta misma pantalla.</p>
+    {% endif %}
+    {% endif %}
+  </div>
 </div>
 {% endif %}
 
@@ -48,10 +83,15 @@
   </div>
 </div>
 
+{# Sin nombre de fuera, desde casa no se puede armar ningún QR: en vez del
+   formulario se dice qué falta y se arregla con botones (C-0504). Con el
+   archivo roto, primero se arregla: ofrecer a la vez guardar un nombre serían
+   dos botones para lo mismo, y uno fallaría. #}
+{% set falta_nombre = de_casa and not utilizables and not error %}
 {# ── Alta de un aparato ────────────────────────────────────────────────── #}
 <h2 class="con-placa">{{ ui.placa('mas') }}<span>Dar de alta un aparato</span></h2>
 
-{% if pendiente %}
+{% if pendiente and qr %}
 <div class="tarjeta">
   <strong style="font-weight:550">{{ pendiente.nombre }}</strong>
   <p class="tenue" style="margin:6px 0 0">
@@ -61,6 +101,47 @@
   </p>
   <div class="qr">{{ qr | safe }}</div>
   <div class="codigo">{{ enlace }}</div>
+</div>
+{% elif de_casa and error %}
+<div class="tarjeta tenue">
+  Primero arregla el archivo de acceso, arriba: mientras esté mal escrito no se
+  puede generar ningún QR.
+</div>
+{% elif falta_nombre %}
+{# 🔴 Sin nombre de la red privada no hay QR: uno a `127.0.0.1` es válido y
+   ningún móvil lo abre. Lo que falta se hace con botones; la solución nunca
+   es escuchar fuera de 127.0.0.1 ni abrir el puerto (regla dura 8). #}
+<div class="tarjeta prep acceso-falta" id="falta">
+  <p>Para entrar desde el móvil u otro aparato faltan dos cosas. El hub sigue
+    escuchando sólo en esta máquina: la red privada (Tailscale) es la que lo lleva
+    hasta los tuyos, nunca abrir el puerto.</p>
+  {% set lleva = red and red.lleva_al_hub %}
+  <ol class="prep-pasos">
+    {% call prep.paso({'id': 'red', 'titulo': 'La red privada lleva al hub', 'hecho': lleva, 'opcional': false,
+        'como': ('No veo Tailscale en esta máquina: instálalo en ella, inicia sesión con tu cuenta y vuelve aquí. Claude te puede guiar.'
+                 if red and not red.hay else
+                 'Tailscale tiene que publicar el hub en tu red privada, y que siga publicado tras un reinicio. '
+                 ~ ('No pude mirarlo: ' ~ red.error ~ '. ' if red and red.error else '')
+                 ~ 'Lo hace Claude contigo: abre una ventana con el encargo escrito, lo lanzas tú con Enter y te pide permiso para cada paso.')}, 1, not lleva) %}
+      <form method="post" action="/acceso/preparar">
+        <button class="cta" title="Abre una ventana con Claude y el encargo escrito; lo lanzas tú con Enter">Preparar con Claude</button>
+      </form>
+    {% endcall %}
+    {% call prep.paso({'id': 'nombre', 'titulo': 'El nombre de esta máquina en la red privada', 'hecho': false, 'opcional': false,
+        'como': ('Tailscale dice que es este. Guárdalo y el QR llevará ahí.' if red and red.nombre else
+                 'Es el nombre exacto que le da Tailscale (algo como maquina.tu-red.ts.net). Escríbelo y guárdalo, o deja que lo haga Claude con el paso de arriba.')}, 2, lleva) %}
+      <form method="post" action="/acceso/nombre">
+        {% if red and red.nombre %}
+        <input type="hidden" name="nombre" value="{{ red.nombre }}">
+        <code class="detectado">{{ red.nombre }}</code>
+        <button class="boton{{ ' cta' if lleva }}">Usar este nombre</button>
+        {% else %}
+        <input type="text" name="nombre" placeholder="maquina.tu-red.ts.net" required autocomplete="off" spellcheck="false">
+        <button class="boton">Guardar</button>
+        {% endif %}
+      </form>
+    {% endcall %}
+  </ol>
 </div>
 {% else %}
 <div class="tarjeta">
@@ -72,6 +153,13 @@
   <p class="tenue" style="margin:10px 0 0">
     El nombre es para reconocerlo después y poder quitarlo sin dudar cuál es.
   </p>
+  {% if de_casa and red and red.lleva_al_hub == false %}
+  <p class="tenue acceso-nota"><strong>Tailscale no tiene guardado publicar el hub en la red privada:</strong>
+    el QR saldrá, pero puede que el aparato no llegue, y tras un reinicio no llegará.</p>
+  <form method="post" action="/acceso/preparar" class="acceso-nota">
+    <button class="boton" title="Abre una ventana con Claude y el encargo escrito; lo lanzas tú con Enter">Preparar con Claude</button>
+  </form>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -117,17 +205,17 @@
     <span class="tenue" style="font-size:var(--letra-2)">{{ 'de casa' if h in locales else 'de la red privada' }}</span>
   </div>
   {% endfor %}
-  {% if hosts | length == locales | length %}
-  <p class="tenue" style="margin:10px 0 0">
+  {% for a in avisos %}
+  <p class="tenue acceso-nota"><code>{{ a.nombre }}</code> {{ a.motivo }}</p>
+  {% endfor %}
+  {% if not utilizables %}
+  <p class="tenue acceso-nota">
     Todavía no hay ninguno de fuera, así que al hub sólo se llega desde esta
-    máquina. Cuando la red privada le dé un nombre, va así en
-    <code>{{ archivo }}</code>:
+    máquina.{% if de_casa and not error %} Arriba, en «Dar de alta un aparato», está lo que falta.{% endif %}
   </p>
-  <pre style="margin:8px 0 0"><code>hosts:
-  - esta-maquina.tu-red.ts.net</code></pre>
   {% endif %}
-  <p class="tenue" style="margin:10px 0 0">
-    Se editan en <code>{{ archivo }}</code> y el hub los relee al arrancar.
+  <p class="tenue acceso-nota">
+    Se guardan en <code>{{ archivo }}</code> con «Usar este nombre» y valen en el acto.
     Tienen que ser nombres <strong style="color:var(--texto-2)">exactos</strong>:
     un comodín se rechaza, porque sin validar el <code>Host</code> los nombres de
     sesión se pueden enumerar desde cualquier página abierta en el navegador.

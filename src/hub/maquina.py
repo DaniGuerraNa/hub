@@ -338,6 +338,11 @@ def sitio_del_hub(estado: dict) -> str:
     de `Foreground` es un `serve` dejado en una terminal y muere con ella, así
     que tras un apagón no está.
     """
+    return _sitio_con_puerto(estado).rsplit(":", 1)[0]
+
+
+def _sitio_con_puerto(estado: dict) -> str:
+    """Como `sitio_del_hub`, con el puerto («nombre:443»), o ""."""
     for sitio, web in (estado.get("Web") or {}).items():
         for manejador in ((web or {}).get("Handlers") or {}).values():
             proxy = (manejador or {}).get("Proxy") or ""
@@ -347,8 +352,68 @@ def sitio_del_hub(estado: dict) -> str:
             except ValueError:
                 continue
             if destino.hostname in ("127.0.0.1", "localhost") and puerto == config.WEB_PORT:
-                return sitio.rsplit(":", 1)[0]
+                return sitio
     return ""
+
+
+#: Lo que se espera a Tailscale al pintar /acceso: la medida del ciclo lento
+#: puede esperar `ESPERA`, una pantalla no.
+ESPERA_RED = 3
+
+
+def _programa_tailscale() -> str | None:
+    """El Tailscale que manda en esta máquina: el de Windows, si lo hay."""
+    return encontrar("tailscale.exe") or encontrar("tailscale")
+
+
+def red_privada(tope: float = ESPERA_RED) -> dict:
+    """El nombre de esta máquina en la red privada y si `tailscale serve` ya
+    lleva al hub, mirado al momento (C-0504). Nunca lanza.
+
+    `hay`: si hay Tailscale; `conectado`: si dice estar en marcha (`Running`);
+    `nombre`: `Self.DNSName` sin el punto final; `lleva_al_hub`: si serve
+    publica `127.0.0.1:WEB_PORT`; `puerto`: en qué puerto lo publica (443 lo
+    normal). Lo que no se pudo mirar va a `None`, no a «no» (regla dura 13):
+    `error` dice por qué. El de Windows primero, como `_tailscale`."""
+    salida = {"hay": False, "conectado": None, "nombre": "", "lleva_al_hub": None,
+              "puerto": None, "error": ""}
+    programa = _programa_tailscale()
+    if not programa:
+        salida["error"] = "no hay Tailscale en esta máquina"
+        return salida
+    salida["hay"] = True
+    import time
+    limite = time.monotonic() + tope
+
+    def pedir(*argumentos) -> dict:
+        # El tope es para las dos preguntas juntas: es lo que espera la pantalla.
+        queda = limite - time.monotonic()
+        if queda <= 0:
+            raise subprocess.TimeoutExpired(programa, tope)
+        texto = subprocess.run([programa, *argumentos], capture_output=True, text=True,
+                               timeout=queda).stdout
+        datos = json.loads(texto or "{}")
+        return datos if isinstance(datos, dict) else {}
+
+    try:
+        estado = pedir("status", "--json")
+        salida["conectado"] = estado.get("BackendState") == "Running"
+        salida["nombre"] = str((estado.get("Self") or {}).get("DNSName") or "").strip().rstrip(".").lower()
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        salida["error"] = f"Tailscale no contestó ({type(exc).__name__})"
+        return salida
+    # En su propio `try`: sin serve se sabe igual el nombre (regla dura 14).
+    try:
+        sitio = _sitio_con_puerto(pedir("serve", "status", "--json"))
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        salida["error"] = f"no se pudo mirar tailscale serve ({type(exc).__name__})"
+        return salida
+    salida["lleva_al_hub"] = bool(sitio)
+    if sitio:
+        nombre, _, puerto = sitio.rpartition(":")
+        salida["puerto"] = int(puerto) if puerto.isdigit() else 443
+        salida["nombre"] = salida["nombre"] or nombre.lower()
+    return salida
 
 
 # Un solo `powershell` para las dos cosas de Windows, como en `_PS_WINDOWS`.

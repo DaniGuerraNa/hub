@@ -306,7 +306,7 @@ def test_el_asistente_lo_ve_encendido_y_sabe_que_esta_apagado(monkeypatch, capsy
     cli.cmd_componentes([])
     encendido = capsys.readouterr().out
     assert "puente: sin preparar · /puente" in encendido and "El puente está en el clon" in encendido
-    assert "hub preparar <navegante|reuniones|puente>" in cli.__doc__
+    assert "hub preparar <navegante|reuniones|puente|estudio>" in cli.__doc__
 
 
 def test_encendida_sale_en_herramientas_de_la_interfaz_nueva():

@@ -635,10 +635,8 @@ def test_parar_mata_la_llamada_y_lanza_cancelada(falso, vigia_rapido, tmp_path, 
     assert not isinstance(exc.value, motor.Cancelada)
 
 
-def test_parar_no_va_con_el_proceso_abierto_y_el_tope_de_tiempo_sigue(falso, tmp_path, monkeypatch):
-    with pytest.raises(ValueError, match="abierta"):
-        motor.llamar("hola", modelo="claude-haiku-4-5", sesion="s-1", nueva=True, abierta=True,
-                     parar=lambda: False)
+def test_el_tope_de_tiempo_no_es_una_cancelacion(falso, tmp_path, monkeypatch):
+    # Que `parar` vaya también con `abierta` (C-0506) lo prueba test_secretario_detener.py.
     monkeypatch.setenv("DORMIR", str(tmp_path / "dormir"))
     monkeypatch.setattr(motor, "TOPE_SEGUNDOS", 1)
     with pytest.raises(motor.MotorCaido, match="no contestó en 1 s") as exc:

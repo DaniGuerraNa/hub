@@ -342,7 +342,7 @@ def test_si_no_se_puede_pegar_lo_dictado_lo_dice_en_vez_de_quedarse_transcribien
 # Abrir el micrófono, grabar y subir la voz: lo que sólo hace `grabar.js`.
 # El menú del modelo (C-0313) pregunta y elige en `/api/voz/estado` y
 # `/api/voz/modelo`: no graba ni sube voz, y no cuenta.
-_POR_SU_CUENTA = re.compile(r"getUserMedia\s*\(|new\s+MediaRecorder\b|fetch\(\s*['\"`]/api/voz(?!/estado|/modelo)")
+_POR_SU_CUENTA = re.compile(r"getUserMedia\s*\(|new\s+MediaRecorder\b|fetch\(\s*['\"`]/api/voz(?!/estado|/modelo|/descargar)")
 
 
 def _quien_graba_por_su_cuenta() -> list[str]:

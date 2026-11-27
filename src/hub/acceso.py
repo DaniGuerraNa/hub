@@ -95,6 +95,12 @@ def _leer() -> dict:
         raise AccesoInvalido(f"`{ruta}` no es YAML válido: {exc}") from exc
     if not isinstance(datos, dict):
         raise AccesoInvalido(f"`{ruta}` tiene que ser un mapa, no {type(datos).__name__}.")
+    # Lo que no es una lista se iteraba y daba un `TypeError`, que ningún
+    # `except AccesoInvalido` recoge: con `hosts: 5` la puerta daba 500 en cada
+    # petición, también desde casa (C-0504). `hosts` lo mira `hosts()`.
+    for clave in ("dispositivos", "pendientes"):
+        if datos.get(clave) is not None and not isinstance(datos[clave], list):
+            raise AccesoInvalido(f"`{clave}` tiene que ser una lista, y en `{ruta}` no lo es.")
     return datos
 
 
@@ -179,8 +185,13 @@ def _actualizar(cambio):
 
 # ── Por qué nombres se entra ─────────────────────────────────────────────────
 
-def hosts() -> tuple[str, ...]:
+def hosts(tolerante: bool = False) -> tuple[str, ...]:
     """Los nombres por los que se acepta entrar, locales incluidos.
+
+    `tolerante`: con el archivo mal escrito valen sólo los de casa, en vez de
+    lanzar. Es lo que necesitan la puerta, la salud y la pantalla: un archivo
+    roto no puede dejar al hub inalcanzable desde casa (C-0504). Lo que lo
+    explica y lo arregla es `revisar`.
 
     🔴 **Un comodín no se acepta, y no se ignora en silencio.** El comentario de
     `web.py` documenta por qué esta lista existe: sin validar el `Host`, los
@@ -188,7 +199,14 @@ def hosts() -> tuple[str, ...]:
     justo el agujero que la lista cerró, así que se levanta y se dice — dejar
     entrar con un aviso en el registro es lo mismo que dejar entrar.
     """
+    if tolerante:
+        try:
+            return hosts()
+        except AccesoInvalido:
+            return HOSTS_LOCALES
     declarados = _leer().get("hosts") or []
+    if not isinstance(declarados, (str, list, tuple, dict)):
+        raise AccesoInvalido(f"`hosts` tiene que ser una lista de nombres, y es «{declarados}».")
     if isinstance(declarados, str):
         # Igual que las `rutas` de un proyecto: Python iteraría la CADENA letra a
         # letra y la lista quedaría llena de nombres de un carácter.
@@ -212,6 +230,247 @@ def hosts() -> tuple[str, ...]:
             )
         fuera.append(texto)
     return (*HOSTS_LOCALES, *fuera)
+
+
+# ── Lo que dice el archivo, y su arreglo (C-0504) ────────────────────────────
+#
+# Quien instala el hub no tiene por qué editar YAML ni escribir comandos: la
+# pantalla dice qué está mal, propone cómo queda y lo reescribe con un botón.
+# Una entrada que nunca puede casar con un `Host` —con esquema, ruta o
+# puerto— o que no sirve para un QR por https —una IP— se SEÑALA y no se usa,
+# en vez de lanzar: lanzar apagaría también los nombres buenos del archivo, y
+# quien estuviera de viaje se quedaría fuera tras actualizar.
+
+def _es_ip(texto: str) -> bool:
+    try:
+        ipaddress.ip_address(texto.strip("[]"))
+    except ValueError:
+        return False
+    return True
+
+
+def _por_que_no_sirve(nombre: str) -> str:
+    """Por qué una entrada de `hosts` no sirve para entrar desde fuera, o «»."""
+    if _es_ip(nombre):
+        return ("es una dirección IP: desde fuera se entra por el nombre de la máquina "
+                "en la red privada, que es el que lleva el certificado de https. "
+                "No se usa para el QR.")
+    if "://" in nombre or "/" in nombre:
+        return ("lleva el esquema o una ruta, y el hub compara sólo el nombre: así no "
+                "deja entrar a nadie.")
+    if ":" in nombre:
+        return "lleva el puerto, y el hub compara sólo el nombre: así no deja entrar a nadie."
+    return ""
+
+
+def _limpiar_nombre(crudo) -> str:
+    """El nombre que quería decir una entrada: sin esquema, ruta ni puerto."""
+    texto = str(crudo or "").strip().lower()
+    if "://" in texto:
+        texto = texto.split("://", 1)[1]
+    texto = texto.split("/", 1)[0]
+    if not _es_ip(texto):
+        texto = texto.rsplit(":", 1)[0] if ":" in texto else texto
+    return texto.strip().rstrip(".")
+
+
+def _validar_nombre(nombre: str) -> str:
+    """Un nombre de la red privada que se puede guardar, o `AccesoInvalido`."""
+    texto = str(nombre or "").strip().lower().rstrip(".")
+    if not texto:
+        raise AccesoInvalido("falta el nombre de la máquina en la red privada")
+    if "*" in texto or "?" in texto:
+        raise AccesoInvalido("un nombre con comodín no se admite: tiene que ser el exacto")
+    if texto in HOSTS_LOCALES:
+        raise AccesoInvalido(f"«{texto}» es de casa: ése vale siempre y no hace falta guardarlo")
+    motivo = _por_que_no_sirve(texto)
+    if motivo:
+        raise AccesoInvalido(f"«{texto}» {motivo}")
+    if not all(c.isalnum() or c in "-." for c in texto) or texto.startswith(("-", ".")):
+        raise AccesoInvalido(f"«{texto}» no parece un nombre de máquina (letras, números, «-» y «.»)")
+    return texto
+
+
+def utilizables(nombres: tuple[str, ...]) -> list[str]:
+    """Los nombres de fuera que sirven para armar un QR."""
+    return [h for h in nombres if h not in HOSTS_LOCALES and not _por_que_no_sirve(h)]
+
+
+def destino_de_alta(host: str | None, de_casa: bool, puerto: int | None = None) -> str | None:
+    """Por qué nombre va a entrar el aparato que se da de alta, o None si no hay
+    ninguno y entonces no se pinta QR (C-0504).
+
+    Desde casa, el primer nombre utilizable de la red privada (decisión 185),
+    con `puerto` si `tailscale serve` publica el hub en uno que no es el 443:
+    el nombre de la petición sería `127.0.0.1`, un QR válido que ningún móvil
+    abre. Desde un aparato que ya entró, el nombre por el que entró. Lo usan
+    la pantalla y el CLI del alta."""
+    if not de_casa:
+        return (host or "").strip() or None
+    remotos = utilizables(hosts(tolerante=True))
+    if not remotos:
+        return None
+    return f"{remotos[0]}:{puerto}" if puerto and puerto != 443 else remotos[0]
+
+
+def _texto_crudo() -> str | None:
+    ruta = archivo()
+    try:
+        return ruta.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+
+
+def _huella_de(texto: str | None) -> str:
+    return hashlib.sha256((texto or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _propuesta(texto: str | None) -> dict | None:
+    """Cómo quedaría bien escrito el archivo cuyo texto es `texto`, o None si
+    ya lo está. `datos` es lo que se escribiría; `cambios`, qué se hace, en
+    frases; `pierde_aparatos`, si los dados de alta tendrán que volver a
+    darse de alta (sólo cuando el archivo no se puede leer)."""
+    if texto is None:
+        return None
+    cambios: list[str] = []
+    pierde = False
+    try:
+        crudo = yaml.safe_load(texto)
+    except yaml.YAMLError:
+        crudo, pierde = None, True
+        cambios.append("No se puede leer (no es YAML): se empieza uno nuevo, sin nombres de fuera.")
+    if crudo is None and not pierde:
+        crudo = {}
+    if isinstance(crudo, list):
+        cambios.append("Empezaba por una lista: sus nombres pasan a «hosts».")
+        crudo = {"hosts": crudo}
+    elif isinstance(crudo, str) and not pierde:
+        cambios.append("Era sólo un texto: pasa a ser un nombre de «hosts».")
+        crudo = {"hosts": [crudo]}
+    elif not isinstance(crudo, dict):
+        if not pierde:
+            cambios.append("No era un mapa: se empieza uno nuevo, sin nombres de fuera.")
+        crudo = {}
+    datos = dict(crudo)
+    declarados = datos.get("hosts")
+    if declarados is None:
+        declarados = []
+    elif isinstance(declarados, str):
+        cambios.append("«hosts» era un texto suelto: pasa a ser una lista.")
+        declarados = [declarados]
+    elif isinstance(declarados, dict):
+        cambios.append("«hosts» era un mapa: sus nombres pasan a ser una lista.")
+        declarados = list(declarados)
+    elif not isinstance(declarados, list):
+        cambios.append("«hosts» no era una lista: se vacía.")
+        declarados = []
+    nuevos: list[str] = []
+    for entrada in declarados:
+        original = str(entrada or "").strip().lower()
+        if not original:
+            continue
+        if "*" in original or "?" in original:
+            cambios.append(f"«{original}» lleva un comodín, que no se admite: se quita.")
+            continue
+        limpio = _limpiar_nombre(original)
+        if limpio != original:
+            cambios.append(f"«{original}» pasa a «{limpio}»: el hub compara sólo el nombre.")
+        if not limpio or limpio in HOSTS_LOCALES:
+            if limpio in HOSTS_LOCALES:
+                cambios.append(f"«{limpio}» es de casa y vale siempre: se quita de la lista.")
+            continue
+        if limpio not in nuevos:
+            nuevos.append(limpio)
+    datos["hosts"] = nuevos
+    for clave in ("dispositivos", "pendientes"):
+        if datos.get(clave) is not None and not isinstance(datos[clave], list):
+            cambios.append(f"«{clave}» no era una lista: se vacía.")
+            pierde = pierde or clave == "dispositivos"
+            datos[clave] = []
+    if not cambios:
+        return None
+    return {"datos": datos, "cambios": cambios, "pierde_aparatos": pierde, "hosts": nuevos}
+
+
+def revisar() -> dict:
+    """Lo que dice `acceso.yml`, para la pantalla: los nombres que valen, los
+    que no sirven y por qué, el error si no se puede obedecer y su arreglo.
+
+    Nunca lanza. `huella` identifica el texto que se revisó: `arreglar` sólo
+    escribe si el archivo sigue siendo ése."""
+    texto = _texto_crudo()
+    error = None
+    try:
+        nombres = hosts()
+        dispositivos()
+    except AccesoInvalido as exc:
+        nombres, error = HOSTS_LOCALES, str(exc)
+    avisos = [{"nombre": h, "motivo": m} for h in nombres
+              if h not in HOSTS_LOCALES and (m := _por_que_no_sirve(h))]
+    propuesta = _propuesta(texto)
+    return {
+        "hosts": nombres, "utilizables": utilizables(nombres), "avisos": avisos,
+        "error": error, "huella": _huella_de(texto),
+        "arreglo": None if propuesta is None else {
+            "cambios": propuesta["cambios"], "hosts": propuesta["hosts"],
+            "pierde_aparatos": propuesta["pierde_aparatos"]},
+    }
+
+
+def arreglar(huella: str) -> Path:
+    """Reescribe bien el archivo y devuelve dónde quedó el anterior.
+
+    🔴 Sólo si sigue siendo el que se enseñó (`huella`): entre mirar el arreglo
+    y pulsarlo otro pudo cambiarlo, y reescribir encima perdería lo suyo.
+    Con el cerrojo de siempre pero sin `_actualizar`, que lee con `_leer` y
+    lanzaría justo con el archivo que se quiere arreglar. El anterior se
+    guarda entero (`acceso.yml.roto-<fecha>-<hora>`, 600): lleva los aparatos."""
+    with _en_exclusiva():
+        texto = _texto_crudo()
+        if not secrets.compare_digest(_huella_de(texto), str(huella or "")):
+            raise AccesoInvalido("el archivo de acceso cambió mientras lo mirabas: "
+                                 "vuelve a mirar el arreglo antes de aplicarlo")
+        propuesta = _propuesta(texto)
+        if propuesta is None:
+            raise AccesoInvalido("el archivo de acceso ya está bien escrito: no hay nada que arreglar")
+        ruta = archivo()
+        copia = ruta.with_name(f"{ruta.name}.roto-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+        try:
+            fd = os.open(copia, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError as exc:
+            raise AccesoInvalido("se acaba de arreglar hace un instante: recarga y mira cómo quedó") from exc
+        with os.fdopen(fd, "w", encoding="utf-8") as salida:
+            salida.write(texto or "")
+        _escribir(propuesta["datos"])
+    return copia
+
+
+def poner_nombre(nombre: str) -> str:
+    """Guarda en `hosts` el nombre de esta máquina en la red privada y lo
+    devuelve como quedó (C-0504). Exacto: sin comodín, esquema, puerto ni IP
+    (`AccesoInvalido` si no). Conserva los aparatos y las altas, y un `hosts`
+    escrito como texto suelto pasa a ser lista. Con el archivo ilegible lanza:
+    primero se arregla (`arreglar`)."""
+    limpio = _validar_nombre(nombre)
+
+    def cambio(datos: dict):
+        actuales = datos.get("hosts")
+        lista = [actuales] if isinstance(actuales, str) else list(actuales or []) \
+            if isinstance(actuales, (list, dict)) else []
+        if any("*" in str(h) or "?" in str(h) for h in lista):
+            # Guardarlo diría «listo» con un archivo que la puerta sigue sin
+            # obedecer: primero se arregla.
+            raise AccesoInvalido("el archivo de acceso tiene un nombre con comodín: arréglalo antes "
+                                 "(«Arreglarlo» en Acceso, o `python -m hub.acceso arreglar`)")
+        if limpio in (str(h).strip().lower() for h in lista):
+            if lista == actuales:
+                return False, limpio
+        else:
+            lista.append(limpio)
+        datos["hosts"] = lista
+        return True, limpio
+
+    return _actualizar(cambio)
 
 
 def partes_de_host(host: str | None) -> tuple[str, str | None]:
@@ -286,7 +545,8 @@ def _puerto(esquema: str, puerto: int | None) -> int | None:
     return puerto if puerto is not None else _PUERTO_DE.get(esquema)
 
 
-def origen_permitido(origen: str | None, host: str | None = None) -> bool:
+def origen_permitido(origen: str | None, host: str | None = None,
+                     nombres: tuple[str, ...] | None = None) -> bool:
     """Sin `Origin` se pasa; con un `Origin` ajeno, no.
 
     Ausente significa que no lo mandó un navegador: `curl`, el `bin/hub` del
@@ -303,12 +563,15 @@ def origen_permitido(origen: str | None, host: str | None = None) -> bool:
     la terminal, donde desde casa no se pide nada más. Los nombres de la red
     privada siguen comparándose sólo por nombre: llegan por `tailscale serve`,
     que no escucha en otros puertos de ese nombre.
+
+    `nombres` sustituye a `hosts()`: quien ya sabe que el archivo está roto
+    pasa los de casa (C-0504).
     """
     if origen is None:
         return True
     partes = urlsplit(origen)
     nombre = partes.hostname or ""
-    if partes.scheme not in ("http", "https") or nombre not in hosts():
+    if partes.scheme not in ("http", "https") or nombre not in (hosts() if nombres is None else nombres):
         return False
     if nombre not in HOSTS_LOCALES or host is None:
         return True
@@ -327,6 +590,46 @@ def origen_permitido(origen: str | None, host: str | None = None) -> bool:
     # Una página de casa sólo habla con el hub por casa: la misma página de
     # 127.0.0.1:5000 pidiendo al nombre de la red privada tampoco es el hub.
     return nombre_host in HOSTS_LOCALES and puerto_origen == puerto_host
+
+
+# ── Que la red privada lleve al hub, con Claude (C-0504) ────────────────────
+#
+# 🔴 El hub no ejecuta `tailscale serve` por su cuenta: la primera vez puede
+# pedir activar serve o https en la consola de Tailscale, con un enlace que
+# sólo abre una persona, y que el proceso que da una shell cambie lo que la
+# máquina deja ver a la red es superficie nueva. Lo hace la persona, con una
+# ventana que deja escrito el encargo SIN Enter (tercer caso de la regla dura
+# 15, decisión 164), y Claude le pide permiso a cada orden.
+
+def encargo_red() -> str:
+    puerto = config.WEB_PORT
+    return (
+        "Prepara esta máquina para entrar al hub desde otros aparatos, por la red privada de "
+        "Tailscale. Desde WSL, Tailscale es el de Windows (tailscale.exe); si no, tailscale. "
+        "1) Mira si está instalado y conectado (tailscale status). Si no lo está o no ha "
+        "iniciado sesión, dime qué hacer y espera a que lo haga yo. "
+        f"2) Publica el hub en la red privada con tailscale serve --bg http://127.0.0.1:{puerto} "
+        "y compruébalo con tailscale serve status. Si pide activar serve o https en la consola "
+        "de Tailscale, dame el enlace y espera a que lo haga yo. "
+        "3) Guarda el nombre de esta máquina en la red privada (el DNSName de tailscale status "
+        "--json, sin el punto final) con uv run python -m hub.acceso nombre <ese nombre>; si "
+        "dice que el archivo de acceso está mal escrito, antes uv run python -m hub.acceso "
+        "arreglar. No edites acceso.yml a mano ni ningún archivo de esta carpeta. "
+        "🔴 Nunca tailscale funnel, nunca escuchar en 0.0.0.0, abrir el puerto ni tocar el "
+        f"cortafuegos, y nunca un enlace con la IP de Tailscale al {puerto}: el hub escucha sólo "
+        "en 127.0.0.1 a propósito, porque su terminal da una shell. Pide permiso antes de cada "
+        "orden. Al terminar dime que vuelva a la pantalla Acceso del hub y pulse «Generar el QR»."
+    )
+
+
+def preparar_red() -> dict:
+    """La ventana en la carpeta del hub con `encargo_red()` escrito y sin Enter."""
+    from . import agentes, slots, tmux
+
+    pane_id = slots.abrir_en(str(config.RAIZ_REPO), "preparar-acceso", "hub",
+                             agentes.comando(encargo_red()))
+    indice = next((p["window_idx"] for p in tmux.listar_paneles() if p["pane_id"] == pane_id), None)
+    return {"session": "hub", "ventana": indice}
 
 
 # ── Dispositivos ─────────────────────────────────────────────────────────────
@@ -434,7 +737,12 @@ def reconocer(testigo: str | None) -> dict | None:
     if not testigo:
         return None
     buscado = _hash(testigo)
-    for d in dispositivos():
+    try:
+        lista = dispositivos()
+    except AccesoInvalido:
+        # Con el archivo roto no se sabe quién está dado de alta: se cierra.
+        return None
+    for d in lista:
         if secrets.compare_digest(str(d.get("hash", "")), buscado):
             return d
     return None
@@ -567,6 +875,9 @@ def _cli(argv: list[str] | None = None) -> int:
     alta.add_argument("--host", help="por qué nombre lo va a abrir el aparato "
                                      "(por defecto, el primero de la red privada)")
     orden.add_parser("listar", help="qué aparatos pueden entrar")
+    poner = orden.add_parser("nombre", help="guarda el nombre de esta máquina en la red privada")
+    poner.add_argument("nombre", help="el exacto, p. ej. maquina.tu-red.ts.net")
+    orden.add_parser("arreglar", help="reescribe bien un acceso.yml mal escrito (guarda el anterior)")
     quitar = orden.add_parser("quitar", help="revoca un aparato por su id")
     quitar.add_argument("id")
     args = partes.parse_args(argv)
@@ -582,6 +893,32 @@ def _cli(argv: list[str] | None = None) -> int:
                   f"   {'visto ' + str(d.get('ultimo_uso'))[:16] if d.get('ultimo_uso') else 'sin usar'}")
         return 0
 
+    # `nombre` y `arreglar` existen para que Claude, desde «Preparar con
+    # Claude», escriba el archivo por la misma puerta que los botones, con su
+    # cerrojo, y no a mano (C-0504).
+    if args.orden == "nombre":
+        try:
+            print(f"Guardado: {poner_nombre(args.nombre)}. Ya se puede generar el QR en Acceso.")
+        except AccesoInvalido as exc:
+            print(f"No se guardó: {exc}")
+            return 1
+        return 0
+
+    if args.orden == "arreglar":
+        estado = revisar()
+        if not estado["arreglo"]:
+            print("El archivo de acceso ya está bien escrito.")
+            return 0
+        for linea in estado["arreglo"]["cambios"]:
+            print(f"  - {linea}")
+        try:
+            copia = arreglar(estado["huella"])
+        except AccesoInvalido as exc:
+            print(f"No se arregló: {exc}")
+            return 1
+        print(f"Arreglado. El anterior quedó en {copia}.")
+        return 0
+
     if args.orden == "quitar":
         print("Quitado." if revocar(args.id) else "No hay ningún aparato con ese id.")
         return 0
@@ -590,13 +927,13 @@ def _cli(argv: list[str] | None = None) -> int:
     # adivinar desde aquí: `127.0.0.1` haría un QR que sólo funciona en la
     # máquina que ya está dentro, que es justo el aparato que no hace falta dar
     # de alta.
-    remotos = [h for h in hosts() if h not in HOSTS_LOCALES]
-    destino = args.host or (remotos[0] if remotos else None)
+    destino = args.host or destino_de_alta(None, de_casa=True)
     if not destino:
         print(
-            f"No sé por qué nombre va a entrar ese aparato.\n\n"
-            f"Añade el nombre de esta máquina en la red privada a la lista `hosts`\n"
-            f"de {archivo()}, o pásalo con --host.\n"
+            "No sé por qué nombre va a entrar ese aparato.\n\n"
+            "En la pantalla Acceso del hub, «Usar este nombre» guarda el de esta máquina\n"
+            "en la red privada; desde aquí, `python -m hub.acceso nombre <el nombre>`,\n"
+            "o pásalo con --host.\n"
         )
         return 1
 

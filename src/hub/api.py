@@ -3015,7 +3015,7 @@ def incidencia(con: sqlite3.Connection, *, interfaz: str, navegador: str | None,
     }
 
 
-def acceso(codigo: str | None = None) -> dict[str, Any]:
+def acceso(codigo: str | None = None, de_casa: bool = False) -> dict[str, Any]:
     """Lo que pinta /acceso: por qué nombres se entra, qué aparatos están dados
     de alta y si la terminal remota está encendida (decisiones 158-163).
 
@@ -3023,27 +3023,66 @@ def acceso(codigo: str | None = None) -> dict[str, Any]:
     El enlace del QR no va aquí: el nombre por el que va a entrar el aparato
     depende de por dónde se está mirando la pantalla, y eso es de la petición.
     Un `acceso.yml` mal escrito no tumba la pantalla: se enseñan los nombres
-    locales y el motivo, para poder arreglarlo desde ella."""
-    from . import acceso as _acceso
+    locales, qué está mal y cómo quedaría arreglado (`acceso.revisar`, C-0504).
 
-    error = None
+    `de_casa` añade `red`: el nombre de esta máquina en la red privada y si
+    `tailscale serve` lleva al hub. Al momento (`maquina.red_privada`) sólo
+    mientras falte algo o haya un alta esperando —tras «Preparar con Claude»
+    la medida del ciclo lento llega con minutos de retraso—; si no, de esa
+    medida. Desde fuera no se mira: eso sólo se arregla en casa."""
+    from . import acceso as _acceso
+    from . import maquina as _maquina
+
+    revision = _acceso.revisar()
+    error = revision["error"]
+    # Con la raíz del archivo rota tampoco se leen aparatos ni altas: la
+    # pantalla daba un 500 justo donde se explica el arreglo (C-0504).
     try:
-        nombres = _acceso.hosts()
+        pendientes, aparatos = _acceso.pendientes(), _acceso.dispositivos()
     except _acceso.AccesoInvalido as exc:
-        nombres, error = _acceso.HOSTS_LOCALES, str(exc)
-    pendiente = next((p for p in _acceso.pendientes() if p["codigo"] == codigo), None) \
+        pendientes, aparatos, error = [], [], error or str(exc)
+    pendiente = next((p for p in pendientes if p["codigo"] == codigo), None) \
         if codigo else None
+    red = None
+    if de_casa:
+        if not revision["utilizables"] or pendiente:
+            red = _maquina.red_privada()
+        else:
+            red = _red_medida()
     return {
-        "hosts": nombres, "locales": _acceso.HOSTS_LOCALES,
+        "hosts": revision["hosts"], "locales": _acceso.HOSTS_LOCALES,
+        "utilizables": revision["utilizables"], "avisos": revision["avisos"],
+        "arreglo": revision["arreglo"], "huella": revision["huella"],
         # Sin la huella del testigo: no la pinta nadie, y lo que sale de `api`
         # lo pueden leer el asistente y el MCP.
         "dispositivos": [{k: v for k, v in d.items() if k != "hash"}
-                         for d in _acceso.dispositivos()],
+                         for d in aparatos],
         "terminal_remota": _acceso.terminal_remota(),
         "pendiente": pendiente,
         "minutos": _acceso.MINUTOS_DE_ALTA,
         "archivo": str(_acceso.archivo()), "error": error,
+        "red": red,
     }
+
+
+def _red_medida() -> dict | None:
+    """Si `tailscale serve` llevaba al hub en la última vuelta lenta, o None
+    si no se midió. Sin el nombre ni el puerto: eso sólo se mira al momento."""
+    from . import db
+    from . import maquina as _maquina
+
+    try:
+        con = db.conectar()
+        try:
+            serve = _maquina.ultimas(con).get("desatendido.serve")
+        finally:
+            con.close()
+    except (sqlite3.Error, OSError, db.BaseIlegible):
+        return None
+    if not serve or serve.get("valor") is None:
+        return None
+    return {"hay": True, "conectado": None, "nombre": "", "puerto": None, "error": "",
+            "lleva_al_hub": bool(serve["valor"])}
 
 
 def _carpeta_existe(ruta: str) -> bool:
@@ -3089,14 +3128,20 @@ def navegante() -> dict[str, Any]:
 
 
 def componentes() -> dict[str, Any]:
-    """Qué les falta a Navegante, Reuniones y el Puente KVM para funcionar
-    (decisiones 293 y 438). Lo lee el asistente para guiar, con los mismos
+    """Qué les falta a Navegante, Reuniones, el Puente KVM y el estudio para
+    funcionar (decisiones 293, 438 y 463). Lo lee el asistente para guiar, con los mismos
     pasos que pintan las pantallas. Del puente, sin preguntarle si contesta:
     eso sólo al pintar /puente."""
     from . import componentes as _c
     from . import reuniones as _r
     pasos = _c.pasos_navegante()
     del_puente = _c.pasos_puente()
+    # El estudio, sólo encendido (461) y sin preguntarle si contesta, como el
+    # puente: eso es de su pantalla.
+    del_estudio: dict[str, Any] = {"encendida": False, "pantalla": _c.PANTALLA["estudio"]}
+    if _opcionales.encendida("estudio"):
+        pasos_e = _c.pasos_estudio()
+        del_estudio.update(encendida=True, pasos=pasos_e, listo=_c.listo(pasos_e))
     return {
         "navegante": {"carpeta": str(_c.carpeta("navegador-lab")), "pasos": pasos,
                       "listo": _c.listo(pasos), "pantalla": _c.PANTALLA["navegador-lab"]},
@@ -3104,6 +3149,7 @@ def componentes() -> dict[str, Any]:
         "puente": {"carpeta": str(_c.carpeta("puente-kvm")), "pasos": del_puente,
                    "listo": _c.listo(del_puente), "pantalla": _c.PANTALLA["puente-kvm"],
                    "encendida": _opcionales.encendida("puente-kvm")},
+        "estudio": del_estudio,
     }
 
 
@@ -3155,9 +3201,11 @@ def estudio(local: bool) -> dict[str, Any]:
     GET a loopback con un plazo absoluto de 0,8 s entre los dos): ni el raíl
     ni el muestreo lo hacen. Apagado no se le pregunta nada.
 
-    Las direcciones —la del estudio, la de cada proyecto y la carpeta del kit—
-    sólo van si `local`: su web no pasa por la puerta de /acceso (regla dura
-    8), y desde otro aparato no se ofrece abrirla."""
+    Las direcciones —la del estudio y la de cada proyecto— sólo van si
+    `local`: su web no pasa por la puerta de /acceso (regla dura 8), y desde
+    otro aparato no se ofrece abrirla. Sin contestar van además sus pasos
+    (`componentes.pasos_estudio`), que preguntan a systemd si lo hay: hasta 5 s
+    más si no contesta."""
     from . import estudio as _e
     if not _opcionales.encendida("estudio"):
         return {"encendida": False}
@@ -3168,9 +3216,14 @@ def estudio(local: bool) -> dict[str, Any]:
         datos.update(direccion=_e.direccion(), puerto=_e.puerto(), variable_puerto=_e.VARIABLE_PUERTO)
         for p in datos["proyectos"]:
             p["direccion"] = _e.direccion_de(p["id"])
-        if not estado["vivo"]:
-            kit = _e.kit()
-            datos["kit"] = str(kit) if kit else None
+    if not estado["vivo"]:
+        # Lo que falta, en pasos y sin un comando para la persona: lo hace la
+        # sesión de «Preparar con Claude» (C-0503). Sin rutas, así que sirve
+        # también desde fuera; el botón sólo se ofrece desde la PC donde corre.
+        from . import componentes as _c
+        pasos = _c.pasos_estudio(estado)
+        datos.update(pasos=pasos, listo=_c.listo(pasos),
+                     se_puede_preparar=_e.kit() is not None or _e.en_catalogo())
     return datos
 
 
@@ -4301,14 +4354,18 @@ def personaje_vista(valor: Any = None) -> dict[str, str]:
     return {"id": pid, "nombre": nombre, "familia": familia, "hoja": _pj.hoja(pid)}
 
 
-def voz_estado(gpu: bool = False, solo_eleccion: bool = False) -> dict:
+def voz_estado(gpu: bool = False, solo_eleccion: bool = False, solo_descarga: bool = False) -> dict:
     """El modelo del dictado (C-0313): cuál eligió, cuáles hay descargados,
-    qué tiene cargado el servidor y, con `gpu`, la memoria de la GPU medida
-    al momento. Lo lee el menú junto a cada micrófono al abrirse; cerrado,
-    sólo lo elegido (`solo_eleccion`), que no lanza nada."""
+    qué tiene cargado el servidor, la descarga en curso o la última (C-0505)
+    y, con `gpu`, la memoria de la GPU medida al momento. Lo lee el menú
+    junto a cada micrófono al abrirse; cerrado, sólo lo elegido
+    (`solo_eleccion`), que no lanza nada. Mientras baja un modelo, el menú
+    abierto pregunta `solo_descarga`, que sólo lee dos archivos."""
     from . import transcribir
     if solo_eleccion:
         return transcribir.eleccion_dictado()
+    if solo_descarga:
+        return {"descarga": transcribir.descarga()}
     return transcribir.estado_dictado(gpu=gpu)
 
 

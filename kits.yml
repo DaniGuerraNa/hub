@@ -61,3 +61,14 @@ kits:
     version: "2.1"
     origen: https://github.com/DaniGuerraNa/kit-orquestacion.git
     descripcion: Trabajar de forma semiautónoma con Claude Code — método, roles, delegación y techo de consumo.
+
+  # Kit de MÁQUINA con su servicio: la web del estudio (unidad de usuario
+  # `estudio`, sólo en 127.0.0.1:8795), donde alguien que no programa habla con
+  # Claude Code y revisa su aplicación. El hub sólo apunta a ella (decisión
+  # 461); instalarlo lo hace una sesión de Claude con la persona delante, desde
+  # «Preparar con Claude» en /estudio (C-0503).
+  - id: estudio
+    nombre: Estudio
+    version: "0.1"
+    origen: https://github.com/DaniGuerraNa/estudio.git
+    descripcion: Una web local donde alguien que no programa construye su aplicación con Claude Code, en iteraciones muy visuales.

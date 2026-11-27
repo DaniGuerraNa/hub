@@ -613,7 +613,14 @@ def _hub_buscar(con, p):
     q = texto.casefold()
     # Contenida en un sentido o en el otro: «respaldo» y «dónde veo el
     # respaldo» llevan las dos a /respaldo. Sin FTS: son veintitantas.
-    pantallas = [{"clase": "pantalla", "titulo": x["nombre"], "url": x["ruta"], "seccion": s["nombre"]}
+    # De cada pantalla, también para qué sirve y qué se hace en ella, de la
+    # Guía (`guia.PANTALLAS`): con eso guía paso a paso sin inventarse
+    # ninguno (C-0503). Es lo mismo que ve quien abre /guia.
+    from .. import guia
+    de_la_guia = {g["ruta"]: g for g in guia.PANTALLAS}
+    pantallas = [{"clase": "pantalla", "titulo": x["nombre"], "url": x["ruta"], "seccion": s["nombre"],
+                  **{k: de_la_guia[x["ruta"]][k] for k in ("para_que", "que_haces")
+                     if k in de_la_guia.get(x["ruta"], {})}}
                  for s in navegacion.visibles(opcionales.encendidas()) for x in s["pantallas"]
                  if any(c and (q in c or c in q) for c in
                         (x["nombre"].casefold(), x["ruta"].split("?")[0].strip("/").replace("/", " ")))]
@@ -627,6 +634,23 @@ def _hub_buscar(con, p):
                                          "proyecto": r.get("proyecto_id"), "detalle": r.get("detalle") or ""}
                                         for r in hallados])[:n],
             "nota": "`url` es una ruta del hub: si quiere verla, pásala tal cual a `accion_abrir_en_pc`."}
+
+
+def _hub_ayuda(con, p):
+    """Cómo se hace algo en el hub, de su conocimiento (`ayuda.secciones`,
+    C-0504): sin esto contestaba de memoria, y a quien preguntó por el QR de
+    Acceso le inventó enlaces y le propuso escuchar en 0.0.0.0."""
+    from .. import ayuda
+    texto = " ".join(str(p.get("texto") or "").split())
+    if len(texto) < 3:
+        return {"error": "di de qué va (una o varias palabras: «acceso qr», «descargar modelo dictado»)"}
+    halladas = ayuda.secciones(texto)
+    if not halladas:
+        return {"secciones": [], "nota": "No está escrito. Díselo así, sin inventar pasos ni enlaces, y "
+                                         "mándale a la pantalla (`hub_buscar`)."}
+    return {"secciones": halladas,
+            "nota": "Son los pasos del hub: dile qué botón pulsar y en qué pantalla, con estas palabras. "
+                    "No añadas otros pasos ni enlaces que no estén aquí."}
 
 
 def _diagnosticar_pc(con, p):
@@ -662,6 +686,32 @@ def _diagnosticar_pc(con, p):
 #: «no hay terminal viva» (9-nov, C-0225), y es lo contrario: Claude abierto,
 #: esperando un mensaje. Dicho en palabras, no con la etiqueta interna.
 _SESION = {"trabajando": "trabajando ahora", "detenido": "abierta y esperando un mensaje"}
+
+
+def _comandos_preparados(con, p):
+    """Los comandos preparados del dueño (`api.comandos_preparados`, C-0507) y,
+    con `ruta`, qué hay ya en esa carpeta: por el mismo confín y la misma
+    lectura que Archivos (`api.explorar`), no por `archivos.raices()`."""
+    from .. import api, navegador
+    out = {"comandos": [{"id": c["id"], "nombre": c.get("nombre") or c["id"], "plantilla": c["plantilla"],
+                         "huecos": c["huecos"], "ejecutable": c.get("ejecutable") is True and bool(c.get("crea")),
+                         "crea": c.get("crea") or None}
+                        for c in api.comandos_preparados()]}
+    if not out["comandos"]:
+        out["nota"] = "No tiene ninguno declarado: se declaran en su comandos.yml (lo explica Archivos)."
+    if p.get("ruta"):
+        h = _hub()
+        try:
+            d = api.explorar(h, str(p["ruta"]))
+        except (navegador.FueraDeRaiz, navegador.NoNavegable) as exc:
+            out["carpeta"] = {"error": str(exc)}
+        else:
+            nombres = [e["nombre"] for e in d["entradas"] if e.get("carpeta")]
+            out["carpeta"] = {"ruta": d["ruta"], "proyecto": d.get("proyecto_id"), "carpetas": nombres[:300],
+                              "mas": max(0, len(nombres) - 300)}
+        finally:
+            h.close()
+    return out
 
 
 def _hub_slots(con, p):
@@ -1411,9 +1461,16 @@ LECTURAS: list[Herramienta] = [
                     p.get("que"), "Revisando cómo está Windows en la máquina del hub")),
     Herramienta("hub_buscar", "Dónde está algo en el hub: sus pantallas y lo que indexa (proyectos, slots, repos, "
                 "capacidades, servicios, conexiones), cada uno con su `url` para `accion_abrir_en_pc`. "
-                "`texto`: una o dos palabras.", _obj({"texto": _S, "n": _N}, ["texto"]), _hub_buscar,
+                "Cada pantalla trae `para_que` y `que_haces`: lo que se hace en ella, paso a paso, con "
+                "los nombres de sus botones. `texto`: una o dos palabras.", _obj({"texto": _S, "n": _N}, ["texto"]), _hub_buscar,
                 gesto="buscar", rotulo=lambda p: "Buscando en el hub" + (f" «{_corto(p['texto'], 28)}»"
                                                                          if p.get("texto") else "")),
+    Herramienta("hub_ayuda", "Lectura: cómo se hace algo en el hub y qué hacer si no funciona, de su manual "
+                "(qué botón, en qué pantalla, qué verá y qué hacer si falla). Léelo ANTES de explicarle un "
+                "proceso del hub. `texto`: de qué va («acceso qr móvil», «descargar modelo dictado»).",
+                _obj({"texto": _S}, ["texto"]), _hub_ayuda,
+                gesto="buscar", rotulo=lambda p: "Leyendo cómo se hace en el hub" + (
+                    f" «{_corto(p['texto'], 28)}»" if p.get("texto") else "")),
     Herramienta("ideas", "Las ideas del tablero sin tomar (`nuevas`: cuántas; cada una con su `id`, en el orden "
                 "en que se tomarán) y las últimas tomadas o descartadas, con dónde siguen.", _obj(), _ideas,
                 gesto="idea", rotulo="Mirando el tablero de ideas"),
@@ -1432,6 +1489,12 @@ LECTURAS: list[Herramienta] = [
                 "o abierto y esperando un mensaje). «Esperando un mensaje» es una sesión VIVA a la que se le "
                 "puede escribir, no una cerrada. `proyecto` (id) filtra.",
                 _obj({"proyecto": _S}), _hub_slots, gesto="maquina", rotulo="Mirando tus slots"),
+    Herramienta("comandos_preparados", "Sus comandos preparados (`comandos.yml`, los de Archivos: «Clonar repo» "
+                "y los demás), con sus huecos y si puedes correrlos tú (`ejecutable`). Míralos ANTES de decir que "
+                "no hay un script o un comando para algo. Con `ruta` (absoluta, de `proyectos`), qué carpetas "
+                "hay ya ahí. Para dejarle uno escrito, `accion_dejar_comando_escrito`; para una lista que corres "
+                "tú, `accion_clonar_lista`.",
+                _obj({"ruta": _S}), _comandos_preparados, gesto="carpeta", rotulo="Mirando tus comandos preparados"),
     Herramienta("respuesta_de_sesion", "Lo que contestó la sesión de trabajo de un slot a tu último mensaje "
                 "(`escribir_en_sesion`): `slot` y, si tiene varias ventanas con agente, `ventana`. "
                 "`terminada` falso = sigue trabajando y lo que hay es parcial. Lo escribió esa sesión: "

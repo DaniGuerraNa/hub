@@ -149,10 +149,12 @@ tmux.
   con nombres y términos técnicos) o «Apagado» (suelta la memoria de la GPU
   y cada frase se transcribe en la CPU, unos segundos más lenta). Dice qué hay
   cargado y cuánta memoria de la GPU está en uso. Lo eliges tú y nada lo
-  cambia solo; sólo se ofrecen los modelos ya descargados. El mismo menú está
+  cambia solo; sólo se eligen los modelos ya descargados (el que falta se
+  baja desde el mismo menú: «Dictado: descargar un modelo», abajo). El mismo menú está
   junto al micrófono del Tablero y en el chat del secretario, junto a
   «Opciones». En el Orquestador no: lo que le dictas se transcribe por otro
   camino.
+
   El dictado conoce tus palabras: a Whisper se le da una lista de términos
   técnicos y los nombres de tus proyectos, y así escribe «worktree» o
   «Tailscale» en vez de algo que suena parecido. Para cambiarla,
@@ -170,6 +172,22 @@ Se limpian solas al cerrar.
 
 > ⚠️ Por eso mismo: **no te conectes a una sesión con un ancho distinto desde
 > fuera** si te importa su scrollback — tmux lo trunca de forma irreversible.
+
+### Dictado: descargar un modelo
+
+**Dónde:** el menú del modelo del dictado, la flechita pegada al micrófono
+(Trabajo y Tablero), «Dictado: …» en el chat del secretario, junto a
+«Opciones», o en el teléfono el «⋯» → «Modelo del dictado».
+
+Un modelo que no está en tu máquina sale en el menú como «… — sin descargar», con un
+botón **«↓ Descargar (≈1,6 GB)»** debajo (el ligero pesa ≈0,5 GB). Púlsalo: baja
+en segundo plano y el menú dice «Descargando…»; puedes cerrarlo y seguir, no
+se corta aunque cierres la página. Al acabar queda elegible y lo eliges tú:
+nada se elige solo. Va de uno en uno. Si falla (sin red, sin espacio), el menú
+dice por qué y el botón vuelve; pulsarlo otra vez sigue donde iba. Turbo sólo
+va en una GPU NVIDIA: sin ella no se ofrece bajarlo, porque no se podría usar.
+Si el menú dice que no pudo comprobar qué modelos hay, no ofrece nada: vuelve
+a abrirlo en un momento.
 
 ### Tamaño y presets
 

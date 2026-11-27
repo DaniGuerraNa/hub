@@ -6,7 +6,13 @@
    opciones. Elegir manda `POST /api/voz/modelo`, que contesta cuando el
    anterior ya soltó la memoria y el nuevo está cargado. Nada se pregunta
    mientras el menú está cerrado: `nvidia-smi` cuesta ~0,3 s y no va en un
-   sondeo. Todo lo que llega se pinta con `textContent`. */
+   sondeo. Todo lo que llega se pinta con `textContent`.
+
+   Un modelo sin descargar se lee «sin descargar» y lleva su «Descargar»
+   (C-0505): `POST /api/voz/descargar` vuelve en el acto y, mientras baja y el
+   menú sigue abierto, se pregunta `/api/voz/estado?solo=descarga` cada pocos
+   segundos (sólo lee dos archivos). Al acabar se repinta: queda elegible, no
+   se elige solo. Si no se pudo mirar qué hay, ni «sin descargar» ni botón. */
 (function () {
   'use strict';
   if (window.HubModeloDictado) return;
@@ -15,6 +21,32 @@
 
   function gb(mb) {
     return (mb / 1024).toFixed(1).replace('.', ',');
+  }
+
+  // Lo que pesa en disco, en GB de los que dice el sistema (10^9 bytes).
+  function peso(bytes) {
+    return (bytes / 1e9).toFixed(1).replace('.', ',');
+  }
+
+  const SONDEO_MS = 3000;
+
+  function bajando(estado, modelo) {
+    const d = estado.descarga;
+    return !!(d && d.estado === 'bajando' && (!modelo || d.modelo === modelo));
+  }
+
+  function notaDescarga(estado) {
+    const d = estado.descarga;
+    if (!d) return '';
+    if (d.estado === 'bajando') {
+      const min = d.desde ? Math.floor((Date.now() / 1000 - d.desde) / 60) : 0;
+      return 'Descargando ' + d.nombre + (min >= 1 ? ' (lleva ' + min + ' min)' : '') +
+        '. Puedes cerrar el menú: sigue sola, y al acabar lo eliges tú.';
+    }
+    // Un fallo viejo sobra si el modelo ya está (se bajó por otro lado).
+    const ya = (estado.modelos || []).some(function (m) { return m.modelo === d.modelo && m.disponible; });
+    if (d.estado === 'fallo' && !ya) return 'No se pudo bajar ' + d.nombre + ': ' + (d.error || 'sin motivo') + '.';
+    return '';
   }
 
   function nota(estado) {
@@ -69,11 +101,81 @@
       b.setAttribute('aria-pressed', elegido ? 'true' : 'false');
       if (!m.disponible) {
         b.disabled = true;
-        b.title = 'No está descargado en esta máquina';
+        if (estado.mirado === false) {
+          b.title = 'No pude comprobar si está descargado';
+        } else {
+          b.textContent = m.nombre + ' — sin descargar';
+          b.title = 'No está descargado en esta máquina';
+        }
       }
       caja.appendChild(b);
+      if (!m.disponible && estado.mirado !== false && m.modelo !== 'apagado') caja.appendChild(descargador(estado, m));
     }
-    pie.textContent = nota(estado);
+    const extra = notaDescarga(estado);
+    pie.textContent = nota(estado) + (extra ? ' ' + extra : '');
+    if (bajando(estado)) vigilar(menu);
+  }
+
+  // Lo que va debajo de un modelo sin descargar: el botón, o por qué no lo hay.
+  function descargador(estado, m) {
+    if (bajando(estado, m.modelo)) {
+      const p = document.createElement('p');
+      p.className = 'tenue md-nota';
+      p.textContent = 'Descargando…';
+      return p;
+    }
+    if (m.solo_gpu && 'gpu' in estado && !estado.gpu) {
+      const p = document.createElement('p');
+      p.className = 'tenue md-nota';
+      p.textContent = 'Necesita una GPU NVIDIA, y en esta máquina no la veo.';
+      return p;
+    }
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.mdDescargar = m.modelo;
+    b.textContent = '↓ Descargar' + (m.tamano ? ' (≈' + peso(m.tamano) + ' GB)' : '');
+    b.title = 'Lo baja en segundo plano a esta máquina; al acabar lo eliges tú';
+    if (bajando(estado)) b.disabled = true;   // de uno en uno
+    return b;
+  }
+
+  // Mientras baja y el menú sigue abierto: cuando deja de bajar, se repinta entero.
+  function vigilar(menu) {
+    if (menu.dataset.vigilando === '1') return;
+    menu.dataset.vigilando = '1';
+    setTimeout(async () => {
+      menu.dataset.vigilando = '';
+      if (!menu.open) return;
+      try {
+        const r = await fetch('/api/voz/estado?solo=descarga');
+        const e = await r.json();
+        if (bajando(e)) vigilar(menu);
+        else await cargar(menu);
+      } catch (err) { vigilar(menu); }
+    }, SONDEO_MS);
+  }
+
+  async function descargar(menu, modelo) {
+    if (menu.dataset.ocupado === '1') return;
+    menu.dataset.ocupado = '1';
+    const pie = menu.querySelector('[data-md-nota]');
+    for (const b of menu.querySelectorAll('[data-md-descargar]')) b.disabled = true;
+    pie.textContent = 'Empezando a bajar ' + (CORTO[modelo] || modelo) + '…';
+    try {
+      const r = await fetch('/api/voz/descargar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ modelo: modelo }).toString(),
+      });
+      const datos = await r.json();
+      await cargar(menu);
+      if (!datos.ok) pie.textContent = datos.error || 'No se pudo empezar a bajar.';
+    } catch (e) {
+      await cargar(menu);
+      pie.textContent = 'No se pudo empezar a bajar: el hub no contestó.';
+    } finally {
+      menu.dataset.ocupado = '';
+    }
   }
 
   async function cargar(menu) {
@@ -136,7 +238,10 @@
       nuevos.push(menu);
       menu.addEventListener('toggle', () => { if (menu.open) cargar(menu); });
       menu.addEventListener('click', (ev) => {
-        const b = ev.target && ev.target.closest ? ev.target.closest('[data-md-modelo]') : null;
+        const cerca = (sel) => (ev.target && ev.target.closest ? ev.target.closest(sel) : null);
+        const d = cerca('[data-md-descargar]');
+        if (d && d.dataset && d.dataset.mdDescargar && !d.disabled) { descargar(menu, d.dataset.mdDescargar); return; }
+        const b = cerca('[data-md-modelo]');
         if (b && !b.disabled) elegir(menu, b.dataset.mdModelo);
       });
     }

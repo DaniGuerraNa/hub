@@ -28,13 +28,15 @@ entras si algo se rompe.
 
    `--bg` hace que se guarde: sin él, `serve` muere al cerrar esa terminal y
    tras un apagón no estaría. Si usas otro puerto (`HUB_PORT`), pon ése.
-2. **Declara su nombre** en `~/.local/share/hub/acceso.yml`, el de la red
-   privada y exacto (sin `*`):
+2. **Declara su nombre**, el de la red privada y exacto (sin `*`). En la
+   máquina del hub, en su carpeta:
 
-   ```yaml
-   hosts:
-     - mi-servidor.tu-red.ts.net
+   ```bash
+   uv run python -m hub.acceso nombre mi-servidor.tu-red.ts.net
    ```
+
+   Es lo mismo que el botón «Usar este nombre» de Acceso: lo guarda en `hosts`
+   de `~/.local/share/hub/acceso.yml`, sin que tengas que editarlo.
 3. **Da de alta tu PC.** Desde tu PC, entra por SSH a la máquina del hub y, en
    la carpeta del hub:
 

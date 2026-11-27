@@ -106,11 +106,13 @@ def test_solo_la_puerta_lanza_procesos_que_sobreviven_al_servicio():
     no es lanzar. Un grupo de procesos propio (`process_group`) tampoco saca
     del cgroup y también se vigila: sólo `secretario/motor.py`, que lo usa
     para matar a `claude` con su servidor MCP al cortar una llamada (C-0241),
-    no para que sobreviva."""
+    no para que sobreviva, y `comandos.py`, para matar con su `git` la orden
+    de una lista que se pasa del tope (C-0507)."""
     assert SRC.is_dir()
     vigilado = r"start_new_session|process_group|\[\s*[\"']systemd-run[\"']"
-    # Lo que cada uno puede usar de eso: la puerta, todo; el motor, su grupo.
-    permitido = {"procesos.py": vigilado, "secretario/motor.py": r"process_group=0"}
+    # Lo que cada uno puede usar de eso: la puerta, todo; el motor y los comandos, su grupo.
+    permitido = {"procesos.py": vigilado, "secretario/motor.py": r"process_group=0",
+                 "comandos.py": r"process_group=0"}
     fuera = []
     for a in SRC.rglob("*.py"):
         nombre = str(a.relative_to(SRC))
@@ -316,11 +318,18 @@ def test_solo_la_costura_de_lectura_le_pregunta_al_puente():
 
 def test_solo_la_costura_de_lectura_le_pregunta_al_estudio():
     """`estudio.estado` se llama al pintar /estudio, por `api.estudio`, y en
-    ningún otro sitio: ni el raíl ni el muestreo le preguntan (461)."""
+    ningún otro sitio: ni el raíl ni el muestreo le preguntan (461).
+
+    `componentes.py` importa el módulo para sus pasos y su encargo —el kit, el
+    catálogo y el puerto, que no le preguntan nada (C-0503, 463)—, y lo que
+    mide se lo da `api.estudio`: puede importarlo, pero no llamar a `estado`."""
     vigia = re.compile(r"from\s+\.+\s+import[^\n]*\bestudio\b|import\s+hub\.estudio|\bestudio\.estado\(")
+    pregunta = re.compile(r"\bestudio\.estado\b|from\s+\.+estudio\s+import[^\n]*\bestado\b")
+    sin_comentarios = lambda a: re.sub(r'""".*?"""|#[^\n]*', "", a.read_text(encoding="utf-8"),  # noqa: E731
+                                       flags=re.S)
     fuera = sorted(str(a.relative_to(SRC)) for a in SRC.rglob("*.py")
                    if a.name not in ("api.py", "estudio.py")
-                   and vigia.search(re.sub(r'""".*?"""|#[^\n]*', "", a.read_text(encoding="utf-8"), flags=re.S)))
+                   and (pregunta if a.name == "componentes.py" else vigia).search(sin_comentarios(a)))
     assert not fuera, f"le preguntan al estudio por su cuenta: {fuera}"
     assert vigia.search((SRC / "api.py").read_text(encoding="utf-8")), "el vigía ya no ve a api.estudio"
 
