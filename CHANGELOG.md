@@ -15,6 +15,21 @@ cruzar.
 
 ## Sin publicar
 
+## 0.18.8 — 2026-11-28
+
+### Qué tienes que hacer
+
+- Si usas el estudio: en su pantalla del hub, «Preparar con Claude» para
+  pasar a la 0.9.
+
+### Qué cambia en lo que ya usabas
+
+- **El estudio pasa a la 0.9.**
+  - Se acabó el «ejecutando una orden» que duraba hasta el plazo de 30
+    minutos.
+  - Mientras Claude trabaja se ve qué está haciendo, con sus palabras, desde
+    cuándo y los pasos que ya hizo.
+
 ## 0.18.7 — 2026-11-27
 
 ### Qué tienes que hacer
