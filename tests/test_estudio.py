@@ -575,3 +575,5 @@ def test_el_encargo_actualiza_a_la_version_del_catalogo_y_reinicia_la_unidad():
     assert "versión del catálogo" in encargo
     assert "systemctl --user restart estudio" in encargo
     assert '"version"' in encargo
+    # Sin systemd, la ventana vieja seguía ocupando el puerto.
+    assert "ciérrala antes" in encargo

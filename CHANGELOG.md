@@ -15,6 +15,24 @@ cruzar.
 
 ## Sin publicar
 
+## 0.18.5 — 2026-11-27
+
+### Qué tienes que hacer
+
+- Si usas el estudio: en su pantalla del hub, «Preparar con Claude» para
+  pasar a la 0.7.
+
+### Qué cambia en lo que ya usabas
+
+- **El estudio pasa a la 0.7, probada con el Claude real** en un proyecto
+  nuevo y en uno que viene de una versión anterior. Claude lee el método
+  del estudio, que antes tenía negado; se frena mucho menos al montar el
+  entorno y las capturas; y no pide `sudo` ni instalar Docker. Los commits
+  funcionan aunque tu máquina no tenga autor de git, y al actualizar, el
+  estudio se reinicia solo.
+- **Sin systemd, «Preparar con Claude» cierra la ventana del estudio viejo**
+  antes de arrancar el nuevo, para que no choquen por el puerto.
+
 ## 0.18.4 — 2026-11-27
 
 ### Qué tienes que hacer

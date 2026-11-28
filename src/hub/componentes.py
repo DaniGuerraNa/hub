@@ -263,6 +263,8 @@ ENCARGOS = {
         "install.sh no la reinicia si ya corría; si no existe, bash \"<ruta del kit>/install.sh\"{opcion_puerto}, que la deja "
         "y la arranca. Sin systemd: bash \"<ruta del kit>/install.sh\" --sin-servicio"
         "{opcion_puerto}, y arranca el comando que imprime al final en una ventana de tmux "
+        "(si ya hay una ventana estudio con una versión vieja corriendo, ciérrala antes, o la "
+        "nueva no podrá usar el puerto) "
         "aparte de esta misma sesión (tmux new-window -d -n estudio …), para que siga vivo "
         "cuando cierres esta y yo vea su registro en Trabajo. 4) Comprueba que contesta: "
         "http://127.0.0.1:{puerto}/api/salud tiene que decir \"vivo\": true y su \"version\" la "
