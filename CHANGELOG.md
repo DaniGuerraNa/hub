@@ -15,6 +15,20 @@ cruzar.
 
 ## Sin publicar
 
+## 0.18.7 — 2026-11-27
+
+### Qué tienes que hacer
+
+- Nada: tras actualizar, «Preparar con Claude» ya abre su ventana.
+
+### Qué cambia en lo que ya usabas
+
+- **«Preparar con Claude» ya no dice «se pegó pero no llegó a verse en el
+  panel».** El encargo del estudio era más largo que la pantalla de una
+  ventana recién abierta, y el hub no lo veía entero aunque estaba escrito.
+  Ahora lo encuentra también en lo que sube por arriba, y espera un poco más
+  a las terminales que tardan en arrancar.
+
 ## 0.18.6 — 2026-11-27
 
 ### Qué tienes que hacer

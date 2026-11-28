@@ -395,8 +395,11 @@ def restaurar(con: sqlite3.Connection, muestra_id: int | None = None) -> dict:
 # Cuánto se espera a ver el comando en la pantalla. La shell acaba de nacer y
 # puede no haber pintado el prompt todavía; medido, aparece de inmediato, pero
 # «de inmediato» en una máquina que acaba de arrancar tras un apagón —que es el
-# único momento en que esto se usa— no significa lo mismo.
-SEGUNDOS_PARA_VERLO = 3.0
+# único momento en que esto se usa— no significa lo mismo. Y una shell que lee
+# un perfil pesado (nvm, conda) tarda segundos en pintar el prompt: el texto
+# llega, pero se ve después (27-nov, en otra máquina). Se sale en cuanto se ve,
+# así que esperar más no retrasa a nadie.
+SEGUNDOS_PARA_VERLO = 8.0
 
 
 def _esperar_a_verlo(pane_id: str, texto: str) -> None:
@@ -409,11 +412,15 @@ def _esperar_a_verlo(pane_id: str, texto: str) -> None:
     hay motivo para suponerlo.
 
     Se mira con `-J` porque el terminal parte por ancho: un comando de 37
-    caracteres en un panel estrecho sale en dos líneas y no casaría.
+    caracteres en un panel estrecho sale en dos líneas y no casaría. Y con el
+    historial, porque un comando más largo que la pantalla sube por arriba: el
+    encargo del estudio (2029 caracteres) no cabe en una ventana recién creada
+    sin cliente, que tmux hace de 80×24, y se daba por no escrito (27-nov). La
+    ventana acaba de nacer: su historial es sólo esto.
     """
     limite = time.monotonic() + SEGUNDOS_PARA_VERLO
     while time.monotonic() < limite:
-        if texto in tmux.capturar_panel(pane_id, unir_lineas=True):
+        if texto in tmux.capturar_panel(pane_id, unir_lineas=True, con_historia=True):
             return
         time.sleep(0.1)
     raise RuntimeError(

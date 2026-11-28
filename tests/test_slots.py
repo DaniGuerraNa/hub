@@ -374,3 +374,16 @@ def test_un_titulo_que_no_se_puede_poner_no_tumba_la_apertura_pero_se_dice(escen
     assert slots.abrir(escena, slot_id) == "%5"
     salida = capsys.readouterr().out
     assert "Con título" in salida and "no such pane" in salida
+
+
+def test_un_comando_mas_largo_que_la_pantalla_de_una_ventana_nueva_se_da_por_escrito(tmp_path):
+    """27-nov: «Preparar con Claude» del estudio decía «se pegó pero no llegó a
+    verse». El encargo (2029 caracteres) no cabe en una ventana recién creada
+    sin cliente, que tmux hace de 80×24 (1920): su principio sube al
+    historial y la comprobación sólo miraba lo visible."""
+    texto = "echo " + "encargo-largo " * 180  # unos 2500 caracteres
+    pane = slots.abrir_en(str(tmp_path), "largo", "prueba-largo", texto=texto)
+    try:
+        assert texto in tmux.capturar_panel(pane, unir_lineas=True, con_historia=True)
+    finally:
+        tmux._correr(["kill-session", "-t", "=prueba-largo"])

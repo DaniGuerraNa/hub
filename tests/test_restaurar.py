@@ -45,7 +45,7 @@ def tmux_falso(monkeypatch):
     # El panel enseña lo que se le pegó. Sin esto la espera de la regla 17 mira
     # un panel de verdad que no existe — y que el arnés lo note es señal de que
     # la comprobación no es decorativa.
-    monkeypatch.setattr(tmux, "capturar_panel", lambda pane, unir_lineas=False: "\n".join(
+    monkeypatch.setattr(tmux, "capturar_panel", lambda pane, unir_lineas=False, con_historia=False: "\n".join(
         f"$ {p['texto']}" for p in hecho["pegados"] if p["pane"] == pane))
     return hecho
 
@@ -99,7 +99,7 @@ def test_un_comando_que_se_pega_y_no_aparece_en_pantalla_cuenta_como_fallo(
     nunca llegó, y anunciarlo en el panorama justo al volver de un apagón.
     Comprobarlo es una captura, así que no hay excusa para suponerlo.
     """
-    monkeypatch.setattr(tmux, "capturar_panel", lambda pane, unir_lineas=False: "$ ")
+    monkeypatch.setattr(tmux, "capturar_panel", lambda pane, unir_lineas=False, con_historia=False: "$ ")
     monkeypatch.setattr(slots, "SEGUNDOS_PARA_VERLO", 0.2)
     resultado = slots.restaurar(con)
     assert resultado["abiertos"] == []
