@@ -15,6 +15,23 @@ cruzar.
 
 ## Sin publicar
 
+## 0.18.6 — 2026-11-27
+
+### Qué tienes que hacer
+
+- Si usas el estudio: en su pantalla del hub, «Preparar con Claude» para
+  pasar a la 0.8.
+
+### Qué cambia en lo que ya usabas
+
+- **El estudio pasa a la 0.8, probada con el Claude real.**
+  - La app de prueba sigue abierta cuando Claude termina su turno, así que
+    «↗ Abrir la app de prueba» ya funciona.
+  - Si Claude perdió la conversación, por ejemplo una de hace más de un mes,
+    el proyecto sigue en una nueva y no se queda roto.
+  - En una WSL sin las librerías del navegador, las capturas salen con el
+    Edge o el Chrome de Windows.
+
 ## 0.18.5 — 2026-11-27
 
 ### Qué tienes que hacer
