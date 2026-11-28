@@ -840,3 +840,22 @@ def test_poner_nombre_no_dice_listo_sobre_un_archivo_con_comodin(acceso_yml):
     with pytest.raises(acceso.AccesoInvalido, match="arréglalo antes"):
         acceso.poner_nombre(FUERA)
     assert acceso_yml.read_text(encoding="utf-8") == "hosts:\n  - '*.ts.net'\n"
+
+
+def test_el_secretario_lee_como_se_entra_desde_fuera_sin_pedir_que_le_describan_la_pantalla(acceso_yml, monkeypatch):
+    """28-nov: con Acceso configurado (el nombre de Tailscale y un móvil dado de
+    alta), el secretario no lo veía y pedía que se lo describieran."""
+    from hub import maquina
+    from hub.secretario import herramientas
+
+    acceso.canjear(acceso.alta_pendiente("Móvil del viaje"))
+    monkeypatch.setattr(maquina, "red_privada", lambda: {
+        "hay": True, "conectado": True, "nombre": FUERA, "lleva_al_hub": True, "puerto": 443, "error": ""})
+    h = herramientas.todas()["hub_acceso"]
+    r = h.funcion(None, {})
+    assert FUERA in r["nombres_admitidos"] and r["nombres_de_red_privada"] == [FUERA]
+    assert r["tailscale"]["serve_lleva_al_hub"] is True
+    assert [a["nombre"] for a in r["aparatos_dados_de_alta"]] == ["Móvil del viaje"]
+    assert r["terminal_remota_encendida"] is False
+    # Nada con lo que se pueda entrar.
+    assert "huella" not in str(r) and "hash" not in str(r)

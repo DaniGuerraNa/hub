@@ -15,6 +15,18 @@ cruzar.
 
 ## Sin publicar
 
+## 0.18.9 — 2026-11-28
+
+### Qué tienes que hacer
+
+- Nada: el secretario se reinicia solo al actualizar.
+
+### Qué cambia en lo que ya usabas
+
+- **El secretario ve tu configuración de Acceso:** los nombres por los que
+  se entra, si Tailscale está conectado y lleva al hub, y qué aparatos están
+  dados de alta. Antes te pedía que le describieras la pantalla.
+
 ## 0.18.8 — 2026-11-28
 
 ### Qué tienes que hacer

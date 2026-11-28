@@ -3015,7 +3015,7 @@ def incidencia(con: sqlite3.Connection, *, interfaz: str, navegador: str | None,
     }
 
 
-def acceso(codigo: str | None = None, de_casa: bool = False) -> dict[str, Any]:
+def acceso(codigo: str | None = None, de_casa: bool = False, al_momento: bool = False) -> dict[str, Any]:
     """Lo que pinta /acceso: por qué nombres se entra, qué aparatos están dados
     de alta y si la terminal remota está encendida (decisiones 158-163).
 
@@ -3029,7 +3029,9 @@ def acceso(codigo: str | None = None, de_casa: bool = False) -> dict[str, Any]:
     `tailscale serve` lleva al hub. Al momento (`maquina.red_privada`) sólo
     mientras falte algo o haya un alta esperando —tras «Preparar con Claude»
     la medida del ciclo lento llega con minutos de retraso—; si no, de esa
-    medida. Desde fuera no se mira: eso sólo se arregla en casa."""
+    medida. `al_momento` la pide siempre al momento: el secretario contesta
+    por lo que hay ahora, no por lo de hace un rato. Desde fuera no se mira:
+    eso sólo se arregla en casa."""
     from . import acceso as _acceso
     from . import maquina as _maquina
 
@@ -3045,7 +3047,7 @@ def acceso(codigo: str | None = None, de_casa: bool = False) -> dict[str, Any]:
         if codigo else None
     red = None
     if de_casa:
-        if not revision["utilizables"] or pendiente:
+        if not revision["utilizables"] or pendiente or al_momento:
             red = _maquina.red_privada()
         else:
             red = _red_medida()

@@ -495,6 +495,29 @@ def _hub_servicios(con, p):
                               "detalle": c.get("detalle"), "imagen": c.get("imagen")} for c in s["contenedores"][:60]]}
 
 
+def _hub_acceso(con, p):
+    """Cómo se entra al hub desde otro aparato (lo de /acceso): por qué nombres,
+    si Tailscale lleva al hub, qué aparatos están dados de alta y la terminal
+    remota. Sin la huella ni nada que sirva para entrar. Sin esto le pedía a la
+    persona que le describiera la pantalla (28-nov)."""
+    from .. import api
+    a = api.acceso(de_casa=True, al_momento=True)
+    red = a.get("red") or {}
+    locales = set(a.get("locales") or [])
+    return {
+        "nombres_admitidos": a.get("hosts") or [],
+        "nombres_de_red_privada": [h for h in a.get("hosts") or [] if h not in locales],
+        "problemas_del_archivo": a.get("avisos") or [], "error": a.get("error") or None,
+        "tailscale": {"instalado": red.get("hay"), "conectado": red.get("conectado"),
+                      "nombre_de_esta_maquina": red.get("nombre") or None,
+                      "serve_lleva_al_hub": red.get("lleva_al_hub"), "por_que_no": red.get("error") or None} if red else None,
+        "aparatos_dados_de_alta": [{"nombre": d.get("nombre"), "alta": d.get("alta"), "ultimo_uso": d.get("ultimo_uso")}
+                                  for d in a.get("dispositivos") or []],
+        "alta_esperando": bool(a.get("pendiente")),
+        "terminal_remota_encendida": bool(a.get("terminal_remota")),
+    }
+
+
 def _hub_maquina(con, p):
     """La salud de la máquina y del propio hub (lo de /maquina)."""
     from .. import api
@@ -1432,6 +1455,12 @@ LECTURAS: list[Herramienta] = [
     Herramienta("hub_servicios", "Los contenedores de docker: cuáles corren, cuáles están parados y de qué "
                 "proyecto son. `proyecto` (id) filtra.", _obj({"proyecto": _S}), _hub_servicios,
                 gesto="maquina", rotulo="Mirando los contenedores"),
+    Herramienta("hub_acceso", "Cómo se entra al hub desde el móvil u otro aparato, lo que enseña Ajustes → "
+                "Acceso: los nombres por los que se entra (el de Tailscale incluido), si Tailscale está "
+                "conectado y `tailscale serve` lleva al hub, los aparatos dados de alta y si la terminal "
+                "remota está encendida. Úsala SIEMPRE antes de guiar con el acceso, el QR o Tailscale: no le "
+                "pidas que te describa la pantalla.", _obj(), _hub_acceso,
+                gesto="maquina", rotulo="Mirando cómo se entra desde fuera"),
     Herramienta("hub_maquina", "La salud de la máquina y del hub: muestreo, tmux, disco, temperatura, luz, "
                 "servicios del hub.", _obj(), _hub_maquina, gesto="maquina", rotulo="Mirando la máquina"),
     Herramienta("diagnosticar_pc", "Revisa la PC con Windows donde corre el hub, SÓLO LEYENDO: no cambia "
